@@ -35,6 +35,10 @@
 | 210703_133430.wav | 16/20 条, 1.82s | 20/20 条, <180s |
 | 190227_155815.wav | 27/30+ 条, 1.89s | 数据充足可作对比 |
 
+**关键发现：ft8rs 与 ft8ts 参考实现解码结果完全一致（同为 16/20）。缺失的 4 条连 ft8ts 也解不出来，只有 Fortran WSJT-X (default mode) 能解全部 20 条。** 参见 ft8ts README benchmark 表。
+
+缺失消息：`K1BZM EA3CJ JN01`, `KD2UGC F6GCP R-23`, `WA2FZW DL5AXX RR73`, `CQ EA2BFM IN83`
+
 当前性能：解码速度快（远超 180s 目标），但灵敏度不足（差 4 条消息）。
 
 ### 1.2 ft8rs 架构概览

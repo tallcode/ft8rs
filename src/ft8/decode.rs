@@ -231,6 +231,15 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     // Save original data for nagain (narrow re-check) passes
     let dd_original = dd.clone();
 
+    // Helper: count candidates per frequency bin (for coarse downsampling cache)
+    fn count_candidate_frequencies(candidates: &[Candidate]) -> std::collections::HashMap<i32, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for c in candidates {
+            *counts.entry(c.freq as i32).or_insert(0) += 1;
+        }
+        counts
+    }
+
     for _pass in 0..max_passes {
         // Use lower syncmin for later passes to find weaker signals in residual
         let pass_syncmin = if max_passes > 1 && _pass > 0 {
@@ -240,13 +249,6 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         };
         cx_re.fill(0.0);
         cx_im.fill(0.0);
-    fn count_candidate_frequencies(candidates: &[Candidate]) -> std::collections::HashMap<i32, usize> {
-    let mut counts = std::collections::HashMap::new();
-    for c in candidates {
-        *counts.entry(c.freq as i32).or_insert(0) += 1;
-    }
-    counts
-}
 
     cx_re[..residual.len()].copy_from_slice(&residual);
         fft_complex(&mut cx_re, &mut cx_im, false);
@@ -302,34 +304,40 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         }
     }
 
-    // ── nagain: narrow re-check around decoded frequencies on ORIGINAL data ──
+    // ── nagain: narrow re-check around each decoded frequency on ORIGINAL data ──
     // WSJT-X nagain mode: after subtraction, re-search narrow band (±20Hz) around
-    // decoded frequencies using original (unsubtracted) data. This catches weak
-    // signals hidden in the skirts of stronger ones.
+    // EACH decoded frequency individually using original (unsubtracted) data.
+    // This catches weak signals hidden in the skirts of stronger ones.
+    // Per-frequency search avoids noise from unrelated parts of the spectrum.
     if depth >= 3 && !decoded.is_empty() {
-        let nagain_freqs: Vec<f64> = decoded.iter().map(|d| d.freq).collect();
-        let nagain_nfa = nagain_freqs.iter().cloned().fold(f64::INFINITY, f64::min) - 20.0;
-        let nagain_nfb = nagain_freqs.iter().cloned().fold(f64::NEG_INFINITY, f64::max) + 20.0;
-        let nagain_nfa = nagain_nfa.max(nfa);
-        let nagain_nfb = nagain_nfb.min(nfb);
+        // Use higher syncmin for narrow-band search (less noise bandwidth → more reliable)
+        let nagain_syncmin = (syncmin * 1.5).max(1.1);
         
-        if nagain_nfb > nagain_nfa {
-            let (nagain_candidates, nagain_sbase) = sync8(&dd_original, nagain_nfa, nagain_nfb, syncmin, max_candidates);
+        // Compute long FFT for original data (done once)
+        let mut nagain_cx_re = vec![0.0; NFFT1_LONG];
+        let mut nagain_cx_im = vec![0.0; NFFT1_LONG];
+        nagain_cx_re[..dd_original.len()].copy_from_slice(&dd_original);
+        fft_complex(&mut nagain_cx_re, &mut nagain_cx_im, false);
+        
+        // Collect decoded frequencies to avoid redundant searches
+        let mut searched_freqs: Vec<f64> = decoded.iter().map(|d| d.freq).collect();
+        searched_freqs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        searched_freqs.dedup_by(|a, b| (*a - *b).abs() < 10.0);
+        
+        for &freq in &searched_freqs {
+            let nagain_nfa = (freq - 20.0).max(nfa);
+            let nagain_nfb = (freq + 20.0).min(nfb);
+            if nagain_nfb <= nagain_nfa { continue; }
             
-            // Recompute long FFT for original data
-            let mut nagain_cx_re = vec![0.0; NFFT1_LONG];
-            let mut nagain_cx_im = vec![0.0; NFFT1_LONG];
-            nagain_cx_re[..dd_original.len()].copy_from_slice(&dd_original);
-            fft_complex(&mut nagain_cx_re, &mut nagain_cx_im, false);
+            let (nagain_candidates, nagain_sbase) = sync8(
+                &dd_original, nagain_nfa, nagain_nfb, nagain_syncmin, 50,  // narrow band, fewer candidates
+            );
             
             let mut nagain_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
                 std::collections::HashMap::new();
             let mut nagain_freq_uses: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
-            let mut _nagain_decoded = 0u32;
-            let mut _nagain_tried = 0u32;
             
             for cand in &nagain_candidates {
-                _nagain_tried += 1;
                 if let Some(result) = ft8b(
                     &dd_original,
                     &nagain_cx_re,
@@ -356,7 +364,6 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
                         msg,
                         sync: cand.sync,
                     });
-                    _nagain_decoded += 1;
                 }
             }
         }
