@@ -84,7 +84,7 @@ pub fn mn(j: usize) -> [usize; 3] {
 /// Nm[i] = bit indices (0-based) for check i (0..82). Variable length (nrw[i] elements).
 /// Returns a slice of up to 7 elements.
 pub fn nm(i: usize) -> &'static [usize] {
-    let base = i * 7;
+    let _base = i * 7;
     let _weight = NRW_DATA[i];
     // We need to return a slice from the static data, but with 0-padding entries removed.
     // Since we can't easily return a variable-length static slice, we'll build it.

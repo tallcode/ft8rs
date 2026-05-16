@@ -136,7 +136,7 @@ fn create_decode_workspace() -> DecodeWorkspace {
 }
 
 /// Lazy-initialized constants
-fn taper() -> &'static Vec<f64> {
+fn build_taper() -> &'static Vec<f64> {
     static T: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
     T.get_or_init(|| {
         let mut t = vec![0.0; TAPER_SIZE];
@@ -148,7 +148,7 @@ fn taper() -> &'static Vec<f64> {
     })
 }
 
-fn costas_sync_templates() -> &'static SyncTemplate {
+fn build_costas_sync_templates() -> &'static SyncTemplate {
     static T: std::sync::OnceLock<SyncTemplate> = std::sync::OnceLock::new();
     T.get_or_init(|| {
         let mut re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
@@ -166,10 +166,10 @@ fn costas_sync_templates() -> &'static SyncTemplate {
     })
 }
 
-fn freq_shift_sync_templates() -> &'static Vec<FrequencyShiftSyncTemplate> {
+fn build_frequency_shift_sync_templates() -> &'static Vec<FrequencyShiftSyncTemplate> {
     static T: std::sync::OnceLock<Vec<FrequencyShiftSyncTemplate>> = std::sync::OnceLock::new();
     T.get_or_init(|| {
-        let cs = costas_sync_templates();
+        let cs = build_costas_sync_templates();
         let mut templates = Vec::new();
         for ifr in -5..=5 {
             let delf = ifr as f64 * 0.5;
@@ -231,15 +231,19 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     for _pass in 0..max_passes {
         cx_re.fill(0.0);
         cx_im.fill(0.0);
-        cx_re[..residual.len()].copy_from_slice(&residual);
+    fn count_candidate_frequencies(candidates: &[Candidate]) -> std::collections::HashMap<i32, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for c in candidates {
+        *counts.entry(c.freq as i32).or_insert(0) += 1;
+    }
+    counts
+}
+
+    cx_re[..residual.len()].copy_from_slice(&residual);
         fft_complex(&mut cx_re, &mut cx_im, false);
 
         let (candidates, _sbase) = sync8(&residual, nfa, nfb, syncmin, max_candidates);
-        let mut coarse_frequency_uses = std::collections::HashMap::new();
-        for c in &candidates {
-            let freq_key = c.freq as i32;
-            *coarse_frequency_uses.entry(freq_key).or_insert(0) += 1;
-        }
+        let mut coarse_frequency_uses = count_candidate_frequencies(&candidates);
         let mut coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
             std::collections::HashMap::new();
         let mut decoded_in_pass = 0;
@@ -663,7 +667,7 @@ fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> isize {
     
     let mut smax = 0.0;
     let mut ibest_unwrapped = i0_raw;  // start with unwrapped
-    let cs = costas_sync_templates();
+    let cs = build_costas_sync_templates();
     for offset in -10..=10 {
         let idx = (i0_center + offset).rem_euclid(NP2 as isize) as usize;
         let sync = sync8d(cd0_re, cd0_im, idx, &cs.re, &cs.im);
@@ -678,7 +682,7 @@ fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> isize {
 fn find_best_frequency_shift(cd0_re: &[f64], cd0_im: &[f64], ibest: isize) -> f64 {
     let mut smax = 0.0;
     let mut delfbest = 0.0;
-    let templates = freq_shift_sync_templates();
+    let templates = build_frequency_shift_sync_templates();
     let idx = ibest.rem_euclid(NP2 as isize) as usize;
     for tpl in templates {
         let sync = sync8d(cd0_re, cd0_im, idx, &tpl.re, &tpl.im);
@@ -692,7 +696,7 @@ fn find_best_frequency_shift(cd0_re: &[f64], cd0_im: &[f64], ibest: isize) -> f6
 
 fn refine_time_offset(cd0_re: &[f64], cd0_im: &[f64], ibest: isize, ss: &mut [f64]) -> isize {
     ss.fill(0.0);
-    let cs = costas_sync_templates();
+    let cs = build_costas_sync_templates();
     for idt in -4..=4 {
         let idx = (ibest + idt).rem_euclid(NP2 as isize) as usize;
         ss[(idt + 4) as usize] =
@@ -967,7 +971,7 @@ fn ft8_downsample(cx_re: &[f64], cx_im: &[f64], f0: f64, workspace: &mut DecodeW
         k += 1;
     }
 
-    let taper_data = taper();
+    let taper_data = build_taper();
     for i in 0..TAPER_SIZE {
         if i >= NFFT2 {
             break;
@@ -1118,16 +1122,10 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
             workspace.llr[i] = scalefac * metric[i];
         }
 
-        // Debug: check LLR values
-        if ipass == 0 {
-            let _llr_sum: f64 = workspace.llr.iter().map(|x| x.abs()).sum();
-        }
-
         if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
             if result.nharderrors <= 36 {
                 return Some(result);
             }
-        } else {
         }
     }
 
