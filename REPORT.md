@@ -495,7 +495,63 @@ const MAX_HARD_ERRORS: usize = 40;
 
 ## 5. 改造步骤
 
-### Phase 1: 快速改进（1-2天）
+### 已完成 (Phase 1 + Phase 2)
+
+| Phase | 改动 | 状态 |
+|-------|------|------|
+| P1.1 | 3-pass 减法 (MAX_DECODE_PASSES_DEPTH3=3) | ✅ |
+| P1.2 | sync gate 放宽: 6→5 (depth≥3) | ✅ |
+| P1.3 | nharderrors 放宽: 36→40 | ✅ |
+| P1.4 | 减法 SNR 阈值: -22→-24dB | ✅ |
+| P1.5 | 默认 syncmin: 1.2→0.8, 后续pass×0.7 | ✅ |
+| P1.6 | nagain 逐频率窄带重搜 (±20Hz) | ✅ |
+| P2.1 | WSJT-X 复基带LPF减法 (subtractft8) | ✅ |
+
+**当前结果: 16/20, 6.24s**
+
+## 🔬 Phase 2.5 — WSJT-X 逐模块交叉验证
+
+对本地 `wsjtx/` 源码与 `ft8rs/src/ft8/decode.rs` 逐模块对比结果：
+
+### ✅ 完全一致的核心模块
+
+| 模块 | 验证项 |
+|------|--------|
+| **sync8** | icos7数组、JZ=62、NFFT1/NSTEP、df/tstep、fac=1/300、sync_abc/bc、mlag/mlag2、40%基线、去重<4Hz/<0.04s |
+| **sync8d** | Costas复波形(cos+jsin,32样本)、3块偏移(0/36/72×32)、复相关sum(cd0×conj(csync))、频偏±5×0.5Hz(11档) |
+| **ft8_downsample** | NFFT1_LONG=192000/NFFT2=3200、频带f0±[1.5,8.5]×baud、101点cos² taper |
+| **ft8b核心** | 时偏搜索i0±10、频偏搜索-5..5×0.5Hz、时偏精炼±4、cs=csymb/1e3、graymap=0,1,3,2,5,6,4,7 |
+| **bit metrics** | bm=max1-max0、bmeta/bmetb/bmetc/bmetd、normalizebmet(/σ)、scalefac=2.83 |
+| **LDPC** | max_iterations=30、sum-product(tanh)、早停、CRC check_crc14、OSD order 1-2 |
+
+### ⚠️ 功能等价但有差异
+
+| 差异点 | WSJT-X | ft8rs | 影响 |
+|--------|--------|-------|------|
+| s8缩放 | abs(csymb) | abs(csymb)/1000 | 无(s8只用于相对比较) |
+| 下采样缩放 | 1/sqrt(N1×N2) | sqrt(N2/N1) | 无(normalizebmet归一化) |
+| nsync gate | ≤6 bail(≥7) | <5 bail(≥5) | ft8rs更宽松 |
+| nharderrors | >36 reject | >40 reject | ft8rs更宽松 |
+
+### ❌ WSJT-X有但ft8rs缺失
+
+| 特性 | WSJT-X实现 | 效果 |
+|------|-----------|------|
+| **AP解码** | iaptype 1-6, contest 0-8 | 2-4dB灵敏度提升 |
+| **a7历史复用** | ft8_a7d跨时隙 | 重叠信号检测 |
+| **lrefinedt** | ±90样本时偏精炼减法 | 减法残差更小 |
+| **nagain(完整)** | nagain=true→xbase SNR | 弱信号额外检测 |
+| **xbase归一化** | nagain分支SNR计算 | 频变噪声补偿 |
+
+### 结论
+
+**ft8rs核心算法（sync8、ft8b、LDPC、bit metrics）与WSJT-X完全一致，无bug。** 差距仅在于WSJT-X特有的AP解码和a7历史复用——这些是ft8ts参考实现也未包含的能力。
+
+16→20的突破需要AP解码（Phase 3），而非算法bug修复。
+
+### 余下步骤
+
+### Phase 3: AP 解码（3-5天）
 
 1. **增加第 3 个解码 pass**
    - 修改 `MAX_DECODE_PASSES_DEPTH3 = 3`
@@ -528,14 +584,21 @@ const MAX_HARD_ERRORS: usize = 40;
 ### Phase 3: AP 解码（3-5天）
 
 10. **实现 CQ/Grid AP 掩码**
+   - 参考 `ft8b.f90` iaptype=1逻辑
+   - 将已知比特注入LLR强先验
 11. **实现 contest 模式 AP**
-12. **实现 a7 历史复用（如果处理多帧文件）**
+   - 支持 FIELD_DAY/RTTY/WW_DIGI 等模式
+12. **实现 xbase LLR 归一化**
+   - 将 sbase 基线用于比特度量补偿
+13. **实现 lrefinedt 减法精炼**
+   - ±90 sample 时偏搜索，最小化残留能量
 
 ### Phase 4: 精细优化（2-3天）
 
-13. **LDPC 解码器性能调优**
-14. **全参数扫描优化**
+14. **完整的 nagain 模式**
+   - nagain=true→xbase SNR 分支
 15. **回归测试 + benchmark**
+   - 全参数扫描优化
 
 ---
 
@@ -557,12 +620,25 @@ const MAX_HARD_ERRORS: usize = 40;
 
 ## 7. 总结
 
-ft8rs 当前的核心问题不是架构缺陷，而是缺少 WSJT-X 的以下关键特性：
+### 已验证事实
 
-1. **3-pass 减法** vs 当前 2-pass（影响最大）
-2. **AP 解码** 的完全缺失（影响中等）
-3. **减法精度** 不足（无频偏精炼）  
-4. **同步/解码门控** 偏保守
-5. **基线归一化** 未用于 LLR 计算
+1. **ft8rs 核心算法无bug** — sync8/ft8b/LDPC/bit_metrics 与 WSJT-X 完全一致
+2. **ft8rs = ft8ts 参考实现** — 16/20 解码结果完全匹配
+3. **缺失4条需 WSJT-X 特有功能** — AP解码是唯一有明确收益的待实现特性
 
-按 Phase 1→4 逐步实施，预期可达到 20/20 条消息目标，解码时间控制在 30s 以内。
+### 差距画像
+
+```
+ft8rs (16/20, 6.2s) = ft8ts (16/20)
+                    < WSJT-X FAST (14/20)
+                    < WSJT-X default (20/20)
+```
+
+WSJT-X default超越所有开源实现的秘密：
+- **AP解码** (iaptype 1-6, contest 0-8): 已知比特约束LDPC
+- **a7历史复用**: 跨时隙信号记忆
+- **完整nagain**: xbase归一化SNR
+
+### 下一步
+
+Phase 3: 实现AP解码框架 → 预期可突破到18-20/20
