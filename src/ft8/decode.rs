@@ -24,9 +24,9 @@ const COSTAS_BLOCKS: usize = 7;
 const COSTAS_SYMBOL_LEN: usize = 32;
 const TAPER_SIZE: usize = 101;
 const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
-const MAX_DECODE_PASSES_DEPTH3: usize = 2;
-const MIN_SUBTRACTION_SNR: f64 = -22.0;
-const SUBTRACTION_GAIN: f64 = 0.95;
+const MAX_DECODE_PASSES_DEPTH3: usize = 3;
+const MIN_SUBTRACTION_SNR: f64 = -24.0;  // was -22, relax to allow subtractions at weaker SNR
+const SUBTRACTION_GAIN: f64 = 1.0;        // was 0.95, use unity gain (LS already estimates amplitude)
 const SUBTRACTION_PHASE_SHIFT: f64 = std::f64::consts::PI / 2.0;
 
 const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
@@ -203,7 +203,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     let sample_rate = options.sample_rate.unwrap_or(SAMPLE_RATE);
     let nfa = options.freq_low.unwrap_or(200.0);
     let nfb = options.freq_high.unwrap_or(3000.0);
-    let syncmin = options.sync_min.unwrap_or(1.2);
+    let syncmin = options.sync_min.unwrap_or(0.8);  // was 1.2; lowered to catch weaker signals
     let depth = options.depth.unwrap_or(2);
     let max_candidates = options.max_candidates.unwrap_or(300);
     let book = options.hash_call_book;
@@ -228,7 +228,16 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         1
     };
 
+    // Save original data for nagain (narrow re-check) passes
+    let dd_original = dd.clone();
+
     for _pass in 0..max_passes {
+        // Use lower syncmin for later passes to find weaker signals in residual
+        let pass_syncmin = if max_passes > 1 && _pass > 0 {
+            (syncmin * 0.7).max(0.6)
+        } else {
+            syncmin
+        };
         cx_re.fill(0.0);
         cx_im.fill(0.0);
     fn count_candidate_frequencies(candidates: &[Candidate]) -> std::collections::HashMap<i32, usize> {
@@ -242,7 +251,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     cx_re[..residual.len()].copy_from_slice(&residual);
         fft_complex(&mut cx_re, &mut cx_im, false);
 
-        let (candidates, _sbase) = sync8(&residual, nfa, nfb, syncmin, max_candidates);
+        let (candidates, _sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates);
         let mut coarse_frequency_uses = count_candidate_frequencies(&candidates);
         let mut coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
             std::collections::HashMap::new();
@@ -290,6 +299,66 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
 
         if decoded_in_pass == 0 {
             break;
+        }
+    }
+
+    // ── nagain: narrow re-check around decoded frequencies on ORIGINAL data ──
+    // WSJT-X nagain mode: after subtraction, re-search narrow band (±20Hz) around
+    // decoded frequencies using original (unsubtracted) data. This catches weak
+    // signals hidden in the skirts of stronger ones.
+    if depth >= 3 && !decoded.is_empty() {
+        let nagain_freqs: Vec<f64> = decoded.iter().map(|d| d.freq).collect();
+        let nagain_nfa = nagain_freqs.iter().cloned().fold(f64::INFINITY, f64::min) - 20.0;
+        let nagain_nfb = nagain_freqs.iter().cloned().fold(f64::NEG_INFINITY, f64::max) + 20.0;
+        let nagain_nfa = nagain_nfa.max(nfa);
+        let nagain_nfb = nagain_nfb.min(nfb);
+        
+        if nagain_nfb > nagain_nfa {
+            let (nagain_candidates, nagain_sbase) = sync8(&dd_original, nagain_nfa, nagain_nfb, syncmin, max_candidates);
+            
+            // Recompute long FFT for original data
+            let mut nagain_cx_re = vec![0.0; NFFT1_LONG];
+            let mut nagain_cx_im = vec![0.0; NFFT1_LONG];
+            nagain_cx_re[..dd_original.len()].copy_from_slice(&dd_original);
+            fft_complex(&mut nagain_cx_re, &mut nagain_cx_im, false);
+            
+            let mut nagain_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
+                std::collections::HashMap::new();
+            let mut nagain_freq_uses: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+            let mut _nagain_decoded = 0u32;
+            let mut _nagain_tried = 0u32;
+            
+            for cand in &nagain_candidates {
+                _nagain_tried += 1;
+                if let Some(result) = ft8b(
+                    &dd_original,
+                    &nagain_cx_re,
+                    &nagain_cx_im,
+                    cand.freq,
+                    cand.dt,
+                    &nagain_sbase,
+                    depth,
+                    &book,
+                    &mut workspace,
+                    &mut nagain_downsample_cache,
+                    &mut nagain_freq_uses,
+                ) {
+                    let message_key = normalize_message_key(&result.msg);
+                    if seen_messages.contains(&message_key) {
+                        continue;
+                    }
+                    seen_messages.insert(message_key);
+                    let msg = result.msg.clone();
+                    decoded.push(DecodedMessage {
+                        freq: result.freq,
+                        dt: result.dt - 0.5,
+                        snr: result.snr,
+                        msg,
+                        sync: cand.sync,
+                    });
+                    _nagain_decoded += 1;
+                }
+            }
         }
     }
 
@@ -582,7 +651,9 @@ fn ft8b(
         workspace,
     );
 
-    let min_costas_hits = if depth >= 3 { 6 } else { 7 };
+    // WSJT-X: sync gate is nsync <= 6 bailout (= need >=7)
+    // We slightly relax for depth=3 to catch weaker signals
+    let min_costas_hits = if depth >= 3 { 5 } else { 7 };
     if !passes_sync_gate(&workspace.s8, min_costas_hits) {
         return None;
     }
@@ -1123,7 +1194,8 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
         }
 
         if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
-            if result.nharderrors <= 36 {
+            // WSJT-X: nharderrors > 36 则跳过. 我们放宽到 40 以捕获更弱信号
+            if result.nharderrors <= 40 {
                 return Some(result);
             }
         }
