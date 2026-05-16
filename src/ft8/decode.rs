@@ -1258,6 +1258,7 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
         &workspace.bmetd,
     ];
 
+    // Passes 1-4: regular BP+OSD decoding with 4 bit metrics
     workspace.apmask.fill(0);
 
     for ipass in 0..4 {
@@ -1270,6 +1271,84 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
             // WSJT-X: nharderrors > 36 则跳过. 我们放宽到 40 以捕获更弱信号
             if result.nharderrors <= 40 {
                 return Some(result);
+            }
+        }
+    }
+
+    // ── AP (A Priori) decoding passes ──
+    // WSJT-X iaptype decoding: constrain known bits with strong LLR priors.
+    // This is the key differentiator that lets WSJT-X decode 20/20 vs our 16/20.
+    if depth >= 2 {
+        // Compute apmag: max LLR magnitude * 1.01 (matches WSJT-X ft8b.f90)
+        let apmag = bmetrics[0].iter()
+            .map(|&x| (scalefac * x).abs())
+            .fold(0.0f64, f64::max) * 1.01;
+        if apmag > 0.1 {
+            // Use the first metric (bmeta) as base LLR for AP passes
+            for i in 0..N_LDPC {
+                workspace.llr[i] = scalefac * bmetrics[0][i];
+            }
+
+            // ── AP Pass 5: CQ call mask ──
+            // Constrain bits 0-28 to "CQ" pattern (n28a=2, ipa=0)
+            // and bits 74-76 to i3=1 (standard message with grid)
+            workspace.apmask.fill(0);
+            // Set CQ pattern: n28a=2 → bit 26=1, others 0; ipa=0
+            for i in 0..29 {
+                workspace.apmask[i] = 1;
+                workspace.llr[i] = if i == 26 { apmag } else { -apmag };
+            }
+            // Constrain i3=1 (standard 2-call message)
+            workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
+            workspace.apmask[75] = 1; workspace.llr[75] = -apmag;  // i3 bit 1 = 0
+            workspace.apmask[76] = 1; workspace.llr[76] = apmag;   // i3 bit 2 = 1
+            
+            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
+                if result.nharderrors <= 40 {
+                    return Some(result);
+                }
+            }
+
+            // ── AP Pass 6: CQ + alternate i3 ──
+            // Try i3=2 (standard 2-call message with /R or /P)
+            workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
+            workspace.apmask[75] = 1; workspace.llr[75] = apmag;   // i3 bit 1 = 1
+            workspace.apmask[76] = 1; workspace.llr[76] = -apmag;  // i3 bit 2 = 0
+            
+            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
+                if result.nharderrors <= 40 {
+                    return Some(result);
+                }
+            }
+
+            // ── AP Pass 7: Message type only constraint ──
+            // Only constrain i3/n3 without assuming specific message content.
+            // i3=1, n3=0: standard 2-call with grid
+            workspace.apmask.fill(0);
+            for i in 0..N_LDPC {
+                workspace.llr[i] = scalefac * bmetrics[0][i];
+            }
+            workspace.apmask[71] = 1; workspace.llr[71] = -apmag;  // n3 bit 0 = 0
+            workspace.apmask[72] = 1; workspace.llr[72] = -apmag;  // n3 bit 1 = 0
+            workspace.apmask[73] = 1; workspace.llr[73] = -apmag;  // n3 bit 2 = 0 (n3=0)
+            workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
+            workspace.apmask[75] = 1; workspace.llr[75] = -apmag;  // i3 bit 1 = 0
+            workspace.apmask[76] = 1; workspace.llr[76] = apmag;   // i3 bit 2 = 1 (i3=1)
+            
+            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
+                if result.nharderrors <= 40 {
+                    return Some(result);
+                }
+            }
+
+            // ── AP Pass 8: Constrain only n3=0, i3=2 ──
+            workspace.apmask[75] = 1; workspace.llr[75] = apmag;   // i3 bit 1 = 1
+            workspace.apmask[76] = 1; workspace.llr[76] = -apmag;  // i3 bit 2 = 0 (i3=2)
+            
+            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
+                if result.nharderrors <= 40 {
+                    return Some(result);
+                }
             }
         }
     }
