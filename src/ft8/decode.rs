@@ -1,0 +1,1135 @@
+/// FT8 decoder – Rust port of decode.ts
+
+use crate::ft8::constants::{COSTAS, GRAY_MAP};
+use crate::ft8::encode::encode_message;
+use crate::util::constants::{N_LDPC, SAMPLE_RATE};
+use crate::util::decode174_91::{decode174_91, DecodeResult};
+use crate::util::fft::{fft_complex, next_pow2};
+use crate::util::hashcall::HashCallBook;
+use crate::util::unpack_jt77::unpack77;
+use crate::util::waveform::generate_ft8_waveform;
+
+const NSPS: usize = 1920;
+const NFFT1: usize = 2 * NSPS; // 3840
+const NSTEP: usize = NSPS / 4; // 480
+const NMAX: usize = 15 * 12_000; // 180000
+const NHSYM: usize = NMAX / NSTEP - 3; // 372
+const NDOWN: usize = 60;
+const NN: usize = 79;
+
+const NFFT1_LONG: usize = 192000;
+const NFFT2: usize = 3200;
+const NP2: usize = 2812;
+const COSTAS_BLOCKS: usize = 7;
+const COSTAS_SYMBOL_LEN: usize = 32;
+const TAPER_SIZE: usize = 101;
+const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
+const MAX_DECODE_PASSES_DEPTH3: usize = 2;
+const MIN_SUBTRACTION_SNR: f64 = -22.0;
+const SUBTRACTION_GAIN: f64 = 0.95;
+const SUBTRACTION_PHASE_SHIFT: f64 = std::f64::consts::PI / 2.0;
+
+const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
+const DT2: f64 = 1.0 / FS2;
+const DOWNSAMPLE_DF: f64 = SAMPLE_RATE as f64 / NFFT1_LONG as f64;
+const DOWNSAMPLE_BAUD: f64 = SAMPLE_RATE as f64 / NSPS as f64;
+const DOWNSAMPLE_SCALE: f64 = 0.12909944487358055; // sqrt(3200/192000)
+
+#[derive(Clone)]
+pub struct DecodedMessage {
+    pub freq: f64,
+    pub dt: f64,
+    pub snr: f64,
+    pub msg: String,
+    pub sync: f64,
+}
+
+pub struct DecodeOptions {
+    pub sample_rate: Option<usize>,
+    pub freq_low: Option<f64>,
+    pub freq_high: Option<f64>,
+    pub sync_min: Option<f64>,
+    pub depth: Option<usize>,
+    pub max_candidates: Option<usize>,
+    pub hash_call_book: Option<HashCallBook>,
+}
+
+impl Default for DecodeOptions {
+    fn default() -> Self {
+        DecodeOptions {
+            sample_rate: None,
+            freq_low: None,
+            freq_high: None,
+            sync_min: None,
+            depth: None,
+            max_candidates: None,
+            hash_call_book: None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Candidate {
+    freq: f64,
+    dt: f64,
+    sync: f64,
+}
+
+struct Ft8bResult {
+    msg: String,
+    freq: f64,
+    dt: f64,
+    snr: f64,
+}
+
+struct SyncTemplate {
+    re: Vec<f64>,
+    im: Vec<f64>,
+}
+
+struct FrequencyShiftSyncTemplate {
+    delf: f64,
+    re: Vec<f64>,
+    im: Vec<f64>,
+}
+
+struct DecodeWorkspace {
+    cd0_re: Vec<f64>,
+    cd0_im: Vec<f64>,
+    shift_re: Vec<f64>,
+    shift_im: Vec<f64>,
+    s8: Vec<f64>,
+    cs_re: Vec<f64>,
+    cs_im: Vec<f64>,
+    symb_re: Vec<f64>,
+    symb_im: Vec<f64>,
+    s2: Vec<f64>,
+    bmeta: Vec<f64>,
+    bmetb: Vec<f64>,
+    bmetc: Vec<f64>,
+    bmetd: Vec<f64>,
+    llr: Vec<f64>,
+    apmask: Vec<i8>,
+    ss: Vec<f64>,
+}
+
+fn create_decode_workspace() -> DecodeWorkspace {
+    DecodeWorkspace {
+        cd0_re: vec![0.0; NFFT2],
+        cd0_im: vec![0.0; NFFT2],
+        shift_re: vec![0.0; NFFT2],
+        shift_im: vec![0.0; NFFT2],
+        s8: vec![0.0; 8 * NN],
+        cs_re: vec![0.0; 8 * NN],
+        cs_im: vec![0.0; 8 * NN],
+        symb_re: vec![0.0; COSTAS_SYMBOL_LEN],
+        symb_im: vec![0.0; COSTAS_SYMBOL_LEN],
+        s2: vec![0.0; 1 << 9],
+        bmeta: vec![0.0; N_LDPC],
+        bmetb: vec![0.0; N_LDPC],
+        bmetc: vec![0.0; N_LDPC],
+        bmetd: vec![0.0; N_LDPC],
+        llr: vec![0.0; N_LDPC],
+        apmask: vec![0; N_LDPC],
+        ss: vec![0.0; 9],
+    }
+}
+
+/// Lazy-initialized constants
+fn taper() -> &'static Vec<f64> {
+    static T: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let mut t = vec![0.0; TAPER_SIZE];
+        let last = TAPER_SIZE - 1;
+        for i in 0..TAPER_SIZE {
+            t[i] = 0.5 * (1.0 + ((i as f64 * std::f64::consts::PI) / last as f64).cos());
+        }
+        t
+    })
+}
+
+fn costas_sync_templates() -> &'static SyncTemplate {
+    static T: std::sync::OnceLock<SyncTemplate> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let mut re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
+        let mut im = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
+        for i in 0..COSTAS_BLOCKS {
+            let mut phi: f64 = 0.0;
+            let dphi = (TWO_PI * COSTAS[i] as f64) / COSTAS_SYMBOL_LEN as f64;
+            for j in 0..COSTAS_SYMBOL_LEN {
+                re[i * COSTAS_SYMBOL_LEN + j] = phi.cos();
+                im[i * COSTAS_SYMBOL_LEN + j] = phi.sin();
+                phi = (phi + dphi) % TWO_PI;
+            }
+        }
+        SyncTemplate { re, im }
+    })
+}
+
+fn freq_shift_sync_templates() -> &'static Vec<FrequencyShiftSyncTemplate> {
+    static T: std::sync::OnceLock<Vec<FrequencyShiftSyncTemplate>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let cs = costas_sync_templates();
+        let mut templates = Vec::new();
+        for ifr in -5..=5 {
+            let delf = ifr as f64 * 0.5;
+            let dphi = TWO_PI * delf * DT2;
+            let mut twk_re = vec![0.0; COSTAS_SYMBOL_LEN];
+            let mut twk_im = vec![0.0; COSTAS_SYMBOL_LEN];
+            let mut phi: f64 = 0.0;
+            for j in 0..COSTAS_SYMBOL_LEN {
+                twk_re[j] = phi.cos();
+                twk_im[j] = phi.sin();
+                phi = (phi + dphi) % TWO_PI;
+            }
+            let mut re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
+            let mut im = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
+            for i in 0..COSTAS_BLOCKS {
+                for j in 0..COSTAS_SYMBOL_LEN {
+                    let idx = i * COSTAS_SYMBOL_LEN + j;
+                    let cs_re = cs.re[idx];
+                    let cs_im = cs.im[idx];
+                    re[idx] = twk_re[j] * cs_re - twk_im[j] * cs_im;
+                    im[idx] = twk_re[j] * cs_im + twk_im[j] * cs_re;
+                }
+            }
+            templates.push(FrequencyShiftSyncTemplate { delf, re, im });
+        }
+        templates
+    })
+}
+
+pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
+    let sample_rate = options.sample_rate.unwrap_or(SAMPLE_RATE);
+    let nfa = options.freq_low.unwrap_or(200.0);
+    let nfb = options.freq_high.unwrap_or(3000.0);
+    let syncmin = options.sync_min.unwrap_or(1.2);
+    let depth = options.depth.unwrap_or(2);
+    let max_candidates = options.max_candidates.unwrap_or(300);
+    let book = options.hash_call_book;
+
+    let dd = if sample_rate == SAMPLE_RATE {
+        copy_samples_to_decode_window(samples)
+    } else {
+        resample(samples, sample_rate, SAMPLE_RATE, NMAX)
+    };
+    let mut residual = dd.clone();
+
+    let mut cx_re = vec![0.0; NFFT1_LONG];
+    let mut cx_im = vec![0.0; NFFT1_LONG];
+    let mut workspace = create_decode_workspace();
+    let mut tone_cache: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+
+    let mut decoded: Vec<DecodedMessage> = Vec::new();
+    let mut seen_messages = std::collections::HashSet::new();
+    let max_passes = if depth >= 3 {
+        MAX_DECODE_PASSES_DEPTH3
+    } else {
+        1
+    };
+
+    for _pass in 0..max_passes {
+        cx_re.fill(0.0);
+        cx_im.fill(0.0);
+        cx_re[..residual.len()].copy_from_slice(&residual);
+        fft_complex(&mut cx_re, &mut cx_im, false);
+
+        let (candidates, _sbase) = sync8(&residual, nfa, nfb, syncmin, max_candidates);
+        let mut coarse_frequency_uses = std::collections::HashMap::new();
+        for c in &candidates {
+            let freq_key = c.freq as i32;
+            *coarse_frequency_uses.entry(freq_key).or_insert(0) += 1;
+        }
+        let mut coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
+            std::collections::HashMap::new();
+        let mut decoded_in_pass = 0;
+
+        for cand in &candidates {
+            if let Some(result) = ft8b(
+                &residual,
+                &cx_re,
+                &cx_im,
+                cand.freq,
+                cand.dt,
+                &_sbase,
+                depth,
+                &book,
+                &mut workspace,
+                &mut coarse_downsample_cache,
+                &mut coarse_frequency_uses,
+            ) {
+                let message_key = normalize_message_key(&result.msg);
+                if seen_messages.contains(&message_key) {
+                    continue;
+                }
+                seen_messages.insert(message_key);
+                
+                let msg = result.msg.clone();
+                decoded.push(DecodedMessage {
+                    freq: result.freq,
+                    dt: result.dt - 0.5,
+                    snr: result.snr,
+                    msg,
+                    sync: cand.sync,
+                });
+                decoded_in_pass += 1;
+
+                if _pass + 1 < max_passes {
+                    subtract_decoded_signal(
+                        &mut residual,
+                        &result,
+                        &mut tone_cache,
+                    );
+                }
+            }
+        }
+
+        if decoded_in_pass == 0 {
+            break;
+        }
+    }
+
+    decoded
+}
+
+fn normalize_message_key(msg: &str) -> String {
+    msg.trim()
+        .split_whitespace()
+        .map(|w| w.to_uppercase())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn copy_samples_to_decode_window(samples: &[f32]) -> Vec<f64> {
+    let len = samples.len().min(NMAX);
+    samples[..len].iter().map(|&x| x as f64).collect()
+}
+
+fn resample(input: &[f32], from_rate: usize, to_rate: usize, out_len: usize) -> Vec<f64> {
+    let ratio = from_rate as f64 / to_rate as f64;
+    (0..out_len)
+        .map(|i| {
+            let src_idx = i as f64 * ratio;
+            let lo = src_idx.floor() as usize;
+            let frac = src_idx - lo as f64;
+            let v0 = if lo < input.len() { input[lo] as f64 } else { 0.0 };
+            let v1 = if lo + 1 < input.len() {
+                input[lo + 1] as f64
+            } else {
+                0.0
+            };
+            v0 * (1.0 - frac) + v1 * frac
+        })
+        .collect()
+}
+
+fn sync8(
+    dd: &[f64],
+    nfa: f64,
+    nfb: f64,
+    syncmin: f64,
+    maxcand: usize,
+) -> (Vec<Candidate>, Vec<f64>) {
+    let jz = 62;
+    let fft_size = next_pow2(NFFT1); // 4096
+    let half_size = fft_size / 2;
+    let tstep = NSTEP as f64 / SAMPLE_RATE as f64;
+    let df = SAMPLE_RATE as f64 / fft_size as f64;
+    let fac = 1.0 / 300.0;
+
+    let mut s = vec![0.0; half_size * NHSYM];
+    let mut savg = vec![0.0; half_size];
+    let mut x_re = vec![0.0; fft_size];
+    let mut x_im = vec![0.0; fft_size];
+
+    for j in 0..NHSYM {
+        let ia = j * NSTEP;
+        x_re.fill(0.0);
+        x_im.fill(0.0);
+        let end = (ia + NSPS).min(dd.len());
+        for i in ia..end {
+            x_re[i - ia] = fac * dd[i];
+        }
+        fft_complex(&mut x_re, &mut x_im, false);
+        for i in 0..half_size {
+            let power = x_re[i] * x_re[i] + x_im[i] * x_im[i];
+            s[i * NHSYM + j] = power;
+            savg[i] += power;
+        }
+    }
+
+    let sbase = compute_baseline(&savg, nfa, nfb, df, half_size);
+
+    let ia = (1.0_f64.max((nfa / df).round())) as usize;
+    let ib = ((half_size - 14) as f64).min((nfb / df).round()) as usize;
+    let nssy = NSPS / NSTEP;
+    let nfos = (SAMPLE_RATE as f64 / NSPS as f64 / df).round() as usize;
+    let jstrt = (0.5 / tstep).round() as usize;
+    let width = 2 * jz + 1;
+    let mut sync2d = vec![0.0; (ib - ia + 1) * width];
+
+    for i in ia..=ib {
+        for jj in (-(jz as isize)..=(jz as isize)).step_by(1) {
+            let mut ta = 0.0;
+            let mut tb = 0.0;
+            let mut tc = 0.0;
+            let mut t0a = 0.0;
+            let mut t0b = 0.0;
+            let mut t0c = 0.0;
+
+            for n in 0..COSTAS_BLOCKS {
+                let m: isize = jj + jstrt as isize + nssy as isize * n as isize;
+                let i_costas = i + nfos * COSTAS[n] as usize;
+
+                if m >= 0 && (m as usize) < NHSYM && i_costas < half_size {
+                    ta += s[i_costas * NHSYM + m as usize];
+                    for tone in 0..=6 {
+                        let idx = i + nfos * tone;
+                        if idx < half_size {
+                            t0a += s[idx * NHSYM + m as usize];
+                        }
+                    }
+                }
+
+                let m36 = m + nssy as isize * 36;
+                if m36 >= 0 && (m36 as usize) < NHSYM && i_costas < half_size {
+                    tb += s[i_costas * NHSYM + m36 as usize];
+                    for tone in 0..=6 {
+                        let idx = i + nfos * tone;
+                        if idx < half_size {
+                            t0b += s[idx * NHSYM + m36 as usize];
+                        }
+                    }
+                }
+
+                let m72 = m + nssy as isize * 72;
+                if m72 >= 0 && (m72 as usize) < NHSYM && i_costas < half_size {
+                    tc += s[i_costas * NHSYM + m72 as usize];
+                    for tone in 0..=6 {
+                        let idx = i + nfos * tone;
+                        if idx < half_size {
+                            t0c += s[idx * NHSYM + m72 as usize];
+                        }
+                    }
+                }
+            }
+
+            let t = ta + tb + tc;
+            let t0 = (t0a + t0b + t0c - t) / 6.0;
+            let sync_val = if t0 > 0.0 { t / t0 } else { 0.0 };
+
+            let tbc = tb + tc;
+            let t0bc = (t0b + t0c - tbc) / 6.0;
+            let sync_bc = if t0bc > 0.0 { tbc / t0bc } else { 0.0 };
+
+            sync2d[(i - ia) * width + (jj + jz as isize) as usize] = sync_val.max(sync_bc);
+        }
+    }
+
+    let mut candidates0: Vec<Candidate> = Vec::new();
+    let mlag: isize = 10;
+    for i in ia..=ib {
+        let mut best_sync = -1.0;
+        let mut best_j: isize = 0;
+        for j in (-mlag..=mlag).step_by(1) {
+            let v = sync2d[(i - ia) * width + (j + jz as isize) as usize];
+            if v > best_sync {
+                best_sync = v;
+                best_j = j;
+            }
+        }
+
+        let mut best_sync2 = -1.0;
+        let mut best_j2: isize = 0;
+        for j in (-(jz as isize)..=(jz as isize)).step_by(1) {
+            let v = sync2d[(i - ia) * width + (j + jz as isize) as usize];
+            if v > best_sync2 {
+                best_sync2 = v;
+                best_j2 = j;
+            }
+        }
+
+        if best_sync >= syncmin {
+            candidates0.push(Candidate {
+                freq: i as f64 * df,
+                dt: (best_j as f64 - 0.5) * tstep,
+                sync: best_sync,
+            });
+        }
+        if best_j2 != best_j && best_sync2 >= syncmin {
+            candidates0.push(Candidate {
+                freq: i as f64 * df,
+                dt: (best_j2 as f64 - 0.5) * tstep,
+                sync: best_sync2,
+            });
+        }
+    }
+
+    let mut sync_values: Vec<f64> = candidates0.iter().map(|c| c.sync).collect();
+    sync_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let pctile_idx = (0.4 * sync_values.len() as f64).round().max(1.0) as usize - 1;
+    let base = sync_values.get(pctile_idx).copied().unwrap_or(1.0);
+    if base > 0.0 {
+        for c in &mut candidates0 {
+            c.sync /= base;
+        }
+    }
+
+    // Remove duplicates
+    let mut filtered: Vec<Candidate> = Vec::new();
+    for i in 0..candidates0.len() {
+        let mut keep = true;
+        for j in 0..i {
+            let fdiff = (candidates0[i].freq - candidates0[j].freq).abs();
+            let tdiff = (candidates0[i].dt - candidates0[j].dt).abs();
+            if fdiff < 4.0 && tdiff < 0.04 {
+                if candidates0[i].sync >= candidates0[j].sync {
+                    // mark j for removal (we'll skip it)
+                } else {
+                    keep = false;
+                }
+            }
+        }
+        if keep && candidates0[i].sync >= syncmin {
+            filtered.push(candidates0[i].clone());
+        }
+    }
+
+    filtered.sort_by(|a, b| b.sync.partial_cmp(&a.sync).unwrap());
+
+    (filtered.into_iter().take(maxcand).collect(), sbase)
+}
+
+fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Vec<f64> {
+    let mut sbase = vec![0.0; nh1];
+    let ia = (1.0_f64.max((nfa / df).round())) as usize;
+    let ib = ((nh1 - 1) as f64).min((nfb / df).round()) as usize;
+    let window = 50;
+
+    for i in 0..nh1 {
+        let mut sum = 0.0;
+        let mut count = 0;
+        let lo = ia.max(if i > window { i - window } else { 0 });
+        let hi = ib.min(i + window);
+        for j in lo..=hi {
+            sum += savg[j];
+            count += 1;
+        }
+        sbase[i] = if count > 0 {
+            10.0 * (1e-30f64.max(sum / count as f64)).log10()
+        } else {
+            0.0
+        };
+    }
+    sbase
+}
+
+fn ft8b(
+    _dd0: &[f64],
+    cx_re: &[f64],
+    cx_im: &[f64],
+    mut f1: f64,
+    xdt: f64,
+    _sbase: &[f64],
+    depth: usize,
+    _book: &Option<HashCallBook>,
+    workspace: &mut DecodeWorkspace,
+    coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
+    coarse_frequency_uses: &mut std::collections::HashMap<i32, usize>,
+) -> Option<Ft8bResult> {
+    load_coarse_downsample(
+        cx_re,
+        cx_im,
+        f1,
+        workspace,
+        coarse_downsample_cache,
+        coarse_frequency_uses,
+    );
+
+    let mut ibest = find_best_time_offset(
+        &workspace.cd0_re,
+        &workspace.cd0_im,
+        xdt,
+    );
+    let delfbest = find_best_frequency_shift(
+        &workspace.cd0_re,
+        &workspace.cd0_im,
+        ibest,
+    );
+
+    f1 += delfbest;
+    ft8_downsample(cx_re, cx_im, f1, workspace);
+
+    ibest = refine_time_offset(
+        &workspace.cd0_re,
+        &workspace.cd0_im,
+        ibest,
+        &mut workspace.ss,
+    );
+    let xdt = (ibest as f64 - 1.0) * DT2;
+
+    // Copy data needed for soft symbol extraction to avoid borrow conflicts
+    let cd0_re_copy = workspace.cd0_re.clone();
+    let cd0_im_copy = workspace.cd0_im.clone();
+    extract_soft_symbols(
+        &cd0_re_copy,
+        &cd0_im_copy,
+        ibest,
+        workspace,
+    );
+
+    let min_costas_hits = if depth >= 3 { 6 } else { 7 };
+    if !passes_sync_gate(&workspace.s8, min_costas_hits) {
+        return None;
+    }
+
+    build_bit_metrics(workspace);
+    let result = try_decode_passes(workspace, depth);
+    if result.is_none() {
+        return None;
+    }
+    let result = result.unwrap();
+
+    if result.cw.iter().all(|&b| b == 0) {
+        return None;
+    }
+
+    let message77: Vec<u8> = result.message91[..77].to_vec();
+    if !is_valid_message_type(&message77) {
+        return None;
+    }
+
+    let msg = unpack77(&message77, _book.as_ref());
+    if msg.is_none() {
+        return None;
+    }
+    let msg = msg.unwrap();
+    if msg.trim().is_empty() {
+        return None;
+    }
+
+    let snr = estimate_snr(&workspace.s8, &result.cw);
+    
+    Some(Ft8bResult {
+        msg,
+        freq: f1,
+        dt: xdt,
+        snr,
+    })
+}
+
+fn load_coarse_downsample(
+    cx_re: &[f64],
+    cx_im: &[f64],
+    f0: f64,
+    workspace: &mut DecodeWorkspace,
+    coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
+    coarse_frequency_uses: &mut std::collections::HashMap<i32, usize>,
+) {
+    let freq_key = f0 as i32;
+    if let Some((re, im)) = coarse_downsample_cache.get(&freq_key) {
+        workspace.cd0_re.copy_from_slice(re);
+        workspace.cd0_im.copy_from_slice(im);
+    } else {
+        ft8_downsample(cx_re, cx_im, f0, workspace);
+        let uses = coarse_frequency_uses.get(&freq_key).copied().unwrap_or(0);
+        if uses > 1 {
+            coarse_downsample_cache.insert(
+                freq_key,
+                (workspace.cd0_re.clone(), workspace.cd0_im.clone()),
+            );
+        }
+    }
+
+    let remaining = coarse_frequency_uses
+        .get(&freq_key)
+        .copied()
+        .unwrap_or(1)
+        .saturating_sub(1);
+    if remaining == 0 {
+        coarse_frequency_uses.remove(&freq_key);
+        coarse_downsample_cache.remove(&freq_key);
+    } else {
+        coarse_frequency_uses.insert(freq_key, remaining);
+    }
+}
+
+fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> isize {
+    // TS: Math.round((xdt + 0.5) * FS2)
+    // The +0.5 centers the search in the middle of the window.
+    // Returns UNWRAPPED ibest (may be negative), matching TS behavior.
+    let i0_raw = ((xdt + 0.5) * FS2).round() as isize;
+    let i0_center = i0_raw.rem_euclid(NP2 as isize);
+    
+    let mut smax = 0.0;
+    let mut ibest_unwrapped = i0_raw;  // start with unwrapped
+    let cs = costas_sync_templates();
+    for offset in -10..=10 {
+        let idx = (i0_center + offset).rem_euclid(NP2 as isize) as usize;
+        let sync = sync8d(cd0_re, cd0_im, idx, &cs.re, &cs.im);
+        if sync > smax {
+            smax = sync;
+            ibest_unwrapped = i0_raw + offset;
+        }
+    }
+    ibest_unwrapped
+}
+
+fn find_best_frequency_shift(cd0_re: &[f64], cd0_im: &[f64], ibest: isize) -> f64 {
+    let mut smax = 0.0;
+    let mut delfbest = 0.0;
+    let templates = freq_shift_sync_templates();
+    let idx = ibest.rem_euclid(NP2 as isize) as usize;
+    for tpl in templates {
+        let sync = sync8d(cd0_re, cd0_im, idx, &tpl.re, &tpl.im);
+        if sync > smax {
+            smax = sync;
+            delfbest = tpl.delf;
+        }
+    }
+    delfbest
+}
+
+fn refine_time_offset(cd0_re: &[f64], cd0_im: &[f64], ibest: isize, ss: &mut [f64]) -> isize {
+    ss.fill(0.0);
+    let cs = costas_sync_templates();
+    for idt in -4..=4 {
+        let idx = (ibest + idt).rem_euclid(NP2 as isize) as usize;
+        ss[(idt + 4) as usize] =
+            sync8d(cd0_re, cd0_im, idx, &cs.re, &cs.im);
+    }
+
+    let mut max_idx: isize = 4;
+    let mut max_val = -1.0;
+    for i in 0..9 {
+        if ss[i] > max_val {
+            max_val = ss[i];
+            max_idx = i as isize;
+        }
+    }
+    ibest + max_idx - 4
+}
+
+fn extract_soft_symbols(cd0_re: &[f64], cd0_im: &[f64], ibest: isize, workspace: &mut DecodeWorkspace) {
+    for k in 0..NN {
+        let i1 = ibest + (k as isize) * (COSTAS_SYMBOL_LEN as isize);
+        workspace.symb_re.fill(0.0);
+        workspace.symb_im.fill(0.0);
+
+        // TS behavior: skip symbols that don't fit in [0, NP2)
+        if i1 >= 0 && (i1 + COSTAS_SYMBOL_LEN as isize - 1) < NP2 as isize {
+            let i1u = i1 as usize;
+            for j in 0..COSTAS_SYMBOL_LEN {
+                workspace.symb_re[j] = cd0_re[i1u + j];
+                workspace.symb_im[j] = cd0_im[i1u + j];
+            }
+        }
+        // else: symb stays zero (no wrap-around)
+
+        fft_complex(&mut workspace.symb_re, &mut workspace.symb_im, false);
+        for tone in 0..8 {
+            let re = workspace.symb_re[tone] / 1000.0;
+            let im = workspace.symb_im[tone] / 1000.0;
+            let idx = tone * NN + k;
+            workspace.cs_re[idx] = re;
+            workspace.cs_im[idx] = im;
+            workspace.s8[idx] = (re * re + im * im).sqrt();
+        }
+    }
+}
+
+fn passes_sync_gate(s8: &[f64], min_costas_hits: usize) -> bool {
+    const SYNC_TIME_SHIFTS: [usize; 3] = [0, 36, 72];
+    let mut nsync = 0;
+    for k in 0..COSTAS_BLOCKS {
+        for &offset in &SYNC_TIME_SHIFTS {
+            let mut max_tone = 0;
+            let mut max_val = -1.0;
+            for t in 0..8 {
+                let v = s8[t * NN + k + offset];
+                if v > max_val {
+                    max_val = v;
+                    max_tone = t;
+                }
+            }
+            if max_tone == COSTAS[k] as usize {
+                nsync += 1;
+            }
+        }
+    }
+    nsync >= min_costas_hits
+}
+
+fn build_bit_metrics(workspace: &mut DecodeWorkspace) {
+    workspace.bmeta.fill(0.0);
+    workspace.bmetb.fill(0.0);
+    workspace.bmetc.fill(0.0);
+    workspace.bmetd.fill(0.0);
+
+    for nsym in 1..=3 {
+        let nt = 1 << (3 * nsym);
+        let ibmax = match nsym {
+            1 => 2,
+            2 => 5,
+            _ => 8,
+        };
+
+        for ihalf in 1..=2 {
+            for k in (1..=29).step_by(nsym) {
+                let ks = if ihalf == 1 { k + 7 } else { k + 43 };
+
+                for i in 0..nt {
+                    let i1 = i / 64;
+                    let i2 = (i & 63) / 8;
+                    let i3 = i & 7;
+                    if nsym == 1 {
+                        let re = workspace.cs_re[GRAY_MAP[i3] as usize * NN + ks - 1];
+                        let im = workspace.cs_im[GRAY_MAP[i3] as usize * NN + ks - 1];
+                        workspace.s2[i] = (re * re + im * im).sqrt();
+                    } else if nsym == 2 {
+                        let s_re = workspace.cs_re[GRAY_MAP[i2] as usize * NN + ks - 1]
+                            + workspace.cs_re[GRAY_MAP[i3] as usize * NN + ks];
+                        let s_im = workspace.cs_im[GRAY_MAP[i2] as usize * NN + ks - 1]
+                            + workspace.cs_im[GRAY_MAP[i3] as usize * NN + ks];
+                        workspace.s2[i] = (s_re * s_re + s_im * s_im).sqrt();
+                    } else {
+                        let s_re = workspace.cs_re[GRAY_MAP[i1] as usize * NN + ks - 1]
+                            + workspace.cs_re[GRAY_MAP[i2] as usize * NN + ks]
+                            + workspace.cs_re[GRAY_MAP[i3] as usize * NN + ks + 1];
+                        let s_im = workspace.cs_im[GRAY_MAP[i1] as usize * NN + ks - 1]
+                            + workspace.cs_im[GRAY_MAP[i2] as usize * NN + ks]
+                            + workspace.cs_im[GRAY_MAP[i3] as usize * NN + ks + 1];
+                        workspace.s2[i] = (s_re * s_re + s_im * s_im).sqrt();
+                    }
+                }
+
+                let i32 = 1 + (k - 1) * 3 + (ihalf - 1) * 87;
+                for ib in 0..=ibmax {
+                    let mut max1 = -1e30;
+                    let mut max0 = -1e30;
+                    for i in 0..nt {
+                        let bit_set = (i & (1 << (ibmax - ib))) != 0;
+                        if bit_set {
+                            if workspace.s2[i] > max1 { max1 = workspace.s2[i]; }
+                        } else {
+                            if workspace.s2[i] > max0 { max0 = workspace.s2[i]; }
+                        }
+                    }
+
+                    let idx = (i32 as isize + ib as isize - 1) as usize;
+                    if idx >= N_LDPC { continue; }
+
+                    let bm = max1 - max0;
+                    if nsym == 1 {
+                        workspace.bmeta[idx] = bm;
+                        let den = max1.max(max0);
+                        workspace.bmetd[idx] = if den > 0.0 { bm / den } else { 0.0 };
+                    } else if nsym == 2 {
+                        workspace.bmetb[idx] = bm;
+                    } else {
+                        workspace.bmetc[idx] = bm;
+                    }
+                }
+            }
+        }
+    }
+
+    normalize_bmet(&mut workspace.bmeta);
+    normalize_bmet(&mut workspace.bmetb);
+    normalize_bmet(&mut workspace.bmetc);
+    normalize_bmet(&mut workspace.bmetd);
+}
+
+fn normalize_bmet(bmet: &mut [f64]) {
+    let n = bmet.len();
+    let mut sum = 0.0;
+    let mut sum2 = 0.0;
+    for i in 0..n {
+        sum += bmet[i];
+        sum2 += bmet[i] * bmet[i];
+    }
+    let avg = sum / n as f64;
+    let avg2 = sum2 / n as f64;
+    let variance = avg2 - avg * avg;
+    let sigma = if variance > 0.0 {
+        variance.sqrt()
+    } else {
+        avg2.sqrt()
+    };
+    if sigma > 0.0 {
+        for i in 0..n {
+            bmet[i] /= sigma;
+        }
+    }
+}
+
+fn subtract_decoded_signal(
+    residual: &mut [f64],
+    result: &Ft8bResult,
+    tone_cache: &mut std::collections::HashMap<String, Vec<u8>>,
+) {
+    if result.snr < MIN_SUBTRACTION_SNR {
+        return;
+    }
+
+    let msg_key = normalize_message_key(&result.msg);
+    let tones = if let Some(t) = tone_cache.get(&msg_key) {
+        t.clone()
+    } else {
+        match std::panic::catch_unwind(|| encode_message(&result.msg)) {
+            Ok(t) => {
+                tone_cache.insert(msg_key.clone(), t.clone());
+                t
+            }
+            Err(_) => return,
+        }
+    };
+
+    let wave_i = generate_ft8_waveform(&tones, crate::util::waveform::WaveformOptions {
+        sample_rate: Some(SAMPLE_RATE as f64),
+        samples_per_symbol: Some(NSPS),
+        base_frequency: Some(result.freq),
+        initial_phase: Some(0.0),
+        ..Default::default()
+    });
+    let wave_q = generate_ft8_waveform(&tones, crate::util::waveform::WaveformOptions {
+        sample_rate: Some(SAMPLE_RATE as f64),
+        samples_per_symbol: Some(NSPS),
+        base_frequency: Some(result.freq),
+        initial_phase: Some(SUBTRACTION_PHASE_SHIFT),
+        ..Default::default()
+    });
+
+    let start = (result.dt * SAMPLE_RATE as f64).round() as isize;
+    let mut src_start = start;
+    let mut tpl_start = 0;
+    if src_start < 0 {
+        tpl_start = (-src_start) as usize;
+        src_start = 0;
+    }
+    let max_len = (residual.len() as isize - src_start)
+        .min(wave_i.len() as isize - tpl_start as isize)
+        .min(wave_q.len() as isize - tpl_start as isize);
+    if max_len <= 0 {
+        return;
+    }
+
+    let mut sii = 0.0;
+    let mut sqq = 0.0;
+    let mut siq = 0.0;
+    let mut sri = 0.0;
+    let mut srq = 0.0;
+    for i in 0..max_len as usize {
+        let wi = wave_i[tpl_start + i] as f64;
+        let wq = wave_q[tpl_start + i] as f64;
+        let rv = residual[src_start as usize + i];
+        sii += wi * wi;
+        sqq += wq * wq;
+        siq += wi * wq;
+        sri += rv * wi;
+        srq += rv * wq;
+    }
+
+    let det = sii * sqq - siq * siq;
+    if det <= 1e-9 {
+        return;
+    }
+
+    let amp_i = (sri * sqq - srq * siq) / det;
+    let amp_q = (srq * sii - sri * siq) / det;
+
+    for i in 0..max_len as usize {
+        let wi = wave_i[tpl_start + i] as f64;
+        let wq = wave_q[tpl_start + i] as f64;
+        let idx = src_start as usize + i;
+        residual[idx] -= SUBTRACTION_GAIN * (amp_i * wi + amp_q * wq);
+    }
+}
+
+fn ft8_downsample(cx_re: &[f64], cx_im: &[f64], f0: f64, workspace: &mut DecodeWorkspace) {
+    let df = DOWNSAMPLE_DF;
+    let baud = DOWNSAMPLE_BAUD;
+    let i0 = (f0 / df).round() as usize;
+    let ft = f0 + 8.5 * baud;
+    let it = ((ft / df).round() as usize).min(NFFT1_LONG / 2);
+    let fb = f0 - 1.5 * baud;
+    let ib = 1.max((fb / df).round() as usize);
+
+    workspace.cd0_re.fill(0.0);
+    workspace.cd0_im.fill(0.0);
+    let mut k = 0;
+    for i in ib..=it {
+        if k >= NFFT2 {
+            break;
+        }
+        workspace.cd0_re[k] = cx_re[i];
+        workspace.cd0_im[k] = cx_im[i];
+        k += 1;
+    }
+
+    let taper_data = taper();
+    for i in 0..TAPER_SIZE {
+        if i >= NFFT2 {
+            break;
+        }
+        let tap = taper_data[TAPER_SIZE - 1 - i];
+        workspace.cd0_re[i] *= tap;
+        workspace.cd0_im[i] *= tap;
+    }
+
+    let end_tap = k - 1;
+    for i in 0..TAPER_SIZE {
+        let idx = end_tap - TAPER_SIZE + 1 + i;
+        if idx < NFFT2 {
+            let tap = taper_data[i];
+            workspace.cd0_re[idx] *= tap;
+            workspace.cd0_im[idx] *= tap;
+        }
+    }
+
+    let shift = i0 - ib;
+    for i in 0..NFFT2 {
+        let src_idx = (i + shift) % NFFT2;
+        workspace.shift_re[i] = workspace.cd0_re[src_idx];
+        workspace.shift_im[i] = workspace.cd0_im[src_idx];
+    }
+    workspace.cd0_re.copy_from_slice(&workspace.shift_re);
+    workspace.cd0_im.copy_from_slice(&workspace.shift_im);
+
+    fft_complex(&mut workspace.cd0_re, &mut workspace.cd0_im, true);
+
+    for i in 0..NFFT2 {
+        workspace.cd0_re[i] *= DOWNSAMPLE_SCALE;
+        workspace.cd0_im[i] *= DOWNSAMPLE_SCALE;
+    }
+}
+
+fn sync8d(cd0_re: &[f64], cd0_im: &[f64], i0: usize, sync_re: &[f64], sync_im: &[f64]) -> f64 {
+    sync8d_isize(cd0_re, cd0_im, i0 as isize, sync_re, sync_im)
+}
+
+fn sync8d_isize(cd0_re: &[f64], cd0_im: &[f64], i0: isize, sync_re: &[f64], sync_im: &[f64]) -> f64 {
+    let mut sync = 0.0;
+    let stride = 36 * COSTAS_SYMBOL_LEN;
+
+    for i in 0..COSTAS_BLOCKS {
+        let base = i * COSTAS_SYMBOL_LEN;
+        let mut i_start = i0 + (i as isize) * (COSTAS_SYMBOL_LEN as isize);
+
+        for _block in 0..3 {
+            if i_start >= 0 && i_start + COSTAS_SYMBOL_LEN as isize <= NP2 as isize {
+                let i_start = i_start as usize;
+                let mut z_re = 0.0;
+                let mut z_im = 0.0;
+                for j in 0..COSTAS_SYMBOL_LEN {
+                    let s_re = sync_re[base + j];
+                    let s_im = sync_im[base + j];
+                    let d_re = cd0_re[i_start + j];
+                    let d_im = cd0_im[i_start + j];
+                    z_re += d_re * s_re + d_im * s_im;
+                    z_im += d_im * s_re - d_re * s_im;
+                }
+                sync += z_re * z_re + z_im * z_im;
+            }
+            i_start += stride as isize;
+        }
+    }
+
+    sync
+}
+
+fn is_valid_message_type(message77: &[u8]) -> bool {
+    let n3v = ((message77[71] as usize) << 2)
+        | ((message77[72] as usize) << 1)
+        | (message77[73] as usize);
+    let i3v = ((message77[74] as usize) << 2)
+        | ((message77[75] as usize) << 1)
+        | (message77[76] as usize);
+    if i3v > 5 || (i3v == 0 && n3v > 6) {
+        return false;
+    }
+    if i3v == 0 && n3v == 2 {
+        return false;
+    }
+    true
+}
+
+fn estimate_snr(s8: &[f64], cw: &[u8]) -> f64 {
+    let itone = get_tones(cw);
+    let mut xsig = 0.0;
+    let mut xnoi = 0.0;
+
+    for i in 0..79 {
+        let tone = itone[i] as usize;
+        xsig += s8[tone * NN + i].powi(2);
+        let ios = (tone + 4) % 7;
+        xnoi += s8[ios * NN + i].powi(2);
+    }
+
+    let mut snr = 0.001;
+    let arg = xsig / xnoi.max(1e-30) - 1.0;
+    if arg > 0.1 {
+        snr = arg;
+    }
+    snr = 10.0 * snr.log10() - 27.0;
+    if snr < -24.0 {
+        -24.0
+    } else {
+        snr
+    }
+}
+
+
+fn get_tones(cw: &[u8]) -> Vec<u8> {
+    let mut tones = vec![0u8; 79];
+    for i in 0..7 {
+        tones[i] = COSTAS[i];
+        tones[36 + i] = COSTAS[i];
+        tones[72 + i] = COSTAS[i];
+    }
+    let mut k = 7;
+    for j in 1..=58 {
+        let i = (j - 1) * 3;
+        if j == 30 {
+            k += 7;
+        }
+        let indx = (cw[i] as usize) * 4 + (cw[i + 1] as usize) * 2 + (cw[i + 2] as usize);
+        tones[k] = GRAY_MAP[indx];
+        k += 1;
+    }
+    tones
+}
+
+fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<DecodeResult> {
+    let maxosd = if depth >= 3 { 2 } else if depth >= 2 { 0 } else { -1 };
+    let scalefac = 2.83;
+    let bmetrics = [
+        &workspace.bmeta,
+        &workspace.bmetb,
+        &workspace.bmetc,
+        &workspace.bmetd,
+    ];
+
+    workspace.apmask.fill(0);
+
+    for ipass in 0..4 {
+        let metric = bmetrics[ipass];
+        for i in 0..N_LDPC {
+            workspace.llr[i] = scalefac * metric[i];
+        }
+
+        // Debug: check LLR values
+        if ipass == 0 {
+            let _llr_sum: f64 = workspace.llr.iter().map(|x| x.abs()).sum();
+        }
+
+        if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
+            if result.nharderrors <= 36 {
+                return Some(result);
+            }
+        } else {
+        }
+    }
+
+    None
+}

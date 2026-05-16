@@ -1,0 +1,17 @@
+[package]
+name = "ft8rs"
+version = "0.1.0"
+edition = "2021"
+description = "FT8/FT4 encoder/decoder in pure Rust"
+license = "GPL-3.0"
+
+[[bin]]
+name = "ft8rs"
+path = "src/main.rs"
+
+[dependencies]
+
+hound = "3"
+num-bigint = "0.4"
+num-traits = "0.2"
+clap = { version = "4", features = ["derive"] }
