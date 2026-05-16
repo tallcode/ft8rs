@@ -664,6 +664,28 @@ fn ft8b(
     }
 
     build_bit_metrics(workspace);
+    
+    // ── xbase LLR normalization: compensate for frequency-dependent noise ──
+    // WSJT-X uses xbase = 10^(0.1*(sbase(freq_bin) - 40)) in SNR calculation.
+    // We apply similar normalization to bit metrics: quiet spectrum → boost LLR.
+    {
+        let freq_bin = (f1 / DOWNSAMPLE_DF).round() as usize;
+        if freq_bin < _sbase.len() {
+            let sbase_val = _sbase[freq_bin];
+            // xbase represents noise power at this frequency.
+            // Lower xbase = quieter band → we can trust the LLRs more
+            let xbase = 10.0_f64.powf(0.1 * (sbase_val - 40.0));
+            // Normalize: divide by sqrt(xbase) so quiet bands get boosted
+            let scale = 1.0 / (xbase.max(0.01).sqrt());
+            let scale = scale.clamp(0.5, 3.0);  // limit to reasonable range
+            for metric in [&mut workspace.bmeta, &mut workspace.bmetb, &mut workspace.bmetc, &mut workspace.bmetd] {
+                for v in metric.iter_mut() {
+                    *v *= scale;
+                }
+            }
+        }
+    }
+    
     let result = try_decode_passes(workspace, depth);
     if result.is_none() {
         return None;
@@ -993,7 +1015,48 @@ fn subtract_decoded_signal(
         ..Default::default()
     });
     
-    let dt_samples = (result.dt * SAMPLE_RATE as f64).round() as isize;
+    let mut dt_samples = (result.dt * SAMPLE_RATE as f64).round() as isize;
+    
+    // ── lrefinedt: time refinement (±90 samples) ──
+    // WSJT-X subtractft8: search for best time offset that minimizes
+    // residual energy after subtraction. We approximate with correlation.
+    {
+        let search_range = 90isize;
+        let mut best_offset = 0isize;
+        let mut best_corr = 0.0f64;
+        for offset in (-search_range..=search_range).step_by(4) {
+            let test_dt = dt_samples + offset;
+            let mut corr = 0.0f64;
+            for i in 0..nframe.min(wave_q.len()).min(wave_i.len()) {
+                let j = test_dt + i as isize;
+                if j < 0 || j >= residual.len() as isize { continue; }
+                let s = residual[j as usize];
+                corr += s * (wave_q[i] as f64 - wave_i[i] as f64);
+            }
+            let corr = corr.abs();
+            if corr > best_corr {
+                best_corr = corr;
+                best_offset = offset;
+            }
+        }
+        // Fine search around best
+        for offset in (best_offset-3..=best_offset+3).step_by(1) {
+            let test_dt = dt_samples + offset;
+            let mut corr = 0.0f64;
+            for i in 0..nframe.min(wave_q.len()).min(wave_i.len()) {
+                let j = test_dt + i as isize;
+                if j < 0 || j >= residual.len() as isize { continue; }
+                let s = residual[j as usize];
+                corr += s * (wave_q[i] as f64 - wave_i[i] as f64);
+            }
+            let corr = corr.abs();
+            if corr > best_corr {
+                best_corr = corr;
+                best_offset = offset;
+            }
+        }
+        dt_samples += best_offset;
+    }
     
     // IQ mix: camp = residual * conj(cref) = residual * (cref_re - j*cref_im)
     // camp_re = residual * cref_re
