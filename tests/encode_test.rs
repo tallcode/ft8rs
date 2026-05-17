@@ -212,3 +212,65 @@ fn test_ft8_roundtrip_decode() {
         }
     }
 }
+
+/// Baseline test: 210703_133430.wav must decode all 20 messages.
+/// This is the quality gate — no commit may reduce this below 20.
+#[test]
+fn test_20_message_baseline() {
+    use std::io::Read;
+    
+    let mut file = std::fs::File::open("tests/ft8/210703_133430.wav").expect("Missing test WAV");
+    let mut raw_data = Vec::new();
+    file.read_to_end(&mut raw_data).expect("Read failed");
+    
+    let num_channels = u16::from_le_bytes([raw_data[22], raw_data[23]]) as usize;
+    let bits_per_sample = u16::from_le_bytes([raw_data[34], raw_data[35]]) as usize;
+    let mut offset = 12usize;
+    let samples: Vec<f32> = loop {
+        if offset + 8 > raw_data.len() { panic!("No data chunk"); }
+        let chunk_id = &raw_data[offset..offset + 4];
+        let chunk_size = u32::from_le_bytes([raw_data[offset+4], raw_data[offset+5], raw_data[offset+6], raw_data[offset+7]]) as usize;
+        if chunk_id == b"data" {
+            let end = (offset + 8 + chunk_size).min(raw_data.len());
+            let raw = &raw_data[offset + 8..end];
+            assert_eq!(bits_per_sample, 16);
+            assert_eq!(num_channels, 1);
+            let mut s = Vec::new();
+            for chunk in raw.chunks_exact(2) {
+                let sample = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0;
+                s.push(sample);
+            }
+            break s;
+        }
+        offset += 8 + chunk_size;
+    };
+    
+    let decoded = decode_ft8(&samples, DecodeFT8Options {
+        sample_rate: Some(SAMPLE_RATE),
+        freq_low: Some(100.0),
+        freq_high: Some(3000.0),
+        sync_min: Some(0.8),
+        depth: Some(3),
+        max_candidates: Some(300),
+        hash_call_book: None,
+    });
+    
+    // ⚠️ QUALITY GATE: must decode all 20 messages
+    assert!(decoded.len() >= 20, 
+        "BASELINE FAILED: decoded {} messages, need ≥20.\nDecoded:\n{}",
+        decoded.len(),
+        decoded.iter().map(|d| format!("  {}  {:.0}Hz  {:.2}s", d.msg, d.freq, d.dt)).collect::<Vec<_>>().join("\n")
+    );
+    
+    // Verify the 4 historically-missed weak signals are present
+    let missed_signals = [
+        "KD2UGC F6GCP R-23",
+        "K1BZM EA3CJ JN01", 
+        "WA2FZW DL5AXX RR73",
+        "CQ EA2BFM IN83",
+    ];
+    for expected in &missed_signals {
+        let found = decoded.iter().any(|d| d.msg.trim().to_uppercase() == *expected);
+        assert!(found, "Critical weak signal not decoded: {}", expected);
+    }
+}

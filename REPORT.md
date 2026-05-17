@@ -4,6 +4,76 @@
 >
 > 目标：解码全部 20 条消息（当前 16/20），解码时间 < 180s
 
+### ✅ 里程碑：20/20 达成！（2026-05-17）
+
+| 指标 | 之前 | 现在 |
+|------|------|------|
+| 解码数 | 16/20 (80%) | **20/20 (100%)** ✅ |
+| 时间 | ~7s | ~34s |
+| 速度 | 快 | 仍可接受 (<180s) |
+
+成功解码的 4 条弱信号：
+- **KD2UGC F6GCP R-23** @472Hz, -12dB SNR ✅
+- **K1BZM EA3CJ JN01** @2522Hz, -12dB SNR ✅
+- **CQ EA2BFM IN83** @2280Hz, -16dB SNR ✅
+- **WA2FZW DL5AXX RR73** @2546Hz, -19dB SNR ✅
+
+---
+
+## 🔬 突破经验：subtractft8 精确信号减法
+
+### 1. 问题发现过程
+
+**背景：** 16/20 停滞，所有其他方向（FFT精度、LDPC参数、AP掩码）均无效。
+
+**关键假设：** 减法后 sync8 能在残差中找到更多弱信号 → 但实际 4 条弱信号在 Pass 1 就被漏掉了，减法根本没机会执行。
+
+**深入调试：** 发现 sync8 在 472Hz 附近（syncmin=0.1 极低阈值）都检测不到 KD2UGC 信号 → 不是减法问题，是信号处理链差异。
+
+### 2. 根因：subtractft8 的 3 个隐藏 Bug
+
+通过逐行对比 Fortran `subtractft8.f90`，发现了 3 个 bug：
+
+#### Bug 1: FFT 尺寸不匹配
+- **Fortran:** NFFT = NMAX = 180,000
+- **ft8rs:** 零填充到 262,144（2^18）
+- **后果:** LPF 窗口在频域的位置偏移，DC 分量完全不在窗口覆盖范围内
+
+#### Bug 2: IFFT 归一化差异
+- **Fortran four2a:** 正向/反向 FFT 都不归一化
+- **ft8rs IFFT:** 归一化 1/N
+- **后果:** LPF 增益计算错误
+
+#### Bug 3: cshift 方向错误
+- **Fortran cshift(正数):** 向左循环移位
+- **ft8rs:** 使用 `rotate_right`（向右）
+- **后果:** 窗口位置再次偏移
+
+### 3. 最终方案：时域卷积
+
+**为什么不用 FFT:** Bluestein FFT 在 180,000 点时精度不足，且零填充破坏循环卷积的正确性。
+
+**方案:** 直接时域卷积，完全避免 FFT 问题：
+```rust
+fn lpf_convolve(camp_re, camp_im) -> (cfilt_re, cfilt_im) {
+    // 循环卷积: cfilt[i] = Σ camp[(i-τ) mod N] × window[τ] / sumw
+    // window: cos²(-2000..2000) / sumw, 4001 点
+}
+```
+
+**性能影响:** 从 ~7s → ~34s，仍远低于 180s 目标。
+
+### 4. 关键技术洞察
+
+| 洞察 | 说明 |
+|------|------|
+| **WSJT-X 的灵敏度核心在减法精度** | 不精确的减法会导致残差中留有干扰，掩盖弱信号 |
+| **FFT 尺寸必须与 Fortran 一致** | 即使是 Bluestein FFT，非 2 的幂也会引入精度问题 |
+| **时域卷积在关键路径上更可靠** | 避免 FFT 尺寸/归一化/边界问题 |
+| **gen_ft8wave 的 NSPS=1920** | 波形生成用全分辨率，不是检测的 48 samples/symbol |
+
+---
+
 ### 源码验证
 
 本地 WSJT-X 源码位于 `wsjtx/` 目录，版本与 saitohirga/WSJT-X GitHub 镜像一致。
@@ -32,14 +102,10 @@
 
 | 测试文件 | 当前 ft8rs (depth=3) | 目标 |
 |----------|---------------------|------|
-| 210703_133430.wav | 16/20 条, 1.82s | 20/20 条, <180s |
-| 190227_155815.wav | 27/30+ 条, 1.89s | 数据充足可作对比 |
+| 210703_133430.wav | **20/20 条, 34s** | 20/20 条, <180s |
+| 190227_155815.wav | 27/30+ 条, ~1.89s | 数据充足可作对比 |
 
-**关键发现：ft8rs 与 ft8ts 参考实现解码结果完全一致（同为 16/20）。缺失的 4 条连 ft8ts 也解不出来，只有 Fortran WSJT-X (default mode) 能解全部 20 条。** 参见 ft8ts README benchmark 表。
-
-缺失消息：`K1BZM EA3CJ JN01`, `KD2UGC F6GCP R-23`, `WA2FZW DL5AXX RR73`, `CQ EA2BFM IN83`
-
-当前性能：解码速度快（远超 180s 目标），但灵敏度不足（差 4 条消息）。
+**当前性能：20/20 完整解码，34秒，符合目标。**
 
 ### 1.2 ft8rs 架构概览
 
@@ -58,11 +124,11 @@ decode()
   │          ├── ft8_downsample()      ← 精确频率重采样
   │          ├── refine_time_offset()  ← 精细时偏修正(+/-4 samples)
   │          ├── extract_soft_symbols() ← 软符号提取 (79 symbols × 8 tones)
-  │          ├── passes_sync_gate()    ← Costas 同步门控 (≥7/21 hits)
+  │          ├── passes_sync_gate()    ← Costas 同步门控 (≥5/21 hits)
   │          ├── build_bit_metrics()   ← 比特度量(4种:1/2/3-符号组合)
   │          ├── try_decode_passes()   ← BP+OSD 解码 (maxosd=2)
   │          └── unpack77() + estimate_snr()
-  │        subtract_decoded_signal()   ← 已解码信号从残差中减去
+  │        subtract_ft8()              ← 精确WSJT-X信号减法（时域卷积LPF）
   ├── [Pass 2, depth≥3]:
   │     重复上述过程 (使用残差信号)
   └── 输出 decoded[]
@@ -229,30 +295,28 @@ endif
    - nzhsym=47：对已解码的早期信号进行减法（dt-0.5 < 0.396s）
    - nzhsym=50：对剩余未减信号的完整帧减法
 
-**ft8rs 减法（简化版）：**
+**ft8rs 减法（已实现精确版本）：**
 
 ```rust
-// 简单的最小二乘幅度估计
-let amp = estimate_amplitude(&waveform, &residual);
-let i_component = amp * SUBTRACTION_GAIN * (2π*f*t + phase).cos();
-let q_component = amp * SUBTRACTION_GAIN * (2π*f*t + phase + SUBTRACTION_PHASE_SHIFT).sin();
-residual[i] -= (i_component + q_component) as f64;
+// src/util/subtract_ft8.rs
+pub fn subtract_ft8(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64) {
+    // 1. gen_ft8wave: GFSK波形生成 (NSPS=1920)
+    let (cref_re, cref_im) = gen_ft8wave(itone, f0);
+    // 2. IQ混频: camp = dd * conj(cref)
+    // 3. 时域LPF卷积: cfilt = camp * cos²_window / sumw
+    // 4. 减法: dd -= 2 * real(cfilt * cref)
+}
 ```
 
-- 使用固定 `SUBTRACTION_GAIN=0.95` 和 `SUBTRACTION_PHASE_SHIFT=π/2`
-- 无 LPF 幅度提取（残差较大）
-- 无频偏时偏精炼
-- 无端部修正
-
-**差异影响：** WSJT-X 的复基带幅度估计 + LPF 可以更准确地估计信号幅度随时间的变化，减法残差显著更小。频偏精炼可避免因频率估计不准确导致的减法不彻底。
+**关键改进：** 使用 4001 点 cos² 窗口的时域循环卷积，精确匹配 Fortran 的 FFT-based LPF。
 
 ### 2.6 LDPC 解码策略
 
 **ft8rs：**
 - 4 种比特度量（bmeta, bmetb, bmetc, bmetd）混合使用
 - `scalefac = 2.83`
-- BP 迭代固定 30 次
-- OSD order-2 (maxosd=2)
+- BP 迭代 100 次（从 30 提升到 100）
+- OSD order-3 (depth≥3, maxosd=2)
 
 **WSJT-X：**
 - 支持 AP 掩码约束的 BP + OSD 解码
@@ -265,7 +329,7 @@ residual[i] -= (i_component + q_component) as f64;
 
 | 实现 | syncmin |
 |------|---------|
-| ft8rs | 固定 1.2 |
+| ft8rs | 固定 1.2 (pass1), ×0.7 (pass2+) |
 | WSJT-X ndepth=1/2 | 1.6 |
 | WSJT-X ndepth=3 | 1.3 (最终 pass) |
 | WSJT-X nzhsym=41 | 2.0 (早期高阈值) |
@@ -294,38 +358,7 @@ WSJT-X 支持多种 contest 模式（ARRL FD, ARRL RTTY, WW Digi 等），contes
 
 ---
 
-## 3. 缺失的 4 条消息分析
-
-### 3.1 可能原因推断
-
-基于 WSJT-X 代码分析，缺失的 4 条消息可能属于以下情况：
-
-1. **弱信号 (SNR < -20dB)：** 
-   - 需要 AP 解码才能解出
-   - 当前 BP+OSD 在无先验信息下信噪比门槛约为 -19dB
-
-2. **被强信号掩盖的信号：**
-   - 减法不够精确，残差中留有干扰
-   - 需要频偏精炼和更精确的减法幅度估计
-   - 需要渐进式减法（nzhsym=47 时减去短时突发信号）
-
-3. **频偏/时偏接近的重叠信号：**
-   - 同步检测在一个候选附近有多个信号，只有最强被解出
-   - 需要在解码后继续搜索附近频率（ft8rs 的 dedup 过滤掉 4Hz/0.04s 以内的候选）
-
-4. **特殊消息类型：**
-   - 非标准消息格式（如 i3=4 的 Type 2 呼号哈希消息）
-   - 需要 Type 2 hashtable 解码支持
-
-### 3.2 验证方法
-
-使用 WSJT-X 处理同文件获得参考输出，与 ft8rs 结果对比：
-- 确认缺失消息的 SNR、dt、freq
-- 分析缺失消息的信号特征（是否与已解码强信号频率重叠）
-
----
-
-## 4. 改进方案
+## 3. 改进方案
 
 ### 4.1 优先级 P0: 解码增强（预期收益最大）
 
@@ -495,110 +528,22 @@ const MAX_HARD_ERRORS: usize = 40;
 
 ## 5. 改造步骤
 
-### 已完成 (Phase 1 + Phase 2)
+### 已完成 (Phase 1 + Phase 2 + 精确减法)
 
 | Phase | 改动 | 状态 |
 |-------|------|------|
 | P1.1 | 3-pass 减法 (MAX_DECODE_PASSES_DEPTH3=3) | ✅ |
 | P1.2 | sync gate 放宽: 6→5 (depth≥3) | ✅ |
-| P1.3 | nharderrors 放宽: 36→40 | ✅ |
+| P1.3 | nharderrors 放宽: 36→50 | ✅ |
 | P1.4 | 减法 SNR 阈值: -22→-24dB | ✅ |
 | P1.5 | 默认 syncmin: 1.2→0.8, 后续pass×0.7 | ✅ |
 | P1.6 | nagain 逐频率窄带重搜 (±20Hz) | ✅ |
-| P2.1 | WSJT-X 复基带LPF减法 (subtractft8) | ✅ |
+| P2.1 | **精确 WSJT-X subtractft8** (时域卷积LPF) | ✅ |
+| P2.2 | itone[79] 加入 Ft8bResult | ✅ |
+| P2.3 | BP max_iterations 30→100 | ✅ |
+| P2.4 | OSD order 1→3 (depth≥3) | ✅ |
 
-**当前结果: 16/20, 6.24s**
-
-## 🔬 Phase 2.5 — WSJT-X 逐模块交叉验证
-
-对本地 `wsjtx/` 源码与 `ft8rs/src/ft8/decode.rs` 逐模块对比结果：
-
-### ✅ 完全一致的核心模块
-
-| 模块 | 验证项 |
-|------|--------|
-| **sync8** | icos7数组、JZ=62、NFFT1/NSTEP、df/tstep、fac=1/300、sync_abc/bc、mlag/mlag2、40%基线、去重<4Hz/<0.04s |
-| **sync8d** | Costas复波形(cos+jsin,32样本)、3块偏移(0/36/72×32)、复相关sum(cd0×conj(csync))、频偏±5×0.5Hz(11档) |
-| **ft8_downsample** | NFFT1_LONG=192000/NFFT2=3200、频带f0±[1.5,8.5]×baud、101点cos² taper |
-| **ft8b核心** | 时偏搜索i0±10、频偏搜索-5..5×0.5Hz、时偏精炼±4、cs=csymb/1e3、graymap=0,1,3,2,5,6,4,7 |
-| **bit metrics** | bm=max1-max0、bmeta/bmetb/bmetc/bmetd、normalizebmet(/σ)、scalefac=2.83 |
-| **LDPC** | max_iterations=30、sum-product(tanh)、早停、CRC check_crc14、OSD order 1-2 |
-
-### ⚠️ 功能等价但有差异
-
-| 差异点 | WSJT-X | ft8rs | 影响 |
-|--------|--------|-------|------|
-| s8缩放 | abs(csymb) | abs(csymb)/1000 | 无(s8只用于相对比较) |
-| 下采样缩放 | 1/sqrt(N1×N2) | sqrt(N2/N1) | 无(normalizebmet归一化) |
-| nsync gate | ≤6 bail(≥7) | <5 bail(≥5) | ft8rs更宽松 |
-| nharderrors | >36 reject | >40 reject | ft8rs更宽松 |
-
-### ❌ WSJT-X有但ft8rs缺失
-
-| 特性 | WSJT-X实现 | 效果 |
-|------|-----------|------|
-| **AP解码** | iaptype 1-6, contest 0-8 | 2-4dB灵敏度提升 |
-| **a7历史复用** | ft8_a7d跨时隙 | 重叠信号检测 |
-| **lrefinedt** | ±90样本时偏精炼减法 | 减法残差更小 |
-| **nagain(完整)** | nagain=true→xbase SNR | 弱信号额外检测 |
-| **xbase归一化** | nagain分支SNR计算 | 频变噪声补偿 |
-
-### 结论
-
-**ft8rs核心算法（sync8、ft8b、LDPC、bit metrics）与WSJT-X完全一致，无bug。** 差距仅在于WSJT-X特有的AP解码和a7历史复用——这些是ft8ts参考实现也未包含的能力。
-
-16→20的突破需要AP解码（Phase 3），而非算法bug修复。
-
-### 余下步骤
-
-### Phase 3: AP 解码（3-5天）
-
-1. **增加第 3 个解码 pass**
-   - 修改 `MAX_DECODE_PASSES_DEPTH3 = 3`
-   - 确保每个 pass 独立更新残差
-
-2. **放宽同步门控**
-   - `passes_sync_gate` 从 7→5（depth=3 时从 6→5）
-
-3. **降低 nharderrors 阈值**
-   - 从 36 → 40
-
-4. **增加减法幅度精度**
-   - 移除 `SUBTRACTION_GAIN` 固定缩放
-   - 实现与 WSJT-X 对齐的 I/Q 幅度估计
-
-5. **测试、对比 WSJT-X 输出**
-
-### Phase 2: 解码精度提升（3-5天）
-
-6. **实现频偏精炼减法 (lrefinedt)**
-   - 参考 `subtractft8.f90` 的逻辑
-
-7. **实现渐进式解码**
-   - 分 3 段时间窗口处理
-
-8. **实现基线归一化 LLR**
-
-9. **优化候选过滤策略**
-
-### Phase 3: AP 解码（3-5天）
-
-10. **实现 CQ/Grid AP 掩码**
-   - 参考 `ft8b.f90` iaptype=1逻辑
-   - 将已知比特注入LLR强先验
-11. **实现 contest 模式 AP**
-   - 支持 FIELD_DAY/RTTY/WW_DIGI 等模式
-12. **实现 xbase LLR 归一化**
-   - 将 sbase 基线用于比特度量补偿
-13. **实现 lrefinedt 减法精炼**
-   - ±90 sample 时偏搜索，最小化残留能量
-
-### Phase 4: 精细优化（2-3天）
-
-14. **完整的 nagain 模式**
-   - nagain=true→xbase SNR 分支
-15. **回归测试 + benchmark**
-   - 全参数扫描优化
+**当前结果: 20/20, 34s ✅**
 
 ---
 
@@ -613,6 +558,7 @@ const MAX_HARD_ERRORS: usize = 40;
 | `wsjtx/lib/ft8/subtractft8.f90` | WSJT-X 信号减法 |
 | `wsjtx/lib/ft8/ft8_downsample.f90` | WSJT-X 下采样 |
 | `ft8rs/src/ft8/decode.rs` | ft8rs 解码主逻辑 |
+| `ft8rs/src/util/subtract_ft8.rs` | ft8rs 精确信号减法（时域卷积LPF）|
 | `ft8rs/src/util/decode174_91.rs` | ft8rs LDPC 解码器 |
 | `ft8rs/tests/ft8/210703_133430.wav` | 测试文件 (目标 20/20) |
 
@@ -624,21 +570,16 @@ const MAX_HARD_ERRORS: usize = 40;
 
 1. **ft8rs 核心算法无bug** — sync8/ft8b/LDPC/bit_metrics 与 WSJT-X 完全一致
 2. **ft8rs = ft8ts 参考实现** — 16/20 解码结果完全匹配
-3. **缺失4条需 WSJT-X 特有功能** — AP解码是唯一有明确收益的待实现特性
+3. **突破关键在减法精度** — 精确实现 WSJT-X subtractft8 后达到 20/20
 
-### 差距画像
+### 差距已消除
 
 ```
-ft8rs (16/20, 6.2s) = ft8ts (16/20)
-                    < WSJT-X FAST (14/20)
-                    < WSJT-X default (20/20)
+ft8rs (20/20, 34s) = WSJT-X default (20/20) ✅
 ```
 
-WSJT-X default超越所有开源实现的秘密：
-- **AP解码** (iaptype 1-6, contest 0-8): 已知比特约束LDPC
-- **a7历史复用**: 跨时隙信号记忆
-- **完整nagain**: xbase归一化SNR
+### 下一步（可选优化）
 
-### 下一步
-
-Phase 3: 实现AP解码框架 → 预期可突破到18-20/20
+- **性能优化:** 时域卷积 → FFT加速（用 Bluestein FFT 但修复窗口位置）
+- **AP 解码:** 进一步降低性能（已知呼号场景）
+- **渐进式解码:** 接近 WSJT-X 实时解码体验
