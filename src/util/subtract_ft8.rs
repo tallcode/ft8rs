@@ -150,21 +150,21 @@ fn lpf_convolve(camp_re: &[f64], camp_im: &[f64]) -> (Vec<f64>, Vec<f64>) {
             ext_im[j] = camp_im[camp_idx];
         }
 
-        for i in 0..n {
+        // Parallel convolution: each output position is independent
+        // Use par_iter for 4-core speedup on 151,680 iterations
+        use rayon::prelude::*;
+        cfilt_re.par_iter_mut().enumerate().zip(cfilt_im.par_iter_mut().enumerate()).for_each(|((i, re_out), (_, im_out))| {
             let mut sum_re = 0.0f64;
             let mut sum_im = 0.0f64;
             for tau in 0..=NFILT {
-                // idx = i + NFILT - tau is always in [0, ext_len-1] because:
-                //   max (tau=0, i=n-1): n-1 + NFILT = n + 3999 < ext_len = n + 4000
-                //   min (tau=NFILT, i=0): 0
                 let idx = i + NFILT - tau;
                 let w = window[tau] / sumw;
                 sum_re += ext_re[idx] * w;
                 sum_im += ext_im[idx] * w;
             }
-            cfilt_re[i] = sum_re;
-            cfilt_im[i] = sum_im;
-        }
+            *re_out = sum_re;
+            *im_out = sum_im;
+        });
 
     (cfilt_re, cfilt_im)
 }
