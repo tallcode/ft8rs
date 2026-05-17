@@ -58,10 +58,20 @@ fn lpf_window_fft() -> &'static (Vec<f64>, Vec<f64>) {
     })
 }
 
-/// GFSK pulse shape (wsjtx/lib/ft2/gfsk_pulse.f90).
-fn gfsk_pulse(bt: f64, tt: f64) -> f64 {
-    let c = PI * (2.0 / std::f64::consts::LN_2).sqrt();
-    0.5 * (erf_approx(c * bt * (tt + 0.5)) - erf_approx(c * bt * (tt - 0.5)))
+/// Cached GFSK pulse: computed once, reused across all gen_ft8wave calls.
+fn gsfk_pulse_cached() -> &'static Vec<f64> {
+    static PULSE: OnceLock<Vec<f64>> = OnceLock::new();
+    PULSE.get_or_init(|| {
+        let bt = 2.0f64;
+        let nsps = NSPS_WAVE;
+        (0..3 * nsps)
+            .map(|i| {
+                let tt = (i as f64 + 1.0 - 1.5 * nsps as f64) / nsps as f64;
+                let c = PI * (2.0 / std::f64::consts::LN_2).sqrt();
+                0.5 * (erf_approx(c * bt * (tt + 0.5)) - erf_approx(c * bt * (tt - 0.5)))
+            })
+            .collect()
+    })
 }
 
 /// Abramowitz & Stegun 7.1.26 erf approximation.
@@ -79,19 +89,13 @@ fn erf_approx(x: f64) -> f64 {
 fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
     let nsps: usize = NSPS_WAVE;
     let nsym: usize = 79;
-    let bt: f64 = 2.0;
     let twopi = 2.0 * PI;
     let dt = 1.0 / SAMPLE_RATE;
     let ntab: usize = 65536;
     let twopi_over_ntab = twopi / ntab as f64;
 
-    let pulse_len = 3 * nsps;
-    let pulse: Vec<f64> = (0..pulse_len)
-        .map(|i| {
-            let tt = (i as f64 + 1.0 - 1.5 * nsps as f64) / nsps as f64;
-            gfsk_pulse(bt, tt)
-        })
-        .collect();
+    let pulse = gsfk_pulse_cached();
+    let pulse_len = pulse.len();
 
     let dphi_len = (nsym + 2) * nsps;
     let mut dphi = vec![0.0f64; dphi_len];

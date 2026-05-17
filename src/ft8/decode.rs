@@ -254,44 +254,49 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
             std::collections::HashMap::new();
         let mut decoded_in_pass = 0;
 
-        for cand in &candidates {
-            if let Some(result) = ft8b(
-                &residual,
-                &cx_re,
-                &cx_im,
-                cand.freq,
-                cand.dt,
-                &_sbase,
-                depth,
-                &book,
-                &mut workspace,
-                &mut coarse_downsample_cache,
-                &mut coarse_frequency_uses,
-            ) {
-                let message_key = normalize_message_key(&result.msg);
-                if seen_messages.contains(&message_key) {
-                    continue;
+        // ── Candidate decoding: parallel when no shared HashCallBook ──
+        let mut results: Vec<(f64, f64, f64, Ft8bResult)> = if book.is_none() {
+            use rayon::prelude::*;
+            candidates.par_iter()
+                .filter_map(|cand| {
+                    let mut my_ws = create_decode_workspace();
+                    let mut my_cache = std::collections::HashMap::new();
+                    let mut my_freq_uses = coarse_frequency_uses.clone();
+                    ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &_sbase,
+                         depth, &None, &mut my_ws, &mut my_cache, &mut my_freq_uses)
+                        .map(|r| (cand.freq, cand.dt, cand.sync, r))
+                })
+                .collect()
+        } else {
+            let mut seq = Vec::new();
+            for cand in &candidates {
+                if let Some(r) = ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &_sbase,
+                    depth, &book, &mut workspace, &mut coarse_downsample_cache, &mut coarse_frequency_uses) {
+                    seq.push((cand.freq, cand.dt, cand.sync, r));
                 }
-                seen_messages.insert(message_key);
-                
-                let msg = result.msg.clone();
-                decoded.push(DecodedMessage {
-                    freq: result.freq,
-                    dt: result.dt - 0.5,
-                    snr: result.snr,
-                    msg,
-                    sync: cand.sync,
-                });
-                decoded_in_pass += 1;
+            }
+            seq
+        };
 
-                if _pass + 1 < max_passes {
-                    crate::util::subtract_ft8::subtract_ft8(
-                        &mut residual,
-                        &result.itone,
-                        result.freq,
-                        result.dt,
-                    );
-                }
+        // Process results sequentially (dedup + subtract + add to decoded)
+        for (_freq, _dt, sync, result) in results.drain(..) {
+            let message_key = normalize_message_key(&result.msg);
+            if seen_messages.contains(&message_key) {
+                continue;
+            }
+            seen_messages.insert(message_key);
+            decoded.push(DecodedMessage {
+                freq: result.freq,
+                dt: result.dt - 0.5,
+                snr: result.snr,
+                msg: result.msg.clone(),
+                sync,
+            });
+            decoded_in_pass += 1;
+            if _pass + 1 < max_passes {
+                crate::util::subtract_ft8::subtract_ft8(
+                    &mut residual, &result.itone, result.freq, result.dt,
+                );
             }
         }
 

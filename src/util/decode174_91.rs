@@ -108,7 +108,7 @@ pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Opt
             } else {
                 ncnt += 1;
             }
-            if ncnt >= 10 && iter >= 15 && ncheck > 25 {
+            if ncnt >= 5 && iter >= 10 && ncheck > 15 {
                 return None;
             }
         }
@@ -158,13 +158,13 @@ pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Opt
 
 /// Hybrid BP + OSD decoder.
 pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeResult> {
-    let max_iterations = 100;
+    let max_iterations = 30;
     if let Some(result) = bp_decode174_91(llr, apmask, max_iterations) {
         return Some(result);
     }
 
     if maxosd >= 0 {
-        return osd_decode174_91(llr, apmask, if maxosd >= 2 { 3 } else if maxosd >= 1 { 2 } else { 1 });
+        return osd_decode174_91(llr, apmask, if maxosd >= 2 { 2 } else if maxosd >= 1 { 2 } else { 1 });
     }
 
     None
