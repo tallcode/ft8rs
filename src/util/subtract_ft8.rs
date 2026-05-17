@@ -107,13 +107,12 @@ fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
 }
 
 /// Precomputed LPF window (time domain)
-static mut LPF_WINDOW: Option<Vec<f64>> = None;
-static mut LPF_SUMW: f64 = 0.0;
-static mut LPF_READY: bool = false;
+use std::sync::OnceLock;
 
-fn init_lpf_window() {
-    unsafe {
-        if LPF_READY { return; }
+static LPF_WINDOW: OnceLock<(Vec<f64>, f64)> = OnceLock::new();
+
+fn lpf_window_data() -> &'static (Vec<f64>, f64) {
+    LPF_WINDOW.get_or_init(|| {
         let mut window = vec![0.0f64; NFILT + 1];
         let mut sumw = 0.0f64;
         for j in 0..=NFILT {
@@ -121,53 +120,59 @@ fn init_lpf_window() {
             window[j] = (PI * j_signed as f64 / NFILT as f64).cos().powi(2);
             sumw += window[j];
         }
-        LPF_WINDOW = Some(window);
-        LPF_SUMW = sumw;
-        LPF_READY = true;
-    }
+        (window, sumw)
+    })
 }
 
 /// Time-domain LPF convolution: cfilt = camp * window / sumw
 /// Matches Fortran: four2a → multiply → four2a (circular convolution)
 /// But we do it directly in time domain to avoid FFT size issues.
 fn lpf_convolve(camp_re: &[f64], camp_im: &[f64]) -> (Vec<f64>, Vec<f64>) {
-    unsafe {
-        let window = LPF_WINDOW.as_ref().unwrap();
-        let sumw = LPF_SUMW;
-        let n = camp_re.len();
+    let (window, sumw) = lpf_window_data();
+    let sumw = *sumw;
+    let n = camp_re.len();
 
         let mut cfilt_re = vec![0.0f64; n];
         let mut cfilt_im = vec![0.0f64; n];
 
-        // Circular convolution: cfilt[i] = sum over tau of camp[(i-tau) mod n] * window[tau] / sumw
-        // window is indexed 0..NFILT (4001 elements), representing lag -2000..2000
-        // In convolution terms: window[t] for t = 0..4000, where t=2000 is lag 0
+    // Optimized convolution: pre-extend camp with HALF_FILT samples of circular halo
+        // to avoid expensive rem_euclid in inner loop.
+        // Original: camp_idx = (i + HALF_FILT - tau) mod n → need modulo
+        // With extension: ext[i + NFILT - tau] → direct indexing, no modulo
+        let ext_len = n + NFILT;
+        let mut ext_re = vec![0.0f64; ext_len];
+        let mut ext_im = vec![0.0f64; ext_len];
+        // ext[j] = camp[ (j - HALF_FILT) mod n ]
+        // So ext[i + NFILT - tau] = camp[ (i + NFILT - tau - HALF_FILT) mod n ] = camp[ (i + HALF_FILT - tau) mod n ] ✓
+        for j in 0..ext_len {
+            let camp_idx = (j as isize - HALF_FILT as isize).rem_euclid(n as isize) as usize;
+            ext_re[j] = camp_re[camp_idx];
+            ext_im[j] = camp_im[camp_idx];
+        }
 
         for i in 0..n {
             let mut sum_re = 0.0f64;
             let mut sum_im = 0.0f64;
-            // Window indices: 0..4000, corresponding to lags -2000..2000
-            // lag k = tau - 2000, so tau = k + 2000
-            // camp at position (i - lag) = (i - (tau - 2000)) = (i - tau + 2000)
             for tau in 0..=NFILT {
-                let lag = tau as isize - HALF_FILT as isize;
-                let camp_idx = (i as isize - lag).rem_euclid(n as isize) as usize;
+                // idx = i + NFILT - tau is always in [0, ext_len-1] because:
+                //   max (tau=0, i=n-1): n-1 + NFILT = n + 3999 < ext_len = n + 4000
+                //   min (tau=NFILT, i=0): 0
+                let idx = i + NFILT - tau;
                 let w = window[tau] / sumw;
-                sum_re += camp_re[camp_idx] * w;
-                sum_im += camp_im[camp_idx] * w;
+                sum_re += ext_re[idx] * w;
+                sum_im += ext_im[idx] * w;
             }
             cfilt_re[i] = sum_re;
             cfilt_im[i] = sum_im;
         }
 
-        (cfilt_re, cfilt_im)
-    }
+    (cfilt_re, cfilt_im)
 }
 
 /// Main subtract function — matches Fortran subtractft8 exactly.
 /// dd0 is modified in-place. dt: time offset from data start in seconds.
 pub fn subtract_ft8(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64) {
-    init_lpf_window();
+
 
     let (cref_re, cref_im) = gen_ft8wave(itone, f0);
     let nmax = 15 * 12000; // 180000
