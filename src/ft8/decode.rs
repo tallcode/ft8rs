@@ -1,13 +1,11 @@
 /// FT8 decoder – Rust port of decode.ts
 
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
-use crate::ft8::encode::encode_message;
 use crate::util::constants::{N_LDPC, SAMPLE_RATE};
 use crate::util::decode174_91::{decode174_91, DecodeResult};
 use crate::util::fft::{fft_complex, next_pow2};
 use crate::util::hashcall::HashCallBook;
 use crate::util::unpack_jt77::unpack77;
-use crate::util::waveform::generate_ft8_waveform;
 
 const NSPS: usize = 1920;
 const NFFT1: usize = 2 * NSPS; // 3840
@@ -25,7 +23,6 @@ const COSTAS_SYMBOL_LEN: usize = 32;
 const TAPER_SIZE: usize = 101;
 const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
 const MAX_DECODE_PASSES_DEPTH3: usize = 3;
-const MIN_SUBTRACTION_SNR: f64 = -24.0;
 
 const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
 const DT2: f64 = 1.0 / FS2;
@@ -78,6 +75,7 @@ struct Ft8bResult {
     freq: f64,
     dt: f64,
     snr: f64,
+    itone: [i32; 79],
 }
 
 struct SyncTemplate {
@@ -216,7 +214,6 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     let mut cx_re = vec![0.0; NFFT1_LONG];
     let mut cx_im = vec![0.0; NFFT1_LONG];
     let mut workspace = create_decode_workspace();
-    let mut tone_cache: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
 
     let mut decoded: Vec<DecodedMessage> = Vec::new();
     let mut seen_messages = std::collections::HashSet::new();
@@ -288,10 +285,11 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
                 decoded_in_pass += 1;
 
                 if _pass + 1 < max_passes {
-                    subtract_decoded_signal(
+                    crate::util::subtract_ft8::subtract_ft8(
                         &mut residual,
-                        &result,
-                        &mut tone_cache,
+                        &result.itone,
+                        result.freq,
+                        result.dt,
                     );
                 }
             }
@@ -712,11 +710,19 @@ fn ft8b(
 
     let snr = estimate_snr(&workspace.s8, &result.cw);
     
+    // Compute itone from codeword (same as get_tones but as [i32; 79])
+    let mut itone = [0i32; 79];
+    let tones = get_tones(&result.cw);
+    for i in 0..79 {
+        itone[i] = tones[i] as i32;
+    }
+    
     Some(Ft8bResult {
         msg,
         freq: f1,
         dt: xdt,
         snr,
+        itone,
     })
 }
 
@@ -962,198 +968,6 @@ fn normalize_bmet(bmet: &mut [f64]) {
         for i in 0..n {
             bmet[i] /= sigma;
         }
-    }
-}
-
-fn subtract_decoded_signal(
-    residual: &mut [f64],
-    result: &Ft8bResult,
-    tone_cache: &mut std::collections::HashMap<String, Vec<u8>>,
-) {
-    if result.snr < MIN_SUBTRACTION_SNR {
-        return;
-    }
-
-    let msg_key = normalize_message_key(&result.msg);
-    let tones = if let Some(t) = tone_cache.get(&msg_key) {
-        t.clone()
-    } else {
-        match std::panic::catch_unwind(|| encode_message(&result.msg)) {
-            Ok(t) => {
-                tone_cache.insert(msg_key.clone(), t.clone());
-                t
-            }
-            Err(_) => return,
-        }
-    };
-
-    // ── WSJT-X subtractft8: complex baseband + LPF subtraction ──
-    // Generates complex reference waveform, IQ-mixes with residual,
-    // LPFs the complex amplitude, then subtracts reconstructed signal.
-    // This is much more precise than the simple I/Q least-squares approach.
-    
-    let nframe = 79 * NSPS; // 151680
-    let nfft = next_pow2(nframe); // 262144
-    let nfilt = 4000usize;
-    let half_filt = nfilt / 2;
-    
-    // Generate complex reference: cref_re + j*cref_im
-    // wave_q (phase=π/2) = cos(φ) = cref_re
-    // wave_i (phase=0)   = sin(φ) = cref_im
-    let wave_q = generate_ft8_waveform(&tones, crate::util::waveform::WaveformOptions {
-        sample_rate: Some(SAMPLE_RATE as f64),
-        samples_per_symbol: Some(NSPS),
-        base_frequency: Some(result.freq),
-        initial_phase: Some(std::f64::consts::PI / 2.0),
-        ..Default::default()
-    });
-    let wave_i = generate_ft8_waveform(&tones, crate::util::waveform::WaveformOptions {
-        sample_rate: Some(SAMPLE_RATE as f64),
-        samples_per_symbol: Some(NSPS),
-        base_frequency: Some(result.freq),
-        initial_phase: Some(0.0),
-        ..Default::default()
-    });
-    
-    let mut dt_samples = (result.dt * SAMPLE_RATE as f64).round() as isize;
-    
-    // ── lrefinedt: time refinement (±90 samples) ──
-    // WSJT-X subtractft8: search for best time offset that minimizes
-    // residual energy after subtraction. We approximate with correlation.
-    {
-        let search_range = 90isize;
-        let mut best_offset = 0isize;
-        let mut best_corr = 0.0f64;
-        for offset in (-search_range..=search_range).step_by(4) {
-            let test_dt = dt_samples + offset;
-            let mut corr = 0.0f64;
-            for i in 0..nframe.min(wave_q.len()).min(wave_i.len()) {
-                let j = test_dt + i as isize;
-                if j < 0 || j >= residual.len() as isize { continue; }
-                let s = residual[j as usize];
-                corr += s * (wave_q[i] as f64 - wave_i[i] as f64);
-            }
-            let corr = corr.abs();
-            if corr > best_corr {
-                best_corr = corr;
-                best_offset = offset;
-            }
-        }
-        // Fine search around best
-        for offset in (best_offset-3..=best_offset+3).step_by(1) {
-            let test_dt = dt_samples + offset;
-            let mut corr = 0.0f64;
-            for i in 0..nframe.min(wave_q.len()).min(wave_i.len()) {
-                let j = test_dt + i as isize;
-                if j < 0 || j >= residual.len() as isize { continue; }
-                let s = residual[j as usize];
-                corr += s * (wave_q[i] as f64 - wave_i[i] as f64);
-            }
-            let corr = corr.abs();
-            if corr > best_corr {
-                best_corr = corr;
-                best_offset = offset;
-            }
-        }
-        dt_samples += best_offset;
-    }
-    
-    // IQ mix: camp = residual * conj(cref) = residual * (cref_re - j*cref_im)
-    // camp_re = residual * cref_re
-    // camp_im = -residual * cref_im
-    let mut camp_re = vec![0.0f64; nfft];
-    let mut camp_im = vec![0.0f64; nfft];
-    
-    for i in 0..nframe.min(wave_q.len()).min(wave_i.len()) {
-        let j = dt_samples + i as isize;
-        if j < 0 || j >= residual.len() as isize {
-            continue;
-        }
-        let s = residual[j as usize];
-        camp_re[i] = s * wave_q[i] as f64;   // s * cref_re
-        camp_im[i] = -s * wave_i[i] as f64;   // s * (-cref_im)
-    }
-    
-    // Build LPF window: cos² taper in time domain
-    let pi = std::f64::consts::PI;
-    let mut window = vec![0.0f64; nfft];
-    let mut sumw = 0.0;
-    for j in 0..nfilt {
-        let val = (pi * j as f64 / nfilt as f64).cos().powi(2);
-        window[j] = val;
-        sumw += val;
-    }
-    window[0] /= sumw;
-    for j in 1..nfilt {
-        window[j] /= sumw;
-    }
-    // Shift window to center (circular shift by half_filt)
-    window.rotate_right(half_filt);
-    
-    // FFT of window to frequency domain
-    let mut cw_re = window.clone();
-    let mut cw_im = vec![0.0f64; nfft];
-    fft_complex(&mut cw_re, &mut cw_im, false);
-    let fac = 1.0 / nfft as f64;
-    for i in 0..nfft {
-        cw_re[i] *= fac;
-        cw_im[i] *= fac;
-    }
-    
-    // Forward FFT of camp
-    fft_complex(&mut camp_re, &mut camp_im, false);
-    
-    // Multiply by cw (frequency domain LPF)
-    for i in 0..nfft {
-        let cr = camp_re[i];
-        let ci = camp_im[i];
-        camp_re[i] = cr * cw_re[i] - ci * cw_im[i];
-        camp_im[i] = cr * cw_im[i] + ci * cw_re[i];
-    }
-    
-    // Inverse FFT back to time domain
-    fft_complex(&mut camp_re, &mut camp_im, true);
-    
-    // End correction: compensate for filter edge effects
-    let mut endcorr = vec![1.0f64; half_filt + 1];
-    let total_w = sumw;
-    for j in 1..=half_filt {
-        let mut partial = 0.0;
-        for k in j-1..half_filt {
-            partial += (pi * k as f64 / nfilt as f64).cos().powi(2);
-        }
-        endcorr[j] = 1.0 / (1.0 - partial / total_w);
-    }
-    
-    // Apply end correction and subtract reconstructed signal
-    // reconstructed: 2.0 * REAL(cref * cfilt)
-    // cfilt = camp (after LPF)
-    for i in 0..nframe.min(wave_q.len()).min(wave_i.len()) {
-        let j = dt_samples + i as isize;
-        if j < 0 || j >= residual.len() as isize {
-            continue;
-        }
-        let cref_re = wave_q[i] as f64;
-        let cref_im = wave_i[i] as f64;
-        let cfilt_re = camp_re[i];
-        let cfilt_im = camp_im[i];
-        
-        // Apply end correction
-        let corr = if i < half_filt {
-            endcorr[i + 1]
-        } else if i >= nframe - half_filt {
-            endcorr[nframe - i]
-        } else {
-            1.0
-        };
-        
-        let cfilt_re = cfilt_re * corr;
-        let cfilt_im = cfilt_im * corr;
-        
-        // Subtract: residual -= 2 * REAL(cref * cfilt)
-        // REAL(cref * cfilt) = cref_re*cfilt_re - cref_im*cfilt_im
-        let z_re = cref_re * cfilt_re - cref_im * cfilt_im;
-        residual[j as usize] -= 2.0 * z_re;
     }
 }
 

@@ -114,7 +114,7 @@ fn parse_callsign(raw: &str) -> CallsignParse {
     }
 }
 
-fn pack28(token: &str) -> usize {
+pub fn pack28(token: &str) -> usize {
     let t = token.trim().to_uppercase();
 
     if t == "DE" {
