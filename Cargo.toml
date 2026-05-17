@@ -10,10 +10,8 @@ name = "ft8rs"
 path = "src/main.rs"
 
 [dependencies]
-rayon = "1"
 
 hound = "3"
 num-bigint = "0.4"
 num-traits = "0.2"
 clap = { version = "4", features = ["derive"] }
-fftw-sys = "0.8.0"
