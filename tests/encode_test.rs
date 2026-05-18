@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use ft8rs::util::pack_jt77::pack77;
 use ft8rs::util::unpack_jt77::unpack77;
 use ft8rs::ft8::encode::{encode174_91, get_tones, encode_message};
@@ -199,7 +200,7 @@ fn test_ft8_roundtrip_decode() {
             sync_min: Some(1.0),
             depth: Some(2),
             max_candidates: Some(300),
-            hash_call_book: Some(book),
+            hash_call_book: Some(Rc::new(book)),
         });
 
         let expected = msg.to_uppercase();

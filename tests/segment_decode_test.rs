@@ -1,9 +1,7 @@
-/// Segment decode test with diff CSV output:
-///   `-` = missed (baseline but not decoded)
-///   `+` = extra (decoded but not in baseline)
-///   `?` = frequency mismatch (decoded but freq differs >3Hz from baseline)
-
+use std::rc::Rc;
+/// Segment decode test with cumulative HashCallBook for AP decoding.
 use ft8rs::{decode_ft8, DecodeFT8Options};
+use ft8rs::util::hashcall::HashCallBook;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -72,111 +70,118 @@ fn resample(src: &[f32], f: u32, t: u32) -> Vec<f32> {
     o
 }
 
+fn extract_and_save_callsigns(msg: &str, book: &HashCallBook) {
+    let skip_tokens = [
+        "CQ", "DX", "TEST", "TU", "73", "RR73", "RRR", "GL",
+        "R+", "R-", "+00", "+01", "+02", "+03", "+04", "+05", "+06", "+07", "+08", "+09", "+10",
+        "-01", "-02", "-03", "-04", "-05", "-06", "-07", "-08", "-09", "-10",
+        "-11", "-12", "-13", "-14", "-15", "-16", "-17", "-18", "-19", "-20",
+        "-21", "-22", "-23", "-24", "-25", "-26", "-27", "-28",
+        "+11", "+12", "+13", "+14", "+15", "+16", "+17", "+18", "+19", "+20",
+        "+21", "+22", "+23", "+24", "+25", "+26", "+27", "+28",
+        "00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+        "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+        "21", "22", "23", "24", "25", "26", "27", "28", "29", "30",
+    ];
+    for word in msg.split_whitespace() {
+        let mut w = word.trim().to_uppercase();
+        if w.starts_with('<') { w = w.trim_start_matches('<').to_string(); }
+        if w.ends_with('>') { w = w.trim_end_matches('>').to_string(); }
+        if w.len() < 3 { continue; }
+        if skip_tokens.contains(&w.as_str()) { continue; }
+        if w.len() == 4 && w.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
+            let digits: usize = w.chars().filter(|c| c.is_ascii_digit()).count();
+            if digits == 2 { continue; }
+        }
+        if (w.starts_with('+') || w.starts_with('-')) && w[1..].chars().all(|c| c.is_ascii_digit()) { continue; }
+        if w.starts_with("R+") || w.starts_with("R-") { continue; }
+        book.save(&w);
+    }
+}
+
 #[test]
-fn test_segment_decode_230208() {
+fn test_segment_decode_with_hashcallbook() {
     let (sr, all) = load_wav("tests/ft8/230208_140300.wav");
     let dur = all.len() as f64 / sr as f64;
     let nseg = (dur / SEGMENT_DURATION as f64).floor() as usize;
-
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
     let bl_count = baseline.len();
-
     let s12k = resample(&all, sr, DECODE_SAMPLE_RATE as u32);
     let sps = SEGMENT_DURATION * DECODE_SAMPLE_RATE;
+
+    // Cumulative HashCallBook across segments
+    let book = Rc::new(HashCallBook::new());
 
     let mut total_matched = 0;
     let mut total_missed = 0;
     let mut total_extra = 0;
     let mut total_freq_mismatch = 0;
-
+    let mut total_hash_resolved = 0;
     let mut diff_lines = vec!["Date-Time,SNR,Drift,Freq,Msg,Tag".to_string()];
 
     for seg in 0..nseg {
-        let start = seg * sps;
-        let data = &s12k[start..(start + sps).min(s12k.len())];
+        let seg_start = (seg as isize * sps as isize - DECODE_SAMPLE_RATE as isize).max(0) as usize;
+        let seg_end = ((seg + 1) as isize * sps as isize + DECODE_SAMPLE_RATE as isize).min(s12k.len() as isize) as usize;
+        let data = &s12k[seg_start..seg_end];
         if data.len() < DECODE_SAMPLE_RATE * 10 { continue; }
 
+        let bk = Rc::clone(&book);
         let t0 = Instant::now();
         let decoded = decode_ft8(data, DecodeFT8Options {
             sample_rate: Some(DECODE_SAMPLE_RATE), freq_low: Some(200.0),
             freq_high: Some(3000.0), sync_min: Some(0.8), depth: Some(3),
-            max_candidates: Some(300), hash_call_book: None,
+            max_candidates: Some(500), hash_call_book: Some(bk),
         });
         let elapsed = t0.elapsed();
+
+        // Extract callsigns and save to cumulative book
+        for d in &decoded {
+            extract_and_save_callsigns(&d.msg, &book);
+            if d.msg.contains('<') { total_hash_resolved += 1; }
+        }
 
         let bl: Vec<&BMsg> = baseline.iter().filter(|(s, _)| *s == seg).map(|(_, m)| m).collect();
         let dec_norm: HashSet<String> = decoded.iter().map(|d| norm(&d.msg)).collect();
 
-        // Build decoded freq map
-        let dmap: std::collections::HashMap<String, (f64, f64)> = decoded.iter()
-            .map(|d| (norm(&d.msg), (d.snr, d.freq))).collect();
-
         let tot = (14 * 3600 + 3 * 60) as u64 + (seg as f64 * SEGMENT_DURATION as f64) as u64;
         let ts = format!("230208_{:02}{:02}{:02}", tot / 3600, (tot % 3600) / 60, tot % 60);
 
-        let mut matched = 0;
-        let mut missed = 0;
-        let mut extra = 0;
-        let mut freq_mm = 0;
+        let mut matched = 0; let mut missed = 0; let mut extra = 0; let mut freq_mm = 0;
 
-        // Baseline messages: check matched, missed, freq mismatch
         for m in &bl {
             let nm = norm(&m.msg);
-            if let Some((dsnr, dfreq)) = dmap.get(&nm) {
-                let fdiff = (dfreq - m.freq).abs();
+            if let Some(d) = decoded.iter().find(|d| norm(&d.msg) == nm) {
+                let fdiff = (d.freq - m.freq).abs();
                 if fdiff > 3.0 {
                     freq_mm += 1;
-                    diff_lines.push(format!(
-                        "{},{},{:.1},{:.0},{},?  (decoded @{:.0}Hz, baseline @{:.0}Hz, Δ={:+.0}Hz)",
-                        ts, dsnr.round() as i32, 0.0, dfreq.round(), m.msg, dfreq, m.freq, dfreq - m.freq
-                    ));
+                    diff_lines.push(format!("{},{},{},{},{}? (decoded @{}Hz, baseline @{}Hz)", ts, d.snr.round() as i32, d.freq.round(), m.freq.round(), m.msg, d.freq, m.freq));
                 }
                 matched += 1;
             } else {
                 missed += 1;
-                diff_lines.push(format!(
-                    "{},{},{},{},{},-",
-                    ts, m.snr, m.drift as i32, m.freq.round() as i32, m.msg
-                ));
+                diff_lines.push(format!("{},{},{},{},{}-", ts, m.snr, m.drift as i32, m.freq.round() as i32, m.msg));
             }
         }
 
-        // Extra decoded messages
         for d in &decoded {
             let nm = norm(&d.msg);
             if !bl.iter().any(|m| norm(&m.msg) == nm) {
                 extra += 1;
-                diff_lines.push(format!(
-                    "{},{},{:.1},{:.0},{},+",
-                    ts, d.snr.round() as i32, 0.0, d.freq.round(), d.msg
-                ));
+                diff_lines.push(format!("{},{},{},{},+", ts, d.snr.round() as i32, d.freq.round(), d.msg));
             }
         }
 
-        total_matched += matched;
-        total_missed += missed;
-        total_extra += extra;
-        total_freq_mismatch += freq_mm;
+        total_matched += matched; total_missed += missed;
+        total_extra += extra; total_freq_mismatch += freq_mm;
 
-        println!("  Seg {:.0}-{:.0}s: decoded {} | matched {}/{} | missed {} | freq? {} | extra {} | {}ms",
+        println!("  Seg {:.0}-{:.0}s: decoded {} | matched {}/{} | missed {} | extra {} | book={} | {}ms",
             seg as f64 * 15.0, seg as f64 * 15.0 + 15.0,
-            decoded.len(), matched, bl.len(), missed, freq_mm, extra, elapsed.as_millis());
+            decoded.len(), matched, bl.len(), missed, extra, book.size(), elapsed.as_millis());
     }
 
     let rate = total_matched as f64 / bl_count as f64 * 100.0;
-    std::fs::write("tests/ft8/230208_140300_diff.csv",
-        diff_lines.join("\n") + "\n").unwrap();
+    std::fs::write("tests/ft8/230208_140300_diff.csv", diff_lines.join("\n") + "\n").unwrap();
 
-    println!("\n╔══════════════════════════════════════════════════════════════╗");
-    println!("║  Segment Decode Test: 230208_140300.wav                      ║");
-    println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║  Baseline: {} messages across {} segments                     ║", bl_count, nseg);
-    println!("║  Matched: {} ({:.1}%)                                     ║", total_matched, rate);
-    println!("║  Missed (-): {}                                               ║", total_missed);
-    println!("║  Extra  (+): {}                                               ║", total_extra);
-    println!("║  Freq ? : {}                                              ║", total_freq_mismatch);
-    println!("╚══════════════════════════════════════════════════════════════╝");
-    println!("📁 Diff: tests/ft8/230208_140300_diff.csv");
-
+    println!("\nMatched: {} / {} ({:.1}%) | Missed: {} | Extra: {} | Hash resolved: {}", total_matched, bl_count, rate, total_missed, total_extra, total_hash_resolved);
     assert!(rate >= 70.0, "Hit rate {:.1}% < 70%", rate);
 }
