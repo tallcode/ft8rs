@@ -103,4 +103,12 @@ impl HashCallBook {
         self.calls12.borrow_mut().iter_mut().for_each(|c| *c = None);
         self.hash22_entries.borrow_mut().clear();
     }
+
+    pub fn clone_book(&self) -> HashCallBook {
+        HashCallBook {
+            calls10: RefCell::new(self.calls10.borrow().clone()),
+            calls12: RefCell::new(self.calls12.borrow().clone()),
+            hash22_entries: RefCell::new(self.hash22_entries.borrow().clone()),
+        }
+    }
 }

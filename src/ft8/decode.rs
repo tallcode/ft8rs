@@ -1,3 +1,4 @@
+use std::rc::Rc;
 /// FT8 decoder – Rust port of decode.ts
 
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
@@ -22,7 +23,7 @@ const COSTAS_BLOCKS: usize = 7;
 const COSTAS_SYMBOL_LEN: usize = 32;
 const TAPER_SIZE: usize = 101;
 const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
-const MAX_DECODE_PASSES_DEPTH3: usize = 3;
+const MAX_DECODE_PASSES_DEPTH3: usize = 4;
 
 const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
 const DT2: f64 = 1.0 / FS2;
@@ -46,7 +47,7 @@ pub struct DecodeOptions {
     pub sync_min: Option<f64>,
     pub depth: Option<usize>,
     pub max_candidates: Option<usize>,
-    pub hash_call_book: Option<HashCallBook>,
+    pub hash_call_book: Option<Rc<HashCallBook>>,
 }
 
 impl Default for DecodeOptions {
@@ -563,7 +564,7 @@ fn sync8(
         for j in 0..i {
             let fdiff = (candidates0[i].freq - candidates0[j].freq).abs();
             let tdiff = (candidates0[i].dt - candidates0[j].dt).abs();
-            if fdiff < 4.0 && tdiff < 0.04 {
+            if fdiff < 0.5 && tdiff < 0.04 {
                 if candidates0[i].sync >= candidates0[j].sync {
                     // mark j for removal (we'll skip it)
                 } else {
@@ -613,7 +614,7 @@ fn ft8b(
     xdt: f64,
     _sbase: &[f64],
     depth: usize,
-    _book: &Option<HashCallBook>,
+    _book: &Option<std::rc::Rc<HashCallBook>>,
     workspace: &mut DecodeWorkspace,
     coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
     coarse_frequency_uses: &mut std::collections::HashMap<i32, usize>,
@@ -704,7 +705,7 @@ fn ft8b(
         return None;
     }
 
-    let msg = unpack77(&message77, _book.as_ref());
+    let msg = unpack77(&message77, _book.as_ref().map(|rc| rc.as_ref()));
     if msg.is_none() {
         return None;
     }
@@ -1131,7 +1132,7 @@ fn get_tones(cw: &[u8]) -> Vec<u8> {
 }
 
 fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<DecodeResult> {
-    let maxosd = if depth >= 3 { 2 } else if depth >= 2 { 0 } else { -1 };
+    let maxosd_base = if depth >= 3 { 2 } else if depth >= 2 { 0 } else { -1 };
     let scalefac = 2.83;
     let bmetrics = [
         &workspace.bmeta,
@@ -1144,14 +1145,19 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
     workspace.apmask.fill(0);
 
     for ipass in 0..4 {
+        let _maxosd = match ipass {
+            0|1|3=>maxosd_base,
+            2=>if depth>=3{5}else{maxosd_base},
+            _=>maxosd_base,
+        };
         let metric = bmetrics[ipass];
         for i in 0..N_LDPC {
             workspace.llr[i] = scalefac * metric[i];
         }
 
-        if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
+        if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
             // WSJT-X: nharderrors > 36 则跳过. 我们放宽到 40 以捕获更弱信号
-            if result.nharderrors <= 40 {
+            if result.nharderrors <= 36 {
                 return Some(result);
             }
         }
@@ -1185,8 +1191,8 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
             workspace.apmask[75] = 1; workspace.llr[75] = -apmag;  // i3 bit 1 = 0
             workspace.apmask[76] = 1; workspace.llr[76] = apmag;   // i3 bit 2 = 1
             
-            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
-                if result.nharderrors <= 40 {
+            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
+                if result.nharderrors <= 36 {
                     return Some(result);
                 }
             }
@@ -1197,8 +1203,8 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
             workspace.apmask[75] = 1; workspace.llr[75] = apmag;   // i3 bit 1 = 1
             workspace.apmask[76] = 1; workspace.llr[76] = -apmag;  // i3 bit 2 = 0
             
-            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
-                if result.nharderrors <= 40 {
+            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
+                if result.nharderrors <= 36 {
                     return Some(result);
                 }
             }
@@ -1217,8 +1223,8 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
             workspace.apmask[75] = 1; workspace.llr[75] = -apmag;  // i3 bit 1 = 0
             workspace.apmask[76] = 1; workspace.llr[76] = apmag;   // i3 bit 2 = 1 (i3=1)
             
-            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
-                if result.nharderrors <= 40 {
+            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
+                if result.nharderrors <= 36 {
                     return Some(result);
                 }
             }
@@ -1227,8 +1233,8 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
             workspace.apmask[75] = 1; workspace.llr[75] = apmag;   // i3 bit 1 = 1
             workspace.apmask[76] = 1; workspace.llr[76] = -apmag;  // i3 bit 2 = 0 (i3=2)
             
-            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd) {
-                if result.nharderrors <= 40 {
+            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
+                if result.nharderrors <= 36 {
                     return Some(result);
                 }
             }
