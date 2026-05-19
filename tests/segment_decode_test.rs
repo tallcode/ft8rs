@@ -2,7 +2,6 @@ use std::rc::Rc;
 /// Segment decode test with cumulative HashCallBook for AP decoding.
 use ft8rs::{decode_ft8, DecodeFT8Options};
 use ft8rs::util::hashcall::HashCallBook;
-use std::collections::HashSet;
 use std::time::Instant;
 
 const SEGMENT_DURATION: usize = 15;
@@ -115,7 +114,7 @@ fn test_segment_decode_with_hashcallbook() {
     let mut total_matched = 0;
     let mut total_missed = 0;
     let mut total_extra = 0;
-    let mut total_freq_mismatch = 0;
+
     let mut total_hash_resolved = 0;
     let mut diff_lines = vec!["Date-Time,SNR,Drift,Freq,Msg,Tag".to_string()];
 
@@ -131,6 +130,8 @@ fn test_segment_decode_with_hashcallbook() {
             sample_rate: Some(DECODE_SAMPLE_RATE), freq_low: Some(200.0),
             freq_high: Some(3000.0), sync_min: Some(0.8), depth: Some(3),
             max_candidates: Some(500), hash_call_book: Some(bk),
+            mycall: None,
+            hiscall: None,
         });
         let elapsed = t0.elapsed();
 
@@ -141,19 +142,18 @@ fn test_segment_decode_with_hashcallbook() {
         }
 
         let bl: Vec<&BMsg> = baseline.iter().filter(|(s, _)| *s == seg).map(|(_, m)| m).collect();
-        let dec_norm: HashSet<String> = decoded.iter().map(|d| norm(&d.msg)).collect();
+
 
         let tot = (14 * 3600 + 3 * 60) as u64 + (seg as f64 * SEGMENT_DURATION as f64) as u64;
         let ts = format!("230208_{:02}{:02}{:02}", tot / 3600, (tot % 3600) / 60, tot % 60);
 
-        let mut matched = 0; let mut missed = 0; let mut extra = 0; let mut freq_mm = 0;
+        let mut matched = 0; let mut missed = 0; let mut extra = 0;
 
         for m in &bl {
             let nm = norm(&m.msg);
             if let Some(d) = decoded.iter().find(|d| norm(&d.msg) == nm) {
                 let fdiff = (d.freq - m.freq).abs();
                 if fdiff > 3.0 {
-                    freq_mm += 1;
                     diff_lines.push(format!("{},{},{},{},{}? (decoded @{}Hz, baseline @{}Hz)", ts, d.snr.round() as i32, d.freq.round(), m.freq.round(), m.msg, d.freq, m.freq));
                 }
                 matched += 1;
@@ -172,7 +172,7 @@ fn test_segment_decode_with_hashcallbook() {
         }
 
         total_matched += matched; total_missed += missed;
-        total_extra += extra; total_freq_mismatch += freq_mm;
+        total_extra += extra;
 
         println!("  Seg {:.0}-{:.0}s: decoded {} | matched {}/{} | missed {} | extra {} | book={} | {}ms",
             seg as f64 * 15.0, seg as f64 * 15.0 + 15.0,

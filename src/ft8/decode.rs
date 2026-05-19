@@ -48,6 +48,8 @@ pub struct DecodeOptions {
     pub depth: Option<usize>,
     pub max_candidates: Option<usize>,
     pub hash_call_book: Option<Rc<HashCallBook>>,
+    pub mycall: Option<String>,
+    pub hiscall: Option<String>,
 }
 
 impl Default for DecodeOptions {
@@ -60,6 +62,8 @@ impl Default for DecodeOptions {
             depth: None,
             max_candidates: None,
             hash_call_book: None,
+            mycall: None,
+            hiscall: None,
         }
     }
 }
@@ -264,7 +268,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
                     let mut my_cache = std::collections::HashMap::new();
                     let mut my_freq_uses = coarse_frequency_uses.clone();
                     ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &_sbase,
-                         depth, &None, &mut my_ws, &mut my_cache, &mut my_freq_uses)
+                         depth, &None, None, None, &mut my_ws, &mut my_cache, &mut my_freq_uses)
                         .map(|r| (cand.freq, cand.dt, cand.sync, r))
                 })
                 .collect()
@@ -272,7 +276,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
             let mut seq = Vec::new();
             for cand in &candidates {
                 if let Some(r) = ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &_sbase,
-                    depth, &book, &mut workspace, &mut coarse_downsample_cache, &mut coarse_frequency_uses) {
+                    depth, &book, None, None, &mut workspace, &mut coarse_downsample_cache, &mut coarse_frequency_uses) {
                     seq.push((cand.freq, cand.dt, cand.sync, r));
                 }
             }
@@ -347,8 +351,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
                     cand.freq,
                     cand.dt,
                     &nagain_sbase,
-                    depth,
-                    &book,
+                    depth, &book, None, None,
                     &mut workspace,
                     &mut nagain_downsample_cache,
                     &mut nagain_freq_uses,
@@ -615,6 +618,8 @@ fn ft8b(
     _sbase: &[f64],
     depth: usize,
     _book: &Option<std::rc::Rc<HashCallBook>>,
+    mycall: Option<&str>,
+    hiscall: Option<&str>,
     workspace: &mut DecodeWorkspace,
     coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
     coarse_frequency_uses: &mut std::collections::HashMap<i32, usize>,
@@ -690,7 +695,7 @@ fn ft8b(
         }
     }
     
-    let result = try_decode_passes(workspace, depth);
+    let result = try_decode_passes(workspace, depth, mycall, hiscall);
     if result.is_none() {
         return None;
     }
@@ -1131,7 +1136,33 @@ fn get_tones(cw: &[u8]) -> Vec<u8> {
     tones
 }
 
-fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<DecodeResult> {
+
+
+/// Encode callsign to 28-bit AP pattern.
+fn encode_callsign_ap(call: &str) -> Option<Vec<i8>> {
+    use crate::util::pack_jt77::pack77;
+    let msg = format!("CQ {} AA00", call.trim().to_uppercase());
+    let bits77 = pack77(&msg);
+    if bits77.len() == 77 && bits77[74] == 0 && bits77[75] == 0 && bits77[76] == 1 {
+        let mut ap_bits = Vec::with_capacity(28);
+        for i in 29..57 {
+            ap_bits.push(if bits77[i] == 1 { 1i8 } else { -1i8 });
+        }
+        return Some(ap_bits);
+    }
+    None
+}
+
+fn encode_callsigns_ap(mycall: &str, hiscall: &str) -> Option<Vec<i8>> {
+    let my_bits = encode_callsign_ap(mycall)?;
+    let his_bits = encode_callsign_ap(hiscall)?;
+    let mut combined = Vec::with_capacity(58);
+    combined.extend_from_slice(&my_bits);
+    combined.extend_from_slice(&his_bits);
+    Some(combined)
+}
+
+fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Option<&str>, hiscall: Option<&str>) -> Option<DecodeResult> {
     let maxosd_base = if depth >= 3 { 2 } else if depth >= 2 { 0 } else { -1 };
     let scalefac = 2.83;
     let bmetrics = [
@@ -1238,8 +1269,49 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize) -> Option<De
                     return Some(result);
                 }
             }
+            // ── AP Pass 9: MYCALL ??? ??? (iaptype=2) ──
+            // ── AP Pass 10: MYCALL HISCALL ??? (iaptype=3) ──
+            // Framework implemented; requires explicit mycall/hiscall parameters.
+            // Disabled by default (None).
+            if mycall.is_some() {
+                if let Some(mycall_str) = mycall {
+                    if let Some(mycall_bits) = encode_callsign_ap(mycall_str) {
+                        workspace.apmask.fill(0);
+                        for i in 0..N_LDPC {
+                            workspace.llr[i] = scalefac * bmetrics[0][i];
+                        }
+                        for i in 0..28 {
+                            workspace.apmask[i] = 1;
+                            workspace.llr[i] = apmag * mycall_bits[i] as f64;
+                        }
+                        workspace.apmask[74] = 1; workspace.llr[74] = -apmag;
+                        workspace.apmask[75] = 1; workspace.llr[75] = -apmag;
+                        workspace.apmask[76] = 1; workspace.llr[76] = apmag;
+                        if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
+                            if result.nharderrors <= 36 { return Some(result); }
+                        }
+                    }
+                }
+            }
+            if let (Some(mycall_str), Some(hiscall_str)) = (mycall, hiscall) {
+                if let Some(both_bits) = encode_callsigns_ap(mycall_str, hiscall_str) {
+                    workspace.apmask.fill(0);
+                    for i in 0..N_LDPC {
+                        workspace.llr[i] = scalefac * bmetrics[0][i];
+                    }
+                    for i in 0..58 {
+                        workspace.apmask[i] = 1;
+                        workspace.llr[i] = apmag * both_bits[i] as f64;
+                    }
+                    workspace.apmask[74] = 1; workspace.llr[74] = -apmag;
+                    workspace.apmask[75] = 1; workspace.llr[75] = -apmag;
+                    workspace.apmask[76] = 1; workspace.llr[76] = apmag;
+                    if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
+                        if result.nharderrors <= 36 { return Some(result); }
+                    }
+                }
+            }
         }
     }
-
     None
 }
