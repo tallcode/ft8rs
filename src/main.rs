@@ -86,7 +86,7 @@ fn run_decode(file: &PathBuf, mode: &str, low: f64, high: f64, depth: usize, max
             sample_rate: Some(wav.sample_rate as usize),
             freq_low: Some(low),
             freq_high: Some(high),
-            sync_min: Some(0.8),  // lowered from 1.2 for weak signal sensitivity
+            sync_min: Some(1.3),  // matches WSJT-X threshold; use 0.8 for max sensitivity
             depth: Some(depth),
             max_candidates: Some(max_candidates),
             hash_call_book: None,

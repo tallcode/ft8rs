@@ -28,7 +28,7 @@ const NDOWN: usize = 60;
 const NN: usize = 79;
 
 const NFFT1_LONG: usize = 192000;
-const SYNC8_DF: f64 = SAMPLE_RATE as f64 / 4096.0; // 12000/4096 ≈ 2.93 Hz/bin — matches sync8 FFT
+const SYNC8_DF: f64 = SAMPLE_RATE as f64 / 4096.0; // 12000/4096 = 2.93 Hz/bin — matches sync8 FFT
 const NFFT2: usize = 3200;
 const NP2: usize = 2812;
 const COSTAS_BLOCKS: usize = 7;
@@ -419,8 +419,6 @@ fn sync8(
 ) -> (Vec<Candidate>, Vec<f64>) {
     let jz = 62;
     let fft_size = next_pow2(NFFT1); // 4096 (df=2.93 Hz/bin).
-    // NOTE: WSJT-X uses NFFT1=3840 (df=3.125). Switching to 3840 breaks
-    // 20/20 baseline — requires full recalibration of syncmin, freq estimation.
     let half_size = fft_size / 2;
     let tstep = NSTEP as f64 / SAMPLE_RATE as f64;
     let df = SAMPLE_RATE as f64 / fft_size as f64;

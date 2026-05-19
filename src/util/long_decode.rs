@@ -5,7 +5,7 @@
 ///  - Different sync spectral representations complement each other
 ///  - Data smoothing between cycles reduces noise variance
 ///  - Cross-segment signal memory enables association detection
-///  - Per-cycle variable syncmin (0.80 → 0.68 → 0.52)
+///  - Per-cycle variable syncmin (1.30 → 1.10 → 0.85)
 use std::rc::Rc;
 
 use crate::decode_ft8;
@@ -43,7 +43,7 @@ impl Default for LongDecodeConfig {
         Self {
             freq_low: 200.0,
             freq_high: 3000.0,
-            sync_min: 0.8,
+            sync_min: 1.3,
             max_candidates: 500,
             depth: 3,
             n_cycles: 3,
