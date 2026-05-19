@@ -201,6 +201,8 @@ fn test_ft8_roundtrip_decode() {
             depth: Some(2),
             max_candidates: Some(300),
             hash_call_book: Some(Rc::new(book)),
+            mycall: None,
+            hiscall: None,
         });
 
         let expected = msg.to_uppercase();
@@ -254,6 +256,8 @@ fn test_20_message_baseline() {
         depth: Some(3),
         max_candidates: Some(300),
         hash_call_book: None,
+        mycall: None,
+        hiscall: None,
     });
     
     // ⚠️ QUALITY GATE: must decode all 20 messages

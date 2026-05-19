@@ -90,6 +90,8 @@ fn run_decode(file: &PathBuf, mode: &str, low: f64, high: f64, depth: usize, max
             depth: Some(depth),
             max_candidates: Some(max_candidates),
             hash_call_book: None,
+            mycall: None,
+            hiscall: None,
         });
         let elapsed = start.elapsed();
         println!("\nDecoded {} messages in {:.2}s:\n", decoded.len(), elapsed.as_secs_f64());

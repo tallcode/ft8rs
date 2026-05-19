@@ -7,11 +7,20 @@ const MAGIC: u64 = 47055833459;
 const MAX_HASH22_ENTRIES: usize = 1000;
 
 fn ihashcall(c0: &str, m: usize) -> usize {
-    let s = format!("{:<11}", c0).to_uppercase();
     let mut n8: u64 = 0;
-    for c in s.chars().take(11) {
-        let j = C38.iter().position(|&x| x == c as u8).unwrap_or(0) as u64;
+    let mut count = 0;
+    for c in c0.chars() {
+        if count >= 11 { break; }
+        let uc = c.to_ascii_uppercase();
+        let j = C38.iter().position(|&x| x == uc as u8).unwrap_or(0) as u64;
         n8 = 38 * n8 + j;
+        count += 1;
+    }
+    // Pad with spaces
+    while count < 11 {
+        let j = C38.iter().position(|&x| x == b' ').unwrap_or(0) as u64;
+        n8 = 38 * n8 + j;
+        count += 1;
     }
     let prod = MAGIC.wrapping_mul(n8);
     ((prod >> (64 - m as u32)) & ((1u64 << m as u32) - 1)) as usize
@@ -33,20 +42,29 @@ impl HashCallBook {
     }
 
     pub fn save(&self, callsign: &str) {
-        let mut cw = callsign.trim().to_uppercase();
-        if cw.is_empty() || cw == "<...>" {
+        let trimmed = callsign.trim();
+        if trimmed.is_empty() || trimmed == "<...>" {
             return;
         }
-        if cw.starts_with('<') {
-            cw = cw[1..].to_string();
-        }
-        if let Some(gt) = cw.find('>') {
-            cw = cw[..gt].to_string();
-        }
-        cw = cw.trim().to_string();
-        if cw.len() < 3 {
+        
+        // Strip < > if present
+        let clean = if trimmed.starts_with('<') && trimmed.ends_with('>') {
+            &trimmed[1..trimmed.len()-1]
+        } else if trimmed.starts_with('<') {
+            if let Some(gt) = trimmed.find('>') {
+                &trimmed[1..gt]
+            } else {
+                &trimmed[1..]
+            }
+        } else {
+            trimmed
+        };
+        
+        if clean.len() < 3 {
             return;
         }
+        
+        let cw = clean.to_uppercase();
 
         let n10 = ihashcall(&cw, 10);
         if n10 <= 1023 {
@@ -103,6 +121,7 @@ impl HashCallBook {
         self.calls12.borrow_mut().iter_mut().for_each(|c| *c = None);
         self.hash22_entries.borrow_mut().clear();
     }
+
 
     pub fn clone_book(&self) -> HashCallBook {
         HashCallBook {
