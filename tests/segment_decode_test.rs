@@ -1,11 +1,11 @@
 use std::rc::Rc;
-/// Segment decode test with cumulative HashCallBook for AP decoding.
-use ft8rs::{decode_ft8, DecodeFT8Options};
+/// Segment decode test with cumulative HashCallBook and long_decode utility.
+use ft8rs::{decode_ft8, long_decode, DecodeFT8Options, LongDecodeConfig};
 use ft8rs::util::hashcall::HashCallBook;
 use std::time::Instant;
 
 const SEGMENT_DURATION: usize = 15;
-const DECODE_SAMPLE_RATE: usize = 12_000;
+const DECODE_SAMPLE_RATE: u32 = 12_000;
 
 #[derive(Debug, Clone)]
 struct BMsg { snr: i32, drift: f64, freq: f64, msg: String }
@@ -105,16 +105,14 @@ fn test_segment_decode_with_hashcallbook() {
     let nseg = (dur / SEGMENT_DURATION as f64).floor() as usize;
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
     let bl_count = baseline.len();
-    let s12k = resample(&all, sr, DECODE_SAMPLE_RATE as u32);
-    let sps = SEGMENT_DURATION * DECODE_SAMPLE_RATE;
+    let s12k = resample(&all, sr, DECODE_SAMPLE_RATE);
+    let sps = SEGMENT_DURATION * DECODE_SAMPLE_RATE as usize;
 
-    // Cumulative HashCallBook across segments
     let book = Rc::new(HashCallBook::new());
 
     let mut total_matched = 0;
     let mut total_missed = 0;
     let mut total_extra = 0;
-
     let mut total_hash_resolved = 0;
     let mut diff_lines = vec!["Date-Time,SNR,Drift,Freq,Msg,Tag".to_string()];
 
@@ -122,12 +120,12 @@ fn test_segment_decode_with_hashcallbook() {
         let seg_start = (seg as isize * sps as isize - DECODE_SAMPLE_RATE as isize).max(0) as usize;
         let seg_end = ((seg + 1) as isize * sps as isize + DECODE_SAMPLE_RATE as isize).min(s12k.len() as isize) as usize;
         let data = &s12k[seg_start..seg_end];
-        if data.len() < DECODE_SAMPLE_RATE * 10 { continue; }
+        if data.len() < DECODE_SAMPLE_RATE as usize * 10 { continue; }
 
         let bk = Rc::clone(&book);
         let t0 = Instant::now();
         let decoded = decode_ft8(data, DecodeFT8Options {
-            sample_rate: Some(DECODE_SAMPLE_RATE), freq_low: Some(200.0),
+            sample_rate: Some(DECODE_SAMPLE_RATE as usize), freq_low: Some(200.0),
             freq_high: Some(3000.0), sync_min: Some(0.8), depth: Some(3),
             max_candidates: Some(500), hash_call_book: Some(bk),
             mycall: None,
@@ -135,15 +133,12 @@ fn test_segment_decode_with_hashcallbook() {
         });
         let elapsed = t0.elapsed();
 
-        // Extract callsigns and save to cumulative book
         for d in &decoded {
             extract_and_save_callsigns(&d.msg, &book);
             if d.msg.contains('<') { total_hash_resolved += 1; }
         }
 
         let bl: Vec<&BMsg> = baseline.iter().filter(|(s, _)| *s == seg).map(|(_, m)| m).collect();
-
-
         let tot = (14 * 3600 + 3 * 60) as u64 + (seg as f64 * SEGMENT_DURATION as f64) as u64;
         let ts = format!("230208_{:02}{:02}{:02}", tot / 3600, (tot % 3600) / 60, tot % 60);
 
@@ -184,4 +179,97 @@ fn test_segment_decode_with_hashcallbook() {
 
     println!("\nMatched: {} / {} ({:.1}%) | Missed: {} | Extra: {} | Hash resolved: {}", total_matched, bl_count, rate, total_missed, total_extra, total_hash_resolved);
     assert!(rate >= 70.0, "Hit rate {:.1}% < 70%", rate);
+}
+
+/// Quick smoke test: validates long_decode compiles and produces results.
+#[test]
+fn test_segment_decode_long_quick() {
+    let (sr, all) = load_wav("tests/ft8/230208_140300.wav");
+    let baseline = parse_baseline("tests/ft8/230208_140300.csv");
+
+    // Only resample what we need for 3 segments (~50s of 48kHz audio → ~12s of 12kHz)
+    let sps_48k = SEGMENT_DURATION * sr as usize;
+    let needed_48k_samples = (3 * sps_48k + sr as usize * 2).min(all.len());
+    let partial_48k = &all[..needed_48k_samples];
+    let s12k = resample(partial_48k, sr, 12000);
+
+    // Only test first 3 segments
+    let sps = SEGMENT_DURATION * DECODE_SAMPLE_RATE as usize;
+    let dur_samples = (3 * sps + DECODE_SAMPLE_RATE as usize * 2).min(s12k.len());
+    let partial = &s12k[..dur_samples];
+
+    let config = LongDecodeConfig {
+        freq_low: 200.0, freq_high: 3000.0, sync_min: 0.8,
+        max_candidates: 300, depth: 3, n_cycles: 1,
+        smoothing: false, cross_segment_memory: true,
+        mycall: None, hiscall: None,
+    };
+
+    let t0 = Instant::now();
+    let result = long_decode(partial, 12000, &config);
+    let elapsed = t0.elapsed();
+
+    let mut matched = 0u32;
+    for seg_result in &result.segments {
+        let seg = seg_result.segment;
+        let bl: Vec<&BMsg> = baseline.iter().filter(|(s, _)| *s == seg).map(|(_, m)| m).collect();
+        for m in &bl {
+            let nm = norm(&m.msg);
+            if seg_result.decoded.iter().any(|d| norm(d) == nm) { matched += 1; }
+        }
+        println!("  Seg {}: {} decoded, {} matches, {}ms",
+            seg, seg_result.decoded.len(), matched, seg_result.elapsed_ms);
+    }
+
+    println!("long_decode quick: {} matches in {:.1}s", matched, elapsed.as_secs_f64());
+    assert!(result.segments.len() > 0, "long_decode produced no segments");
+    assert!(matched > 0, "long_decode should decode at least 1 message");
+}
+
+/// Full long_decode with 2-cycle decoding for maximum sensitivity.
+/// Takes ~6-8 minutes. Run manually: cargo test test_segment_decode_long -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_segment_decode_long() {
+    let (sr, all) = load_wav("tests/ft8/230208_140300.wav");
+    let baseline = parse_baseline("tests/ft8/230208_140300.csv");
+    let bl_count = baseline.len();
+
+    let config = LongDecodeConfig {
+        freq_low: 200.0, freq_high: 3000.0, sync_min: 0.8,
+        max_candidates: 500, depth: 3, n_cycles: 2,
+        smoothing: true, cross_segment_memory: true,
+        mycall: None, hiscall: None,
+    };
+
+    let t0 = Instant::now();
+    let result = long_decode(&all, sr, &config);
+    let total_elapsed = t0.elapsed();
+
+    let mut total_matched = 0u32;
+    let mut total_missed = 0u32;
+    let mut total_extra = 0u32;
+
+    for seg_result in &result.segments {
+        let seg = seg_result.segment;
+        let bl: Vec<&BMsg> = baseline.iter().filter(|(s, _)| *s == seg).map(|(_, m)| m).collect();
+
+        let mut matched = 0u32; let mut missed = 0u32;
+        for m in &bl {
+            let nm = norm(&m.msg);
+            if seg_result.decoded.iter().any(|d| norm(d) == nm) { matched += 1; }
+            else { missed += 1; }
+        }
+        let extra = seg_result.decoded.len() as u32 - matched;
+
+        total_matched += matched; total_missed += missed; total_extra += extra;
+        println!("  Seg {}: decoded {} | matched {}/{} | missed {} | extra {} | {}ms",
+            seg, seg_result.decoded.len(), matched, bl.len(), missed, extra, seg_result.elapsed_ms);
+    }
+
+    let rate = total_matched as f64 / bl_count as f64 * 100.0;
+    println!("\nLong decode full:");
+    println!("Matched: {} / {} ({:.1}%) | Missed: {} | Extra: {}", total_matched, bl_count, rate, total_missed, total_extra);
+    println!("Total elapsed: {:.1}s", total_elapsed.as_secs_f64());
+    assert!(rate >= 75.0, "Hit rate {:.1}% < 75%", rate);
 }

@@ -8,6 +8,17 @@ use crate::util::fft::{fft_complex, next_pow2};
 use crate::util::hashcall::HashCallBook;
 use crate::util::unpack_jt77::unpack77;
 
+/// sync8 spectral mode – different representations favour different SNR regimes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SyncMode {
+    /// Power spectrum: s = Re² + Im² (best for strong signals)
+    Power = 0,
+    /// Amplitude spectrum: s = sqrt(Re² + Im²) (better for weak signals, compresses dynamic range)
+    Amplitude = 1,
+    /// Absolute sum: s = |Re| + |Im| (most robust against impulsive noise)
+    AbsSum = 2,
+}
+
 const NSPS: usize = 1920;
 const NFFT1: usize = 2 * NSPS; // 3840
 const NSTEP: usize = NSPS / 4; // 480
@@ -253,7 +264,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     cx_re[..residual.len()].copy_from_slice(&residual);
         fft_complex(&mut cx_re, &mut cx_im, false);
 
-        let (candidates, _sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates);
+        let (candidates, _sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates, SyncMode::Power);
         let mut coarse_frequency_uses = count_candidate_frequencies(&candidates);
         let mut coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
             std::collections::HashMap::new();
@@ -336,7 +347,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
             if nagain_nfb <= nagain_nfa { continue; }
             
             let (nagain_candidates, nagain_sbase) = sync8(
-                &dd_original, nagain_nfa, nagain_nfb, nagain_syncmin, 50,  // narrow band, fewer candidates
+                &dd_original, nagain_nfa, nagain_nfb, nagain_syncmin, 50, SyncMode::Power,  // narrow band, fewer candidates
             );
             
             let mut nagain_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
@@ -414,6 +425,7 @@ fn sync8(
     nfb: f64,
     syncmin: f64,
     maxcand: usize,
+    mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
     let jz = 62;
     let fft_size = next_pow2(NFFT1); // 4096
@@ -437,9 +449,13 @@ fn sync8(
         }
         fft_complex(&mut x_re, &mut x_im, false);
         for i in 0..half_size {
-            let power = x_re[i] * x_re[i] + x_im[i] * x_im[i];
-            s[i * NHSYM + j] = power;
-            savg[i] += power;
+            let val = match mode {
+                SyncMode::Amplitude => (x_re[i] * x_re[i] + x_im[i] * x_im[i]).sqrt(),
+                SyncMode::AbsSum => x_re[i].abs() + x_im[i].abs(),
+                _ => x_re[i] * x_re[i] + x_im[i] * x_im[i],
+            };
+            s[i * NHSYM + j] = val;
+            savg[i] += val;
         }
     }
 
@@ -666,8 +682,8 @@ fn ft8b(
     );
 
     // WSJT-X: sync gate is nsync <= 6 bailout (= need >=7)
-    // We slightly relax for depth=3 to catch weaker signals
-    let min_costas_hits = if depth >= 3 { 5 } else { 7 };
+    // We relax: nsync >= 5 default; nsync >= 4 allowed with high symbol SNR
+    let min_costas_hits: usize = if depth >= 3 { 4 } else { 6 };
     if !passes_sync_gate(&workspace.s8, min_costas_hits) {
         return None;
     }
@@ -860,23 +876,50 @@ fn extract_soft_symbols(cd0_re: &[f64], cd0_im: &[f64], ibest: isize, workspace:
 fn passes_sync_gate(s8: &[f64], min_costas_hits: usize) -> bool {
     const SYNC_TIME_SHIFTS: [usize; 3] = [0, 36, 72];
     let mut nsync = 0;
+    // ── SNR-based scoring (JTDX-style) ──
+    let mut nsyncscore = 0u32;
+    let mut scoreratio = 0.0f64;
+
     for k in 0..COSTAS_BLOCKS {
         for &offset in &SYNC_TIME_SHIFTS {
             let mut max_tone = 0;
             let mut max_val = -1.0;
+            let mut sum_noise = 0.0;
             for t in 0..8 {
                 let v = s8[t * NN + k + offset];
+                sum_noise += v;
                 if v > max_val {
                     max_val = v;
                     max_tone = t;
                 }
             }
-            if max_tone == COSTAS[k] as usize {
+            // SNR per sync symbol: sync_tone / average of other 7 tones
+            let noise = (sum_noise - max_val) / 7.0;
+            if noise > 1e-12 && max_tone == COSTAS[k] as usize {
                 nsync += 1;
+                if max_val > noise {
+                    nsyncscore += 1;
+                    scoreratio += max_val / noise;
+                }
             }
         }
     }
-    nsync >= min_costas_hits
+
+    // ── JTDX-style soft gate: hard nsync threshold is lowered when per-symbol SNR is high ──
+    if nsyncscore > 0 {
+        scoreratio /= nsyncscore as f64;
+    }
+
+    // Hard gate: minimum Costas hits
+    if nsync < min_costas_hits {
+        // Soft override: if per-symbol SNR is very high, let borderline nsync through
+        if nsync >= 4 && nsyncscore >= nsync as u32 && scoreratio > 3.0 {
+            return true;
+        }
+        return false;
+    }
+
+    true
 }
 
 fn build_bit_metrics(workspace: &mut DecodeWorkspace) {

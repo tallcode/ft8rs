@@ -9,3 +9,4 @@ pub mod waveform;
 pub mod hashcall;
 pub mod wav;
 pub mod subtract_ft8;
+pub mod long_decode;
