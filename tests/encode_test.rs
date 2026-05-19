@@ -253,7 +253,7 @@ fn test_20_message_baseline() {
         sample_rate: Some(SAMPLE_RATE),
         freq_low: Some(100.0),
         freq_high: Some(3000.0),
-        sync_min: Some(0.8),
+        sync_min: Some(1.3),
         depth: Some(3),
         max_candidates: Some(300),
         hash_call_book: None,

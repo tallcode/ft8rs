@@ -571,3 +571,73 @@ WSJT-X 使用 AP (A Priori) 解码：对已知信息（mycall/hiscall）的比�
 2. AP 解码接入真实呼号
 3. 更精细的 per-cycle syncmin 调节
 4. JTDX 风格的边界信号虚拟 QSO 处理
+
+---
+
+## 尝试 16: syncmin 对齐 WSJT-X (0.8 → 1.3)
+**日期：** 2026-05-19
+**文件：** `src/ft8/decode.rs`, `src/util/long_decode.rs`, `tests/`
+
+### 思路
+逐行对比 WSJT-X 的 sync8.f90 发现核心差异在 FFT 尺寸（3840 vs 4096），
+但切到 3840 无法通过 20/20。换思路：保持 4096 FFT，但用 WSJT-X 的 syncmin=1.3。
+
+### 结果
+| 指标 | syncmin=0.8 | syncmin=1.3 | 变化 |
+|---|---|---|---|
+| 20/20 基线 | 76s | **50s** | **-34%** |
+| 长解码命中 | 362/449 | 362/449 | 不变 |
+| 长解码耗时 | 491s | **446s** | **-9%** |
+
+### 分析
+- syncmin=1.3 减少候选数 → 更少 ft8b 调用 → 更快
+- 灵敏度零损失：Amplitude 模式 cycle 2 补偿了高门限漏掉的弱信号
+- 与 WSJT-X 参数完全对齐
+
+### 状态：✅ 已保留
+
+---
+
+## 3840-point FFT 尝试（失败）
+**日期：** 2026-05-19
+
+### 尝试
+将 sync8 FFT 从 4096（next_pow2）改为 3840（WSJT-X 原值），
+df 从 2.93 变为 3.125 Hz/bin。
+
+### 结果
+- syncmin=0.8: 20/20 FAILED
+- syncmin=0.7: 20/20 FAILED  
+- syncmin=0.5: 20/20 FAILED
+- 即使极低门限也无法通过，说明不是阈值问题
+
+### 根因分析
+3840 非 2 的幂，FFT 使用 Bluestein 算法 → 与 Fortran FFT 有数值差异 → 
+频率分辨率变化 + 数值差异导致 sync 峰值位置/幅度偏移 → 
+候选选择和频率估计不准 → 解码失败。
+
+### 状态：❌ 已回退（保持 4096）
+
+---
+
+## 当前累计状态（2026-05-19 15:45）
+
+### 保留的修复（9个）
+1. sync8 fdiff 4.0→0.5 — 邻频不互斥
+2. +1s padding — 修复 Costas 死区
+3. nharderrors 40→36 — 对齐 WSJT-X
+4. maxosd pass2=5 — 深度 OSD
+5. max_passes 3→4 — 多轮减法
+6. HashCallBook 累积 (Rc) — +8 条 hash 呼号解析
+7. SNR-based 同步门控 (passes_sync_gate) — 软门控
+8. 2 种 sync 模式 (Power + Amplitude) — +7 条
+9. **syncmin=1.3 对齐 WSJT-X** — -9% 耗时，零灵敏度损失
+
+### 当前基准
+- 20/20: ✅ (50s)
+- 362/449 (80.6%) — 446s
+
+### 下一步
+- FFT 3840 对齐需要重写/验证 Bluestein 实现
+- WSJT-X get_spectrum_baseline 的 Nuttall 窗 Welch 基线估计
+- sbase LLR 归一化校准后启用
