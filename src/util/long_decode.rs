@@ -138,7 +138,7 @@ pub fn long_decode(
             &mut seg_snrs,
         );
 
-        // ── Cycle 2: Amplitude sync on (optionally smoothed) data + relaxed syncmin ──
+        // ── Cycle 2: Amplitude sync + relaxed syncmin ──
         if config.n_cycles >= 2 {
             let decode_data: Vec<f32> = if config.smoothing {
                 let data_f64: Vec<f64> = data.iter().map(|&x| x as f64).collect();
@@ -286,7 +286,6 @@ fn smooth_data(data: &[f64]) -> Vec<f64> {
     smoothed
 }
 
-/// Extract callsigns from a decoded message and save to hash call book.
 fn extract_callsigns(msg: &str, book: &Rc<HashCallBook>) {
     let parts: Vec<&str> = msg.split_whitespace().collect();
     for part in parts {

@@ -319,7 +319,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     // Per-frequency search avoids noise from unrelated parts of the spectrum.
     if depth >= 3 && !decoded.is_empty() {
         // Use higher syncmin for narrow-band search (less noise bandwidth → more reliable)
-        let nagain_syncmin = (syncmin * 1.5).max(1.1);
+        let nagain_syncmin = (syncmin * 1.15).max(1.1); // slightly higher than main passes (narrow band already limits)
         
         // Compute long FFT for original data (done once)
         let mut nagain_cx_re = vec![0.0; NFFT1_LONG];
