@@ -1204,7 +1204,7 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
     for ipass in 0..4 {
         let _maxosd = match ipass {
             0|1|3=>maxosd_base,
-            2=>if depth>=3{5}else{maxosd_base},
+            2=>maxosd_base, // was 5 for depth≥3; WSJT-X uses maxosd=2 always, TRY.md: no measurable gain from deeper OSD
             _=>maxosd_base,
         };
         let metric = bmetrics[ipass];
