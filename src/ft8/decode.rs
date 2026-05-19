@@ -235,7 +235,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
 
     // Compute high-quality spectrum baseline (WSJT-X get_spectrum_baseline)
     // Used for sync normalization and SNR estimation.
-    let _sbase_quality = get_spectrum_baseline(&dd, nfa, nfb);
+    let _sbase_quality = get_spectrum_baseline(&dd);
 
     // Helper: count candidates per frequency bin (for coarse downsampling cache)
     fn count_candidate_frequencies(candidates: &[Candidate]) -> std::collections::HashMap<i32, usize> {
@@ -274,7 +274,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
                     let mut my_cache = std::collections::HashMap::new();
                     let mut my_freq_uses = coarse_frequency_uses.clone();
                     ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &_sbase,
-                         depth, &None, None, None, &mut my_ws, &mut my_cache, &mut my_freq_uses)
+                         depth, &None, None, None, None, &mut my_ws, &mut my_cache, &mut my_freq_uses)
                         .map(|r| (cand.freq, cand.dt, cand.sync, r))
                 })
                 .collect()
@@ -282,7 +282,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
             let mut seq = Vec::new();
             for cand in &candidates {
                 if let Some(r) = ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &_sbase,
-                    depth, &book, None, None, &mut workspace, &mut coarse_downsample_cache, &mut coarse_frequency_uses) {
+                    depth, &book, None, None, None, &mut workspace, &mut coarse_downsample_cache, &mut coarse_frequency_uses) {
                     seq.push((cand.freq, cand.dt, cand.sync, r));
                 }
             }
@@ -357,7 +357,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
                     cand.freq,
                     cand.dt,
                     &nagain_sbase,
-                    depth, &book, None, None,
+                    depth, &book, None, None, None,
                     &mut workspace,
                     &mut nagain_downsample_cache,
                     &mut nagain_freq_uses,
@@ -620,14 +620,11 @@ fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Ve
 }
 
 /// Nuttall 4-term window (matching WSJT-X nuttal_window.f90).
-/// Coefficients: a0=0.355768, a1=0.487396, a2=0.144232, a3=0.012604
 fn nuttall_window(n: usize) -> Vec<f64> {
     let mut w = vec![0.0; n];
     let nf = n as f64;
-    let a0 = 0.355768;
-    let a1 = 0.487396;
-    let a2 = 0.144232;
-    let a3 = 0.012604;
+    let a0 = 0.355768; let a1 = 0.487396;
+    let a2 = 0.144232; let a3 = 0.012604;
     for i in 0..n {
         let x = 2.0 * std::f64::consts::PI * i as f64 / nf;
         w[i] = a0 - a1 * x.cos() + a2 * (2.0 * x).cos() - a3 * (3.0 * x).cos();
@@ -635,66 +632,30 @@ fn nuttall_window(n: usize) -> Vec<f64> {
     w
 }
 
-/// WSJT-X-style spectrum baseline estimation using Welch's method.
-/// Uses Nuttall-windowed overlapping FFT blocks for low-variance baseline.
-fn get_spectrum_baseline(dd: &[f64], nfa: f64, nfb: f64) -> Vec<f64> {
-    let nfft = NFFT1; // 3840
-    let nh1 = nfft / 2; // 1920
-    let nst = nh1; // 1920 — step size for 50% overlap
-    let nf = if dd.len() > nfft { (dd.len() - nfft) / nst + 1 } else { 1 };
-    let nf = nf.min(93); // WSJT-X: NF = NMAX/NST - 1 = 93
-
-    // Compute Nuttall window once
+/// WSJT-X get_spectrum_baseline: Welch method with Nuttall window.
+fn get_spectrum_baseline(dd: &[f64]) -> Vec<f64> {
+    let nfft = NFFT1; let nh1 = nfft / 2; let nst = nh1;
+    let nf = if dd.len() > nfft { ((dd.len() - nfft) / nst + 1).min(93) } else { 1 };
     let window = nuttall_window(nfft);
-
     let mut savg = vec![0.0; nh1];
-    let df = SAMPLE_RATE as f64 / nfft as f64; // 3.125 Hz/bin
-
     for j in 0..nf {
-        let ia = j * nst;
-        let ib = ia + nfft;
+        let ia = j * nst; let ib = ia + nfft;
         if ib > dd.len() { break; }
-
-        let mut x_re = vec![0.0; nfft];
-        let mut x_im = vec![0.0; nfft];
-        for i in 0..nfft {
-            x_re[i] = dd[ia + i] * window[i];
-        }
+        let mut x_re = vec![0.0; nfft]; let mut x_im = vec![0.0; nfft];
+        for i in 0..nfft { x_re[i] = dd[ia + i] * window[i]; }
         fft_complex(&mut x_re, &mut x_im, false);
-
-        for i in 0..nh1 {
-            savg[i] += x_re[i] * x_re[i] + x_im[i] * x_im[i];
-        }
+        for i in 0..nh1 { savg[i] += x_re[i] * x_re[i] + x_im[i] * x_im[i]; }
     }
-
-    // Average
-    if nf > 0 {
-        let scale = 1.0 / nf as f64;
-        for i in 0..nh1 {
-            savg[i] *= scale;
-        }
-    }
-
-    // Baseline smoothing (WSJT-X baseline.f90)
-    let ia = (1.0_f64.max((nfa / df).round())) as usize;
-    let ib = ((nh1 - 1) as f64).min((nfb / df).round()) as usize;
-    let window = 50;
+    if nf > 0 { let s = 1.0 / nf as f64; for v in savg.iter_mut() { *v *= s; } }
+    let df = SAMPLE_RATE as f64 / nfft as f64;
+    let ia = (1.0_f64.max((200.0 / df).round())) as usize;
+    let ib = ((nh1 - 1) as f64).min((3000.0 / df).round()) as usize;
     let mut sbase = vec![0.0; nh1];
-
     for i in 0..nh1 {
-        let lo = ia.max(i.saturating_sub(window));
-        let hi = ib.min(i + window);
-        let mut sum = 0.0;
-        let mut count = 0;
-        for j in lo..=hi {
-            sum += savg[j];
-            count += 1;
-        }
-        sbase[i] = if count > 0 {
-            10.0 * (1e-30f64.max(sum / count as f64)).log10()
-        } else {
-            0.0
-        };
+        let lo = ia.max(i.saturating_sub(50)); let hi = ib.min(i + 50);
+        let mut sum = 0.0; let mut cnt = 0;
+        for j in lo..=hi { sum += savg[j]; cnt += 1; }
+        sbase[i] = if cnt > 0 { 10.0 * (1e-30f64.max(sum / cnt as f64)).log10() } else { 0.0 };
     }
     sbase
 }
@@ -710,6 +671,7 @@ fn ft8b(
     _book: &Option<std::rc::Rc<HashCallBook>>,
     mycall: Option<&str>,
     hiscall: Option<&str>,
+    sbase_welch: Option<&[f64]>,
     workspace: &mut DecodeWorkspace,
     coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
     coarse_frequency_uses: &mut std::collections::HashMap<i32, usize>,
@@ -767,8 +729,8 @@ fn ft8b(
     // ── sbase-based LLR normalization: compensate for frequency-dependent noise ──
     // sbase is built by sync8 with SYNC8_DF = 12000/4096 = 2.93 Hz/bin.
     // Previously used DOWNSAMPLE_DF (0.0625) → wrong index, normalization never applied.
-    if false { // Disabled: xbase formula needs recalibration for our sbase valuespace
-        let freq_bin = (f1 / SYNC8_DF).round() as usize;
+    if let Some(sb) = sbase_welch {
+        let df_w = crate::util::constants::SAMPLE_RATE as f64 / crate::ft8::decode::NFFT1 as f64; let freq_bin = (f1 / df_w).round() as usize;
         if freq_bin < _sbase.len() {
             let sbase_val = _sbase[freq_bin];
             let xbase = 10.0_f64.powf(0.1 * (sbase_val - 40.0));
