@@ -51,6 +51,7 @@ pub struct DecodedMessage {
     pub sync: f64,
 }
 
+#[derive(Default)]
 pub struct DecodeOptions {
     pub sample_rate: Option<usize>,
     pub freq_low: Option<f64>,
@@ -66,22 +67,6 @@ pub struct DecodeOptions {
     pub sync_mode: Option<SyncMode>,
 }
 
-impl Default for DecodeOptions {
-    fn default() -> Self {
-        DecodeOptions {
-            sample_rate: None,
-            freq_low: None,
-            freq_high: None,
-            sync_min: None,
-            depth: None,
-            max_candidates: None,
-            hash_call_book: None,
-            mycall: None,
-            hiscall: None,
-            sync_mode: None,
-        }
-    }
-}
 
 #[derive(Clone)]
 struct Candidate {
@@ -394,8 +379,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
 }
 
 fn normalize_message_key(msg: &str) -> String {
-    msg.trim()
-        .split_whitespace()
+    msg.split_whitespace()
         .map(|w| w.to_uppercase())
         .collect::<Vec<_>>()
         .join(" ")
@@ -615,7 +599,7 @@ fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Ve
     for i in 0..nh1 {
         let mut sum = 0.0;
         let mut count = 0;
-        let lo = ia.max(if i > window { i - window } else { 0 });
+        let lo = ia.max(i.saturating_sub(window));
         let hi = ib.min(i + window);
         for j in lo..=hi {
             sum += savg[j];
@@ -717,9 +701,7 @@ fn ft8b(
     }
     
     let result = try_decode_passes(workspace, depth, mycall, hiscall);
-    if result.is_none() {
-        return None;
-    }
+    result.as_ref()?;
     let result = result.unwrap();
 
     if result.cw.iter().all(|&b| b == 0) {
@@ -732,9 +714,7 @@ fn ft8b(
     }
 
     let msg = unpack77(&message77, _book.as_ref().map(|rc| rc.as_ref()));
-    if msg.is_none() {
-        return None;
-    }
+    msg.as_ref()?;
     let msg = msg.unwrap();
     if msg.trim().is_empty() {
         return None;

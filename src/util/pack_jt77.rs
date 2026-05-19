@@ -105,7 +105,7 @@ fn parse_callsign(raw: &str) -> CallsignParse {
         }
     }
 
-    let standard = iarea >= 1 && iarea <= 2 && nplet >= 1 && npdig < iarea && nslet <= 3;
+    let standard = (1..=2).contains(&iarea) && nplet >= 1 && npdig < iarea && nslet <= 3;
 
     CallsignParse {
         basecall: call,
@@ -137,7 +137,7 @@ pub fn pack28(token: &str) -> usize {
             let padded = format!("{:>4}", rest);
             let mut m: usize = 0;
             for c in padded.chars() {
-                let j = if c >= 'A' && c <= 'Z' {
+                let j = if ('A'..='Z').contains(&c) {
                     (c as usize) - 64
                 } else {
                     0
@@ -177,7 +177,7 @@ pub fn pack28(token: &str) -> usize {
         };
 
         let cs_chars: Vec<char> = cs.chars().collect();
-        let mut cs_padded = vec![' '; 6];
+        let mut cs_padded = [' '; 6];
         for i in 0..cs_chars.len().min(6) {
             cs_padded[i] = cs_chars[i];
         }
@@ -244,7 +244,7 @@ fn pack_grid4(s: &str) -> usize {
     // Numeric report
     if let Some(rest) = s.strip_prefix('R') {
         if let Ok(irpt) = rest.parse::<i32>() {
-            let irpt = if irpt >= -50 && irpt <= -31 {
+            let irpt = if (-50..=-31).contains(&irpt) {
                 irpt + 101
             } else {
                 irpt
@@ -254,7 +254,7 @@ fn pack_grid4(s: &str) -> usize {
     }
 
     if let Ok(irpt) = s.parse::<i32>() {
-        let irpt = if irpt >= -50 && irpt <= -31 {
+        let irpt = if (-50..=-31).contains(&irpt) {
             irpt + 101
         } else {
             irpt
@@ -319,7 +319,7 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
         (MAXGRID4 + 4, 0)
     } else if let Some(rest) = last_upper.strip_prefix('R') {
         if let Ok(irpt) = rest.parse::<i32>() {
-            let irpt = if irpt >= -50 && irpt <= -31 {
+            let irpt = if (-50..=-31).contains(&irpt) {
                 irpt + 101
             } else {
                 irpt
@@ -329,7 +329,7 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
             return None;
         }
     } else if let Ok(irpt) = last_upper.parse::<i32>() {
-        let irpt = if irpt >= -50 && irpt <= -31 {
+        let irpt = if (-50..=-31).contains(&irpt) {
             irpt + 101
         } else {
             irpt
@@ -499,13 +499,13 @@ fn pack_text77(chars: &[char]) -> Vec<u8> {
     // limb 0 gives 7 bits (bits 0-6 of byte 0, i.e., top 7 bits)
     let byte0 = qa_bytes[0];
     for b in (0..7).rev() {
-        bits.push(((byte0 >> b) & 1) as u8);
+        bits.push(((byte0 >> b) & 1));
     }
     // limbs 1..8 give 8 bits each
     for li in 1..=8 {
         let byte = qa_bytes[li];
         for b in (0..8).rev() {
-            bits.push(((byte >> b) & 1) as u8);
+            bits.push(((byte >> b) & 1));
         }
     }
     bits

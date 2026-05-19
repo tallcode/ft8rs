@@ -1,5 +1,4 @@
 /// FT8-specific constants.
-
 /// 7-symbol Costas array for sync.
 pub const COSTAS: [u8; 7] = [3, 1, 4, 0, 6, 5, 2];
 

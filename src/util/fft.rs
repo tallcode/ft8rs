@@ -114,7 +114,7 @@ fn radix2_fft_raw(re: &mut [f64], im: &mut [f64], inverse: bool) {
         return;
     }
 
-    let bits = (usize::BITS - n.leading_zeros()) as u32 - 1;
+    let bits = (usize::BITS - n.leading_zeros()) - 1;
     for i in 1..n {
         let j = bit_reverse(i as u32, bits) as usize;
         if j > i {

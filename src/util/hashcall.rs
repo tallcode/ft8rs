@@ -32,6 +32,12 @@ pub struct HashCallBook {
     hash22_entries: RefCell<Vec<(usize, String)>>,
 }
 
+impl Default for HashCallBook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HashCallBook {
     pub fn new() -> Self {
         HashCallBook {

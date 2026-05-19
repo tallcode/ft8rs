@@ -40,6 +40,7 @@ pub struct DecodedMessage {
     pub sync: f64,
 }
 
+#[derive(Default)]
 pub struct DecodeOptions {
     pub sample_rate: Option<usize>,
     pub freq_low: Option<f64>,
@@ -50,19 +51,6 @@ pub struct DecodeOptions {
     pub hash_call_book: Option<HashCallBook>,
 }
 
-impl Default for DecodeOptions {
-    fn default() -> Self {
-        DecodeOptions {
-            sample_rate: None,
-            freq_low: None,
-            freq_high: None,
-            sync_min: None,
-            depth: None,
-            max_candidates: None,
-            hash_call_book: None,
-        }
-    }
-}
 
 struct Candidate {
     freq: f64,
@@ -714,7 +702,7 @@ fn ft4_baseline(savg: &[f64], _nfa: usize, nfb: usize, df: f64) -> Vec<f64> {
     let nseg = 10;
     let npct = 10;
     let nlen = ((ib - ia + 1) / nseg).max(1);
-    let i0 = (ib - ia + 1) / 2;
+    let i0 = (ib - ia).div_ceil(2);
 
     let mut x: Vec<f64> = Vec::new();
     let mut y: Vec<f64> = Vec::new();
@@ -754,11 +742,7 @@ fn ft4_baseline(savg: &[f64], _nfa: usize, nfb: usize, df: f64) -> Vec<f64> {
     } else {
         let half_window = 25;
         for i in ia..=ib {
-            let lo = ia.max(if i > half_window {
-                i - half_window
-            } else {
-                0
-            });
+            let lo = ia.max(i.saturating_sub(half_window));
             let hi = ib.min(i + half_window);
             let mut sum = 0.0;
             let mut count = 0;
