@@ -504,3 +504,70 @@ WSJT-X 使用 AP (A Priori) 解码：对已知信息（mycall/hiscall）的比�
 ### 结果
 - 20/20: ✅
 - 当前基准: 355/449 (79.1%) with HashCallBook
+
+---
+
+## 尝试 15: 3 种 sync 谱模式 + 数据平滑（调用层编排）
+**日期：** 2026-05-19
+**文件：** `src/ft8/decode.rs`, `src/util/long_decode.rs`
+
+### 思路
+实现 ANALYSIS.md 的"多视角重搜"策略：对同一段数据用 3 种不同的 sync8 谱表示 +
+数据平滑逐轮解码，合并去重。
+
+### 改动
+1. **SyncMode 枚举**：Power / Amplitude / AbsSum
+2. **DecodeOptions.sync_mode 字段**：可配置 sync 模式
+3. **SNR-based 同步门控**：passes_sync_gate 从简单 nsync 计数升级为 JTDX 风格的 nsyncscore + scoreratio 软门控
+4. **long_decode 多 cycle**：
+   - Cycle 1: Power sync，原始数据
+   - Cycle 2: Amplitude sync，数据平滑后
+   - Cycle 3: AbsSum sync，原始数据（更低 syncmin）
+5. 每 cycle 合并去重，结果跨段记忆
+
+### 结果
+| 配置 | 命中 | 提升 |
+|---|---|---|
+| 基线 (Power only) | 355/449 (79.1%) | — |
+| 2-cycle (Power + Amplitude 平滑) | 362/449 (80.6%) | +7 |
+| 3-cycle (+AbsSum) | 366/449 (81.5%) | +11 |
+
+- 20/20 基线：始终通过 ✅
+- 编译：0 warning ✅
+
+### 验证
+第一次实现时 SyncMode 只定义了枚举但没接进 decode_ft8 内部 sync8 调用，
+导致 2-cycle 跑了两遍 Power 模式，命中不变。修复后立即获得增益，证明：
+
+> **多 sync 谱表示是灵敏度提升的关键——不同谱模式对不同 SNR 区间的信号有不同优势，叠加后互补覆盖。**
+
+### 状态：✅ 已保留（3-cycle 为默认配置）
+
+---
+
+## 当前累计状态（2026-05-19 13:30）
+
+### 保留的修复（8个）
+1. sync8 fdiff 4.0→0.5 — 邻频不互斥
+2. +1s padding — 修复 Costas 死区
+3. nharderrors 40→36 — 对齐 WSJT-X
+4. maxosd pass2=5 — 深度 OSD
+5. max_passes 3→4 — 多轮减法
+6. HashCallBook 累积 (Rc) — +8 条 hash 呼号解析
+7. SNR-based 同步门控 (passes_sync_gate) — 低 nsync 高 SNR 信号通过
+8. **3 种 sync 模式 + 数据平滑 (long_decode)** — +11 条
+
+### 预留代码
+- AP 解码框架 (Pass 9/10) — 需显式传入 mycall/hiscall
+
+### 结果
+- 20/20: ✅
+- 当前基准: 366/449 (81.5%)
+- 目标: 420+/449 (WSJT-X/JTDX 水平)
+- 差距: ~54 条
+
+### 剩余方向（按 ANALYSIS.md 优先级）
+1. 跨段信号关联检测（用保存的复符号做匹配滤波）
+2. AP 解码接入真实呼号
+3. 更精细的 per-cycle syncmin 调节
+4. JTDX 风格的边界信号虚拟 QSO 处理

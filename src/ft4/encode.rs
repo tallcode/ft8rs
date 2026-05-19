@@ -13,7 +13,7 @@ const COSTAS_D: [u8; 4] = [3, 2, 0, 1];
 
 /// Convert FT4 LDPC codeword bits into 103 channel tones.
 pub fn get_tones(codeword: &[u8]) -> Vec<u8> {
-    let mut data_tones = vec![0u8; 87];
+    let mut data_tones = [0u8; 87];
     for i in 0..87 {
         let b0 = codeword[2 * i];
         let b1 = codeword[2 * i + 1];

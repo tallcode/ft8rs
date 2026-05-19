@@ -27,12 +27,12 @@ fn unpack28(n28: usize, book: Option<&HashCallBook>) -> Option<String> {
         return Some("CQ".into());
     }
 
-    if n28 >= 3 && n28 < 3 + 1000 {
+    if (3..3 + 1000).contains(&n28) {
         let nqsy = n28 - 3;
         return Some(format!("CQ {:03}", nqsy));
     }
 
-    if n28 >= 1003 && n28 < N_TOKENS {
+    if (1003..N_TOKENS).contains(&n28) {
         let mut m = n28 - 1003;
         let mut chars = String::new();
         for _ in 0..4 {
@@ -51,7 +51,7 @@ fn unpack28(n28: usize, book: Option<&HashCallBook>) -> Option<String> {
         return Some(format!("CQ {}", directed));
     }
 
-    if n28 >= N_TOKENS && n28 < N_TOKENS + MAX22 {
+    if (N_TOKENS..N_TOKENS + MAX22).contains(&n28) {
         let n22 = n28 - N_TOKENS;
         if let Some(book) = book {
             if let Some(resolved) = book.lookup22(n22) {

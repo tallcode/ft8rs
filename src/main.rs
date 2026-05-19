@@ -62,7 +62,7 @@ fn run_decode(file: &PathBuf, mode: &str, low: f64, high: f64, depth: usize, max
         wav.samples.len() as f64 / wav.sample_rate as f64
     );
 
-    let samples_f32: Vec<f32> = wav.samples.iter().map(|&x| x as f32).collect();
+    let samples_f32: Vec<f32> = wav.samples.iter().map(|&x| x).collect();
     let start = Instant::now();
 
     if mode == "ft4" {

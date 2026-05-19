@@ -201,9 +201,7 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
                 if icol != id {
                     for row_idx in 0..k {
                         let r = row_idx * n;
-                        let tmp = genmrb[r + id];
-                        genmrb[r + id] = genmrb[r + icol];
-                        genmrb[r + icol] = tmp;
+                        genmrb.swap(r + id, r + icol);
                     }
                     indices.swap(id, icol);
                 }
@@ -275,7 +273,7 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
     // Order-2
     if norder >= 2 {
         let ntry = 64.min(k);
-        let i_min = if k > ntry { k - ntry } else { 0 };
+        let i_min = k.saturating_sub(ntry);
         for i1 in (i_min..k).rev() {
             if apmask[indices[i1]] == 1 {
                 continue;
@@ -317,7 +315,7 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
     // Reorder codeword back to original order
     let mut final_cw = vec![0u8; n];
     for i in 0..n {
-        final_cw[indices[i]] = best_cw[i] as u8;
+        final_cw[indices[i]] = best_cw[i];
     }
 
     let bits91: Vec<u8> = final_cw[..KK].to_vec();

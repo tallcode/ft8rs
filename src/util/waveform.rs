@@ -3,6 +3,7 @@
 const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
 const MODULATION_INDEX: f64 = 1.0;
 
+#[derive(Default)]
 pub struct WaveformOptions {
     pub sample_rate: Option<f64>,
     pub samples_per_symbol: Option<usize>,
@@ -11,17 +12,6 @@ pub struct WaveformOptions {
     pub initial_phase: Option<f64>,
 }
 
-impl Default for WaveformOptions {
-    fn default() -> Self {
-        WaveformOptions {
-            sample_rate: None,
-            samples_per_symbol: None,
-            bt: None,
-            base_frequency: None,
-            initial_phase: None,
-        }
-    }
-}
 
 struct WaveformDefaults {
     sample_rate: f64,

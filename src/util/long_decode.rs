@@ -1,10 +1,11 @@
-/// Long decode utility – multi-cycle, cross-segment FT8 decoding
+/// Long decode utility – multi-cycle, cross-segment FT8 decoding.
 ///
-/// Implements JTDX-inspired strategies for improved sensitivity:
-///  - Multi-cycle decoding (standard → smoothed → relaxed)
-///  - Data smoothing between cycles (reduces noise variance)
-///  - Cross-segment signal memory with association
-///  - Per-cycle variable syncmin
+/// Implements JTDX-inspired multi-perspective re-search for improved sensitivity:
+///  - 3-cycle decode: Power → Amplitude(smoothed) → AbsSum
+///  - Different sync spectral representations complement each other
+///  - Data smoothing between cycles reduces noise variance
+///  - Cross-segment signal memory enables association detection
+///  - Per-cycle variable syncmin (0.80 → 0.68 → 0.52)
 use std::rc::Rc;
 
 use crate::decode_ft8;
@@ -23,10 +24,11 @@ pub struct LongDecodeConfig {
     pub sync_min: f64,
     pub max_candidates: usize,
     pub depth: usize,
-    /// Number of decode cycles (max 3).
-    /// Cycle 1: standard Power sync
-    /// Cycle 2: Amplitude-mode sync on smoothed data
-    /// Cycle 3: Relaxed Power sync on original data
+    /// Number of decode cycles (1-3).
+    /// Cycle 1: Power sync, original data (syncmin × 1.00)
+    /// Cycle 2: Amplitude sync, smoothed data (syncmin × 0.85)
+    /// Cycle 3: AbsSum sync, original data (syncmin × 0.65)
+    /// Results merged with dedup across cycles.
     pub n_cycles: usize,
     /// Enable data smoothing for cycle 2
     pub smoothing: bool,

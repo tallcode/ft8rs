@@ -329,3 +329,91 @@ ft8rs 的并行候选解码是**超越 WSJT-X 的创新**，利用多核加速�
 | ft8ts | TypeScript | 16/20 | TypeScript 参考端口 |
 | wsjtx_lib | C++ | 14/20 | C++ 封装 Fortran |
 | ft8rs (本项目) | Rust | 20/20 | 3.60s |
+
+
+## 第六部分：调用层编排 — 多视角重搜（2026-05-19）
+
+### 6.1 核心发现
+
+**灵敏度提升的关键不在解码器内部算法，而在调用层的多角度编排。**
+
+通过深入对比 WSJT-X 和 JTDX 源码，发现它们在不同 pass 中使用**不同的 sync 谱计算方式**：
+
+| Sync 模式 | 公式 | 优势 | WSJT-X | JTDX | ft8rs (修复前) |
+|---|---|---|---|---|---|
+| Power | Re² + Im² | 强信号 | ✅ | ✅ | ✅ |
+| Amplitude | √(Re² + Im²) | 弱信号（压缩动态范围） | ❌ | ✅ pass 1,4,7 | ❌ |
+| AbsSum | \|Re\| + \|Im\| | 脉冲噪声鲁棒 | ❌ | ✅ pass 3,6,9 | ❌ |
+
+### 6.2 实现
+
+#### SyncMode 枚举
+```rust
+pub enum SyncMode {
+    Power = 0,      // 默认，强信号
+    Amplitude = 1,  // 弱信号友好
+    AbsSum = 2,     // 抗脉冲噪声
+}
+```
+
+#### 通过 DecodeOptions 传递到解码链路
+```rust
+pub struct DecodeOptions {
+    ...
+    pub sync_mode: Option<SyncMode>,  // → decode() → sync8()
+}
+```
+
+#### long_decode 多 cycle 编排
+```
+Cycle 1: Power sync, 原始数据, syncmin=0.80
+Cycle 2: Amplitude sync, 平滑数据, syncmin=0.68
+Cycle 3: AbsSum sync, 原始数据, syncmin=0.52
+每 cycle 去重合并
+```
+
+### 6.3 灵敏度提升历程
+
+| 阶段 | 命中 | 提升 | 关键改动 |
+|---|---|---|---|
+| 原始基线 | 338/449 (75.3%) | — | — |
+| +5 项基础修复 | 355/449 (79.1%) | +17 | sync8邻频/padding/OSD/passes等 |
+| +Power+Amplitude平滑 | 362/449 (80.6%) | +7 | SyncMode 接入 decode |
+| +AbsSum | 366/449 (81.5%) | +4 | 3 种模式全覆盖 |
+
+**总提升：338 → 366 (+28 条, +6.2%)**
+
+### 6.4 数据平滑技术
+
+```rust
+fn smooth_data(data: &[f64]) -> Vec<f64> {
+    // JTDX pass 4 技术: dd[i] = (dd[i-1] + dd[i]) / 2
+    let mut smoothed = vec![0.0; n];
+    smoothed[0] = data[0];
+    for i in 1..n {
+        smoothed[i] = (data[i - 1] + data[i]) * 0.5;
+    }
+    smoothed
+}
+```
+
+低通滤波减小噪声方差，配合 Amplitude sync 模式对弱信号更敏感。
+
+### 6.5 SNR-based 同步门控增强
+
+从简单 nsync 计数升级为 JTDX 风格：
+
+```rust
+// 每符号计算信噪比: sync_tone / avg(other_7_tones)
+// nsyncscore: SNR > 1 的符号数
+// scoreratio: 平均 SNR
+// 软门控: nsync < 4 但 nsyncscore >= nsync 且 scoreratio > 3.0 → 放行
+```
+
+### 6.6 经验教训
+
+**第一次尝试失败**：定义了 SyncMode 枚举和 long_decode，但 cycle 2 调用 decode_ft8 时没传递 sync_mode 参数，decode 内部 hardcoded SyncMode::Power。2-cycle 跑了两次同样的 Power 模式 → 0 增益。
+
+**修复后**：SyncMode → DecodeOptions → decode() → sync8()，完整链路打通 → +11 条。
+
+**教训**：调用层编排不仅仅是"多跑几遍"——必须是**有差异的多遍**（不同参数、不同算法），合并后才互补。这正是 ANALYSIS.md 最初的分析结论。

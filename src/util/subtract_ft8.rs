@@ -217,7 +217,7 @@ pub fn subtract_ft8(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64) {
     let mut camp_re = vec![0.0f64; NFRAME];
     let mut camp_im = vec![0.0f64; NFRAME];
     for i in 0..NFRAME {
-        let j = (nstart - 1 + i as isize) as isize;
+        let j = nstart - 1 + i as isize;
         if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
             let d = dd0[(j - 1) as usize];
             camp_re[i] = d * cref_re[i];
@@ -230,7 +230,7 @@ pub fn subtract_ft8(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64) {
 
     // Subtract: dd0[j] -= 2 × REAL(cfilt[i] × cref(i))
     for i in 0..NFRAME {
-        let j = (nstart - 1 + i as isize) as isize;
+        let j = nstart - 1 + i as isize;
         if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
             let z_re = cfilt_re[i] * cref_re[i] - cfilt_im[i] * cref_im[i];
             dd0[(j - 1) as usize] -= 2.0 * z_re;
