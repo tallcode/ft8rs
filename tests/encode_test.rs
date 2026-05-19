@@ -203,6 +203,7 @@ fn test_ft8_roundtrip_decode() {
             hash_call_book: Some(Rc::new(book)),
             mycall: None,
             hiscall: None,
+            sync_mode: None,
         });
 
         let expected = msg.to_uppercase();
@@ -258,6 +259,7 @@ fn test_20_message_baseline() {
         hash_call_book: None,
         mycall: None,
         hiscall: None,
+        sync_mode: None,
     });
     
     // ⚠️ QUALITY GATE: must decode all 20 messages

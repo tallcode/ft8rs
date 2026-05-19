@@ -128,6 +128,7 @@ pub fn long_decode(
             DECODE_SAMPLE_RATE,
             config,
             config.sync_min,
+            crate::ft8::decode::SyncMode::Power,
             &book,
             &mut seg_msgs,
             &mut seg_freqs,
@@ -135,7 +136,7 @@ pub fn long_decode(
             &mut seg_snrs,
         );
 
-        // ── Cycle 2: Smoothed data + relaxed syncmin ──
+        // ── Cycle 2: Smoothed data + Amplitude sync + relaxed syncmin ──
         if config.n_cycles >= 2 && config.smoothing {
             let data_f64: Vec<f64> = data.iter().map(|&x| x as f64).collect();
             let smoothed_f64 = smooth_data(&data_f64);
@@ -145,6 +146,7 @@ pub fn long_decode(
                 DECODE_SAMPLE_RATE,
                 config,
                 config.sync_min * 0.85,
+                crate::ft8::decode::SyncMode::Amplitude,
                 &book,
                 &mut seg_msgs,
                 &mut seg_freqs,
@@ -153,13 +155,14 @@ pub fn long_decode(
             );
         }
 
-        // ── Cycle 3: Original data, most relaxed syncmin ──
+        // ── Cycle 3: AbsSum sync, most relaxed syncmin ──
         if config.n_cycles >= 3 {
             decode_cycle(
                 data,
                 DECODE_SAMPLE_RATE,
                 config,
                 config.sync_min * 0.65,
+                crate::ft8::decode::SyncMode::AbsSum,
                 &book,
                 &mut seg_msgs,
                 &mut seg_freqs,
@@ -213,6 +216,7 @@ fn decode_cycle(
     sr: u32,
     config: &LongDecodeConfig,
     sync_min: f64,
+    sync_mode: crate::ft8::decode::SyncMode,
     book: &Rc<HashCallBook>,
     msgs: &mut Vec<String>,
     freqs: &mut Vec<f64>,
@@ -230,6 +234,7 @@ fn decode_cycle(
         hash_call_book: Some(bk),
         mycall: config.mycall.clone(),
         hiscall: config.hiscall.clone(),
+        sync_mode: Some(sync_mode),
     });
     for d in &decoded {
         if !msgs.contains(&d.msg) {
