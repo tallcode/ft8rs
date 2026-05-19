@@ -418,7 +418,9 @@ fn sync8(
     mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
     let jz = 62;
-    let fft_size = next_pow2(NFFT1); // 4096 (df=2.93 Hz/bin)
+    let fft_size = next_pow2(NFFT1); // 4096 (df=2.93 Hz/bin).
+    // NOTE: WSJT-X uses NFFT1=3840 (df=3.125). Switching to 3840 breaks
+    // 20/20 baseline — requires full recalibration of syncmin, freq estimation.
     let half_size = fft_size / 2;
     let tstep = NSTEP as f64 / SAMPLE_RATE as f64;
     let df = SAMPLE_RATE as f64 / fft_size as f64;
