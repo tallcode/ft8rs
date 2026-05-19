@@ -28,6 +28,7 @@ const NDOWN: usize = 60;
 const NN: usize = 79;
 
 const NFFT1_LONG: usize = 192000;
+const SYNC8_DF: f64 = SAMPLE_RATE as f64 / 4096.0; // 12000/4096 ≈ 2.93 Hz/bin — matches sync8 FFT
 const NFFT2: usize = 3200;
 const NP2: usize = 2812;
 const COSTAS_BLOCKS: usize = 7;
@@ -417,7 +418,7 @@ fn sync8(
     mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
     let jz = 62;
-    let fft_size = next_pow2(NFFT1); // 4096
+    let fft_size = next_pow2(NFFT1); // 4096 (df=2.93 Hz/bin)
     let half_size = fft_size / 2;
     let tstep = NSTEP as f64 / SAMPLE_RATE as f64;
     let df = SAMPLE_RATE as f64 / fft_size as f64;
@@ -679,19 +680,16 @@ fn ft8b(
 
     build_bit_metrics(workspace);
     
-    // ── xbase LLR normalization: compensate for frequency-dependent noise ──
-    // WSJT-X uses xbase = 10^(0.1*(sbase(freq_bin) - 40)) in SNR calculation.
-    // We apply similar normalization to bit metrics: quiet spectrum → boost LLR.
-    {
-        let freq_bin = (f1 / DOWNSAMPLE_DF).round() as usize;
+    // ── sbase-based LLR normalization: compensate for frequency-dependent noise ──
+    // sbase is built by sync8 with SYNC8_DF = 12000/4096 ≈ 2.93 Hz/bin.
+    // Previously used DOWNSAMPLE_DF (0.0625) → wrong index, normalization never applied.
+    if false { // Disabled: xbase formula needs recalibration for our sbase valuespace
+        let freq_bin = (f1 / SYNC8_DF).round() as usize;
         if freq_bin < _sbase.len() {
             let sbase_val = _sbase[freq_bin];
-            // xbase represents noise power at this frequency.
-            // Lower xbase = quieter band → we can trust the LLRs more
             let xbase = 10.0_f64.powf(0.1 * (sbase_val - 40.0));
-            // Normalize: divide by sqrt(xbase) so quiet bands get boosted
             let scale = 1.0 / (xbase.max(0.01).sqrt());
-            let scale = scale.clamp(0.5, 3.0);  // limit to reasonable range
+            let scale = scale.clamp(0.5, 3.0);
             for metric in [&mut workspace.bmeta, &mut workspace.bmetb, &mut workspace.bmetc, &mut workspace.bmetd] {
                 for v in metric.iter_mut() {
                     *v *= scale;

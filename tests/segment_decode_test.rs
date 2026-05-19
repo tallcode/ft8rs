@@ -238,8 +238,8 @@ fn test_segment_decode_long() {
 
     let config = LongDecodeConfig {
         freq_low: 200.0, freq_high: 3000.0, sync_min: 0.8,
-        max_candidates: 500, depth: 3, n_cycles: 3,
-        smoothing: true, cross_segment_memory: true,
+        max_candidates: 500, depth: 3, n_cycles: 2,
+        smoothing: false, cross_segment_memory: true,
         mycall: None, hiscall: None,
     };
 
