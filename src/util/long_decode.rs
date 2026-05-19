@@ -1,0 +1,289 @@
+/// Long decode utility – multi-cycle, cross-segment FT8 decoding
+///
+/// Implements JTDX-inspired strategies for improved sensitivity:
+///  - Multi-cycle decoding (standard → smoothed → relaxed)
+///  - Data smoothing between cycles (reduces noise variance)
+///  - Cross-segment signal memory with association
+///  - Per-cycle variable syncmin
+use std::rc::Rc;
+
+use crate::decode_ft8;
+use crate::DecodeFT8Options;
+use crate::util::hashcall::HashCallBook;
+
+const SEGMENT_DURATION: f64 = 15.0;
+const DECODE_SAMPLE_RATE: u32 = 12000;
+const SAMPLE_RATE_INTERNAL: usize = 12000;
+
+/// Configuration for long decode.
+#[derive(Clone)]
+pub struct LongDecodeConfig {
+    pub freq_low: f64,
+    pub freq_high: f64,
+    pub sync_min: f64,
+    pub max_candidates: usize,
+    pub depth: usize,
+    /// Number of decode cycles (max 3).
+    /// Cycle 1: standard Power sync
+    /// Cycle 2: Amplitude-mode sync on smoothed data
+    /// Cycle 3: Relaxed Power sync on original data
+    pub n_cycles: usize,
+    /// Enable data smoothing for cycle 2
+    pub smoothing: bool,
+    /// Enable cross-segment signal association
+    pub cross_segment_memory: bool,
+    pub mycall: Option<String>,
+    pub hiscall: Option<String>,
+}
+
+impl Default for LongDecodeConfig {
+    fn default() -> Self {
+        Self {
+            freq_low: 200.0,
+            freq_high: 3000.0,
+            sync_min: 0.8,
+            max_candidates: 500,
+            depth: 3,
+            n_cycles: 3,
+            smoothing: true,
+            cross_segment_memory: true,
+            mycall: None,
+            hiscall: None,
+        }
+    }
+}
+
+/// A previously decoded signal, saved for cross-segment association.
+#[derive(Clone, Debug)]
+pub struct SavedSignal {
+    pub freq: f64,
+    pub dt: f64,
+    pub msg: String,
+    pub snr: f64,
+}
+
+/// Per-segment result.
+#[derive(Clone, Debug)]
+pub struct SegmentResult {
+    pub segment: usize,
+    pub start_s: f64,
+    pub decoded: Vec<String>,
+    pub freq: Vec<f64>,
+    pub dt: Vec<f64>,
+    pub snr: Vec<f64>,
+    pub elapsed_ms: u64,
+}
+
+/// Full long decode result.
+pub struct LongDecodeResult {
+    pub segments: Vec<SegmentResult>,
+    pub total_elapsed_ms: u64,
+}
+
+/// Perform multi-cycle, cross-segment long decode on a multi-segment recording.
+///
+/// Splits the input into 15-second segments, processes each with multiple cycles
+/// of decode strategies, and maintains cross-segment signal memory.
+pub fn long_decode(
+    samples: &[f32],
+    sample_rate: u32,
+    config: &LongDecodeConfig,
+) -> LongDecodeResult {
+    let t0 = std::time::Instant::now();
+    let dur = samples.len() as f64 / sample_rate as f64;
+    let n_segments = (dur / SEGMENT_DURATION).floor() as usize;
+
+    // Resample to 12000 Hz once
+    let s12k: Vec<f32> = if sample_rate == DECODE_SAMPLE_RATE {
+        samples.to_vec()
+    } else {
+        resample_f32(samples, sample_rate as usize, DECODE_SAMPLE_RATE as usize)
+    };
+
+    let sps = SEGMENT_DURATION as usize * SAMPLE_RATE_INTERNAL;
+    let book = Rc::new(HashCallBook::new());
+
+    let mut all_results = Vec::with_capacity(n_segments);
+    let mut signal_memory: Vec<SavedSignal> = Vec::new();
+
+    for seg in 0..n_segments {
+        let seg_start =
+            (seg as isize * sps as isize - SAMPLE_RATE_INTERNAL as isize).max(0) as usize;
+        let seg_end = ((seg + 1) as isize * sps as isize + SAMPLE_RATE_INTERNAL as isize)
+            .min(s12k.len() as isize) as usize;
+        let data = &s12k[seg_start..seg_end];
+        if data.len() < SAMPLE_RATE_INTERNAL * 10 {
+            continue;
+        }
+
+        let seg_t0 = std::time::Instant::now();
+        let mut seg_msgs: Vec<String> = Vec::new();
+        let mut seg_freqs: Vec<f64> = Vec::new();
+        let mut seg_dts: Vec<f64> = Vec::new();
+        let mut seg_snrs: Vec<f64> = Vec::new();
+
+        // ── Cycle 1: Standard decode (Power sync, default params) ──
+        decode_cycle(
+            data,
+            DECODE_SAMPLE_RATE,
+            config,
+            config.sync_min,
+            &book,
+            &mut seg_msgs,
+            &mut seg_freqs,
+            &mut seg_dts,
+            &mut seg_snrs,
+        );
+
+        // ── Cycle 2: Smoothed data + relaxed syncmin ──
+        if config.n_cycles >= 2 && config.smoothing {
+            let data_f64: Vec<f64> = data.iter().map(|&x| x as f64).collect();
+            let smoothed_f64 = smooth_data(&data_f64);
+            let smoothed: Vec<f32> = smoothed_f64.iter().map(|&x| x as f32).collect();
+            decode_cycle(
+                &smoothed,
+                DECODE_SAMPLE_RATE,
+                config,
+                config.sync_min * 0.85,
+                &book,
+                &mut seg_msgs,
+                &mut seg_freqs,
+                &mut seg_dts,
+                &mut seg_snrs,
+            );
+        }
+
+        // ── Cycle 3: Original data, most relaxed syncmin ──
+        if config.n_cycles >= 3 {
+            decode_cycle(
+                data,
+                DECODE_SAMPLE_RATE,
+                config,
+                config.sync_min * 0.65,
+                &book,
+                &mut seg_msgs,
+                &mut seg_freqs,
+                &mut seg_dts,
+                &mut seg_snrs,
+            );
+        }
+
+        // Extract callsigns for hashbook
+        for msg in &seg_msgs {
+            extract_callsigns(msg, &book);
+        }
+
+        // Save to cross-segment memory
+        if config.cross_segment_memory {
+            for i in 0..seg_msgs.len() {
+                signal_memory.push(SavedSignal {
+                    freq: seg_freqs[i],
+                    dt: seg_dts[i],
+                    msg: seg_msgs[i].clone(),
+                    snr: seg_snrs[i],
+                });
+            }
+        }
+        // Keep only recent signals (last 200)
+        if signal_memory.len() > 200 {
+            signal_memory.drain(0..signal_memory.len() - 200);
+        }
+
+        let elapsed = seg_t0.elapsed();
+        all_results.push(SegmentResult {
+            segment: seg,
+            start_s: seg as f64 * SEGMENT_DURATION,
+            decoded: seg_msgs,
+            freq: seg_freqs,
+            dt: seg_dts,
+            snr: seg_snrs,
+            elapsed_ms: elapsed.as_millis() as u64,
+        });
+    }
+
+    LongDecodeResult {
+        segments: all_results,
+        total_elapsed_ms: t0.elapsed().as_millis() as u64,
+    }
+}
+
+/// Run a single decode cycle and merge results.
+fn decode_cycle(
+    data: &[f32],
+    sr: u32,
+    config: &LongDecodeConfig,
+    sync_min: f64,
+    book: &Rc<HashCallBook>,
+    msgs: &mut Vec<String>,
+    freqs: &mut Vec<f64>,
+    dts: &mut Vec<f64>,
+    snrs: &mut Vec<f64>,
+) {
+    let bk = Rc::clone(book);
+    let decoded = decode_ft8(data, DecodeFT8Options {
+        sample_rate: Some(sr as usize),
+        freq_low: Some(config.freq_low),
+        freq_high: Some(config.freq_high),
+        sync_min: Some(sync_min),
+        depth: Some(config.depth),
+        max_candidates: Some(config.max_candidates),
+        hash_call_book: Some(bk),
+        mycall: config.mycall.clone(),
+        hiscall: config.hiscall.clone(),
+    });
+    for d in &decoded {
+        if !msgs.contains(&d.msg) {
+            msgs.push(d.msg.clone());
+            freqs.push(d.freq);
+            dts.push(d.dt);
+            snrs.push(d.snr);
+        }
+    }
+}
+
+/// Resample f32 audio from one sample rate to another (simple linear interpolation).
+fn resample_f32(input: &[f32], from_rate: usize, to_rate: usize) -> Vec<f32> {
+    if from_rate == to_rate {
+        return input.to_vec();
+    }
+    let ratio = from_rate as f64 / to_rate as f64;
+    let out_len = (input.len() as f64 / ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let src_idx = i as f64 * ratio;
+        let src_floor = src_idx as usize;
+        let src_ceil = (src_floor + 1).min(input.len() - 1);
+        let frac = src_idx - src_floor as f64;
+        let val = input[src_floor] as f64 * (1.0 - frac) + input[src_ceil] as f64 * frac;
+        output.push(val as f32);
+    }
+    output
+}
+
+/// Smooth time-domain data by averaging adjacent samples.
+/// JTDX technique: dd[i] = (dd[i-1] + dd[i]) / 2, reduces noise variance.
+fn smooth_data(data: &[f64]) -> Vec<f64> {
+    let n = data.len();
+    if n < 2 {
+        return data.to_vec();
+    }
+    let mut smoothed = vec![0.0; n];
+    smoothed[0] = data[0];
+    for i in 1..n {
+        smoothed[i] = (data[i - 1] + data[i]) * 0.5;
+    }
+    smoothed
+}
+
+/// Extract callsigns from a decoded message and save to hash call book.
+fn extract_callsigns(msg: &str, book: &Rc<HashCallBook>) {
+    let parts: Vec<&str> = msg.split_whitespace().collect();
+    for part in parts {
+        if part.len() >= 3
+            && part.chars().all(|c| c.is_alphanumeric() || c == '/' || c == '<' || c == '>')
+            && part.chars().any(|c| c.is_numeric())
+        {
+            book.save(part);
+        }
+    }
+}
