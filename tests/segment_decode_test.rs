@@ -130,6 +130,7 @@ fn test_segment_decode_with_hashcallbook() {
             max_candidates: Some(500), hash_call_book: Some(bk),
             mycall: None,
             hiscall: None,
+            sync_mode: None,
         });
         let elapsed = t0.elapsed();
 

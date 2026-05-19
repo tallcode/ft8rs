@@ -61,6 +61,9 @@ pub struct DecodeOptions {
     pub hash_call_book: Option<Rc<HashCallBook>>,
     pub mycall: Option<String>,
     pub hiscall: Option<String>,
+    /// Sync spectral mode: Power (default), Amplitude (better for weak signals),
+    /// AbsSum (robust against impulsive noise).
+    pub sync_mode: Option<SyncMode>,
 }
 
 impl Default for DecodeOptions {
@@ -75,6 +78,7 @@ impl Default for DecodeOptions {
             hash_call_book: None,
             mycall: None,
             hiscall: None,
+            sync_mode: None,
         }
     }
 }
@@ -219,6 +223,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     let depth = options.depth.unwrap_or(2);
     let max_candidates = options.max_candidates.unwrap_or(300);
     let book = options.hash_call_book;
+    let sync_mode = options.sync_mode.unwrap_or(SyncMode::Power);
 
     let dd = if sample_rate == SAMPLE_RATE {
         copy_samples_to_decode_window(samples)
@@ -264,7 +269,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     cx_re[..residual.len()].copy_from_slice(&residual);
         fft_complex(&mut cx_re, &mut cx_im, false);
 
-        let (candidates, _sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates, SyncMode::Power);
+        let (candidates, _sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates, sync_mode);
         let mut coarse_frequency_uses = count_candidate_frequencies(&candidates);
         let mut coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
             std::collections::HashMap::new();
@@ -347,7 +352,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
             if nagain_nfb <= nagain_nfa { continue; }
             
             let (nagain_candidates, nagain_sbase) = sync8(
-                &dd_original, nagain_nfa, nagain_nfb, nagain_syncmin, 50, SyncMode::Power,  // narrow band, fewer candidates
+                &dd_original, nagain_nfa, nagain_nfb, nagain_syncmin, 50, sync_mode,  // narrow band, fewer candidates
             );
             
             let mut nagain_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
