@@ -138,13 +138,17 @@ pub fn long_decode(
             &mut seg_snrs,
         );
 
-        // ── Cycle 2: Smoothed data + Amplitude sync + relaxed syncmin ──
-        if config.n_cycles >= 2 && config.smoothing {
-            let data_f64: Vec<f64> = data.iter().map(|&x| x as f64).collect();
-            let smoothed_f64 = smooth_data(&data_f64);
-            let smoothed: Vec<f32> = smoothed_f64.iter().map(|&x| x as f32).collect();
+        // ── Cycle 2: Amplitude sync on (optionally smoothed) data + relaxed syncmin ──
+        if config.n_cycles >= 2 {
+            let decode_data: Vec<f32> = if config.smoothing {
+                let data_f64: Vec<f64> = data.iter().map(|&x| x as f64).collect();
+                let smoothed_f64 = smooth_data(&data_f64);
+                smoothed_f64.iter().map(|&x| x as f32).collect()
+            } else {
+                data.to_vec()
+            };
             decode_cycle(
-                &smoothed,
+                &decode_data,
                 DECODE_SAMPLE_RATE,
                 config,
                 config.sync_min * 0.85,
