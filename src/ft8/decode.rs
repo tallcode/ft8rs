@@ -243,7 +243,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     }
 
     for _pass in 0..max_passes {
-        // Use lower syncmin for later passes to find weaker signals in residual
+        // Lower syncmin for later passes to catch weaker signals in residual
         let pass_syncmin = if max_passes > 1 && _pass > 0 {
             (syncmin * 0.7).max(0.6)
         } else {
