@@ -28,7 +28,7 @@ const NDOWN: usize = 60;
 const NN: usize = 79;
 
 const NFFT1_LONG: usize = 192000;
-const SYNC8_DF: f64 = SAMPLE_RATE as f64 / 4096.0; // 12000/4096 = 2.93 Hz/bin — matches sync8 FFT
+const SYNC8_DF: f64 = SAMPLE_RATE as f64 / 4096.0; // 12000/4096 = 2.93 Hz/bin
 const NFFT2: usize = 3200;
 const NP2: usize = 2812;
 const COSTAS_BLOCKS: usize = 7;
@@ -418,7 +418,7 @@ fn sync8(
     mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
     let jz = 62;
-    let fft_size = next_pow2(NFFT1); // 4096 (df=2.93 Hz/bin).
+    let fft_size = next_pow2(NFFT1); // 4096 (df=2.93). Mixed-radix 3840=19/20, returns 4096.
     let half_size = fft_size / 2;
     let tstep = NSTEP as f64 / SAMPLE_RATE as f64;
     let df = SAMPLE_RATE as f64 / fft_size as f64;
@@ -681,7 +681,7 @@ fn ft8b(
     build_bit_metrics(workspace);
     
     // ── sbase-based LLR normalization: compensate for frequency-dependent noise ──
-    // sbase is built by sync8 with SYNC8_DF = 12000/4096 ≈ 2.93 Hz/bin.
+    // sbase is built by sync8 with SYNC8_DF = 12000/4096 = 2.93 Hz/bin.
     // Previously used DOWNSAMPLE_DF (0.0625) → wrong index, normalization never applied.
     if false { // Disabled: xbase formula needs recalibration for our sbase valuespace
         let freq_bin = (f1 / SYNC8_DF).round() as usize;
