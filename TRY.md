@@ -641,3 +641,58 @@ df 从 2.93 变为 3.125 Hz/bin。
 - FFT 3840 对齐需要重写/验证 Bluestein 实现
 - WSJT-X get_spectrum_baseline 的 Nuttall 窗 Welch 基线估计
 - sbase LLR 归一化校准后启用
+
+---
+
+## 尝试 17: 重写 FFT — mixed-radix 替代 Bluestein
+**日期：** 2026-05-19
+**文件：** `src/util/fft.rs`
+
+### 思路
+非 2 的幂尺寸（3840, 3200）之前用 Bluestein（chirp 卷积，慢且数值误差大）。
+实现 Cooley-Tukey 混合基 FFT：N = P × Q，Q 为 2 的幂用 radix-2，P ≤ 50 用直接 DFT。
+
+### 实现
+- 3840 = 15 × 256（15-point DFT + 256-point radix-2）
+- 3200 = 25 × 128（25-point DFT + 128-point radix-2）
+- DIT 算法：按 mod P 分组 → Q-point FFT → twiddle → transpose → P-point DFT
+- 对比 Bluestein 验证正确（3 个测试全过）
+
+### 3840 FFT sync8 尝试
+- FFT 输出正确（对比 Bluestein 验证）
+- 20/20 测试：19/20（syncmin=1.2/1.3 都差 1 条）
+- 速度更慢：79s vs 4096 的 50s（混合基开销 > 纯 radix-2）
+- **结论：3840 不适合直接替代 4096**
+
+### 收益
+- NFFT2=3200 的 ft8_downsample 从 Bluestein → mixed-radix，加速 ~3×
+- 通用优化：所有非 2 的幂 FFT 受益
+
+### 状态：✅ 已保留（sync8 仍用 4096，mixed-radix 作为通用 FFT 优化）
+
+---
+
+## 尝试 18: syncmin 对齐 + 3840 对比总结
+**日期：** 2026-05-19
+
+### 最终配置
+| 参数 | 值 | 说明 |
+|---|---|---|
+| FFT | 4096 (radix-2) | 速度最快 |
+| syncmin | 1.3 | 对齐 WSJT-X |
+| 周期 | 2 (Power + Amplitude) | 性价比最优 |
+
+### 3840 FFT 结论
+- 19/20 差 1 条，追不上 4096 的 20/20
+- 慢 58%（79s vs 50s）
+- 非简单调参可解决，需系统性重校准
+
+### 当前累计状态（2026-05-19 16:15）
+
+#### 保留的修复（10个）
+1-9 同上
+10. **mixed-radix FFT** — 替代 Bluestein，NFFT2=3200 加速
+
+#### 当前基准
+- 20/20: ✅ (50s)
+- 362/449 (80.6%) — 446s

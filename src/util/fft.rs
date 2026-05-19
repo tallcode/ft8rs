@@ -101,8 +101,115 @@ pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
 
     if (n & (n - 1)) == 0 {
         radix2_fft_cached(re, im, inverse);
+    } else if let Some((p, q)) = factor_for_mixed_radix(n) {
+        mixed_radix_fft(re, im, inverse, p, q);
     } else {
         bluestein_fft_cached(re, im, inverse);
+    }
+}
+
+// ── Mixed-radix FFT for N = P × Q (Q = power of 2, P ≤ 50) ────────
+
+/// Factor N as P × Q where Q is the largest power of 2 dividing N.
+/// Returns Some((p, q)) if p ≤ 50 (small enough for direct DFT).
+fn factor_for_mixed_radix(n: usize) -> Option<(usize, usize)> {
+    // Find largest power of 2 dividing n
+    let q = 1 << n.trailing_zeros();
+    let p = n / q;
+    if p <= 1 || p > 50 {
+        return None;
+    }
+    Some((p, q))
+}
+
+/// Cooley-Tukey mixed-radix FFT: N = P × Q, Q is power of 2.
+/// DIT algorithm: groups input by residue mod P, natural-order output.
+fn mixed_radix_fft(re: &mut [f64], im: &mut [f64], inverse: bool, p: usize, q: usize) {
+    let n = re.len();
+    assert_eq!(n, p * q);
+
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let sign = if inverse { 1.0 } else { -1.0 };
+
+    // Allocate scratch for reordering
+    let mut scratch_re = vec![0.0; n];
+    let mut scratch_im = vec![0.0; n];
+
+    // Step 0: Reorder input by residue mod P (DIT input layout).
+    // x[p + P·q] → block p, position q (stride P grouping)
+    // Original: natural order re[0..N-1]
+    // Reordered: block 0 = re[0], re[P], re[2P], ...; block 1 = re[1], re[P+1], re[2P+1], ...
+    for p_idx in 0..p {
+        for q_idx in 0..q {
+            let src = p_idx + p * q_idx;     // natural order index
+            let dst = p_idx * q + q_idx;     // DIT order: block p_idx, pos q_idx
+            scratch_re[dst] = re[src];
+            scratch_im[dst] = im[src];
+        }
+    }
+
+    // Step 1: Q-point radix-2 FFT on each of the P blocks
+    for block in 0..p {
+        let start = block * q;
+        radix2_fft_cached(&mut scratch_re[start..start + q], &mut scratch_im[start..start + q], inverse);
+    }
+
+    // Step 2: Multiply by twiddle factors exp(sign·2πi·p_idx·q_idx/N)
+    for p_idx in 0..p {
+        for q_idx in 0..q {
+            let idx = p_idx * q + q_idx;
+            let angle = sign * two_pi * (p_idx as f64) * (q_idx as f64) / (n as f64);
+            let (tw_re, tw_im) = (angle.cos(), angle.sin());
+            let val_re = scratch_re[idx];
+            let val_im = scratch_im[idx];
+            scratch_re[idx] = val_re * tw_re - val_im * tw_im;
+            scratch_im[idx] = val_re * tw_im + val_im * tw_re;
+        }
+    }
+
+    // Step 3: Allocate second scratch, transpose, do P-point DFTs
+    let mut scratch2_re = vec![0.0; n];
+    let mut scratch2_im = vec![0.0; n];
+
+    // Transpose: P×Q → Q×P
+    for i in 0..p {
+        for j in 0..q {
+            let src = i * q + j;
+            let dst = j * p + i;
+            scratch2_re[dst] = scratch_re[src];
+            scratch2_im[dst] = scratch_im[src];
+        }
+    }
+
+    // Step 4: P-point direct DFT on each column (Q columns of P elements)
+    for col in 0..q {
+        let start = col * p;
+        for k in 0..p {
+            let mut sum_re = 0.0;
+            let mut sum_im = 0.0;
+            for j in 0..p {
+                let angle = sign * two_pi * (j as f64) * (k as f64) / (p as f64);
+                let (tw_re, tw_im) = (angle.cos(), angle.sin());
+                let val_re = scratch2_re[start + j];
+                let val_im = scratch2_im[start + j];
+                sum_re += val_re * tw_re - val_im * tw_im;
+                sum_im += val_re * tw_im + val_im * tw_re;
+            }
+            // Output in natural order: k₁ + Q·k₂ → col + q·k
+            let dst = col + q * k;
+            re[dst] = sum_re;
+            im[dst] = sum_im;
+        }
+    }
+
+    // Radix-2 applies 1/Q for inverse in step 1.
+    // Direct DFT in step 4 needs 1/P to reach 1/N = 1/(P×Q) total.
+    if inverse {
+        let scale = 1.0 / (p as f64);
+        for i in 0..n {
+            re[i] *= scale;
+            im[i] *= scale;
+        }
     }
 }
 
@@ -352,3 +459,95 @@ pub fn fft_real(input: &[f64], out_re: &mut [f64], out_im: &mut [f64]) {
         out_im[n - k] = -(e_im - to_im);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mixed_radix_3840() {
+        let n = 3840;
+        let (p, q) = factor_for_mixed_radix(n).unwrap();
+        assert_eq!(p, 15);
+        assert_eq!(q, 256);
+
+        // Generate a test signal: impulse
+        let mut re_mr = vec![0.0; n];
+        let mut im_mr = vec![0.0; n];
+        re_mr[100] = 1.0;
+        let mut re_bl = re_mr.clone();
+        let mut im_bl = im_mr.clone();
+
+        // Mixed-radix forward
+        mixed_radix_fft(&mut re_mr, &mut im_mr, false, p, q);
+        // Bluestein forward
+        bluestein_fft_cached(&mut re_bl, &mut im_bl, false);
+
+        // Compare: should be very close (within 1e-10)
+        for i in 0..n {
+            let diff_re = (re_mr[i] - re_bl[i]).abs();
+            let diff_im = (im_mr[i] - im_bl[i]).abs();
+            assert!(diff_re < 1e-10, "re[{}]: mr={}, bl={}", i, re_mr[i], re_bl[i]);
+            assert!(diff_im < 1e-10, "im[{}]: mr={}, bl={}", i, im_mr[i], im_bl[i]);
+        }
+
+        // Test roundtrip: FFT → IFFT → original
+        let mut re_rt = vec![0.0; n];
+        let mut im_rt = vec![0.0; n];
+        re_rt[100] = 1.0;
+        mixed_radix_fft(&mut re_rt, &mut im_rt, false, p, q); // forward
+        mixed_radix_fft(&mut re_rt, &mut im_rt, true, p, q);  // inverse
+
+        for i in 0..n {
+            let expected = if i == 100 { 1.0 } else { 0.0 };
+            assert!((re_rt[i] - expected).abs() < 1e-10, "roundtrip re[{}]: {}", i, re_rt[i]);
+            assert!(im_rt[i].abs() < 1e-10, "roundtrip im[{}]: {}", i, im_rt[i]);
+        }
+    }
+
+    #[test]
+    fn test_mixed_radix_3200() {
+        let n = 3200;
+        let (p, q) = factor_for_mixed_radix(n).unwrap();
+        assert_eq!(p, 25);
+        assert_eq!(q, 128);
+
+        let mut re = vec![0.0; n];
+        let mut im = vec![0.0; n];
+        re[50] = 1.0;
+
+        // Forward then inverse
+        mixed_radix_fft(&mut re, &mut im, false, p, q);
+        mixed_radix_fft(&mut re, &mut im, true, p, q);
+
+        for i in 0..n {
+            let expected = if i == 50 { 1.0 } else { 0.0 };
+            assert!((re[i] - expected).abs() < 1e-10, "roundtrip re[{}]: {}", i, re[i]);
+            assert!(im[i].abs() < 1e-10);
+        }
+    }
+}
+
+    #[test]
+    fn test_mixed_radix_small() {
+        let n = 12; // 3 × 4
+        let (p, q) = factor_for_mixed_radix(n).unwrap();
+        assert_eq!(p, 3);
+        assert_eq!(q, 4);
+        
+        let mut re_mr = vec![0.0; n];
+        let mut im_mr = vec![0.0; n];
+        re_mr[1] = 1.0;
+        let mut re_bl = re_mr.clone();
+        let mut im_bl = im_mr.clone();
+        
+        mixed_radix_fft(&mut re_mr, &mut im_mr, false, p, q);
+        bluestein_fft_cached(&mut re_bl, &mut im_bl, false);
+        
+        for i in 0..n {
+            let diff_re = (re_mr[i] - re_bl[i]).abs();
+            let diff_im = (im_mr[i] - im_bl[i]).abs();
+            assert!(diff_re < 1e-10, "re[{}]: mr={}, bl={}", i, re_mr[i], re_bl[i]);
+            assert!(diff_im < 1e-10, "im[{}]: mr={}, bl={}", i, im_mr[i], im_bl[i]);
+        }
+    }
