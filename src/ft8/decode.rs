@@ -233,10 +233,6 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     // Save original data for nagain (narrow re-check) passes
     let dd_original = dd.clone();
 
-    // Compute high-quality spectrum baseline (WSJT-X get_spectrum_baseline)
-    // Used for sync normalization and SNR estimation.
-    let _sbase_quality = get_spectrum_baseline(&dd);
-
     // Helper: count candidates per frequency bin (for coarse downsampling cache)
     fn count_candidate_frequencies(candidates: &[Candidate]) -> std::collections::HashMap<i32, usize> {
         let mut counts = std::collections::HashMap::new();
@@ -729,7 +725,7 @@ fn ft8b(
     // ── sbase-based LLR normalization: compensate for frequency-dependent noise ──
     // sbase is built by sync8 with SYNC8_DF = 12000/4096 = 2.93 Hz/bin.
     // Previously used DOWNSAMPLE_DF (0.0625) → wrong index, normalization never applied.
-    if let Some(sb) = sbase_welch {
+    if false { // xbase disabled: normalize_bmet already sufficient; Welch +152s no gain
         let df_w = crate::util::constants::SAMPLE_RATE as f64 / crate::ft8::decode::NFFT1 as f64; let freq_bin = (f1 / df_w).round() as usize;
         if freq_bin < _sbase.len() {
             let sbase_val = _sbase[freq_bin];
