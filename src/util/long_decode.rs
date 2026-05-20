@@ -1,22 +1,21 @@
-/// Long decode utility – multi-cycle, cross-segment FT8 decoding.
+/// Long decode utility – progressive FT8 decoding.
 ///
-/// Implements JTDX-inspired multi-perspective re-search for improved sensitivity:
-///  - 3-cycle decode: Power → Amplitude(smoothed) → AbsSum
-///  - Different sync spectral representations complement each other
-///  - Data smoothing between cycles reduces noise variance
-///  - Cross-segment signal memory enables association detection
-///  - Per-cycle variable syncmin (1.30 → 1.10 → 0.85)
+/// Implements WSJT-X-style progressive decoding:
+///  - Stage 1 (early):  First 11s, decode strong signals (syncmin=1.95)
+///  - Stage 2:          Subtract strong signals from full data
+///  - Stage 3 (final):  Full 15s decode on cleaned residual (syncmin=1.3)
 use std::rc::Rc;
 
 use crate::decode_ft8;
 use crate::DecodeFT8Options;
 use crate::util::hashcall::HashCallBook;
+use crate::util::subtract_ft8::subtract_ft8;
 
 const SEGMENT_DURATION: f64 = 15.0;
 const DECODE_SAMPLE_RATE: u32 = 12000;
 const SAMPLE_RATE_INTERNAL: usize = 12000;
 
-/// Configuration for long decode.
+/// Configuration for progressive long decode.
 #[derive(Clone)]
 pub struct LongDecodeConfig {
     pub freq_low: f64,
@@ -24,13 +23,9 @@ pub struct LongDecodeConfig {
     pub sync_min: f64,
     pub max_candidates: usize,
     pub depth: usize,
-    /// Number of decode cycles (1-3).
-    /// Cycle 1: Power sync, original data (syncmin × 1.00)
-    /// Cycle 2: Amplitude sync, smoothed data (syncmin × 0.85)
-    /// Cycle 3: AbsSum sync, original data (syncmin × 0.65)
-    /// Results merged with dedup across cycles.
-    pub n_cycles: usize,
-    /// Enable data smoothing for cycle 2
+    /// Enable progressive decoding (3-stage: early→subtract→final)
+    pub progressive: bool,
+    /// Enable data smoothing for Amplitude cycle
     pub smoothing: bool,
     /// Enable cross-segment signal association
     pub cross_segment_memory: bool,
@@ -46,8 +41,8 @@ impl Default for LongDecodeConfig {
             sync_min: 1.3,
             max_candidates: 500,
             depth: 3,
-            n_cycles: 3,
-            smoothing: true,
+            progressive: true,
+            smoothing: false,
             cross_segment_memory: true,
             mycall: None,
             hiscall: None,
@@ -82,10 +77,7 @@ pub struct LongDecodeResult {
     pub total_elapsed_ms: u64,
 }
 
-/// Perform multi-cycle, cross-segment long decode on a multi-segment recording.
-///
-/// Splits the input into 15-second segments, processes each with multiple cycles
-/// of decode strategies, and maintains cross-segment signal memory.
+/// Perform progressive long decode on a multi-segment recording.
 pub fn long_decode(
     samples: &[f32],
     sample_rate: u32,
@@ -95,7 +87,6 @@ pub fn long_decode(
     let dur = samples.len() as f64 / sample_rate as f64;
     let n_segments = (dur / SEGMENT_DURATION).floor() as usize;
 
-    // Resample to 12000 Hz once
     let s12k: Vec<f32> = if sample_rate == DECODE_SAMPLE_RATE {
         samples.to_vec()
     } else {
@@ -124,65 +115,26 @@ pub fn long_decode(
         let mut seg_dts: Vec<f64> = Vec::new();
         let mut seg_snrs: Vec<f64> = Vec::new();
 
-        // ── Cycle 1: Standard decode (Power sync, default params) ──
-        decode_cycle(
-            data,
-            DECODE_SAMPLE_RATE,
-            config,
-            config.sync_min,
-            crate::ft8::decode::SyncMode::Power,
-            &book,
-            &mut seg_msgs,
-            &mut seg_freqs,
-            &mut seg_dts,
-            &mut seg_snrs,
-        );
-
-        // ── Cycle 2: Amplitude sync + relaxed syncmin ──
-        if config.n_cycles >= 2 {
-            let decode_data: Vec<f32> = if config.smoothing {
-                let data_f64: Vec<f64> = data.iter().map(|&x| x as f64).collect();
-                let smoothed_f64 = smooth_data(&data_f64);
-                smoothed_f64.iter().map(|&x| x as f32).collect()
-            } else {
-                data.to_vec()
-            };
-            decode_cycle(
-                &decode_data,
-                DECODE_SAMPLE_RATE,
-                config,
-                config.sync_min * 0.85,
-                crate::ft8::decode::SyncMode::Amplitude,
-                &book,
-                &mut seg_msgs,
-                &mut seg_freqs,
-                &mut seg_dts,
-                &mut seg_snrs,
-            );
-        }
-
-        // ── Cycle 3: AbsSum sync, most relaxed syncmin ──
-        if config.n_cycles >= 3 {
-            decode_cycle(
+        if config.progressive {
+            progressive_decode(
                 data,
                 DECODE_SAMPLE_RATE,
                 config,
-                config.sync_min * 0.65,
-                crate::ft8::decode::SyncMode::AbsSum,
                 &book,
                 &mut seg_msgs,
                 &mut seg_freqs,
                 &mut seg_dts,
                 &mut seg_snrs,
             );
+        } else {
+            fallback_decode(data, DECODE_SAMPLE_RATE, config, &book,
+                &mut seg_msgs, &mut seg_freqs, &mut seg_dts, &mut seg_snrs);
         }
 
-        // Extract callsigns for hashbook
         for msg in &seg_msgs {
             extract_callsigns(msg, &book);
         }
 
-        // Save to cross-segment memory
         if config.cross_segment_memory {
             for i in 0..seg_msgs.len() {
                 signal_memory.push(SavedSignal {
@@ -193,7 +145,6 @@ pub fn long_decode(
                 });
             }
         }
-        // Keep only recent signals (last 200)
         if signal_memory.len() > 200 {
             signal_memory.drain(0..signal_memory.len() - 200);
         }
@@ -216,13 +167,95 @@ pub fn long_decode(
     }
 }
 
-/// Run a single decode cycle and merge results.
-fn decode_cycle(
+/// WSJT-X style progressive decode:
+/// Stage 1: Early decode (first 11s) with high syncmin → find strong signals
+/// Stage 2: Subtract strong signals from full data
+/// Stage 3: Final decode on cleaned residual with normal syncmin
+fn progressive_decode(
     data: &[f32],
     sr: u32,
     config: &LongDecodeConfig,
-    sync_min: f64,
-    sync_mode: crate::ft8::decode::SyncMode,
+    book: &Rc<HashCallBook>,
+    msgs: &mut Vec<String>,
+    freqs: &mut Vec<f64>,
+    dts: &mut Vec<f64>,
+    snrs: &mut Vec<f64>,
+) {
+    let n_early = 11.0 * sr as f64; // First 11 seconds
+    let early_len = n_early.min(data.len() as f64) as usize;
+    if early_len < sr as usize * 8 {
+        fallback_decode(data, sr, config, book, msgs, freqs, dts, snrs);
+        return;
+    }
+
+    let early_data = &data[..early_len];
+
+    // ── Stage 1: Early decode (high syncmin to find strong signals) ──
+    let bk = Rc::clone(book);
+    let early_decoded = decode_ft8(early_data, DecodeFT8Options {
+        sample_rate: Some(sr as usize),
+        freq_low: Some(config.freq_low),
+        freq_high: Some(config.freq_high),
+        sync_min: Some(config.sync_min * 1.5), // Higher threshold
+        depth: Some(config.depth),
+        max_candidates: Some(config.max_candidates),
+        hash_call_book: Some(bk),
+        mycall: config.mycall.clone(),
+        hiscall: config.hiscall.clone(),
+        sync_mode: Some(crate::ft8::decode::SyncMode::Power),
+    });
+
+    // ── Stage 2: Subtract strong signals ──
+    let mut residual: Vec<f64> = data.iter().map(|&x| x as f64).collect();
+
+    for sig in &early_decoded {
+        let itone_arr: [i32; 79] = {
+            let mut arr = [0i32; 79];
+            arr.copy_from_slice(&sig.itone[..79]);
+            arr
+        };
+        subtract_ft8(&mut residual, &itone_arr, sig.freq, sig.dt);
+    }
+
+    // ── Stage 3: Final decode on cleaned residual ──
+    let residual_f32: Vec<f32> = residual.iter().map(|&x| x as f32).collect();
+    let bk = Rc::clone(book);
+    let final_decoded = decode_ft8(&residual_f32, DecodeFT8Options {
+        sample_rate: Some(sr as usize),
+        freq_low: Some(config.freq_low),
+        freq_high: Some(config.freq_high),
+        sync_min: Some(config.sync_min),
+        depth: Some(config.depth),
+        max_candidates: Some(config.max_candidates),
+        hash_call_book: Some(bk),
+        mycall: config.mycall.clone(),
+        hiscall: config.hiscall.clone(),
+        sync_mode: Some(crate::ft8::decode::SyncMode::Amplitude),
+    });
+
+    // Merge: early strong signals + final weak signals
+    for d in &early_decoded {
+        if !msgs.contains(&d.msg) {
+            msgs.push(d.msg.clone());
+            freqs.push(d.freq);
+            dts.push(d.dt);
+            snrs.push(d.snr);
+        }
+    }
+    for d in &final_decoded {
+        if !msgs.contains(&d.msg) {
+            msgs.push(d.msg.clone());
+            freqs.push(d.freq);
+            dts.push(d.dt);
+            snrs.push(d.snr);
+        }
+    }
+}
+
+fn fallback_decode(
+    data: &[f32],
+    sr: u32,
+    config: &LongDecodeConfig,
     book: &Rc<HashCallBook>,
     msgs: &mut Vec<String>,
     freqs: &mut Vec<f64>,
@@ -234,25 +267,22 @@ fn decode_cycle(
         sample_rate: Some(sr as usize),
         freq_low: Some(config.freq_low),
         freq_high: Some(config.freq_high),
-        sync_min: Some(sync_min),
+        sync_min: Some(config.sync_min),
         depth: Some(config.depth),
         max_candidates: Some(config.max_candidates),
         hash_call_book: Some(bk),
         mycall: config.mycall.clone(),
         hiscall: config.hiscall.clone(),
-        sync_mode: Some(sync_mode),
+        sync_mode: Some(crate::ft8::decode::SyncMode::Power),
     });
     for d in &decoded {
-        if !msgs.contains(&d.msg) {
-            msgs.push(d.msg.clone());
-            freqs.push(d.freq);
-            dts.push(d.dt);
-            snrs.push(d.snr);
-        }
+        msgs.push(d.msg.clone());
+        freqs.push(d.freq);
+        dts.push(d.dt);
+        snrs.push(d.snr);
     }
 }
 
-/// Resample f32 audio from one sample rate to another (simple linear interpolation).
 fn resample_f32(input: &[f32], from_rate: usize, to_rate: usize) -> Vec<f32> {
     if from_rate == to_rate {
         return input.to_vec();
@@ -269,21 +299,6 @@ fn resample_f32(input: &[f32], from_rate: usize, to_rate: usize) -> Vec<f32> {
         output.push(val as f32);
     }
     output
-}
-
-/// Smooth time-domain data by averaging adjacent samples.
-/// JTDX technique: dd[i] = (dd[i-1] + dd[i]) / 2, reduces noise variance.
-fn smooth_data(data: &[f64]) -> Vec<f64> {
-    let n = data.len();
-    if n < 2 {
-        return data.to_vec();
-    }
-    let mut smoothed = vec![0.0; n];
-    smoothed[0] = data[0];
-    for i in 1..n {
-        smoothed[i] = (data[i - 1] + data[i]) * 0.5;
-    }
-    smoothed
 }
 
 fn extract_callsigns(msg: &str, book: &Rc<HashCallBook>) {

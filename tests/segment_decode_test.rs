@@ -182,27 +182,25 @@ fn test_segment_decode_with_hashcallbook() {
     assert!(rate >= 70.0, "Hit rate {:.1}% < 70%", rate);
 }
 
-/// Quick smoke test: validates long_decode compiles and produces results.
+/// Quick smoke test for progressive decode (first 3 segments).
 #[test]
 fn test_segment_decode_long_quick() {
     let (sr, all) = load_wav("tests/ft8/230208_140300.wav");
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
 
-    // Only resample what we need for 3 segments (~50s of 48kHz audio → ~12s of 12kHz)
     let sps_48k = SEGMENT_DURATION * sr as usize;
     let needed_48k_samples = (3 * sps_48k + sr as usize * 2).min(all.len());
     let partial_48k = &all[..needed_48k_samples];
     let s12k = resample(partial_48k, sr, 12000);
 
-    // Only test first 3 segments
     let sps = SEGMENT_DURATION * DECODE_SAMPLE_RATE as usize;
     let dur_samples = (3 * sps + DECODE_SAMPLE_RATE as usize * 2).min(s12k.len());
     let partial = &s12k[..dur_samples];
 
     let config = LongDecodeConfig {
-        freq_low: 200.0, freq_high: 3000.0, sync_min: 0.8,
-        max_candidates: 300, depth: 3, n_cycles: 1,
-        smoothing: false, cross_segment_memory: true,
+        freq_low: 200.0, freq_high: 3000.0, sync_min: 1.3,
+        max_candidates: 500, depth: 3,
+        smoothing: false, cross_segment_memory: true, progressive: true,
         mycall: None, hiscall: None,
     };
 
@@ -227,8 +225,8 @@ fn test_segment_decode_long_quick() {
     assert!(matched > 0, "long_decode should decode at least 1 message");
 }
 
-/// Full long_decode with 2-cycle decoding for maximum sensitivity.
-/// Takes ~6-8 minutes. Run manually: cargo test test_segment_decode_long -- --ignored --nocapture
+/// Full progressive long decode.
+/// Takes ~5-8 minutes. Run manually: cargo test test_segment_decode_long -- --ignored --nocapture
 #[test]
 #[ignore]
 fn test_segment_decode_long() {
@@ -238,8 +236,8 @@ fn test_segment_decode_long() {
 
     let config = LongDecodeConfig {
         freq_low: 200.0, freq_high: 3000.0, sync_min: 1.3,
-        max_candidates: 500, depth: 3, n_cycles: 2,
-        smoothing: false, cross_segment_memory: true,
+        max_candidates: 500, depth: 3,
+        smoothing: false, cross_segment_memory: true, progressive: true,
         mycall: None, hiscall: None,
     };
 
