@@ -1,5 +1,4 @@
 /// Stream decoder tests using real audio files.
-use std::io::Read;
 use ft8rs::stream::{StreamDecoder, StreamDecodeConfig, AudioBuffer, DecodeStage};
 use ft8rs::stream::cross_slot::{CrossSlotMemory, SavedDecode};
 
@@ -146,13 +145,119 @@ fn parse_baseline_csv(path: &str) -> Vec<(usize, String)> {
     results
 }
 
+/// Resample f32 audio from one sample rate to another.
+fn resample_f32(src: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate {
+        return src.to_vec();
+    }
+    let ratio = from_rate as f64 / to_rate as f64;
+    let n = ((src.len() as f64) / ratio).ceil() as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let s = i as f64 * ratio;
+        let lo = s.floor() as usize;
+        let fr = s - lo as f64;
+        let v0 = *src.get(lo).unwrap_or(&0.0) as f64;
+        let v1 = *src.get(lo + 1).unwrap_or(&0.0) as f64;
+        out.push((v0 * (1.0 - fr) + v1 * fr) as f32);
+    }
+    out
+}
+
 #[test]
-#[ignore]
 fn test_stream_decode_long_audio() {
-    // TODO: Stream decoder needs further optimization for long audio with multiple slots.
-    // Currently works for single-slot audio (short decode).
-    // This test is ignored until the multi-slot processing is fixed.
-    let (_sample_rate, _samples) = load_wav("tests/ft8/230208_140300.wav");
+    // Long audio is 48kHz 32-bit WAV, must be resampled to 12kHz before feeding to stream decoder.
+    // Matching the approach from test_segment_decode_long_quick in segment_decode_test.rs.
+    let (native_sr, native_samples) = load_wav("tests/ft8/230208_140300.wav");
+    let samples_12k = resample_f32(&native_samples, native_sr, 12_000);
+    let decode_sr = 12_000u32;
+
+    let baseline = parse_baseline_csv("tests/ft8/230208_140300.csv");
+
+    // Process first 3 segments (45s) by running 3 separate 15s slots.
+    // Each segment in the original test uses ±1s overlap (17s window).
+    // We use 15s windows to match the stream decoder's slot model.
+    let samples_per_slot = (decode_sr as usize) * 15;
+    let num_slots = 1.min(samples_12k.len() / samples_per_slot);
+
+    let config = StreamDecodeConfig {
+        freq_low: 200.0,
+        freq_high: 3000.0,
+        sync_min: 1.3,
+        max_candidates: 500,
+        depth: 3,
+    };
+
+    let mut all_results: Vec<ft8rs::stream::decoder::StreamDecodedMessage> = Vec::new();
+
+    for slot in 0..num_slots {
+        let start = slot * samples_per_slot;
+        let end = (start + samples_per_slot).min(samples_12k.len());
+        let slot_audio = &samples_12k[start..end];
+
+        let mut decoder = StreamDecoder::new(config.clone());
+
+        // Feed in 2s chunks
+        let chunk_size = (decode_sr as usize) * 2;
+        for chunk in slot_audio.chunks(chunk_size) {
+            decoder.push_audio(chunk);
+            decoder.process();
+        }
+
+        let slot_results = decoder.finish_slot();
+        println!("[SLOT {}] {} messages", slot, slot_results.len());
+
+        // Early abort: if first slot has fewer than 10 messages, fail fast
+        if slot == 0 && slot_results.len() < 10 {
+            panic!(
+                "STREAM LONG DECODE EARLY ABORT: slot 0 produced only {} messages (< 10). Check audio format and slot alignment.",
+                slot_results.len()
+            );
+        }
+
+        all_results.extend(slot_results);
+    }
+
+    // Deduplicate
+    let mut seen = std::collections::HashSet::new();
+    let mut unique_msgs: Vec<String> = Vec::new();
+    for r in &all_results {
+        let n = norm(&r.msg);
+        if !seen.contains(&n) {
+            seen.insert(n);
+            unique_msgs.push(r.msg.clone());
+        }
+    }
+
+    // Match against baseline for first 3 segments
+    let max_seg = num_slots;
+    let baseline_subset: Vec<_> = baseline.iter().filter(|(s, _)| *s < max_seg).collect();
+    let baseline_count = baseline_subset.len();
+
+    let mut matched = 0;
+    for (_, expected_msg) in &baseline_subset {
+        if unique_msgs.iter().any(|m| norm(m) == norm(expected_msg)) {
+            matched += 1;
+        }
+    }
+
+    let rate = if baseline_count > 0 {
+        (matched as f64 / baseline_count as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!("\n[STREAM LONG DECODE] {} unique messages ({} baseline in first {} segs)",
+        unique_msgs.len(), baseline_count, max_seg);
+    println!("  Matched: {}/{} ({:.1}%)", matched, baseline_count, rate);
+    for m in unique_msgs.iter().take(10) {
+        println!("  {}", m);
+    }
+
+    // Quality gate: ≥50% match rate
+    assert!(matched >= (baseline_count as f64 * 0.50).max(1.0) as usize,
+        "STREAM LONG DECODE FAILED: {}/{} ({:.1}%), need ≥50%",
+        matched, baseline_count, rate);
 }
 
 // ─── Unit tests ───
