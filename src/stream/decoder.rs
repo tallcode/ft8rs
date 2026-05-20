@@ -14,6 +14,7 @@ use crate::stream::buffer::{AudioBuffer, DecodeStage};
 use crate::stream::cross_slot::{CrossSlotMemory, SavedDecode};
 use crate::stream::ft8b_stream::{ft8b_stream, Ft8bResult};
 use crate::stream::subtract::subtract_signal;
+use crate::util::subtract_ft8::subtract_ft8;
 use crate::stream::ap_decode::ap_decode;
 
 use crate::ft8::decode::sync8;
@@ -139,8 +140,15 @@ impl StreamDecoder {
     /// Prepares for next slot.
     pub fn finish_slot(&mut self) -> Vec<StreamDecodedMessage> {
         // Ensure we've processed all stages
-        if self.buffer.stage() == DecodeStage::Full && !self.stage_full_done {
-            self.decode_full();
+        // If audio is short (<15s), still run decode on whatever we have
+        if !self.stage_full_done {
+            if !self.stage_subtract_done && !self.stage_early_done {
+                // Audio may be short, run full decode directly
+                self.decode_full();
+            } else if !self.stage_subtract_done {
+                self.decode_subtract();
+                self.stage_subtract_done = true;
+            }
             self.stage_full_done = true;
         }
 
@@ -252,42 +260,97 @@ impl StreamDecoder {
         results
     }
 
-    /// Full decode (nzhsym=50): complete decode on residual (Power + Amplitude).
+    /// Full decode (nzhsym=50): complete decode on residual with multi-pass + nagain.
     fn decode_full(&mut self) -> Vec<StreamDecodedMessage> {
-        let mut residual: Vec<f64> = self.buffer.samples().to_vec();
-
-        // Subtract any unsubtracted signals
-        for (freq, dt, itone) in &self.strong_signals {
-            subtract_signal(&mut residual, itone, *freq, *dt + 0.5, true);
-        }
-
+        let samples: Vec<f64> = self.buffer.samples().to_vec();
         let mut results = Vec::new();
 
-        // Power mode
+        // ── Pass 1: sync8 + decode on original data ──
         let syncmin = self.config.sync_min;
         let (candidates_p, sbase_p) = sync8(
-            &residual,
+            &samples,
             self.config.freq_low,
             self.config.freq_high,
             syncmin,
             self.config.max_candidates,
             SyncMode::Power,
         );
-        for result in self.decode_candidates_parallel(&candidates_p, &sbase_p) {
-            results.push(result);
+        let pass1 = self.decode_candidates_parallel_on(&samples, &candidates_p, &sbase_p);
+        results.extend(pass1);
+
+        // ── Pass 2: subtract decoded signals, re-decode ──
+        if !results.is_empty() {
+            let mut residual_f64: Vec<f64> = samples.clone();
+            for r in &results {
+                subtract_ft8(&mut residual_f64, &r.itone, r.freq, r.dt + 0.5);
+            }
+
+            // Power mode on residual
+            let (candidates_r, sbase_r) = sync8(
+                &residual_f64,
+                self.config.freq_low,
+                self.config.freq_high,
+                (syncmin * 0.7).max(0.6),
+                self.config.max_candidates,
+                SyncMode::Power,
+            );
+            let pass2 = self.decode_candidates_parallel_on(&residual_f64, &candidates_r, &sbase_r);
+            results.extend(pass2);
+
+            // Amplitude mode on residual for weak signals
+            let (candidates_a, sbase_a) = sync8(
+                &residual_f64,
+                self.config.freq_low,
+                self.config.freq_high,
+                (syncmin * 0.85).max(0.8),
+                self.config.max_candidates,
+                SyncMode::Amplitude,
+            );
+            let pass3 = self.decode_candidates_parallel_on(&residual_f64, &candidates_a, &sbase_a);
+            results.extend(pass3);
+        } else {
+            // No results in pass 1, try Amplitude mode on original data
+            let (candidates_a, sbase_a) = sync8(
+                &samples,
+                self.config.freq_low,
+                self.config.freq_high,
+                (syncmin * 0.85).max(0.8),
+                self.config.max_candidates,
+                SyncMode::Amplitude,
+            );
+            let pass3 = self.decode_candidates_parallel_on(&samples, &candidates_a, &sbase_a);
+            results.extend(pass3);
         }
 
-        // Amplitude mode for weak signals
-        let (candidates_a, sbase_a) = sync8(
-            &residual,
-            self.config.freq_low,
-            self.config.freq_high,
-            (syncmin * 0.85).max(0.8),
-            self.config.max_candidates,
-            SyncMode::Amplitude,
-        );
-        for result in self.decode_candidates_parallel(&candidates_a, &sbase_a) {
-            results.push(result);
+        // ── Pass 3 (nagain): narrow re-check around decoded frequencies on ORIGINAL data ──
+        if !results.is_empty() && self.config.depth >= 3 {
+            let nagain_syncmin = (syncmin * 1.0).max(0.6);
+
+            // Collect unique decoded frequencies
+            let mut searched_freqs: Vec<f64> = results.iter().map(|r| r.freq).collect();
+            searched_freqs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            searched_freqs.dedup_by(|a, b| (*a - *b).abs() < 10.0);
+
+            // Precompute FFT for original data
+            let mut nagain_cx_re = vec![0.0; 192000];
+            let mut nagain_cx_im = vec![0.0; 192000];
+            nagain_cx_re[..samples.len()].copy_from_slice(&samples);
+            crate::util::fft::fft_complex(&mut nagain_cx_re, &mut nagain_cx_im, false);
+
+            for &freq in &searched_freqs {
+                let nagain_nfa = (freq - 20.0).max(self.config.freq_low);
+                let nagain_nfb = (freq + 20.0).min(self.config.freq_high);
+                if nagain_nfb <= nagain_nfa { continue; }
+
+                let (nagain_cands, nagain_sbase) = sync8(
+                    &samples, nagain_nfa, nagain_nfb, nagain_syncmin, 50, SyncMode::Power,
+                );
+
+                let nagain_results = self.decode_with_precomputed(
+                    &samples, &nagain_cx_re, &nagain_cx_im, &nagain_cands, &nagain_sbase,
+                );
+                results.extend(nagain_results);
+            }
         }
 
         for result in &results {
@@ -314,6 +377,80 @@ impl StreamDecoder {
                     &dd_vec,
                     &cx_re,
                     &cx_im,
+                    cand.freq,
+                    cand.dt,
+                    sbase,
+                    depth,
+                    cand.sync,
+                )
+                .map(|r| StreamDecodedMessage {
+                    freq: r.freq,
+                    dt: r.dt - 0.5,
+                    snr: r.snr,
+                    msg: r.msg,
+                    sync: r.sync,
+                    itone: r.itone,
+                })
+            })
+            .collect()
+    }
+
+    /// Decode candidates using provided audio data (not self.buffer).
+    fn decode_candidates_parallel_on(
+        &self,
+        dd: &[f64],
+        candidates: &[Candidate],
+        sbase: &[f64],
+    ) -> Vec<StreamDecodedMessage> {
+        let depth = self.config.depth;
+
+        // Precompute FFT
+        let mut cx_re = vec![0.0; 192000];
+        let mut cx_im = vec![0.0; 192000];
+        cx_re[..dd.len()].copy_from_slice(dd);
+        crate::util::fft::fft_complex(&mut cx_re, &mut cx_im, false);
+
+        candidates.par_iter()
+            .filter_map(|cand| {
+                ft8b_stream(
+                    dd,
+                    &cx_re,
+                    &cx_im,
+                    cand.freq,
+                    cand.dt,
+                    sbase,
+                    depth,
+                    cand.sync,
+                )
+                .map(|r| StreamDecodedMessage {
+                    freq: r.freq,
+                    dt: r.dt - 0.5,
+                    snr: r.snr,
+                    msg: r.msg,
+                    sync: r.sync,
+                    itone: r.itone,
+                })
+            })
+            .collect()
+    }
+
+    /// Decode using precomputed FFT (for nagain pass).
+    fn decode_with_precomputed(
+        &self,
+        dd: &[f64],
+        cx_re: &[f64],
+        cx_im: &[f64],
+        candidates: &[Candidate],
+        sbase: &[f64],
+    ) -> Vec<StreamDecodedMessage> {
+        let depth = self.config.depth;
+
+        candidates.par_iter()
+            .filter_map(|cand| {
+                ft8b_stream(
+                    dd,
+                    cx_re,
+                    cx_im,
                     cand.freq,
                     cand.dt,
                     sbase,
