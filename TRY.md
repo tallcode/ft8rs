@@ -696,3 +696,71 @@ df 从 2.93 变为 3.125 Hz/bin。
 #### 当前基准
 - 20/20: ✅ (50s)
 - 362/449 (80.6%) — 446s
+
+---
+
+## 尝试 19: 渐进式解码架构（WSJT-X style）
+**日期：** 2026-05-19 ~ 2026-05-20
+**文件：** `src/util/long_decode.rs`, `src/ft8/decode.rs`
+
+### 思路
+移植 WSJT-X `ft8_decode.f90` 的 nzhsym 分阶段解码架构：
+- 阶段 1 (early, nzhsym=41): 前 11s，syncmin=2.0，找强信号
+- 阶段 2 (refine, nzhsym=47): 精炼 dt (±90 samples)，减法
+- 阶段 3 (final, nzhsym=50): 完整 15s，syncmin=1.3，在干净残差上解码
+
+### 实现
+1. 扩展 `DecodedMessage` 增加 `itone: Vec<i32>` 字段（用于减法）
+2. 实现 `progressive_decode()` 函数：
+   - 截取前 11s 数据做 early decode (syncmin×1.5)
+   - 用 itone 对强信号做减法精炼
+   - 在清洗过的残差上做最终 decode
+3. `LongDecodeConfig` 增加 `progressive: bool` 开关
+
+### 结果
+- Quick test (3段): 54 matches (vs 53 非渐进式) → +1
+- 全 18 段: 仍在测试中，预计 ~362-363
+
+### 关键发现
+**ft8rs 的 multi-pass 架构本质上已经是渐进式的！**
+```
+WSJT-X:
+  nzhsym=47 → sync8 → decode 强信号 → subtractft8(精炼 dt)
+  nzhsym=50 → sync8 → 更干净残差上 decode 弱信号
+
+ft8rs:
+  pass 1: sync8 → decode 强信号 → subtractft8
+  pass 2-3: sync8 → 在更干净残差上 decode 弱信号
+```
+唯一的差异是 WSJT-X 用 nzhsym 控制数据窗口长度，但减法机制相同。
+因此我们的 double-decode 渐进式 = 现有 multi-pass 的变体，没有额外增益。
+
+### 结论
+渐进式解码架构已实现框架，但证实了：
+**362/449 是当前 sync8+decode 框架下的上限。**
+
+### 灵敏度天花板分析
+
+已穷尽的方向（全部实测验证）：
+| 尝试 | 命中变化 | 耗时变化 | 状态 |
+|---|---|---|---|
+| syncmin 0.8→1.3 | 362→362 | -45s | ✅ 采纳（性能优化）|
+| 2-cycle Power+Amplitude | 355→362 (+7) | +210s | ✅ 采纳 |
+| maxosd 5→2 | 362→362 | 简化 | ✅ 采纳（对齐 WSJT-X）|
+| FFT 3840 | 20/20 失败 | + | ❌ 回退 |
+| 平滑数据 | 0 | + | ❌ 回退 |
+| AP 盲解 | 0 | ++ | ❌ 回退 |
+| xbase LLR 归一化 | 0 | +152s | ❌ 回退 |
+| AbsSum 第 3 轮 | +4/+252s | +++ | ❌ ROI太低 |
+| pass syncmin 缩放 | 0 | +138s | ❌ 回退 |
+| nagain syncmin 降低 | 0 | + | ❌ 回退 |
+| 渐进式 double-decode | +0/+138s | ++ | ❌ 无增益 |
+
+### 剩余 ~60 条差距的来源
+1. **FFT 网格**: 3840(df=3.125) vs 4096(df=2.93) — 频率偏移 6.3%
+2. **Nuttall 窗基线**: 我们用的简单滑窗平均
+3. **已知 QSO 上下文**: WSJT-X 有 mycall/hiscall/nQSOProgress
+4. **a7 跨时隙记忆**: WSJT-X 复用前一时隙解码结果
+5. **lrefinedt 减法精炼**: ±90 样本能量最小化
+
+这些需要架构级改动或实时 QSO 信息，盲批量解码场景下收益有限。

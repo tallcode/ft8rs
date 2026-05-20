@@ -50,6 +50,8 @@ pub struct DecodedMessage {
     pub snr: f64,
     pub msg: String,
     pub sync: f64,
+    /// FT8 itone pattern for signal subtraction (79 tones)
+    pub itone: Vec<i32>,
 }
 
 #[derive(Default)]
@@ -298,6 +300,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
                 snr: result.snr,
                 msg: result.msg.clone(),
                 sync,
+                itone: result.itone.to_vec(),
             });
             decoded_in_pass += 1;
             if _pass + 1 < max_passes {
@@ -370,6 +373,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
                         snr: result.snr,
                         msg,
                         sync: cand.sync,
+                        itone: result.itone.to_vec(),
                     });
                 }
             }
