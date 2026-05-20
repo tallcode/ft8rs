@@ -1,6 +1,7 @@
 pub mod ft8;
 pub mod ft4;
 pub mod util;
+pub mod stream;
 
 // Re-exports matching ft8ts index.ts
 pub use ft8::decode::{decode as decode_ft8, DecodedMessage as DecodedFT8Message, DecodeOptions as DecodeFT8Options, SyncMode};

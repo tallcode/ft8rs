@@ -79,10 +79,10 @@ pub struct DecodeOptions {
 
 
 #[derive(Clone)]
-struct Candidate {
-    freq: f64,
-    dt: f64,
-    sync: f64,
+pub(crate) struct Candidate {
+    pub(crate) freq: f64,
+    pub(crate) dt: f64,
+    pub(crate) sync: f64,
 }
 
 struct Ft8bResult {
@@ -93,9 +93,9 @@ struct Ft8bResult {
     itone: [i32; 79],
 }
 
-struct SyncTemplate {
-    re: Vec<f64>,
-    im: Vec<f64>,
+pub(crate) struct SyncTemplate {
+    pub(crate) re: Vec<f64>,
+    pub(crate) im: Vec<f64>,
 }
 
 struct FrequencyShiftSyncTemplate {
@@ -159,7 +159,7 @@ fn build_taper() -> &'static Vec<f64> {
     })
 }
 
-fn build_costas_sync_templates() -> &'static SyncTemplate {
+pub(crate) fn build_costas_sync_templates() -> &'static SyncTemplate {
     static T: std::sync::OnceLock<SyncTemplate> = std::sync::OnceLock::new();
     T.get_or_init(|| {
         let mut re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
@@ -484,7 +484,7 @@ impl Sync8Buffers {
     }
 }
 
-fn sync8(
+pub(crate) fn sync8(
     dd: &[f64],
     nfa: f64,
     nfb: f64,
@@ -698,7 +698,7 @@ fn sync8(
     })
 }
 
-fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Vec<f64> {
+pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Vec<f64> {
     let mut sbase = vec![0.0; nh1];
     let ia = (1.0_f64.max((nfa / df).round())) as usize;
     let ib = ((nh1 - 1) as f64).min((nfb / df).round()) as usize;
