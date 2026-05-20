@@ -209,9 +209,27 @@ fn lpf_convolve(camp_re: &[f64], camp_im: &[f64]) -> (Vec<f64>, Vec<f64>) {
 /// Main subtract function. dd0 is modified in-place.
 /// dt: time offset from data start in seconds (matching WSJTX convention).
 pub fn subtract_ft8(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64) {
+    subtract_ft8_refined(dd0, itone, f0, dt, false)
+}
+
+/// Subtract with optional dt refinement (WSJT-X lrefinedt).
+/// When refined=true, searches ±90 samples for optimal dt using energy minimization.
+pub fn subtract_ft8_refined(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64, refined: bool) {
     let (cref_re, cref_im) = gen_ft8wave(itone, f0);
     let nmax = 15 * 12000;
-    let nstart = (dt * SAMPLE_RATE).round() as isize + 1;
+    
+    // dt refinement (WSJT-X lrefinedt)
+    let refined_dt = if refined {
+        let offset = refine_dt(dd0, &cref_re, &cref_im, f0, dt);
+        if offset.abs() > 90 {
+            return; // No acceptable minimum: do not subtract
+        }
+        dt + (offset as f64 / SAMPLE_RATE)
+    } else {
+        dt
+    };
+    
+    let nstart = (refined_dt * SAMPLE_RATE).round() as isize + 1;
 
     // IQ mix: camp(i) = dd0[j] × conjg(cref(i))
     let mut camp_re = vec![0.0f64; NFRAME];
@@ -236,4 +254,71 @@ pub fn subtract_ft8(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64) {
             dd0[(j - 1) as usize] -= 2.0 * z_re;
         }
     }
+}
+
+/// Refine dt by minimizing residual energy in signal band (WSJT-X lrefinedt).
+/// Tests offsets -90, 0, +90 samples and uses quadratic interpolation.
+fn refine_dt(
+    dd0: &[f64],
+    cref_re: &[f64],
+    cref_im: &[f64],
+    f0: f64,
+    dt: f64,
+) -> isize {
+    let nmax = 15 * 12000;
+    
+    // Compute residual energy at three offsets
+    let sqa = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, -90);
+    let sq0 = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, 0);
+    let sqb = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, 90);
+    
+    // Quadratic interpolation to find minimum
+    // Peakup: fits parabola through (-90, sqa), (0, sq0), (90, sqb)
+    // Minimum at dx = 90 * (sqa - sqb) / (2 * (sqa - 2*sq0 + sqb))
+    let denom = 2.0 * (sqa - 2.0 * sq0 + sqb);
+    if denom.abs() < 1e-30 {
+        return 0;
+    }
+    let dx = 90.0 * (sqa - sqb) / denom;
+    dx.round() as isize
+}
+
+/// Compute residual energy in signal band after subtraction at given offset.
+fn compute_residual_energy(
+    dd0: &[f64],
+    cref_re: &[f64],
+    cref_im: &[f64],
+    f0: f64,
+    dt: f64,
+    offset: isize,
+) -> f64 {
+    let nmax = 15 * 12000;
+    let nstart = (dt * SAMPLE_RATE).round() as isize + 1 + offset;
+    
+    // IQ mix
+    let mut camp_re = vec![0.0f64; NFRAME];
+    let mut camp_im = vec![0.0f64; NFRAME];
+    for i in 0..NFRAME {
+        let j = nstart - 1 + i as isize;
+        if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
+            let d = dd0[(j - 1) as usize];
+            camp_re[i] = d * cref_re[i];
+            camp_im[i] = -d * cref_im[i];
+        }
+    }
+    
+    // LPF convolution
+    let (cfilt_re, cfilt_im) = lpf_convolve(&camp_re, &camp_im);
+    
+    // Compute residual and its energy in signal band
+    let mut energy = 0.0;
+    for i in 0..NFRAME {
+        let j = nstart - 1 + i as isize;
+        if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
+            let z_re = cfilt_re[i] * cref_re[i] - cfilt_im[i] * cref_im[i];
+            let residual = dd0[(j - 1) as usize] - 2.0 * z_re;
+            energy += residual * residual;
+        }
+    }
+    energy
 }
