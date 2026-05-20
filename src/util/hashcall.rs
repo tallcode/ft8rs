@@ -128,6 +128,16 @@ impl HashCallBook {
         self.hash22_entries.borrow_mut().clear();
     }
 
+    pub fn get_calls(&self) -> Vec<String> {
+        let mut calls: Vec<String> = Vec::new();
+        for entry in self.hash22_entries.borrow().iter() {
+            if !calls.contains(&entry.1) {
+                calls.push(entry.1.clone());
+            }
+        }
+        calls
+    }
+
 
     pub fn clone_book(&self) -> HashCallBook {
         HashCallBook {
