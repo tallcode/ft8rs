@@ -25,8 +25,15 @@ fn platanh(x: f64) -> f64 {
     0.5 * ((1.0 + x) / (1.0 - x)).ln()
 }
 
-/// BP decoder for (174,91) LDPC code.
-pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Option<DecodeResult> {
+/// BP decoding result with accumulated posteriors for OSD.
+pub struct BPResult {
+    pub decoded: Option<DecodeResult>,
+    pub zsave: Vec<Vec<f64>>,
+}
+
+pub fn bp_decode174_91_with_posteriors(
+    llr: &[f64], apmask: &[i8], max_iterations: usize, maxosd: usize,
+) -> BPResult {
     let n = N_LDPC;
     let m = M_LDPC;
 
@@ -35,6 +42,8 @@ pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Opt
     let mut tanhtoc = vec![0.0; 7 * m];
     let mut zn = vec![0.0; n];
     let mut cw = vec![0i8; n];
+    let mut zsum = vec![0.0; n];
+    let mut zsave: Vec<Vec<f64>> = vec![vec![0.0; n]; maxosd];
 
     // Initialize messages to checks
     for j in 0..m {
@@ -60,6 +69,14 @@ pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Opt
             } else {
                 zn[i] = llr[i];
             }
+        }
+
+        // WSJT-X: zsum=zsum+zn, save zsave at iter=1..maxosd
+        for i in 0..n {
+            zsum[i] += zn[i];
+        }
+        if iter >= 1 && iter <= maxosd {
+            zsave[iter - 1].copy_from_slice(&zsum);
         }
 
         // Hard decision
@@ -90,13 +107,16 @@ pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Opt
                         nharderrors += 1;
                     }
                 }
-                return Some(DecodeResult {
-                    message91: bits91,
-                    cw: cw.iter().map(|&b| b as u8).collect(),
-                    nharderrors,
-                    dmin: 0.0,
-                    ntype: 1,
-                });
+                return BPResult {
+                    decoded: Some(DecodeResult {
+                        message91: bits91,
+                        cw: cw.iter().map(|&b| b as u8).collect(),
+                        nharderrors,
+                        dmin: 0.0,
+                        ntype: 1,
+                    }),
+                    zsave,
+                };
             }
         }
 
@@ -109,7 +129,7 @@ pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Opt
                 ncnt += 1;
             }
             if ncnt >= 5 && iter >= 10 && ncheck > 15 {
-                return None;
+                return BPResult { decoded: None, zsave };
             }
         }
         nclast = ncheck;
@@ -153,18 +173,44 @@ pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Opt
         }
     }
 
-    None
+    BPResult { decoded: None, zsave }
+}
+
+/// BP decoder for (174,91) LDPC code (backward-compatible).
+pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Option<DecodeResult> {
+    bp_decode174_91_with_posteriors(llr, apmask, max_iterations, 0).decoded
 }
 
 /// Hybrid BP + OSD decoder.
 pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeResult> {
-    let max_iterations = 30;
-    if let Some(result) = bp_decode174_91(llr, apmask, max_iterations) {
+    let max_iterations: usize = 30;
+    let nosd = if maxosd < 0 {
+        0
+    } else if maxosd == 0 {
+        1
+    } else {
+        maxosd as usize
+    };
+
+    let bp = bp_decode174_91_with_posteriors(llr, apmask, max_iterations, nosd);
+
+    if let Some(result) = bp.decoded {
         return Some(result);
     }
 
-    if maxosd >= 0 {
-        return osd_decode174_91(llr, apmask, if maxosd >= 2 { 2 } else if maxosd >= 1 { 2 } else { 1 });
+    // Try OSD with accumulated BP posteriors (WSJT-X approach)
+    if nosd >= 1 {
+        for i in 0..nosd {
+            if let Some(result) = osd_decode174_91(&bp.zsave[i], apmask, 2) {
+                return Some(result);
+            }
+        }
+        // Fallback to raw LLRs
+        if let Some(result) = osd_decode174_91(llr, apmask, 2) {
+            return Some(result);
+        }
+    } else if maxosd == 0 {
+        return osd_decode174_91(llr, apmask, 1);
     }
 
     None

@@ -543,6 +543,25 @@ fn sync8(
         let sync2d_len = (ib - ia + 1) * width;
         sync2d[..sync2d_len].fill(0.0);
 
+        // WSJT-X sync8.f90:150: scale spectrum to reference level
+        let mut s_max = 0.0;
+        for i in 0..half_size {
+            for j in 0..NHSYM {
+                if s[i * NHSYM + j] > s_max {
+                    s_max = s[i * NHSYM + j];
+                }
+            }
+        }
+        if s_max > 1e-30 {
+            let fac = 20.0 / s_max;
+            for v in s.iter_mut() {
+                *v *= fac;
+            }
+            for v in savg.iter_mut() {
+                *v *= fac;
+            }
+        }
+
         for i in ia..=ib {
             for jj in (-(jz as isize)..=(jz as isize)).step_by(1) {
                 let mut ta = 0.0;
@@ -656,7 +675,7 @@ fn sync8(
                 let fj = candidate0[j].freq;
                 let di = candidate0[read_idx].dt;
                 let dj = candidate0[j].dt;
-                if (fi - fj).abs() < 0.5 && (di - dj).abs() < 0.04 {
+                if (fi - fj).abs() < 4.0 && (di - dj).abs() < 0.04 {
                     if candidate0[read_idx].sync < candidate0[j].sync {
                         keep = false;
                     }
@@ -683,24 +702,139 @@ fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Ve
     let mut sbase = vec![0.0; nh1];
     let ia = (1.0_f64.max((nfa / df).round())) as usize;
     let ib = ((nh1 - 1) as f64).min((nfb / df).round()) as usize;
-    let window = 50;
 
-    for i in 0..nh1 {
-        let mut sum = 0.0;
-        let mut count = 0;
-        let lo = ia.max(i.saturating_sub(window));
-        let hi = ib.min(i + window);
-        for j in lo..=hi {
-            sum += savg[j];
-            count += 1;
-        }
-        sbase[i] = if count > 0 {
-            10.0 * (1e-30f64.max(sum / count as f64)).log10()
-        } else {
-            0.0
-        };
+    let db_range = (ib - ia + 1).max(1);
+    let mut sdb = vec![0.0; nh1];
+    for i in ia..=ib {
+        sdb[i] = 10.0 * savg[i].max(1e-30).log10();
     }
+
+    let nseg: usize = 10;
+    let nlen = db_range / nseg;
+    if nlen < 1 {
+        let window = 50;
+        for i in 0..nh1 {
+            let lo = ia.max(i.saturating_sub(window));
+            let hi = ib.min(i + window);
+            let mut sum = 0.0;
+            let mut count = 0;
+            for j in lo..=hi {
+                sum += savg[j];
+                count += 1;
+            }
+            sbase[i] = if count > 0 {
+                10.0 * (1e-30f64.max(sum / count as f64)).log10()
+            } else {
+                0.0
+            };
+        }
+        return sbase;
+    }
+
+    let npct: usize = 10;
+    let mut env_x: Vec<f64> = Vec::new();
+    let mut env_y: Vec<f64> = Vec::new();
+    let i0 = db_range / 2;
+
+    for n in 0..nseg {
+        let ja = ia + n * nlen;
+        let jb = (ja + nlen - 1).min(ib);
+        if ja > ib || ja >= sdb.len() {
+            break;
+        }
+        let slice = &sdb[ja..=jb.min(sdb.len() - 1)];
+        let pval = percentile(slice, npct);
+        for i in ja..=jb.min(sdb.len() - 1) {
+            if sdb[i] <= pval {
+                env_x.push((i as isize - i0 as isize) as f64);
+                env_y.push(sdb[i]);
+            }
+        }
+    }
+
+    let a = polyfit(&env_x, &env_y, 5);
+
+    for i in ia..=ib.min(nh1 - 1) {
+        let t = (i as isize - i0 as isize) as f64;
+        sbase[i] = evpoly(&a, t) + 0.65;
+    }
+
     sbase
+}
+
+fn percentile(slice: &[f64], k: usize) -> f64 {
+    if slice.is_empty() {
+        return 0.0;
+    }
+    let mut tmp = slice.to_vec();
+    tmp.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let idx = (tmp.len() * k).div_ceil(100).min(tmp.len()).max(1) - 1;
+    tmp[idx]
+}
+
+fn polyfit(x: &[f64], y: &[f64], d: usize) -> Vec<f64> {
+    let n = x.len().min(y.len());
+    if n <= d {
+        return vec![0.0; d + 1];
+    }
+    let m = d + 1;
+    let mut a = vec![vec![0.0; m]; m];
+    let mut b = vec![0.0; m];
+
+    for i in 0..n {
+        for j in 0..m {
+            let xj = x[i].powi(j as i32);
+            for k2 in 0..m {
+                a[j][k2] += xj * x[i].powi(k2 as i32);
+            }
+            b[j] += xj * y[i];
+        }
+    }
+
+    for col in 0..m {
+        let mut max_val = a[col][col].abs();
+        let mut max_row = col;
+        for row in (col + 1)..m {
+            if a[row][col].abs() > max_val {
+                max_val = a[row][col].abs();
+                max_row = row;
+            }
+        }
+        if max_val < 1e-30 {
+            break;
+        }
+        if max_row != col {
+            a.swap(col, max_row);
+            b.swap(col, max_row);
+        }
+        for row in (col + 1)..m {
+            let factor = a[row][col] / a[col][col];
+            for k2 in col..m {
+                a[row][k2] -= factor * a[col][k2];
+            }
+            b[row] -= factor * b[col];
+        }
+    }
+
+    let mut coeffs = vec![0.0; m];
+    for i in (0..m).rev() {
+        let mut sum = 0.0;
+        for j in (i + 1)..m {
+            sum += a[i][j] * coeffs[j];
+        }
+        if a[i][i].abs() >= 1e-30 {
+            coeffs[i] = (b[i] - sum) / a[i][i];
+        }
+    }
+    coeffs
+}
+
+fn evpoly(a: &[f64], t: f64) -> f64 {
+    let mut result = 0.0;
+    for i in (0..a.len()).rev() {
+        result = result * t + a[i];
+    }
+    result
 }
 
 /// Nuttall 4-term window (matching WSJT-X nuttal_window.f90).
@@ -1306,14 +1440,14 @@ fn get_tones(cw: &[u8]) -> Vec<u8> {
 
 
 
-/// Encode callsign to 28-bit AP pattern.
+/// Encode callsign to 28-bit AP pattern, matching WSJT-X ft8apset.f90.
 fn encode_callsign_ap(call: &str) -> Option<Vec<i8>> {
     use crate::util::pack_jt77::pack77;
-    let msg = format!("CQ {} AA00", call.trim().to_uppercase());
+    let msg = format!("{} K1ABC RRR", call.trim().to_uppercase());
     let bits77 = pack77(&msg);
     if bits77.len() == 77 && bits77[74] == 0 && bits77[75] == 0 && bits77[76] == 1 {
         let mut ap_bits = Vec::with_capacity(28);
-        for i in 29..57 {
+        for i in 0..28 {
             ap_bits.push(if bits77[i] == 1 { 1i8 } else { -1i8 });
         }
         return Some(ap_bits);
@@ -1322,12 +1456,17 @@ fn encode_callsign_ap(call: &str) -> Option<Vec<i8>> {
 }
 
 fn encode_callsigns_ap(mycall: &str, hiscall: &str) -> Option<Vec<i8>> {
-    let my_bits = encode_callsign_ap(mycall)?;
-    let his_bits = encode_callsign_ap(hiscall)?;
-    let mut combined = Vec::with_capacity(58);
-    combined.extend_from_slice(&my_bits);
-    combined.extend_from_slice(&his_bits);
-    Some(combined)
+    use crate::util::pack_jt77::pack77;
+    let msg = format!("{} {} RRR", mycall.trim().to_uppercase(), hiscall.trim().to_uppercase());
+    let bits77 = pack77(&msg);
+    if bits77.len() == 77 && bits77[74] == 0 && bits77[75] == 0 && bits77[76] == 1 {
+        let mut ap_bits = Vec::with_capacity(58);
+        for i in 0..58 {
+            ap_bits.push(if bits77[i] == 1 { 1i8 } else { -1i8 });
+        }
+        return Some(ap_bits);
+    }
+    None
 }
 
 fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Option<&str>, hiscall: Option<&str>) -> Option<DecodeResult> {
