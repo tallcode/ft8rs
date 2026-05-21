@@ -265,7 +265,7 @@ fn refine_dt(
     f0: f64,
     dt: f64,
 ) -> isize {
-    let nmax = 15 * 12000;
+    let _nmax = 15 * 12000;
     
     // Compute residual energy at three offsets
     let sqa = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, -90);
@@ -288,7 +288,7 @@ fn compute_residual_energy(
     dd0: &[f64],
     cref_re: &[f64],
     cref_im: &[f64],
-    f0: f64,
+    _f0: f64,
     dt: f64,
     offset: isize,
 ) -> f64 {

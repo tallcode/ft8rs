@@ -1,149 +1,73 @@
-use clap::{Parser, Subcommand};
-use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use ft8rs::util::wav::{parse_wav_buffer, write_mono16_wav_file};
-use ft8rs::{decode_ft8, decode_ft4, encode_ft8, DecodeFT8Options, DecodeFT4Options};
+use clap::Parser;
+use hound::WavReader;
 
-const SAMPLE_RATE: usize = 12_000;
-
+use ft8rs::stream::{StreamDecoder, StreamDecodeConfig};
 
 #[derive(Parser)]
-#[command(name = "ft8rs", about = "FT8/FT4 encoder/decoder")]
+#[command(name = "ft8rs", about = "FT8 streaming decoder")]
 struct Cli {
-    #[command(subcommand)]
-    command: Commands,
+    /// Input WAV file
+    file: PathBuf,
 }
 
-#[derive(Subcommand)]
-enum Commands {
-    /// Decode a WAV file
-    Decode {
-        /// Input WAV file
-        file: PathBuf,
-        /// Mode: ft8 (default) or ft4
-        #[arg(long, default_value = "ft8")]
-        mode: String,
-        /// Lower frequency bound (Hz)
-        #[arg(long, default_value = "200")]
-        low: f64,
-        /// Upper frequency bound (Hz)
-        #[arg(long, default_value = "3000")]
-        high: f64,
-        /// Decoding depth (1=fast, 2=normal, 3=deep)
-        #[arg(long, default_value = "2")]
-        depth: usize,
-        /// Max candidate signals
-        #[arg(long, default_value = "300")]
-        max_candidates: usize,
-    },
-    /// Encode a message to WAV
-    Encode {
-        /// Message to encode
-        message: String,
-        /// Output WAV file
-        #[arg(long, default_value = "output.wav")]
-        out: PathBuf,
-        /// Base frequency in Hz
-        #[arg(long, default_value = "1000")]
-        df: f64,
-    },
+fn load_wav_f32(path: &str) -> (u32, Vec<f32>) {
+    let r = WavReader::open(path).expect("Failed to open WAV");
+    let spec = r.spec();
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Int => {
+            r.into_samples::<i32>().map(|v| {
+                match spec.bits_per_sample {
+                    16 => v.unwrap() as f32 / 32768.0,
+                    24 => v.unwrap() as f32 / 8_388_608.0,
+                    32 => v.unwrap() as f32 / 2_147_483_648.0,
+                    _ => panic!("unsupported bits"),
+                }
+            }).collect()
+        }
+        hound::SampleFormat::Float => r.into_samples::<f32>().map(|v| v.unwrap()).collect(),
+    };
+    (spec.sample_rate, samples)
 }
 
-fn run_decode(file: &PathBuf, mode: &str, low: f64, high: f64, depth: usize, max_candidates: usize) {
-    let buf = fs::read(file).expect("Failed to read file");
-    let wav = parse_wav_buffer(&buf).expect("Failed to parse WAV");
-
-    println!(
-        "WAV: {} Hz, {} samples, {:.1}s",
-        wav.sample_rate,
-        wav.samples.len(),
-        wav.samples.len() as f64 / wav.sample_rate as f64
-    );
-
-    let samples_f32: Vec<f32> = wav.samples.iter().map(|&x| x).collect();
-    let start = Instant::now();
-
-    if mode == "ft4" {
-        let decoded = decode_ft4(&samples_f32, DecodeFT4Options {
-            sample_rate: Some(wav.sample_rate as usize),
-            freq_low: Some(low),
-            freq_high: Some(high),
-            depth: Some(depth),
-            max_candidates: Some(max_candidates),
-            ..Default::default()
-        });
-        let elapsed = start.elapsed();
-        println!("\nDecoded {} messages in {:.2}s:\n", decoded.len(), elapsed.as_secs_f64());
-        println!("   dt  snr   freq  message");
-        println!("  ---  ---  -----  -------");
-        for d in &decoded {
-            println!("    {}  {:+3}  {:>5}  {}", format!("{:+.1}", d.dt), d.snr.round() as i32, d.freq.round() as i32, d.msg);
-        }
-    } else {
-        let decoded = decode_ft8(&samples_f32, DecodeFT8Options {
-            sample_rate: Some(wav.sample_rate as usize),
-            freq_low: Some(low),
-            freq_high: Some(high),
-            sync_min: Some(1.3),
-            depth: Some(depth),
-            max_candidates: Some(max_candidates),
-            hash_call_book: None,
-            mycall: None,
-            hiscall: None,
-            sync_mode: None,
-        });
-        let elapsed = start.elapsed();
-        println!("\nDecoded {} messages in {:.2}s:\n", decoded.len(), elapsed.as_secs_f64());
-        println!("   dt  snr   freq  message");
-        println!("  ---  ---  -----  -------");
-        for d in &decoded {
-            println!("    {}  {:+3}  {:>5}  {}", format!("{:+.1}", d.dt), d.snr.round() as i32, d.freq.round() as i32, d.msg);
-        }
+fn resample(src: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate { return src.to_vec(); }
+    let ratio = from_rate as f64 / to_rate as f64;
+    let n = ((src.len() as f64) / ratio).ceil() as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let s = i as f64 * ratio;
+        let lo = s.floor() as usize;
+        let fr = s - lo as f64;
+        let v0 = *src.get(lo).unwrap_or(&0.0) as f64;
+        let v1 = *src.get(lo + 1).unwrap_or(&0.0) as f64;
+        out.push((v0 * (1.0 - fr) + v1 * fr) as f32);
     }
-}
-
-fn run_encode(message: &str, out_file: &PathBuf, df_hz: f64) {
-    let waveform = encode_ft8(message, ft8rs::util::waveform::WaveformOptions {
-        sample_rate: Some(SAMPLE_RATE as f64),
-        samples_per_symbol: Some(1_920),
-        base_frequency: Some(df_hz),
-        ..Default::default()
-    });
-
-    let mut file = fs::File::create(out_file).expect("Failed to create output file");
-    write_mono16_wav_file(&mut file, &waveform, SAMPLE_RATE as u32)
-        .expect("Failed to write WAV");
-
-    println!(
-        "Wrote {} ({} samples, {:.3} s)",
-        out_file.display(),
-        waveform.len(),
-        waveform.len() as f64 / SAMPLE_RATE as f64
-    );
+    out
 }
 
 fn main() {
     let cli = Cli::parse();
+    let (sr, samples) = load_wav_f32(&cli.file.to_string_lossy());
+    let samples_12k = resample(&samples, sr, 12_000);
+    let samples_per_slot = 12_000 * 15;
 
-    match cli.command {
-        Commands::Decode {
-            file,
-            mode,
-            low,
-            high,
-            depth,
-            max_candidates,
-        } => {
-            run_decode(&file, &mode, low, high, depth, max_candidates);
-        }
-        Commands::Encode {
-            message,
-            out,
-            df,
-        } => {
-            run_encode(&message, &out, df);
+    let config = StreamDecodeConfig::default();
+    let mut decoder = StreamDecoder::new(config);
+
+    let total_slots = samples_12k.len() / samples_per_slot;
+    let t0 = Instant::now();
+
+    for slot in 0..total_slots {
+        let start = slot * samples_per_slot;
+        let end = (start + samples_per_slot).min(samples_12k.len());
+        let results = decoder.decode_slot(&samples_12k[start..end]);
+        for r in &results {
+            println!("{:+.1} {:>3} {:>5.0} {}", r.dt, r.snr.round(), r.freq, r.msg);
         }
     }
+
+    eprintln!("Decoded {} slots in {:.1}s", total_slots, t0.elapsed().as_secs_f64());
 }

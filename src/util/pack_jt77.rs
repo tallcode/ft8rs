@@ -499,13 +499,13 @@ fn pack_text77(chars: &[char]) -> Vec<u8> {
     // limb 0 gives 7 bits (bits 0-6 of byte 0, i.e., top 7 bits)
     let byte0 = qa_bytes[0];
     for b in (0..7).rev() {
-        bits.push(((byte0 >> b) & 1));
+        bits.push((byte0 >> b) & 1);
     }
     // limbs 1..8 give 8 bits each
     for li in 1..=8 {
         let byte = qa_bytes[li];
         for b in (0..8).rev() {
-            bits.push(((byte >> b) & 1));
+            bits.push((byte >> b) & 1);
         }
     }
     bits
