@@ -5,8 +5,5 @@ pub mod fft;
 pub mod pack_jt77;
 pub mod unpack_jt77;
 pub mod decode174_91;
-pub mod waveform;
 pub mod hashcall;
-pub mod wav;
 pub mod subtract_ft8;
-pub mod long_decode;

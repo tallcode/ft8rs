@@ -2,7 +2,6 @@
 
 use crate::util::constants::G_HEX;
 use crate::util::pack_jt77::pack77;
-use crate::util::waveform::{generate_ft8_waveform, WaveformOptions};
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
 
 fn generate_ldpc_g_matrix() -> Vec<Vec<u8>> {
@@ -92,9 +91,4 @@ pub fn encode_message(msg: &str) -> Vec<u8> {
     let bits77 = pack77(msg);
     let codeword = encode174_91(&bits77);
     get_tones(&codeword)
-}
-
-/// Encode a message string into a waveform.
-pub fn encode(msg: &str, options: WaveformOptions) -> Vec<f32> {
-    generate_ft8_waveform(&encode_message(msg), options)
 }
