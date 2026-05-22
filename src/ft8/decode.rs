@@ -292,7 +292,7 @@ fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Du
     // Capture sbase from first pass for AP decode xbase computation (WSJT-X convention)
     let mut sbase: Vec<f64> = Vec::new();
 
-    for _pass in 0..max_passes {
+    for pass_idx in 0..max_passes {
         let pass_syncmin = syncmin;
         cx_re.fill(0.0);
         cx_im.fill(0.0);
@@ -302,10 +302,15 @@ fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Du
 
         let t0 = std::time::Instant::now();
         let (candidates, pass_sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates, sync_mode);
-        if _pass == 0 {
+        if pass_idx == 0 {
             sbase = pass_sbase;
         }
         t_sync8_total += t0.elapsed();
+
+        // WSJT-X ft8_decode.f90: pass 1 uses ndeep=2 when depth=3 (maxosd=0),
+        // passes 2+ use full depth (maxosd=2). This avoids aggressive OSD on the
+        // first pass when the residual is still clean, reducing false positives.
+        let pass_depth = if pass_idx == 0 && depth >= 3 { 2 } else { depth };
 
         let _coarse_frequency_uses = count_candidate_frequencies(&candidates);
         let _coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
@@ -319,7 +324,7 @@ fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Du
             let mut cand_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> = std::collections::HashMap::new();
             let mut cand_freq_uses: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
             if let Some(r) = ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &sbase,
-                depth, &book, None, None, None, &mut cand_ws, &mut cand_cache, &mut cand_freq_uses) {
+                pass_depth, &book, None, None, None, &mut cand_ws, &mut cand_cache, &mut cand_freq_uses) {
                 let message_key = normalize_message_key(&r.msg);
                 if seen_messages.contains(&message_key) {
                     continue;
