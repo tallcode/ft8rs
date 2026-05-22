@@ -19,23 +19,19 @@
 
 ## 待对齐 ⚠️
 
-### 1. maxosd 条件逻辑 (高优先级)
-**WSJT-X**: `maxosd=2` 仅当 depth=3 且 `|nfqso-f1|≤napwid`
-**我们**: depth=3 时对所有候选都做 maxosd=2
+### 1. maxosd 条件逻辑 ~~(高优先级)~~ ✅ 已对齐
+**WSJT-X**: `maxosd=2` 默认值就是 2，条件成立也是 2
+**我们**: maxosd_base=2 ✅ 一致
 
-WSJT-X 只对已知频率附近（napwid 范围内）的候选做高阶 OSD，
-避免对噪声候选浪费 OSD 资源导致假阳性。
+TODO 原始分析有误 — WSJT-X 的 maxosd 初始值就是 2，
+条件判断只是保持 2 而不是改成其他值。standalone ndepth=3
+模式下两者完全一致。
 
-- 需要增加 `nfqso`（已知 QSO 频率）参数
-- 需要增加 `napwid`（AP 搜索宽度）参数
-- 修改 `try_decode_passes` 的 maxosd 决策逻辑
+### 2. SNR 计算 xsnr2 fallback ~~(中优先级)~~ ✅ 已对齐
+**基准测试**: 358/449 vs 358/449 — **零增益**
 
-### 2. SNR 计算 xsnr2 fallback (中优先级)
-**WSJT-X**: `xsnr2 = xsig/xbase/3e6-1`，nagain=false 时用 xsnr2
-**我们**: 只有 xsig/xnoi 的 xsnr
-
-WSJT-X 的 xsnr2 基于 sbase 频谱基线估计，对频率相关噪声更鲁棒。
-在边际信号（-20dB 附近）可能有显著差异。
+xsnr2 只改变 SNR 报告方式，不影响解码决策。已实现但
+不带来匹配数提升。
 
 ### 3. AP 解码参数体系 (中优先级)
 WSJT-X ft8b.f90 有大量参数控制 AP 行为：
