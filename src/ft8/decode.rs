@@ -1,5 +1,5 @@
 use std::rc::Rc;
-/// FT8 decoder – Rust port of decode.ts
+/// FT8 decoder - Rust port of decode.ts
 
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
 use crate::util::constants::{N_LDPC, SAMPLE_RATE};
@@ -15,12 +15,12 @@ pub(crate) static FT8B_TIMERS: [std::sync::atomic::AtomicU64; 6] = [
     std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0),
 ];
 
-/// sync8 spectral mode – different representations favour different SNR regimes.
+/// sync8 spectral mode - different representations favour different SNR regimes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SyncMode {
-    /// Power spectrum: s = Re² + Im² (best for strong signals)
+    /// Power spectrum: s = Re2 + Im2 (best for strong signals)
     Power = 0,
-    /// Amplitude spectrum: s = sqrt(Re² + Im²) (better for weak signals, compresses dynamic range)
+    /// Amplitude spectrum: s = sqrt(Re2 + Im2) (better for weak signals, compresses dynamic range)
     Amplitude = 1,
     /// Absolute sum: s = |Re| + |Im| (most robust against impulsive noise)
     AbsSum = 2,
@@ -921,25 +921,21 @@ fn ft8b(
 
     build_bit_metrics(workspace);
     let _t4 = t0.elapsed();
-    
-    // ── sbase-based LLR normalization: compensate for frequency-dependent noise ──
-    // sbase is built by sync8 with SYNC8_DF = 12000/4096 = 2.93 Hz/bin.
-    // Previously used DOWNSAMPLE_DF (0.0625) → wrong index, normalization never applied.
-    if false { // xbase disabled: normalize_bmet already sufficient; Welch +152s no gain
-        let df_w = crate::util::constants::SAMPLE_RATE as f64 / crate::ft8::decode::NFFT1 as f64; let freq_bin = (f1 / df_w).round() as usize;
-        if freq_bin < _sbase.len() {
-            let sbase_val = _sbase[freq_bin];
-            let xbase = 10.0_f64.powf(0.1 * (sbase_val - 40.0));
-            let scale = 1.0 / (xbase.max(0.01).sqrt());
-            let scale = scale.clamp(0.5, 3.0);
-            for metric in [&mut workspace.bmeta, &mut workspace.bmetb, &mut workspace.bmetc, &mut workspace.bmetd] {
-                for v in metric.iter_mut() {
-                    *v *= scale;
-                }
-            }
+
+    // ── xbase: noise baseline at candidate frequency (for xsnr2) ──
+    // sbase is built by sync8 with NFFT1=3840 → df=3.125 Hz/bin.
+    // WSJT-X ft8b.f90: xbase = 10^(0.1*(sbase[freq_bin]-40))
+    // This represents the absolute noise power at f1 in the original spectrum.
+    let xbase = {
+        let df_sync = SAMPLE_RATE as f64 / NFFT1 as f64; // 3.125 Hz/bin
+        let freq_bin = (f1 / df_sync).round() as usize;
+        if freq_bin < _sbase.len() && _sbase[freq_bin] > 0.0 {
+            10.0_f64.powf(0.1 * (_sbase[freq_bin] - 40.0))
+        } else {
+            1e-6 // safe fallback: very low noise floor
         }
-    }
-    
+    };
+
     let result = try_decode_passes(workspace, depth, mycall, hiscall);
     result.as_ref()?;
     let result = result.unwrap();
@@ -960,15 +956,27 @@ fn ft8b(
         return None;
     }
 
-    let snr = estimate_snr(&workspace.s8, &result.cw);
-    
+    let (_xsnr, xsnr2) = compute_snr(&workspace.s8, &result.cw, xbase);
+
+    // WSJT-X ft8b.f90: when nagain=false (initial decode, not subtract+retry),
+    // use xsnr2 (spectrum baseline) instead of xsnr (adjacent-tone).
+    // nagain=false is the default case for standalone decode.
+    let snr = if xsnr2 < -24.0 { -24.0 } else { xsnr2 }; // nagain=false, clamped
+
+    // WSJT-X ft8b.f90: false-positive bail-out
+    // if (nsync.le.10 .and. xsnr.lt.-24.0) then nbadcrc=1; return
+    let nsync = compute_nsync(&workspace.s8);
+    if nsync <= 10 && snr < -24.0 {
+        return None;
+    }
+
     // Compute itone from codeword (same as get_tones but as [i32; 79])
     let mut itone = [0i32; 79];
     let tones = get_tones(&result.cw);
     for i in 0..79 {
         itone[i] = tones[i] as i32;
     }
-    
+
     Some(Ft8bResult {
         msg,
         freq: f1,
@@ -1020,7 +1028,7 @@ fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> isize {
     // Returns UNWRAPPED ibest (may be negative), matching TS behavior.
     let i0_raw = ((xdt + 0.5) * FS2).round() as isize;
     let i0_center = i0_raw.rem_euclid(NP2 as isize);
-    
+
     let mut smax = 0.0;
     let mut ibest_unwrapped = i0_raw;  // start with unwrapped
     let cs = build_costas_sync_templates();
@@ -1122,6 +1130,32 @@ fn passes_sync_gate_strict(s8: &[f64], min_costas_hits: usize) -> bool {
     }
 
     nsync >= min_costas_hits
+}
+
+/// Compute nsync count matching WSJT-X ft8b.f90: count of correct Costas tones.
+/// Returns 0-21 (3 blocks × 7 tones).
+fn compute_nsync(s8: &[f64]) -> usize {
+    const SYNC_TIME_SHIFTS: [usize; 3] = [0, 36, 72];
+    let mut nsync = 0;
+
+    for k in 0..COSTAS_BLOCKS {
+        for &offset in &SYNC_TIME_SHIFTS {
+            let mut max_tone = 0;
+            let mut max_val = -1.0;
+            for t in 0..8 {
+                let v = s8[t * NN + k + offset];
+                if v > max_val {
+                    max_val = v;
+                    max_tone = t;
+                }
+            }
+            if max_tone == COSTAS[k] as usize {
+                nsync += 1;
+            }
+        }
+    }
+
+    nsync
 }
 
 #[allow(dead_code)]
@@ -1387,7 +1421,14 @@ fn is_valid_message_type(message77: &[u8]) -> bool {
     true
 }
 
-fn estimate_snr(s8: &[f64], cw: &[u8]) -> f64 {
+/// Compute both SNR estimates matching WSJT-X ft8b.f90.
+///
+/// - `xsnr`: xsig/xnoi - 1 (adjacent-tone noise)
+/// - `xsnr2`: xsig/xbase/3e6 - 1 (spectrum baseline)
+///
+/// WSJT-X uses xsnr2 when nagain=false (initial decode), xsnr when nagain=true
+/// (after subtract+retry). xbase is the noise power at f1 from the sync8 baseline.
+fn compute_snr(s8: &[f64], cw: &[u8], xbase: f64) -> (f64, f64) {
     let itone = get_tones(cw);
     let mut xsig = 0.0;
     let mut xnoi = 0.0;
@@ -1399,17 +1440,41 @@ fn estimate_snr(s8: &[f64], cw: &[u8]) -> f64 {
         xnoi += s8[ios * NN + i].powi(2);
     }
 
-    let mut snr = 0.001;
+    // xsnr: adjacent-tone noise estimate
+    let mut xsnr = 0.001;
     let arg = xsig / xnoi.max(1e-30) - 1.0;
     if arg > 0.1 {
-        snr = arg;
+        xsnr = arg;
     }
-    snr = 10.0 * snr.log10() - 27.0;
-    if snr < -24.0 {
-        -24.0
-    } else {
-        snr
+    xsnr = 10.0 * xsnr.log10() - 27.0;
+
+    // xsnr2: spectrum baseline estimate (WSJT-X ft8b.f90)
+    // WSJT-X: xsnr2_arg = xsig / (xbase * 3e6) - 1
+    // Our s8 is scaled by 1/1000 vs WSJT-X (extract_soft_symbols divides csymb by 1000),
+    // so our xsig is 1e6x smaller. Compensate: use 3 instead of 3e6.
+    let mut xsnr2 = 0.001;
+    let arg2 = xsig / xbase / 3.0 - 1.0;
+    if arg2 > 0.1 {
+        xsnr2 = arg2;
     }
+    xsnr2 = 10.0 * xsnr2.log10() - 27.0;
+
+    // Clamp both to -24 dB floor
+    if xsnr < -24.0 {
+        xsnr = -24.0;
+    }
+    if xsnr2 < -24.0 {
+        xsnr2 = -24.0;
+    }
+
+    (xsnr, xsnr2)
+}
+
+/// Legacy SNR estimate (adjacent-tone only, for compatibility).
+#[allow(dead_code)]
+fn estimate_snr(s8: &[f64], cw: &[u8]) -> f64 {
+    let (xsnr, _) = compute_snr(s8, cw, 1e-6); // dummy xbase, unused
+    xsnr
 }
 
 
@@ -1523,7 +1588,7 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
             workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
             workspace.apmask[75] = 1; workspace.llr[75] = -apmag;  // i3 bit 1 = 0
             workspace.apmask[76] = 1; workspace.llr[76] = apmag;   // i3 bit 2 = 1
-            
+
             if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
                 if result.nharderrors <= 36 {
                     return Some(result);
@@ -1535,7 +1600,7 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
             workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
             workspace.apmask[75] = 1; workspace.llr[75] = apmag;   // i3 bit 1 = 1
             workspace.apmask[76] = 1; workspace.llr[76] = -apmag;  // i3 bit 2 = 0
-            
+
             if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
                 if result.nharderrors <= 36 {
                     return Some(result);
@@ -1555,7 +1620,7 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
             workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
             workspace.apmask[75] = 1; workspace.llr[75] = -apmag;  // i3 bit 1 = 0
             workspace.apmask[76] = 1; workspace.llr[76] = apmag;   // i3 bit 2 = 1 (i3=1)
-            
+
             if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
                 if result.nharderrors <= 36 {
                     return Some(result);
@@ -1565,7 +1630,7 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
             // ── AP Pass 8: Constrain only n3=0, i3=2 ──
             workspace.apmask[75] = 1; workspace.llr[75] = apmag;   // i3 bit 1 = 1
             workspace.apmask[76] = 1; workspace.llr[76] = -apmag;  // i3 bit 2 = 0 (i3=2)
-            
+
             if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
                 if result.nharderrors <= 36 {
                     return Some(result);

@@ -291,7 +291,8 @@ pub fn ft8_a7d(
     if msgbest.starts_with("CQ ") && std_2 && grid4.trim().is_empty() { return None; }
     if msgbest.starts_with("QU1RK ") { return None; }
 
-    // SNR
+    // SNR — WSJT-X ft8b.f90: xsnr2 = xsig/(xbase*3e6)-1
+    // AP decode s8 has WSJT-X scale (no /1000), so 3e6 divisor is correct.
     let xsnr = {
         let arg = pbest / xbase / 3e6 - 1.0;
         if arg > 0.0 { (-24.0f64).max(10.0 * arg.log10() - 27.0) } else { -24.0 }
