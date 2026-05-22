@@ -7,7 +7,7 @@
 | 短解码 | 19/20 | 20/20 | 20/20 |
 | 长解码 | 358/449 (79.7%) | 353/449 (78.6%) | ~420+/449 |
 
-## 已完成 ✅
+## 已完成 ✅（已验证零增益）
 
 - [x] FFT 引擎双引擎切换（FFTW@3840 / rustfft@4096）
 - [x] FFT 尺寸对齐 (3840 via FFTW)
@@ -16,22 +16,26 @@
 - [x] xbase LLR 归一化启用
 - [x] SNR 门控: nsync≤10 && snr<-24dB → 拒绝
 - [x] 单元测试全部通过
+- [x] maxosd pass 1 depth=2 (WSJT-X ft8_decode.f90 策略) → 零增益
+- [x] xsnr2 fallback (频谱基线 SNR 报告) → 零增益
 
 ## 待对齐 ⚠️
 
-### 1. maxosd 条件逻辑 ~~(高优先级)~~ ✅ 已对齐
-**WSJT-X**: `maxosd=2` 默认值就是 2，条件成立也是 2
-**我们**: maxosd_base=2 ✅ 一致
-
-TODO 原始分析有误 — WSJT-X 的 maxosd 初始值就是 2，
-条件判断只是保持 2 而不是改成其他值。standalone ndepth=3
-模式下两者完全一致。
-
-### 2. SNR 计算 xsnr2 fallback ~~(中优先级)~~ ✅ 已对齐
+### 2. SNR 计算 xsnr2 fallback ~~(中优先级)~~ ✅ 已对齐（零增益）
 **基准测试**: 358/449 vs 358/449 — **零增益**
 
 xsnr2 只改变 SNR 报告方式，不影响解码决策。已实现但
 不带来匹配数提升。
+
+### 1. maxosd pass 1 depth=2 ~~(高优先级)~~ ✅ 已对齐（零增益）
+**WSJT-X ft8_decode.f90**: pass 1 用 `ndeep=2`（→ maxosd=0），passes 2-3 用 `ndeep=3`（→ maxosd=2）
+**我们**: 已对齐，pass 1 depth=2, passes 2-3 depth=3
+
+**基准测试**: 358/449 vs 358/449 — **零增益**
+
+WSJT-X pass 1 更保守（maxosd=0 避免假阳性），passes 2-3 在
+清理后残差上用 maxosd=2 补偿。总结果和所有 pass 用 maxosd=2
+一样，因为减法会清理假阳性。
 
 ### 3. AP 解码参数体系 (中优先级)
 WSJT-X ft8b.f90 有大量参数控制 AP 行为：
