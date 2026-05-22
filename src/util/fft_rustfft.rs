@@ -179,3 +179,23 @@ mod tests {
         }
     }
 }
+
+/// Real-to-complex forward FFT via fft_complex with zero imaginary input.
+#[inline]
+pub fn fft_r2c(re: &mut [f64], im: &mut [f64]) {
+    let n = re.len();
+    debug_assert_eq!(im.len(), n);
+    let nh = n / 2 + 1;
+    fft_complex(re, im, false);
+    for i in nh..n { re[i] = 0.0; im[i] = 0.0; }
+}
+
+/// Complex-to-real inverse FFT via fft_complex inverse.
+#[inline]
+pub fn fft_c2r(re: &mut [f64], im: &mut [f64]) {
+    let n = re.len();
+    debug_assert_eq!(im.len(), n);
+    let nh = n / 2 + 1;
+    for i in nh..n { re[i] = 0.0; im[i] = 0.0; }
+    fft_complex(re, im, true);
+}

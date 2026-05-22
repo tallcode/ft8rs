@@ -1,16 +1,28 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use hound::WavReader;
 
 use ft8rs::stream::{StreamDecoder, StreamDecodeConfig};
+
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum FftEngine {
+    #[default]
+    Fftw,
+    Rustfft,
+}
 
 #[derive(Parser)]
 #[command(name = "ft8rs", about = "FT8 streaming decoder")]
 struct Cli {
     /// Input WAV file
     file: PathBuf,
+
+    /// FFT engine to use
+    #[arg(long, value_enum, default_value_t = FftEngine::Fftw,
+        help = "FFT engine: fftw (3840-pt, WSJT-X aligned) or rustfft (4096-pt)")]
+    fft_engine: FftEngine,
 }
 
 fn load_wav_f32(path: &str) -> (u32, Vec<f32>) {
@@ -50,6 +62,12 @@ fn resample(src: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
 
 fn main() {
     let cli = Cli::parse();
+
+    // Set FFT engine before any decoding
+    match cli.fft_engine {
+        FftEngine::Rustfft => std::env::set_var("FTRS_FFT", "rustfft"),
+        FftEngine::Fftw    => std::env::set_var("FTRS_FFT", "fftw"),
+    }
     let (sr, samples) = load_wav_f32(&cli.file.to_string_lossy());
     let samples_12k = resample(&samples, sr, 12_000);
     let samples_per_slot = 12_000 * 15;

@@ -16,10 +16,8 @@
 
 use super::decode::{
     build_costas_sync_templates, normalize_bmet, NP2, NN, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN,
-    FS2, DT2, TWO_PI, NFFT2, NFFT1_LONG, DOWNSAMPLE_DF, DOWNSAMPLE_BAUD, DOWNSAMPLE_SCALE,
-    NSPS, TAPER_SIZE,
+    FS2, DT2, TWO_PI, NFFT2, NFFT1_LONG, DOWNSAMPLE_DF, DOWNSAMPLE_BAUD, DOWNSAMPLE_SCALE, TAPER_SIZE,
 };
-use crate::util::constants::SAMPLE_RATE;
 use crate::util::pack_jt77::{pack77, is_stdcall};
 
 const NDOWN: usize = 60;
@@ -451,7 +449,7 @@ fn ap_downsample(dd0: &[f64], f0: f64, taper: &[f64; 101]) -> (Vec<f64>, Vec<f64
     let mut re = dd0.to_vec();
     re.resize(NFFT1_LONG, 0.0);
     let mut im = vec![0.0f64; NFFT1_LONG];
-    crate::util::fft::fft_complex(&mut re, &mut im, false);
+    crate::util::fft_complex(&mut re, &mut im, false);
 
     let df = DOWNSAMPLE_DF;
     let baud = DOWNSAMPLE_BAUD;
@@ -496,7 +494,7 @@ fn ap_downsample(dd0: &[f64], f0: f64, taper: &[f64; 101]) -> (Vec<f64>, Vec<f64
         cd0_re = tmp_re; cd0_im = tmp_im;
     }
 
-    crate::util::fft::fft_complex(&mut cd0_re, &mut cd0_im, true);
+    crate::util::fft_complex(&mut cd0_re, &mut cd0_im, true);
     for i in 0..NFFT2 { cd0_re[i] *= DOWNSAMPLE_SCALE; cd0_im[i] *= DOWNSAMPLE_SCALE; }
     (cd0_re, cd0_im)
 }
