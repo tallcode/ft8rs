@@ -7,17 +7,34 @@
 | 短解码 | 19/20 | 20/20 | 20/20 |
 | 长解码 | 358/449 (79.7%) | 353/449 (78.6%) | ~420+/449 |
 
-## 已完成 ✅（已验证零增益）
+## 已验证为零增益的改造 ✅
 
-- [x] FFT 引擎双引擎切换（FFTW@3840 / rustfft@4096）
-- [x] FFT 尺寸对齐 (3840 via FFTW)
+- [x] FFT 引擎双引擎切换（FFTW@3840 / rustfft@4096）— 灵敏度无差异
+- [x] maxosd pass 1 depth=2 — 358/449 vs 358/449，零增益
+- [x] xsnr2 fallback — 358/449 vs 358/449，零增益
 - [x] SYNC8_DF 对齐 (3.125 Hz/bin)
 - [x] subtract_ft8 共轭对称修复 (fft_r2c → fft_complex)
-- [x] xbase LLR 归一化启用
+- [x] xbase LLR 归一化
 - [x] SNR 门控: nsync≤10 && snr<-24dB → 拒绝
-- [x] 单元测试全部通过
-- [x] maxosd pass 1 depth=2 (WSJT-X ft8_decode.f90 策略) → 零增益
-- [x] xsnr2 fallback (频谱基线 SNR 报告) → 零增益
+
+## 当前基线
+
+| 模式 | 短解码 | 长解码 |
+|---|---|---|
+| ft8rs (FFTW@3840) | 19/20 | 358/449 (79.7%) |
+| WSJT-X 参考 | 20/20 | ~366/449+ |
+| 差距 | 1 | ~8+ |
+
+## 待调查 ⚠️
+
+### 1. sync8 sync 值精度
+sync2d 计算中 t/t0 的浮点精度可能导致弱信号 sync 值在 syncmin=1.3 门限上下波动。
+
+### 2. subtract_ft8 质量
+减法后残差质量影响后续 pass。需要对比 WSJT-X subtractft8.f90 的 LPF 参数。
+
+### 3. LLR 数值精度
+normalize_bmet 的浮点差异累积可能影响边际信号的 BP 收敛。
 
 ## 待对齐 ⚠️
 
