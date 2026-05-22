@@ -510,3 +510,49 @@ fn pack_text77(chars: &[char]) -> Vec<u8> {
     }
     bits
 }
+
+/// Check if a callsign is "standard" per WSJT-X stdcall.
+/// Port of wsjtx/lib/qra/q65/q65_set_list.f90:stdcall
+pub fn is_stdcall(callsign: &str) -> bool {
+    let c = callsign.trim().to_uppercase();
+    let bytes = c.as_bytes();
+    let n = bytes.len();
+    if n < 2 || n > 12 {
+        return false;
+    }
+
+    // Find right-most digit (call area)
+    let mut iarea: i32 = -1;
+    for i in (1..n).rev() {
+        if bytes[i].is_ascii_digit() {
+            iarea = i as i32;
+            break;
+        }
+    }
+
+    if iarea < 2 || iarea > 3 {
+        return false;
+    }
+
+    // Count digits and letters before call area
+    let mut npdig = 0;
+    let mut nplet = 0;
+    for i in 0..(iarea as usize) {
+        if bytes[i].is_ascii_digit() {
+            npdig += 1;
+        }
+        if bytes[i].is_ascii_uppercase() {
+            nplet += 1;
+        }
+    }
+
+    // Count letters in suffix
+    let mut nslet = 0;
+    for i in (iarea as usize + 1)..n {
+        if bytes[i].is_ascii_uppercase() {
+            nslet += 1;
+        }
+    }
+
+    nplet >= 1 && (npdig as i32) < iarea - 1 && nslet <= 3
+}

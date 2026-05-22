@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
 use crate::util::constants::{N_LDPC, SAMPLE_RATE};
 use crate::util::decode174_91::{decode174_91, DecodeResult};
-use crate::util::fft::{fft_complex, next_pow2};
+use crate::util::fft::{fft_complex, fft_r2c, next_pow2};
 use crate::util::hashcall::HashCallBook;
 use crate::util::unpack_jt77::unpack77;
 
@@ -26,30 +26,30 @@ pub enum SyncMode {
     AbsSum = 2,
 }
 
-const NSPS: usize = 1920;
-const NFFT1: usize = 2 * NSPS; // 3840
-const NSTEP: usize = NSPS / 4; // 480
-const NMAX: usize = 15 * 12_000; // 180000
-const NHSYM: usize = NMAX / NSTEP - 3; // 372
-const NDOWN: usize = 60;
-const NN: usize = 79;
+pub(crate) const NSPS: usize = 1920;
+pub(crate) const NFFT1: usize = 2 * NSPS; // 3840
+pub(crate) const NSTEP: usize = NSPS / 4; // 480
+pub(crate) const NMAX: usize = 15 * 12_000; // 180000
+pub(crate) const NHSYM: usize = NMAX / NSTEP - 3; // 372
+pub(crate) const NDOWN: usize = 60;
+pub(crate) const NN: usize = 79;
 
-const NFFT1_LONG: usize = 192000;
+pub(crate) const NFFT1_LONG: usize = 192000;
 #[allow(dead_code)]
 const SYNC8_DF: f64 = SAMPLE_RATE as f64 / 4096.0; // 12000/4096 = 2.93 Hz/bin
-const NFFT2: usize = 3200;
-const NP2: usize = 2812;
-const COSTAS_BLOCKS: usize = 7;
-const COSTAS_SYMBOL_LEN: usize = 32;
-const TAPER_SIZE: usize = 101;
-const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
+pub(crate) const NFFT2: usize = 3200;
+pub(crate) const NP2: usize = 2812;
+pub(crate) const COSTAS_BLOCKS: usize = 7;
+pub(crate) const COSTAS_SYMBOL_LEN: usize = 32;
+pub(crate) const TAPER_SIZE: usize = 101;
+pub(crate) const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
 const MAX_DECODE_PASSES_DEPTH3: usize = 4;
 
-const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
-const DT2: f64 = 1.0 / FS2;
-const DOWNSAMPLE_DF: f64 = SAMPLE_RATE as f64 / NFFT1_LONG as f64;
-const DOWNSAMPLE_BAUD: f64 = SAMPLE_RATE as f64 / NSPS as f64;
-const DOWNSAMPLE_SCALE: f64 = 0.12909944487358055; // sqrt(3200/192000)
+pub(crate) const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
+pub(crate) const DT2: f64 = 1.0 / FS2;
+pub(crate) const DOWNSAMPLE_DF: f64 = SAMPLE_RATE as f64 / NFFT1_LONG as f64;
+pub(crate) const DOWNSAMPLE_BAUD: f64 = SAMPLE_RATE as f64 / NSPS as f64;
+pub(crate) const DOWNSAMPLE_SCALE: f64 = 0.12909944487358055; // sqrt(3200/192000)
 
 #[derive(Clone)]
 pub struct DecodedMessage {
@@ -214,13 +214,6 @@ fn build_frequency_shift_sync_templates() -> &'static Vec<FrequencyShiftSyncTemp
 pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     let t_start = std::time::Instant::now();
     let sample_rate = options.sample_rate.unwrap_or(SAMPLE_RATE);
-    let nfa = options.freq_low.unwrap_or(200.0);
-    let nfb = options.freq_high.unwrap_or(3000.0);
-    let syncmin = options.sync_min.unwrap_or(1.3);
-    let depth = options.depth.unwrap_or(3);
-    let max_candidates = options.max_candidates.unwrap_or(600);
-    let book = options.hash_call_book;
-    let sync_mode = options.sync_mode.unwrap_or(SyncMode::Power);
 
     let dd = if sample_rate == SAMPLE_RATE {
         copy_samples_to_decode_window(samples)
@@ -228,11 +221,48 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
+    let (msgs, _) = decode_from_f64(dd, options, t_dd, t_start);
+    msgs
+}
+
+/// Decode directly from f64 samples (used for cleaned residual after subtraction).
+pub fn decode_f64(samples: &[f64], options: DecodeOptions) -> Vec<DecodedMessage> {
+    let t_start = std::time::Instant::now();
+    let len = samples.len().min(NMAX);
+    let dd = samples[..len].to_vec();
+    let t_dd = t_start.elapsed();
+    let (msgs, _) = decode_from_f64(dd, options, t_dd, t_start);
+    msgs
+}
+
+/// Decode returning both messages and the sbase noise baseline.
+pub fn decode_with_sbase(samples: &[f32], options: DecodeOptions) -> (Vec<DecodedMessage>, Vec<f64>) {
+    let t_start = std::time::Instant::now();
+    let sample_rate = options.sample_rate.unwrap_or(SAMPLE_RATE);
+    let dd = if sample_rate == SAMPLE_RATE {
+        copy_samples_to_decode_window(samples)
+    } else {
+        resample(samples, sample_rate, SAMPLE_RATE, NMAX)
+    };
+    let t_dd = t_start.elapsed();
+    decode_from_f64(dd, options, t_dd, t_start)
+}
+
+fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Duration, t_start: std::time::Instant) -> (Vec<DecodedMessage>, Vec<f64>) {
+    // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
+    if dd.len() > NMAX { dd.truncate(NMAX); }
+    let nfa = options.freq_low.unwrap_or(200.0);
+    let nfb = options.freq_high.unwrap_or(3000.0);
+    let syncmin = options.sync_min.unwrap_or(1.3);
+    let depth = options.depth.unwrap_or(3);
+    let max_candidates = options.max_candidates.unwrap_or(600);
+    let book = options.hash_call_book;
+    let sync_mode = options.sync_mode.unwrap_or(SyncMode::Power);
     let mut residual = dd.clone();
 
     let mut cx_re = vec![0.0; NFFT1_LONG];
     let mut cx_im = vec![0.0; NFFT1_LONG];
-    cx_re[..residual.len()].copy_from_slice(&residual);
+    cx_re[..residual.len().min(NFFT1_LONG)].copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
     fft_complex(&mut cx_re, &mut cx_im, false);
     let t_cx = t_start.elapsed();
     let _workspace = create_decode_workspace();
@@ -259,6 +289,9 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
     let mut t_decode_total = std::time::Duration::ZERO;
     let mut t_subtract_total = std::time::Duration::ZERO;
 
+    // Capture sbase from first pass for AP decode xbase computation (WSJT-X convention)
+    let mut sbase: Vec<f64> = Vec::new();
+
     for _pass in 0..max_passes {
         let pass_syncmin = syncmin;
         cx_re.fill(0.0);
@@ -268,7 +301,10 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         fft_complex(&mut cx_re, &mut cx_im, false);
 
         let t0 = std::time::Instant::now();
-        let (candidates, _sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates, sync_mode);
+        let (candidates, pass_sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates, sync_mode);
+        if _pass == 0 {
+            sbase = pass_sbase;
+        }
         t_sync8_total += t0.elapsed();
 
         let _coarse_frequency_uses = count_candidate_frequencies(&candidates);
@@ -282,7 +318,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
             let mut cand_ws = create_decode_workspace();
             let mut cand_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> = std::collections::HashMap::new();
             let mut cand_freq_uses: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
-            if let Some(r) = ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &_sbase,
+            if let Some(r) = ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &sbase,
                 depth, &book, None, None, None, &mut cand_ws, &mut cand_cache, &mut cand_freq_uses) {
                 let message_key = normalize_message_key(&r.msg);
                 if seen_messages.contains(&message_key) {
@@ -333,7 +369,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         ft8b_down/1000, ft8b_sync8d/1000, ft8b_symbols/1000, ft8b_bmet/1000, ft8b_ldpc/1000,
         t_subtract_total.as_millis(), total.as_millis());
 
-    decoded
+    (decoded, sbase)
 }
 
 fn normalize_message_key(msg: &str) -> String {
@@ -413,7 +449,7 @@ pub(crate) fn sync8(
     mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
     let jz = 62;
-    let fft_size = next_pow2(NFFT1); // 4096
+    let fft_size = next_pow2(NFFT1); // 4096 — matches WSJT-X four2a exactly
     let half_size = fft_size / 2;
     let tstep = NSTEP as f64 / SAMPLE_RATE as f64;
     let df = SAMPLE_RATE as f64 / fft_size as f64;
@@ -441,8 +477,22 @@ pub(crate) fn sync8(
             for i in ia..end {
                 x_re[i - ia] = fac * dd[i];
             }
-            fft_complex(x_re, x_im, false);
+            fft_r2c(x_re, x_im);
             let row_offset = j;
+            // Debug: check FFT output for first symbol
+            if j == 0 {
+                let total_power: f64 = (0..half_size).map(|i| x_re[i]*x_re[i] + x_im[i]*x_im[i]).sum();
+                let max_power: f64 = (0..half_size).map(|i| x_re[i]*x_re[i] + x_im[i]*x_im[i]).fold(0.0, f64::max);
+                let input_power: f64 = (0..end.min(ia+NSPS)).map(|i| dd[i]*dd[i]).sum::<f64>();
+                eprintln!("[FFTW DEBUG] symbol 0: half_size={}, input_power={:.2e}, total_power={:.2e}, max_power={:.2e}",
+                          half_size, input_power, total_power, max_power);
+                // Also check a few bins
+                for bi in [0, 1, 10, 100, 500, 1000, 1900].iter() {
+                    if *bi < half_size {
+                        eprintln!("[FFTW DEBUG]   bin {}: ({:.4e}, {:.4e})", bi, x_re[*bi], x_im[*bi]);
+                    }
+                }
+            }
             for i in 0..half_size {
                 let val = match mode {
                     SyncMode::Amplitude => (x_re[i] * x_re[i] + x_im[i] * x_im[i]).sqrt(),
@@ -819,7 +869,7 @@ fn get_spectrum_baseline(dd: &[f64]) -> Vec<f64> {
         if ib > dd.len() { break; }
         let mut x_re = vec![0.0; nfft]; let mut x_im = vec![0.0; nfft];
         for i in 0..nfft { x_re[i] = dd[ia + i] * window[i]; }
-        fft_complex(&mut x_re, &mut x_im, false);
+        fft_r2c(&mut x_re, &mut x_im);
         for i in 0..nh1 { savg[i] += x_re[i] * x_re[i] + x_im[i] * x_im[i]; }
     }
     if nf > 0 { let s = 1.0 / nf as f64; for v in savg.iter_mut() { *v *= s; } }
@@ -1218,7 +1268,7 @@ fn build_bit_metrics(workspace: &mut DecodeWorkspace) {
     normalize_bmet(&mut workspace.bmetd);
 }
 
-fn normalize_bmet(bmet: &mut [f64]) {
+pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
     let n = bmet.len();
     let mut sum = 0.0;
     let mut sum2 = 0.0;
