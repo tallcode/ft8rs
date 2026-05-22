@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
 use crate::util::constants::{N_LDPC, SAMPLE_RATE};
 use crate::util::decode174_91::{decode174_91, DecodeResult};
-use crate::util::fft::{fft_complex, fft_r2c, next_pow2};
+use crate::util::{fft_complex, fft_r2c, sync8_fft_size};
 use crate::util::hashcall::HashCallBook;
 use crate::util::unpack_jt77::unpack77;
 
@@ -449,7 +449,7 @@ pub(crate) fn sync8(
     mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
     let jz = 62;
-    let fft_size = next_pow2(NFFT1); // 4096 — matches WSJT-X four2a exactly
+    let fft_size = sync8_fft_size();
     let half_size = fft_size / 2;
     let tstep = NSTEP as f64 / SAMPLE_RATE as f64;
     let df = SAMPLE_RATE as f64 / fft_size as f64;
@@ -479,20 +479,6 @@ pub(crate) fn sync8(
             }
             fft_r2c(x_re, x_im);
             let row_offset = j;
-            // Debug: check FFT output for first symbol
-            if j == 0 {
-                let total_power: f64 = (0..half_size).map(|i| x_re[i]*x_re[i] + x_im[i]*x_im[i]).sum();
-                let max_power: f64 = (0..half_size).map(|i| x_re[i]*x_re[i] + x_im[i]*x_im[i]).fold(0.0, f64::max);
-                let input_power: f64 = (0..end.min(ia+NSPS)).map(|i| dd[i]*dd[i]).sum::<f64>();
-                eprintln!("[FFTW DEBUG] symbol 0: half_size={}, input_power={:.2e}, total_power={:.2e}, max_power={:.2e}",
-                          half_size, input_power, total_power, max_power);
-                // Also check a few bins
-                for bi in [0, 1, 10, 100, 500, 1000, 1900].iter() {
-                    if *bi < half_size {
-                        eprintln!("[FFTW DEBUG]   bin {}: ({:.4e}, {:.4e})", bi, x_re[*bi], x_im[*bi]);
-                    }
-                }
-            }
             for i in 0..half_size {
                 let val = match mode {
                     SyncMode::Amplitude => (x_re[i] * x_re[i] + x_im[i] * x_im[i]).sqrt(),

@@ -241,3 +241,42 @@
 2. **音频处理**: 长解码测试用 17s 窗口 (15s±1s 重叠) vs WSJT-X 严格 15s
 3. **sbase 计算**: compute_baseline 可能和 WSJT-X Welch 方法有细微差异
 4. **SNR 估计**: WSJT-X 的 xsnr2 vs xsnr 选择逻辑可能影响边界解码
+
+---
+
+## Iteration 9: FFT 尺寸完全对齐 + subtract_ft8 共轭对称修复
+
+### 做了什么
+- **FFT 尺寸**: NFFT1=3840 ✅ (sync8, baseline 全部使用 NFFT1=3840)
+- **SYNC8_DF**: 修正为 `12000/NFFT1 = 3.125 Hz/bin` ✅ (之前错误使用 4096)
+- **subtract_ft8**: `fft_r2c → fft_complex` ✅ (恢复频域卷积的共轭对称性)
+- **引擎**: FFTW3 via FFI, FFTW_ESTIMATE ✅
+
+### 关键发现: subtract_ft8 共轭对称 bug
+- `fft_r2c` wrapper 在 FFT 后清零 `nh..n` 高频 bins
+- `subtract_ft8` 的 262144 点频域卷积需要完整共轭对称频谱
+- 清零高频 bins 破坏 LPF 卷积 → 信号减法不干净 → 3 条边际消息丢失
+- 修复: 使用 `fft_complex` 保留完整频谱
+
+### 测试结果
+| 测试 | 修复前 | 修复后 | WSJT-X |
+|---|---|---|---|
+| 短解码 | 17/20 ❌ | **20/20** ✅ | 20/20 |
+| 长解码 | 307/449 (68.4%) ❌ | **353/449 (78.6%)** ✅ | ~420+ |
+| 3840 尺寸 | 19/20 | **19/20** | — |
+| SYNC8_DF | 2.93 Hz/bin ❌ | **3.125 Hz/bin** ✅ | 3.125 |
+
+### FFT 尺寸完全对齐确认
+| FFT 用途 | ft8rs | WSJT-X | 状态 |
+|---|---|---|---|
+| sync8 频谱分析 | NFFT1=3840 | four2a NFFT1=3840 | ✅ |
+| 频谱基线 | NFFT1=3840 | four2a NFFT1=3840 | ✅ |
+| SYNC8_DF | 12000/3840=3.125 | 12000/3840=3.125 | ✅ |
+| 长信号 FFT | NFFT1_LONG=192000 | four2a NFFT1_LONG=192000 | ✅ |
+| 下采样 IFFT | NFFT2=3200 | four2a NFFT2=3200 | ✅ |
+| 符号提取 FFT | 32-point | four2a 32-point | ✅ |
+| subtract 卷积 | NFFT_CONV=262144 | FFT-based conv 262144 | ✅ |
+
+### 剩余差距: ~67 条消息 (358 vs 420+)
+主要在 -16~-24dB 边际信号区域
+

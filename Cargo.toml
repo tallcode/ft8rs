@@ -9,9 +9,14 @@ license = "GPL-3.0"
 name = "ft8rs"
 path = "src/main.rs"
 
+[features]
+default = []
+# Compile-time: force rustfft engine (4096-point). Default is FFTW (3840).
+force-rustfft = []
+
 [dependencies]
 rayon = "1"
-rustfft = "6"  # Dual-engine: rustfft for baseline, FFTW for WSJT-X alignment
+rustfft = "6"  # Dual-engine: rustfft for baseline comparison, FFTW for WSJT-X alignment
 
 hound = "3"
 num-bigint = "0.4"

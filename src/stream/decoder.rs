@@ -214,7 +214,7 @@ fn extract_slot_entry(
 
     // Compute xbase from sbase (matching WSJT-X: 10^(0.1*(sbase(nint(f1/3.125))-40.0)))
     let xbase = {
-        let df = 12000.0 / 4096.0; // SYNC8_DF
+        let df = crate::util::sync8_df();
         let freq_bin = (d.freq / df).round() as usize;
         if freq_bin < sbase.len() && freq_bin > 0 {
             10.0_f64.powf(0.1 * (sbase[freq_bin] - 40.0))

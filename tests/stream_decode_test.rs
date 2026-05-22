@@ -3,6 +3,7 @@ use std::rc::Rc;
 use ft8rs::HashCallBook;
 use ft8rs::stream::{StreamDecoder, StreamDecodeConfig};
 use ft8rs::ft8::decode::{decode, DecodeOptions, SyncMode};
+use ft8rs::util::engine_name;
 
 fn norm(msg: &str) -> String {
     msg.split_whitespace().map(|w| w.trim().to_uppercase()).collect::<Vec<_>>().join(" ")
@@ -82,7 +83,7 @@ fn test_stream_decode_short_audio() {
         if !seen.contains(&n) { seen.insert(n); unique_msgs.push(r.msg.clone()); }
     }
 
-    println!("\n[STREAM SHORT DECODE] {} unique messages in {:.1}s", unique_msgs.len(), elapsed.as_secs_f64());
+    println!("\n[ENGINE={}] [STREAM SHORT DECODE] {} unique messages in {:.1}s", engine_name(), unique_msgs.len(), elapsed.as_secs_f64());
     for m in &unique_msgs { println!("  {}", m); }
     assert!(unique_msgs.len() >= 19, "STREAM SHORT: {} < 19", unique_msgs.len());
 }
@@ -96,7 +97,7 @@ fn test_stream_decode_long_audio() {
     let nseg = (dur_12k / 15.0).floor() as usize;
 
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
-    println!("\n[STREAM LONG DECODE] {} segments, {} baseline messages", nseg, baseline.len());
+    println!("\n[ENGINE={}] [STREAM LONG DECODE] {} segments, {} baseline messages", engine_name(), nseg, baseline.len());
 
     let config = StreamDecodeConfig {
         freq_low: 200.0, freq_high: 3000.0, sync_min: 1.3, max_candidates: 600, depth: 3,
