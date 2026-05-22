@@ -17,7 +17,7 @@
 //!   NFFT_CONV = 262144 (next pow2 of NFRAME + 2*NFILT for zero-padded linear conv)
 //!   NSPS   = 1920 (waveform generation resolution, NOT detection rate of 48)
 
-use crate::util::fft::fft_complex;
+use crate::util::fft::{fft_complex, fft_r2c};
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
@@ -52,7 +52,7 @@ fn lpf_window_fft() -> &'static (Vec<f64>, Vec<f64>) {
 
         // FFT of window (window at indices 0..4000, zero-padded to 262144)
         let mut w_im = vec![0.0f64; nfft];
-        fft_complex(&mut win, &mut w_im, false);
+        fft_r2c(&mut win, &mut w_im);
 
         (win, w_im)
     })
