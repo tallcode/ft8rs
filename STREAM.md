@@ -60,6 +60,9 @@ Operational policy:
 
 - Final WSJT-X parity claims and release acceptance tests must use FFTW at
   3840.
+- Stream acceptance tests now assert release mode at runtime, so accidental
+  debug `cargo test` runs fail immediately instead of producing meaningless
+  timing data.
 - Candidate/sbase/subtraction/AP numerical comparisons against WSJT-X should
   use FFTW at 3840 only.
 - RustFFT at 4096 remains useful for no-FFTW builds, smoke tests, and diagnosing
@@ -133,15 +136,23 @@ Current `ft8rs` status after Iteration 12:
 - `mlag=13` is now aligned.
 - `DecodeOptions` now includes `nfqso`, so the "QSO frequency first" ordering
   can be represented.
+- Stream test defaults no longer override `max_candidates` below the WSJT-X
+  `MAXCAND=1000` alignment value.
 - Candidate construction now follows the WSJT-X structure more closely:
   descending `red`, optional `red2`, near-dupe zeroing, `nfqso +/- 10 Hz`
   priority, then remaining candidates by sync.
+- The final candidate pruning/ordering is now isolated in a small helper with a
+  unit fixture for the WSJT-X order rule: near-dupe pruning, `nfqso +/- 10 Hz`
+  priority, then descending sync.
 - `sbase` now comes from `get_spectrum_baseline(dd,nfa,nfb)`.
 - Remaining risk: the Rust `baseline` polynomial helper still needs a numerical
   parity check against WSJT-X `baseline.f90`/`polyfit` on the reference files.
 - `sbase` indexing now follows the WSJT-X 1-based convention: FFT bin 0/DC is
   omitted and Vec index 0 is unused, so `sbase[nint(f/3.125)]` maps to the same
   bin as Fortran `sbase(nint(f/3.125))`.
+- The Rust `pctile` equivalent now uses Fortran `nint(npts*0.01*npct)` ranking
+  instead of a ceil percentile, and the lower-envelope sample set follows
+  WSJT-X's fixed 1000-point cap.
 - `SyncMode::Amplitude` and `SyncMode::AbsSum` remain non-WSJT-X comparison
   modes. Default alignment mode is `Power`.
 
@@ -191,6 +202,10 @@ WSJT-X `ft8b.f90` inner decode:
   `maxosd>0` BP-posterior OSD, caps `maxosd` at 3, removes the non-WSJT-X raw
   fallback after BP-posterior OSD, computes BP-success `dmin`, and only accepts
   OSD results when `nharderrors > 0` like WSJT-X.
+- The Rust OSD path now implements the WSJT-X `ndeep=2` first preprocessing
+  search shape used by `ft8b` (`nord=1`, `npre1=1`, `nt=40`, `ntheta=10`) and
+  uses `nextpat91`-style pattern iteration instead of the older ad-hoc last-64
+  order-2 brute force.
 
 Current `ft8rs` status after Iteration 12:
 
@@ -224,6 +239,8 @@ Current `ft8rs` status after Iteration 12:
 - Remaining gaps:
   - `nagain` is now consumed for the WSJT-X `nfqso +/- 20 Hz` search window and
     adjacent-tone SNR selection.
+  - OSD `ndeep=2` now follows the first WSJT-X preprocessing rule, but `npre2`
+    and deeper `ndeep>=3` branches are not yet fully ported.
   - AP masks now follow the WSJT-X branch structure, but still need bit-level
     regression checks against WSJT-X for contest and Hound examples.
   - `nzhsym` is represented at the stream orchestration level and gates internal

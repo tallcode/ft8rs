@@ -74,13 +74,20 @@ fn parse_baseline(path: &str) -> Vec<(usize, String)> {
     results
 }
 
+fn assert_release_mode() {
+    assert!(
+        !cfg!(debug_assertions),
+        "stream decode acceptance tests must be run with --release"
+    );
+}
+
 #[test]
 fn test_stream_decode_short_audio() {
+    assert_release_mode();
     let t0 = std::time::Instant::now();
     let (_sr, samples) = load_wav("tests/ft8/210703_133430.wav");
 
     let mut decoder = StreamDecoder::new(StreamDecodeConfig {
-        max_candidates: 300,
         freq_low: 100.0,
         ..Default::default()
     });
@@ -121,6 +128,7 @@ fn test_stream_decode_short_audio() {
 
 #[test]
 fn test_stream_decode_long_audio() {
+    assert_release_mode();
     let (sr, all) = load_wav("tests/ft8/230208_140300.wav");
     let s12k = resample(&all, sr, 12000);
     let sps = 15 * 12000;
