@@ -291,83 +291,102 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
         hdec[i] = if llr[indices[i]] >= 0.0 { 1 } else { 0 };
     }
     let absrx: Vec<f64> = (0..n).map(|i| absllr[indices[i]]).collect();
+    let apmaskr: Vec<i8> = (0..n).map(|i| apmask[indices[i]]).collect();
 
     // Encode hard decision on MRB
-    let mut c0 = vec![0u8; n];
-    for i in 0..k {
-        if hdec[i] != 1 {
-            continue;
-        }
-        let row = i * n;
-        for j in 0..n {
-            c0[j] ^= genmrb[row + j];
-        }
-    }
+    let m0: Vec<u8> = hdec[..k].iter().map(|&b| b as u8).collect();
+    let c0 = mrb_encode(&m0, &genmrb, n);
 
     let mut dmin = 0.0;
     for i in 0..n {
         let x = (c0[i] ^ hdec[i] as u8) as f64;
         dmin += x * absrx[i];
     }
-    let mut best_flip1: isize = -1;
-    let mut best_flip2: isize = -1;
-
-    // Order-1
-    for i1 in (0..k).rev() {
-        if apmask[indices[i1]] == 1 {
-            continue;
-        }
-        let row1 = i1 * n;
-        let mut dd = 0.0;
-        for j in 0..n {
-            let x = (c0[j] ^ genmrb[row1 + j] ^ hdec[j] as u8) as f64;
-            dd += x * absrx[j];
-        }
-        if dd < dmin {
-            dmin = dd;
-            best_flip1 = i1 as isize;
-            best_flip2 = -1;
-        }
-    }
-
-    // Order-2
-    if norder >= 2 {
-        let ntry = 64.min(k);
-        let i_min = k.saturating_sub(ntry);
-        for i1 in (i_min..k).rev() {
-            if apmask[indices[i1]] == 1 {
-                continue;
-            }
-            let row1 = i1 * n;
-            for i2 in i_min..i1 {
-                if apmask[indices[i2]] == 1 {
-                    continue;
-                }
-                let row2 = i2 * n;
-                let mut dd = 0.0;
-                for j in 0..n {
-                    let x = (c0[j] ^ genmrb[row1 + j] ^ genmrb[row2 + j] ^ hdec[j] as u8) as f64;
-                    dd += x * absrx[j];
-                }
-                if dd < dmin {
-                    dmin = dd;
-                    best_flip1 = i1 as isize;
-                    best_flip2 = i2 as isize;
-                }
-            }
-        }
-    }
 
     let mut best_cw = c0.clone();
-    if best_flip1 >= 0 {
-        let row1 = best_flip1 as usize * n;
-        for j in 0..n {
-            best_cw[j] ^= genmrb[row1 + j];
+
+    if norder > 0 {
+        let mut ndeep = norder.min(6);
+        if ndeep == 0 {
+            ndeep = 1;
         }
-        if best_flip2 >= 0 {
-            let row2 = best_flip2 as usize * n;
-            for j in 0..n {
-                best_cw[j] ^= genmrb[row2 + j];
+        let (nord, npre1, _npre2, nt, ntheta) = match ndeep {
+            1 => (1usize, false, false, 40usize, 12usize),
+            2 => (1usize, true, false, 40usize, 10usize),
+            3 => (1usize, true, true, 40usize, 12usize),
+            4 => (2usize, true, true, 40usize, 12usize),
+            5 => (3usize, true, true, 40usize, 12usize),
+            _ => (4usize, true, true, 95usize, 12usize),
+        };
+
+        for iorder in 1..=nord {
+            let mut misub = vec![0u8; k];
+            for slot in misub.iter_mut().take(k).skip(k - iorder) {
+                *slot = 1;
+            }
+            let mut iflag = Some(k - iorder);
+            while let Some(flag) = iflag {
+                let iend = if iorder == nord && !npre1 { flag } else { 0 };
+                let mut d1 = 0.0;
+                let mut e2sub = vec![0u8; n - k];
+                for n1 in (iend..=flag).rev() {
+                    let mut mi = misub.clone();
+                    mi[n1] = 1;
+                    if mi
+                        .iter()
+                        .zip(apmaskr.iter())
+                        .take(k)
+                        .any(|(&m, &a)| m == 1 && a == 1)
+                    {
+                        continue;
+                    }
+
+                    let me: Vec<u8> = m0.iter().zip(mi.iter()).map(|(&a, &b)| a ^ b).collect();
+                    let (e2, nd1kpt) = if n1 == flag {
+                        let ce = mrb_encode(&me, &genmrb, n);
+                        for j in k..n {
+                            e2sub[j - k] = ce[j] ^ hdec[j] as u8;
+                        }
+                        d1 = me
+                            .iter()
+                            .zip(hdec.iter())
+                            .zip(absrx.iter())
+                            .take(k)
+                            .map(|((&m, &h), &a)| (m ^ h as u8) as f64 * a)
+                            .sum();
+                        let nd = e2sub.iter().take(nt).filter(|&&b| b == 1).count() + 1;
+                        (e2sub.clone(), nd)
+                    } else {
+                        let mut e2 = e2sub.clone();
+                        for j in k..n {
+                            e2[j - k] ^= genmrb[n1 * n + j];
+                        }
+                        let nd = e2.iter().take(nt).filter(|&&b| b == 1).count() + 2;
+                        (e2, nd)
+                    };
+
+                    if nd1kpt <= ntheta {
+                        let ce = mrb_encode(&me, &genmrb, n);
+                        let dd = if n1 == flag {
+                            d1 + e2sub
+                                .iter()
+                                .zip(absrx.iter().skip(k))
+                                .map(|(&e, &a)| e as f64 * a)
+                                .sum::<f64>()
+                        } else {
+                            d1 + (ce[n1] ^ hdec[n1] as u8) as f64 * absrx[n1]
+                                + e2.iter()
+                                    .zip(absrx.iter().skip(k))
+                                    .map(|(&e, &a)| e as f64 * a)
+                                    .sum::<f64>()
+                        };
+                        if dd < dmin {
+                            dmin = dd;
+                            best_cw = ce;
+                        }
+                    }
+                }
+                iflag = nextpat91(&mut misub, iorder);
             }
         }
     }
@@ -399,6 +418,44 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
         dmin: dmin_orig,
         ntype: 2,
     })
+}
+
+fn mrb_encode(message: &[u8], genmrb: &[u8], n: usize) -> Vec<u8> {
+    let mut codeword = vec![0u8; n];
+    for (i, &bit) in message.iter().enumerate() {
+        if bit != 1 {
+            continue;
+        }
+        let row = i * n;
+        for j in 0..n {
+            codeword[j] ^= genmrb[row + j];
+        }
+    }
+    codeword
+}
+
+fn nextpat91(mi: &mut [u8], iorder: usize) -> Option<usize> {
+    let k = mi.len();
+    let mut ind = None;
+    for i in 0..k.saturating_sub(1) {
+        if mi[i] == 0 && mi[i + 1] == 1 {
+            ind = Some(i);
+        }
+    }
+    let ind = ind?;
+    let mut ms = vec![0u8; k];
+    ms[..ind].copy_from_slice(&mi[..ind]);
+    ms[ind] = 1;
+    ms[ind + 1] = 0;
+    if ind + 1 < k {
+        let ones = ms.iter().filter(|&&b| b == 1).count();
+        let nz = iorder.saturating_sub(ones);
+        for slot in ms.iter_mut().take(k).skip(k - nz) {
+            *slot = 1;
+        }
+    }
+    mi.copy_from_slice(&ms);
+    mi.iter().position(|&b| b == 1)
 }
 
 fn get_generator() -> Vec<u8> {

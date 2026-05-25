@@ -769,52 +769,60 @@ pub(crate) fn sync8(
             }
         }
 
-        for i in 0..candidate0.len() {
-            for j in 0..i {
-                let fdiff = candidate0[i].freq.abs() - candidate0[j].freq.abs();
-                let tdiff = (candidate0[i].dt - candidate0[j].dt).abs();
-                if fdiff.abs() < 4.0 && tdiff < 0.04 {
-                    if candidate0[i].sync >= candidate0[j].sync {
-                        candidate0[j].sync = 0.0;
-                    } else {
-                        candidate0[i].sync = 0.0;
-                    }
-                }
-            }
-        }
-
-        let mut sorted_idx: Vec<usize> = (0..candidate0.len()).collect();
-        sorted_idx.sort_by(|&a, &b| candidate0[a].sync.partial_cmp(&candidate0[b].sync).unwrap());
-
-        let mut candidates = Vec::with_capacity(maxcand);
-        for c in candidate0.iter_mut() {
-            if (c.freq - nfqso).abs() <= 10.0 && c.sync >= syncmin {
-                candidates.push(c.clone());
-                c.sync = 0.0;
-                if candidates.len() >= maxcand {
-                    break;
-                }
-            }
-        }
-
-        if candidates.len() < maxcand {
-            for &idx in sorted_idx.iter().rev() {
-                let c = &candidate0[idx];
-                if c.sync >= syncmin {
-                    candidates.push(Candidate {
-                        freq: c.freq.abs(),
-                        dt: c.dt,
-                        sync: c.sync,
-                    });
-                    if candidates.len() >= maxcand {
-                        break;
-                    }
-                }
-            }
-        }
+        let candidates = finalize_sync8_candidates(candidate0, syncmin, nfqso, maxcand);
 
         (candidates, sbase)
     })
+}
+
+fn finalize_sync8_candidates(
+    candidate0: &mut [Candidate],
+    syncmin: f64,
+    nfqso: f64,
+    maxcand: usize,
+) -> Vec<Candidate> {
+    for i in 0..candidate0.len() {
+        for j in 0..i {
+            let fdiff = candidate0[i].freq.abs() - candidate0[j].freq.abs();
+            let tdiff = (candidate0[i].dt - candidate0[j].dt).abs();
+            if fdiff.abs() < 4.0 && tdiff < 0.04 {
+                if candidate0[i].sync >= candidate0[j].sync {
+                    candidate0[j].sync = 0.0;
+                } else {
+                    candidate0[i].sync = 0.0;
+                }
+            }
+        }
+    }
+
+    let mut sorted_idx: Vec<usize> = (0..candidate0.len()).collect();
+    sorted_idx.sort_by(|&a, &b| candidate0[a].sync.partial_cmp(&candidate0[b].sync).unwrap());
+
+    let mut candidates = Vec::with_capacity(maxcand);
+    for c in candidate0.iter_mut() {
+        if (c.freq - nfqso).abs() <= 10.0 && c.sync >= syncmin {
+            candidates.push(c.clone());
+            c.sync = 0.0;
+            if candidates.len() >= maxcand {
+                return candidates;
+            }
+        }
+    }
+
+    for &idx in sorted_idx.iter().rev() {
+        let c = &candidate0[idx];
+        if c.sync >= syncmin {
+            candidates.push(Candidate {
+                freq: c.freq.abs(),
+                dt: c.dt,
+                sync: c.sync,
+            });
+            if candidates.len() >= maxcand {
+                break;
+            }
+        }
+    }
+    candidates
 }
 
 pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Vec<f64> {
@@ -867,8 +875,14 @@ pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: u
         let pval = percentile(slice, npct);
         for i in ja..=jb.min(nh1) {
             if sdb[i] <= pval {
-                env_x.push((i as isize - i0 as isize) as f64);
-                env_y.push(sdb[i]);
+                let x = (i as isize - i0 as isize) as f64;
+                if env_x.len() < 1000 {
+                    env_x.push(x);
+                    env_y.push(sdb[i]);
+                } else {
+                    env_x[999] = x;
+                    env_y[999] = sdb[i];
+                }
             }
         }
     }
@@ -889,7 +903,10 @@ fn percentile(slice: &[f64], k: usize) -> f64 {
     }
     let mut tmp = slice.to_vec();
     tmp.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let idx = (tmp.len() * k).div_ceil(100).min(tmp.len()).max(1) - 1;
+    let idx = ((tmp.len() as f64 * 0.01 * k as f64).round() as usize)
+        .min(tmp.len())
+        .max(1)
+        - 1;
     tmp[idx]
 }
 
@@ -2018,4 +2035,47 @@ fn set_i3_001(workspace: &mut DecodeWorkspace, apmag: f64) {
     set_sign(workspace, 75, -1, apmag);
     set_sign(workspace, 76, -1, apmag);
     set_sign(workspace, 77, 1, apmag);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{finalize_sync8_candidates, Candidate};
+
+    #[test]
+    fn sync8_candidate_order_matches_wsjtx_priority_rules() {
+        let mut candidate0 = vec![
+            Candidate {
+                freq: 100.0,
+                dt: 0.00,
+                sync: 4.5,
+            },
+            Candidate {
+                freq: 102.5,
+                dt: 0.02,
+                sync: 5.0,
+            },
+            Candidate {
+                freq: 210.0,
+                dt: -0.01,
+                sync: 6.0,
+            },
+            Candidate {
+                freq: 300.0,
+                dt: 0.10,
+                sync: 8.0,
+            },
+            Candidate {
+                freq: 400.0,
+                dt: 0.20,
+                sync: 3.0,
+            },
+        ];
+
+        let ordered = finalize_sync8_candidates(&mut candidate0, 4.0, 212.0, 3);
+
+        assert_eq!(ordered.len(), 3);
+        assert_eq!(ordered[0].freq, 210.0);
+        assert_eq!(ordered[1].freq, 300.0);
+        assert_eq!(ordered[2].freq, 102.5);
+    }
 }

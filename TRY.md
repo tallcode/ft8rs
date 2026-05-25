@@ -420,6 +420,86 @@
 - `git diff --check` ✅
 - 未运行 release 解码测试。
 
+## Iteration 27: `osd174_91` 的 `ndeep=2` 第一预筛规则对齐
+
+### 做了什么
+- 继续对照 `wsjtx/lib/ft8/osd174_91.f90`。
+- 将 Rust OSD 从旧的“最后 64 位 order-2 brute force”改为 WSJT-X
+  `ndeep=2` 的第一预筛搜索形态：
+  - `nord=1`
+  - `npre1=1`
+  - `npre2=0`
+  - `nt=40`
+  - `ntheta=10`
+- 新增 `nextpat91` 风格的 test pattern 迭代。
+- 新增 `mrb_encode`，按 WSJT-X `mrbencode91` 的方式用修改后的 generator
+  matrix 对 MRB message 编码。
+- AP mask 约束现在在 MRB reordered 坐标里检查，匹配 WSJT-X 的
+  `apmaskr=apmaskr(indices)` 后再 `any(iand(apmaskr(1:k),mi).eq.1)`。
+- OSD 最终 `nharderrors` 改回最佳码字相对硬判决的最终错误数，不再用
+  `max(best_nhard,nhe)` 做非 WSJT-X 的防御式放大。
+
+### 重要说明
+- `ft8b` 当前传入 `norder=2`，所以优先实现 `ndeep=2` 分支是当前主路径。
+- `npre2` / `boxit91` / `fetchit91` 以及 `ndeep>=3` 还没完整移植；这些暂时
+  不影响当前 `ft8b` 主调用，但后续如果暴露更深 OSD 需要继续补。
+- 这是 OSD 候选集合对齐，不是扩大搜索做灵敏度调参。
+
+### 测试
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
+## Iteration 28: baseline `pctile` 与 sync8 候选排序夹具
+
+### 做了什么
+- 继续对照：
+  - `wsjtx/lib/ft8/get_spectrum_baseline.f90`
+  - `wsjtx/lib/ft8/baseline.f90`
+  - `wsjtx/lib/pctile.f90`
+  - `wsjtx/lib/ft8/sync8.f90`
+- `compute_baseline` 的 percentile 排名改为 WSJT-X `pctile` 的
+  `nint(npts*0.01*npct)` 语义，不再使用 ceil percentile。
+- lower-envelope 点集按 WSJT-X `x(1000), y(1000)` 固定容量处理；超过
+  1000 后覆盖最后一个槽位，贴近 Fortran `if(k.lt.1000) k=k+1; x(k)=...`
+  的行为。
+- 将 `sync8` 最后的候选 near-dupe pruning、`nfqso +/- 10 Hz` priority、
+  descending-sync append 抽成 `finalize_sync8_candidates`，并添加一个小
+  unit fixture 固化 WSJT-X 候选顺序规则。
+
+### 重要说明
+- 这不是完整音频解码测试，只是把 `baseline/pctile` 的数值路径和
+  `sync8` 候选输出规则继续往 WSJT-X 收敛。
+- `polyfit` 仍需要后续用 WSJT-X fixture 做数值 parity 检查；当前 Rust
+  仍是 normal-equation/Gaussian elimination 实现。
+
+### 测试
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
+## Iteration 29: 测试前门禁收紧
+
+### 做了什么
+- 按准备开始长短测试前的要求，检查 `tests/stream_decode_test.rs` 的验收入口。
+- 增加 release-mode runtime guard：如果误用 debug `cargo test`，测试会立即
+  失败并提示必须使用 `--release`。
+- 短测移除局部 `max_candidates=300` 覆盖，回到默认 `MAXCAND=1000` 对齐值；
+  这避免测试入口用比 WSJT-X 更窄的候选集影响验收结论。
+
+### 重要说明
+- 这是测试保护和入口语义修正，不是为了调结果。
+- 长测原有每段 `15s` timeout 和 `target-10` 灵敏度早停保留不变。
+- 短测是单段文件，最终 `>=19` 断言本身比 `20-10` 的严重灵敏度早停更严格。
+
+### 测试
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
 ## Iteration 0: 现状分析
 
 - 完整阅读 wsjtx/lib/ft8_decode.f90 源码
