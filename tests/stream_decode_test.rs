@@ -79,6 +79,11 @@ fn assert_release_mode() {
         !cfg!(debug_assertions),
         "stream decode acceptance tests must be run with --release"
     );
+    assert_eq!(
+        engine_name(),
+        "FFTW",
+        "stream decode acceptance tests must use FFTW@3840"
+    );
 }
 
 #[test]
@@ -169,9 +174,12 @@ fn test_stream_decode_long_audio() {
 
         let bl: Vec<_> = baseline.iter().filter(|(s, _)| *s == seg).collect();
         let mut matched = 0;
+        let mut missed = Vec::new();
         for (_, bmsg) in &bl {
             if results.iter().any(|d| norm(&d.msg) == norm(bmsg)) {
                 matched += 1;
+            } else {
+                missed.push((*bmsg).clone());
             }
         }
         total_matched += matched;
@@ -183,6 +191,12 @@ fn test_stream_decode_long_audio() {
             bl.len(),
             elapsed_ms
         );
+        if std::env::var("FT8RS_PRINT_MISSES").ok().as_deref() == Some("1") && !missed.is_empty()
+        {
+            for msg in missed {
+                println!("    MISS {}", msg);
+            }
+        }
 
         let remaining_baseline = baseline.iter().filter(|(s, _)| *s > seg).count();
         assert!(

@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
 use crate::ft8::ap_decode::{ft8_a7d, ApDecodeResult};
-use crate::ft8::decode::{decode_f64_with_sbase, DecodeOptions, DecodedMessage, SyncMode};
+use crate::ft8::decode::{
+    decode_f64_with_sbase, decode_f64_with_sbase_and_residual, DecodeOptions, DecodedMessage,
+    SyncMode,
+};
 use crate::util::hashcall::HashCallBook;
 use crate::util::pack_jt77::is_stdcall;
 use crate::util::subtract_ft8::subtract_ft8_refined;
@@ -145,8 +148,8 @@ impl StreamDecoder {
                 subtract_ft8_refined(&mut full_dd, &itone, d.freq, d.dt + 0.5, true);
             }
         }
-        let (full_results, sbase) =
-            decode_f64_with_sbase(&full_dd, self.decode_options(50, Rc::clone(&book)));
+        let (full_results, sbase, full_residual) =
+            decode_f64_with_sbase_and_residual(&full_dd, self.decode_options(50, Rc::clone(&book)));
 
         // Build current a7 table entries before AP. WSJT-X ft8_a7_save uses
         // these current entries to suppress previous entries already accounted
@@ -172,7 +175,7 @@ impl StreamDecoder {
             let mut ap_msgs: Vec<ApDecodeResult> = Vec::new();
             for entry in &ap_candidates {
                 let result = ft8_a7d(
-                    &raw,
+                    &full_residual,
                     &entry.call_1,
                     &entry.call_2,
                     &entry.grid4,

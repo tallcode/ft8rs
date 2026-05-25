@@ -252,7 +252,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start);
     msgs
 }
 
@@ -262,7 +262,7 @@ pub fn decode_f64(samples: &[f64], options: DecodeOptions) -> Vec<DecodedMessage
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    let (msgs, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start);
     msgs
 }
 
@@ -271,6 +271,18 @@ pub fn decode_f64_with_sbase(
     samples: &[f64],
     options: DecodeOptions,
 ) -> (Vec<DecodedMessage>, Vec<f64>) {
+    let t_start = std::time::Instant::now();
+    let len = samples.len().min(NMAX);
+    let dd = samples[..len].to_vec();
+    let t_dd = t_start.elapsed();
+    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start);
+    (msgs, sbase)
+}
+
+pub fn decode_f64_with_sbase_and_residual(
+    samples: &[f64],
+    options: DecodeOptions,
+) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
     let t_start = std::time::Instant::now();
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
@@ -291,7 +303,8 @@ pub fn decode_with_sbase(
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    decode_from_f64(dd, options, t_dd, t_start)
+    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start);
+    (msgs, sbase)
 }
 
 fn decode_from_f64(
@@ -299,7 +312,7 @@ fn decode_from_f64(
     options: DecodeOptions,
     t_dd: std::time::Duration,
     t_start: std::time::Instant,
-) -> (Vec<DecodedMessage>, Vec<f64>) {
+) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
     // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
     if dd.len() > NMAX {
         dd.truncate(NMAX);
@@ -356,7 +369,7 @@ fn decode_from_f64(
     let mut t_decode_total = std::time::Duration::ZERO;
     let mut t_subtract_total = std::time::Duration::ZERO;
 
-    // Capture sbase from first pass for AP decode xbase computation (WSJT-X convention)
+    // WSJT-X sync8 refreshes sbase for each pass on the current residual.
     let mut sbase: Vec<f64> = Vec::new();
 
     for pass_idx in 0..max_passes {
@@ -386,9 +399,7 @@ fn decode_from_f64(
             max_candidates,
             sync_mode,
         );
-        if pass_idx == 0 {
-            sbase = pass_sbase;
-        }
+        sbase = pass_sbase;
         t_sync8_total += t0.elapsed();
 
         // WSJT-X ft8_decode.f90: pass 1 uses imetric=1, passes 2/3 use imetric=2.
@@ -425,6 +436,13 @@ fn decode_from_f64(
                 &mut cand_freq_uses,
             ) {
                 let message_key = normalize_message_key(&r.msg);
+                crate::util::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
+                // Recompute FFT so next candidate sees cleaned residual
+                cx_re.fill(0.0);
+                cx_im.fill(0.0);
+                cx_re[..residual.len().min(NFFT1_LONG)]
+                    .copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
+                fft_complex(&mut cx_re, &mut cx_im, false);
                 if seen_messages.contains(&message_key) {
                     continue;
                 }
@@ -438,13 +456,6 @@ fn decode_from_f64(
                     itone: r.itone.to_vec(),
                 });
                 decoded_in_pass += 1;
-                crate::util::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
-                // Recompute FFT so next candidate sees cleaned residual
-                cx_re.fill(0.0);
-                cx_im.fill(0.0);
-                cx_re[..residual.len().min(NFFT1_LONG)]
-                    .copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
-                fft_complex(&mut cx_re, &mut cx_im, false);
             }
         }
         t_decode_total += t_decode_start.elapsed();
@@ -470,7 +481,7 @@ fn decode_from_f64(
         ft8b_down/1000, ft8b_sync8d/1000, ft8b_symbols/1000, ft8b_bmet/1000, ft8b_ldpc/1000,
         t_subtract_total.as_millis(), total.as_millis());
 
-    (decoded, sbase)
+    (decoded, sbase, residual)
 }
 
 fn normalize_message_key(msg: &str) -> String {

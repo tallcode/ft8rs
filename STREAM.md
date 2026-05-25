@@ -60,9 +60,11 @@ Operational policy:
 
 - Final WSJT-X parity claims and release acceptance tests must use FFTW at
   3840.
-- Stream acceptance tests now assert release mode at runtime, so accidental
-  debug `cargo test` runs fail immediately instead of producing meaningless
-  timing data.
+- Stream acceptance tests now assert release mode and `FFTW` engine at runtime,
+  so accidental debug or RustFFT acceptance runs fail immediately instead of
+  producing misleading timing/sensitivity data.
+- `build.rs` now supports `FFTW_DIR` and common Homebrew FFTW library paths so
+  the FFTW@3840 acceptance path can link without per-command `LIBRARY_PATH`.
 - Candidate/sbase/subtraction/AP numerical comparisons against WSJT-X should
   use FFTW at 3840 only.
 - RustFFT at 4096 remains useful for no-FFTW builds, smoke tests, and diagnosing
@@ -245,6 +247,20 @@ Current `ft8rs` status after Iteration 12:
     regression checks against WSJT-X for contest and Hound examples.
   - `nzhsym` is represented at the stream orchestration level and gates internal
     AP, but long-decode slot timing still needs reconciliation with WSJT-X.
+- Residual handling is closer to WSJT-X:
+  - valid duplicate decodes are now still subtracted before duplicate skipping,
+    matching `ft8b` subtract-before-outer-dupe behavior.
+  - `sbase` is refreshed from every `sync8` pass on the current residual instead
+    of reusing pass 1 for later passes.
+  - stream-level `ft8_a7d` now receives the full-decode residual rather than the
+    raw slot buffer.
+
+Current release-test status:
+
+- Short file `210703_133430.wav`: `21` unique messages in about `3.5s`, passes
+  the `>=19` / `<15s` requirement on FFTW.
+- Long file `230208_140300.wav`: every segment is under `15s`, but current
+  matched count is `361/449`, below the required `366/449`.
 
 ## AP / Cross-slot Memory
 
