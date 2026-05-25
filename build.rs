@@ -3,7 +3,9 @@ fn main() {
         println!("cargo:rustc-link-search=native={fftw_dir}/lib");
     }
     for lib_dir in ["/opt/homebrew/lib", "/usr/local/lib"] {
-        if std::path::Path::new(lib_dir).join("libfftw3.dylib").exists()
+        if std::path::Path::new(lib_dir)
+            .join("libfftw3.dylib")
+            .exists()
             || std::path::Path::new(lib_dir).join("libfftw3.a").exists()
         {
             println!("cargo:rustc-link-search=native={lib_dir}");

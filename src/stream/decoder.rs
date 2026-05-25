@@ -33,7 +33,7 @@ struct SlotDecodeEntry {
 pub struct StreamDecodeConfig {
     pub freq_low: f64,
     pub freq_high: f64,
-    pub sync_min: f64,
+    pub sync_min: Option<f64>,
     pub max_candidates: usize,
     pub depth: usize,
     pub nfqso: f64,
@@ -53,7 +53,7 @@ impl Default for StreamDecodeConfig {
         Self {
             freq_low: 200.0,
             freq_high: 3000.0,
-            sync_min: 1.3,
+            sync_min: None,
             max_candidates: 1000,
             depth: 3,
             nfqso: 0.0,
@@ -257,7 +257,7 @@ impl StreamDecoder {
             sample_rate: Some(SAMPLE_RATE as usize),
             freq_low: Some(self.config.freq_low),
             freq_high: Some(self.config.freq_high),
-            sync_min: Some(self.config.sync_min),
+            sync_min: self.config.sync_min,
             depth: Some(self.config.depth),
             max_candidates: Some(self.config.max_candidates),
             hash_call_book: Some(book),
@@ -425,8 +425,7 @@ fn is_hashable_callsign_token(token: &str) -> bool {
     if is_grid4(bare) {
         return false;
     }
-    bare.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '/')
+    bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '/')
         && bare.chars().any(|c| c.is_ascii_alphabetic())
         && bare.chars().any(|c| c.is_ascii_digit())
 }

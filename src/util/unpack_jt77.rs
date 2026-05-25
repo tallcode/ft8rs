@@ -1,8 +1,7 @@
-/// FT8 message unpacking – Rust port of unpack77
-
-use num_bigint::BigInt;
 use crate::util::constants::*;
 use crate::util::hashcall::HashCallBook;
+/// FT8 message unpacking – Rust port of unpack77
+use num_bigint::BigInt;
 
 fn bits_to_uint(bits: &[u8], start: usize, len: usize) -> usize {
     let mut val: usize = 0;

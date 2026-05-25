@@ -1,7 +1,7 @@
 pub mod ft8;
-pub mod util;
 pub mod stream;
+pub mod util;
 
-pub use stream::decoder::{StreamDecoder, StreamDecodeConfig, StreamDecodedMessage};
-pub use ft8::decode::{DecodedMessage, DecodeOptions, SyncMode, decode_with_sbase};
+pub use ft8::decode::{decode_with_sbase, DecodeOptions, DecodedMessage, SyncMode};
+pub use stream::decoder::{StreamDecodeConfig, StreamDecodedMessage, StreamDecoder};
 pub use util::hashcall::HashCallBook;

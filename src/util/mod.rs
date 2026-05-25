@@ -1,13 +1,13 @@
 pub mod constants;
-pub mod ldpc_tables;
 pub mod crc;
+pub mod decode174_91;
 pub mod fft_fftw;
 pub mod fft_rustfft;
-pub mod pack_jt77;
-pub mod unpack_jt77;
-pub mod decode174_91;
 pub mod hashcall;
+pub mod ldpc_tables;
+pub mod pack_jt77;
 pub mod subtract_ft8;
+pub mod unpack_jt77;
 
 /// Dual-engine FFT dispatcher.
 ///
@@ -16,7 +16,6 @@ pub mod subtract_ft8;
 /// CLI: `ft8rs --fft-engine=rustfft file.wav`
 ///
 /// Both engines expose the same public API via this dispatcher.
-
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -26,7 +25,9 @@ static ENGINE_ID: AtomicU8 = AtomicU8::new(0);
 #[inline]
 fn engine_id() -> u8 {
     let id = ENGINE_ID.load(Ordering::Relaxed);
-    if id != 0 { return id; }
+    if id != 0 {
+        return id;
+    }
     let env = std::env::var("FTRS_FFT").unwrap_or_default();
     let id = if env == "rustfft" { 2 } else { 1 };
     ENGINE_ID.store(id, Ordering::SeqCst);
@@ -35,12 +36,18 @@ fn engine_id() -> u8 {
 
 /// Returns true when using rustfft engine.
 #[inline]
-pub fn is_rustfft() -> bool { engine_id() == 2 }
+pub fn is_rustfft() -> bool {
+    engine_id() == 2
+}
 
 /// sync8 FFT size: FFTW→3840, rustfft→4096
 #[inline]
 pub fn sync8_fft_size() -> usize {
-    if is_rustfft() { 4096 } else { 3840 }
+    if is_rustfft() {
+        4096
+    } else {
+        3840
+    }
 }
 
 /// sync8 frequency resolution
@@ -52,7 +59,11 @@ pub fn sync8_df() -> f64 {
 /// Engine name string for logging
 #[inline]
 pub fn engine_name() -> &'static str {
-    if is_rustfft() { "rustfft" } else { "FFTW" }
+    if is_rustfft() {
+        "rustfft"
+    } else {
+        "FFTW"
+    }
 }
 
 // ── FFT dispatch ──

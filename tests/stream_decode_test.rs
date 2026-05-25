@@ -191,8 +191,7 @@ fn test_stream_decode_long_audio() {
             bl.len(),
             elapsed_ms
         );
-        if std::env::var("FT8RS_PRINT_MISSES").ok().as_deref() == Some("1") && !missed.is_empty()
-        {
+        if std::env::var("FT8RS_PRINT_MISSES").ok().as_deref() == Some("1") && !missed.is_empty() {
             for msg in missed {
                 println!("    MISS {}", msg);
             }
