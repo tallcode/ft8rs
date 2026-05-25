@@ -79,7 +79,15 @@ pub fn ft8_a7d(
         let delf = ifr as f64 * 0.5;
         let dphi = TWO_PI * delf * DT2;
         let (ctwk_re, ctwk_im) = build_ctwk(dphi);
-        let sync = ap_sync8d_twk(&cd0_re, &cd0_im, ibest, &ctwk_re, &ctwk_im);
+        let sync = ap_sync8d_twk(
+            &cd0_re,
+            &cd0_im,
+            ibest,
+            &costas.re,
+            &costas.im,
+            &ctwk_re,
+            &ctwk_im,
+        );
         if sync > smax {
             smax = sync;
             delfbest = delf;
@@ -98,8 +106,7 @@ pub fn ft8_a7d(
     // ── Time refinement ±4 ──
     let mut ss = [0.0f64; 9];
     for idt in -4..=4 {
-        let (ctwk_re, ctwk_im) = build_ctwk(0.0); // no freq shift
-        let sync = ap_sync8d_twk(&cd0_re, &cd0_im, ibest + idt, &ctwk_re, &ctwk_im);
+        let sync = ap_sync8d(&cd0_re, &cd0_im, ibest + idt, &costas.re, &costas.im);
         ss[(idt + 4) as usize] = sync;
     }
     let idx = ss
@@ -297,7 +304,7 @@ pub fn ft8_a7d(
     // AP decode s8 has WSJT-X scale (no /1000), so 3e6 divisor is correct.
     let xsnr = {
         let arg = pbest / xbase / 3e6 - 1.0;
-        if arg > 0.0 { (-24.0f64).max(10.0 * arg.log10() - 27.0) } else { -24.0 }
+        if arg > 0.0 { (-25.0f64).max(10.0 * arg.log10() - 27.0) } else { -25.0 }
     };
 
     Some(ApDecodeResult {
@@ -530,7 +537,15 @@ fn ap_sync8d(cd0_re: &[f64], cd0_im: &[f64], i0: isize, sync_re: &[f64], sync_im
     sync
 }
 
-fn ap_sync8d_twk(cd0_re: &[f64], cd0_im: &[f64], i0: isize, twk_re: &[f64; 32], twk_im: &[f64; 32]) -> f64 {
+fn ap_sync8d_twk(
+    cd0_re: &[f64],
+    cd0_im: &[f64],
+    i0: isize,
+    sync_re: &[f64],
+    sync_im: &[f64],
+    twk_re: &[f64; 32],
+    twk_im: &[f64; 32],
+) -> f64 {
     let mut sync = 0.0f64;
     let stride = 36 * COSTAS_SYMBOL_LEN;
     for i in 0..COSTAS_BLOCKS {
@@ -540,8 +555,11 @@ fn ap_sync8d_twk(cd0_re: &[f64], cd0_im: &[f64], i0: isize, twk_re: &[f64; 32], 
                 let s = i_start as usize;
                 let mut zr = 0.0; let mut zi = 0.0;
                 for j in 0..COSTAS_SYMBOL_LEN {
-                    zr += cd0_re[s + j] * twk_re[j] + cd0_im[s + j] * twk_im[j];
-                    zi += cd0_re[s + j] * twk_im[j] - cd0_im[s + j] * twk_re[j];
+                    let base = i * COSTAS_SYMBOL_LEN + j;
+                    let tpl_re = twk_re[j] * sync_re[base] - twk_im[j] * sync_im[base];
+                    let tpl_im = twk_re[j] * sync_im[base] + twk_im[j] * sync_re[base];
+                    zr += cd0_re[s + j] * tpl_re + cd0_im[s + j] * tpl_im;
+                    zi += cd0_re[s + j] * tpl_im - cd0_im[s + j] * tpl_re;
                 }
                 sync += zr * zr + zi * zi;
             }

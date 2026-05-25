@@ -120,7 +120,8 @@ shared decode buffer. For example, `41*3456 = 141696` samples and
 WSJT-X `sync8.f90`:
 
 - Computes `s(i,j)` using power spectrum, `real(cx(i))**2 + aimag(cx(i))**2`.
-- Uses `NFFT1=3840`, `df=3.125 Hz`, `JZ=62`, `jstrt=0.5/tstep`.
+- Uses `NFFT1=3840`, `df=3.125 Hz`, `JZ=62`, and WSJT-X's
+  implicit-integer `jstrt=0.5/tstep` truncation (`12`, not rounded `13`).
 - Uses Costas correlation for full `abc` and late `bc` sync blocks.
 - Uses `mlag=13` for `red/jpeak` and `mlag2=JZ` for `red2/jpeak2`.
 - Normalizes `red` and `red2` by the 40th percentile over frequency bins.
@@ -265,7 +266,15 @@ Current release-test status:
 - Short file `210703_133430.wav`: `21` unique messages in about `3.5s`, passes
   the `>=19` / `<15s` requirement on FFTW.
 - Long file `230208_140300.wav`: every segment is under `15s`; current matched
-  count is `381/449`, passing the required `366/449`.
+  count is `381/449`, passing the first milestone `381/449`; the second
+  milestone target is `400/449`.
+
+Second milestone policy:
+
+1. Continue with source-code architecture differences first.
+2. Then use miss analysis to find architecture differences.
+3. Then compare source-code parameter differences.
+4. Finally use miss analysis to locate parameter differences.
 
 ## AP / Cross-slot Memory
 
@@ -301,11 +310,17 @@ Current `ft8rs` status after Iteration 13:
 - `ft8b` internal AP pass scheduling and masks are now structurally close to
   WSJT-X. The separate `ft8_a7d` implementation still depends on accurate
   previous-slot memory and `sbase`.
+- `ft8_a7d` AP sync refinement now uses `ctwk * Costas` for frequency tweak and
+  plain Costas sync for second time refinement, matching WSJT-X `sync8d`.
+- `ft8_a7d` AP SNR clamp now uses WSJT-X's `-25 dB` floor.
 - `HashCallBook` is shared through `Rc<HashCallBook>`, which is the right
   architectural direction for cross-slot hash resolution.
 - Stream-level hash collection now filters decoded tokens before saving them to
   the shared `HashCallBook`, avoiding grid/report tokens such as `FN20` or
   `RR73`. This keeps the table closer to WSJT-X callsign-only hash semantics.
+- Miss review found Type 4 compound-call decodes such as
+  `EA5/DH0YAH <RK4FF> RR73`; this follows WSJT-X `hash12` display semantics,
+  so core output should not strip angle brackets just to match a CSV variant.
 - Stream-level `ft8_a7_save` entry extraction now uses a `split77`-like word
   normalization before saving `call_1 call_2`, including the WSJT-X `CQ xxx
   CALL -> CQ_xxx CALL` rewrite and subsequent `CQ_` skip.
