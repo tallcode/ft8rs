@@ -156,7 +156,7 @@ impl StreamDecoder {
         // for by a regular decode in this sequence.
         let all_regular: Vec<&DecodedMessage> =
             early_results.iter().chain(full_results.iter()).collect();
-        let entries_to_save: Vec<SlotDecodeEntry> = all_regular
+        let mut entries_to_save: Vec<SlotDecodeEntry> = all_regular
             .iter()
             .copied()
             .filter_map(|d| extract_slot_entry(d, &sbase))
@@ -224,6 +224,9 @@ impl StreamDecoder {
         }
 
         for r in &ap_results {
+            if let Some(entry) = extract_slot_entry_from_parts(&r.msg, r.freq, r.dt, &sbase) {
+                entries_to_save.push(entry);
+            }
             let key = normal(&r.msg);
             if seen.insert(key) {
                 merged.push(StreamDecodedMessage {
@@ -294,13 +297,22 @@ fn partial_window(samples: &[f64], nzhsym: usize) -> Vec<f64> {
 /// Extract call_1/call_2/grid4/xbase from a decoded message.
 /// Matches WSJT-X ft8_a7_save logic.
 fn extract_slot_entry(d: &DecodedMessage, sbase: &[f64]) -> Option<SlotDecodeEntry> {
-    let words = split77_words(&d.msg);
+    extract_slot_entry_from_parts(&d.msg, d.freq, d.dt, sbase)
+}
+
+fn extract_slot_entry_from_parts(
+    msg: &str,
+    freq: f64,
+    dt: f64,
+    sbase: &[f64],
+) -> Option<SlotDecodeEntry> {
+    let words = split77_words(msg);
     if words.len() < 2 {
         return None;
     }
 
     // Skip messages with / or < (WSJT-X: if(index(msg,'/').ge.1 .or. index(msg,'<').ge.1) go to 999)
-    if d.msg.contains('/') || d.msg.contains('<') {
+    if msg.contains('/') || msg.contains('<') {
         return None;
     }
 
@@ -335,7 +347,7 @@ fn extract_slot_entry(d: &DecodedMessage, sbase: &[f64]) -> Option<SlotDecodeEnt
     // Compute xbase from sbase (matching WSJT-X: 10^(0.1*(sbase(nint(f1/3.125))-40.0)))
     let xbase = {
         let df = crate::util::sync8_df();
-        let freq_bin = (d.freq / df).round() as usize;
+        let freq_bin = (freq / df).round() as usize;
         if freq_bin < sbase.len() && freq_bin > 0 {
             10.0_f64.powf(0.1 * (sbase[freq_bin] - 40.0))
         } else {
@@ -348,8 +360,8 @@ fn extract_slot_entry(d: &DecodedMessage, sbase: &[f64]) -> Option<SlotDecodeEnt
         call_1,
         call_2,
         grid4,
-        dt: d.dt,
-        freq: d.freq,
+        dt,
+        freq,
         xbase,
     })
 }

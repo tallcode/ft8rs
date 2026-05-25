@@ -563,6 +563,44 @@
 - 当前剩余差距更可能在 candidate/LLR/OSD/AP fixture 的数值细节，需要继续用
   小 fixture 或按 miss 集中段做对照，而不是扩大搜索或放松阈值。
 
+## Iteration 32: `ft8b` `sync8d` 时间索引环绕修正，长测过线
+
+### 做了什么
+- 继续按“先源码架构差异”的优先级对照：
+  - `wsjtx/lib/ft8/ft8b.f90`
+  - `wsjtx/lib/ft8/sync8d.f90`
+  - `src/ft8/decode.rs`
+  - `src/stream/decoder.rs`
+- 修正一个关键架构差异：
+  - WSJT-X `sync8d(cd0,i0,...)` 接收 signed `i0`
+  - 若 `i0+i*32` 越界，则对应 Costas block 贡献为 0
+  - Rust 之前在 `find_best_time_offset`、`find_best_frequency_shift`、
+    `refine_time_offset` 中用 `rem_euclid(NP2)` 把负/越界索引环绕到
+    `cd0` 尾部
+  - 这会让边界候选和 `red2` 候选在错误的时间位置上获得 sync 分数
+- Rust 现在改为全程传 signed index 到 `sync8d_isize`，不再 wrap。
+- 顺手删除了不再使用的 `sync8d(usize)` wrapper。
+- 继续补齐跨时隙 AP 记忆：
+  - WSJT-X `ft8_a7d` 成功后会调用 `ft8_a7_save`
+  - Rust 现在也会把 AP 解码结果保存到 same-parity AP memory，供下一轮 AP 使用
+
+### 测试结果
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `3.9s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `381/449`
+  - 每段均小于 `15s`
+  - 通过目标 `366/449`
+
+### 反思
+- 这是源码架构差异带来的实质提升：从 `361/449` 到 `381/449`，不是调阈值。
+- 后续仍应继续补 fixture，尤其是 `sync8` candidate、`baseline/polyfit`、
+  `osd174_91` 更深分支和 AP bit-level parity，但当前长短验收线已经通过。
+
 ## Iteration 0: 现状分析
 
 - 完整阅读 wsjtx/lib/ft8_decode.f90 源码
