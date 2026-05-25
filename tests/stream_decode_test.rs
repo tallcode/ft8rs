@@ -1,25 +1,33 @@
+use ft8rs::ft8::decode::{decode, DecodeOptions, SyncMode};
+use ft8rs::stream::{StreamDecodeConfig, StreamDecoder};
+use ft8rs::util::engine_name;
+use ft8rs::HashCallBook;
 use std::collections::HashSet;
 use std::rc::Rc;
-use ft8rs::HashCallBook;
-use ft8rs::stream::{StreamDecoder, StreamDecodeConfig};
-use ft8rs::ft8::decode::{decode, DecodeOptions, SyncMode};
-use ft8rs::util::engine_name;
 
 fn norm(msg: &str) -> String {
-    msg.split_whitespace().map(|w| w.trim().to_uppercase()).collect::<Vec<_>>().join(" ")
+    msg.split_whitespace()
+        .map(|w| w.trim().to_uppercase())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn load_wav(path: &str) -> (u32, Vec<f32>) {
     let r = hound::WavReader::open(path).unwrap();
     let spec = r.spec();
     let s: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Int => r.into_samples::<i32>().map(|v| {
-            let v = v.unwrap();
-            match spec.bits_per_sample {
-                16 => v as f32 / 32768.0, 24 => v as f32 / 8_388_608.0,
-                32 => v as f32 / 2_147_483_648.0, _ => panic!(),
-            }
-        }).collect(),
+        hound::SampleFormat::Int => r
+            .into_samples::<i32>()
+            .map(|v| {
+                let v = v.unwrap();
+                match spec.bits_per_sample {
+                    16 => v as f32 / 32768.0,
+                    24 => v as f32 / 8_388_608.0,
+                    32 => v as f32 / 2_147_483_648.0,
+                    _ => panic!(),
+                }
+            })
+            .collect(),
         hound::SampleFormat::Float => r.into_samples::<f32>().map(|v| v.unwrap()).collect(),
     };
     (spec.sample_rate, s)
@@ -45,9 +53,13 @@ fn parse_baseline(path: &str) -> Vec<(usize, String)> {
     let mut results = Vec::new();
     for line in content.lines().skip(1) {
         let line = line.trim().trim_end_matches(',');
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() < 5 { continue; }
+        if parts.len() < 5 {
+            continue;
+        }
         let ts = parts[0].trim();
         let msg = parts[4].trim();
         let nmsg = norm(msg);
@@ -57,7 +69,9 @@ fn parse_baseline(path: &str) -> Vec<(usize, String)> {
             let m: usize = t[2..4].parse().unwrap_or(0);
             let s: usize = t[4..6].parse().unwrap_or(0);
             (h * 3600 + m * 60 + s - (14 * 3600 + 3 * 60)) / 15
-        } else { 0 };
+        } else {
+            0
+        };
         results.push((seg, nmsg));
     }
     results
@@ -69,23 +83,45 @@ fn test_stream_decode_short_audio() {
     let (_sr, samples) = load_wav("tests/ft8/210703_133430.wav");
 
     let mut decoder = StreamDecoder::new(StreamDecodeConfig {
-        freq_low: 100.0, freq_high: 3000.0, sync_min: 1.3, max_candidates: 300, depth: 3,
+        freq_low: 100.0,
+        freq_high: 3000.0,
+        sync_min: 1.3,
+        max_candidates: 300,
+        depth: 3,
     });
 
     let results = decoder.decode_slot(&samples);
     let elapsed = t0.elapsed();
-    assert!(elapsed.as_secs_f64() < 15.0, "Short decode timeout: {:.1}s > 15s", elapsed.as_secs_f64());
+    assert!(
+        elapsed.as_secs_f64() < 15.0,
+        "Short decode timeout: {:.1}s > 15s",
+        elapsed.as_secs_f64()
+    );
 
     let mut seen = HashSet::new();
     let mut unique_msgs: Vec<String> = Vec::new();
     for r in &results {
         let n = norm(&r.msg);
-        if !seen.contains(&n) { seen.insert(n); unique_msgs.push(r.msg.clone()); }
+        if !seen.contains(&n) {
+            seen.insert(n);
+            unique_msgs.push(r.msg.clone());
+        }
     }
 
-    println!("\n[ENGINE={}] [STREAM SHORT DECODE] {} unique messages in {:.1}s", engine_name(), unique_msgs.len(), elapsed.as_secs_f64());
-    for m in &unique_msgs { println!("  {}", m); }
-    assert!(unique_msgs.len() >= 19, "STREAM SHORT: {} < 19", unique_msgs.len());
+    println!(
+        "\n[ENGINE={}] [STREAM SHORT DECODE] {} unique messages in {:.1}s",
+        engine_name(),
+        unique_msgs.len(),
+        elapsed.as_secs_f64()
+    );
+    for m in &unique_msgs {
+        println!("  {}", m);
+    }
+    assert!(
+        unique_msgs.len() >= 19,
+        "STREAM SHORT: {} < 19",
+        unique_msgs.len()
+    );
 }
 
 #[test]
@@ -97,14 +133,25 @@ fn test_stream_decode_long_audio() {
     let nseg = (dur_12k / 15.0).floor() as usize;
 
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
-    println!("\n[ENGINE={}] [STREAM LONG DECODE] {} segments, {} baseline messages", engine_name(), nseg, baseline.len());
+    println!(
+        "\n[ENGINE={}] [STREAM LONG DECODE] {} segments, {} baseline messages",
+        engine_name(),
+        nseg,
+        baseline.len()
+    );
 
     let config = StreamDecodeConfig {
-        freq_low: 200.0, freq_high: 3000.0, sync_min: 1.3, max_candidates: 600, depth: 3,
+        freq_low: 200.0,
+        freq_high: 3000.0,
+        sync_min: 1.3,
+        max_candidates: 1000,
+        depth: 3,
     };
     let mut decoder = StreamDecoder::new(config);
 
     let mut total_matched = 0;
+    let target_matched = 366usize;
+    let severe_floor = target_matched.saturating_sub(10);
 
     for seg in 0..nseg {
         let seg_start = (seg as isize * sps as isize - 12000).max(0) as usize;
@@ -114,19 +161,54 @@ fn test_stream_decode_long_audio() {
         let slot_t0 = std::time::Instant::now();
         let results = decoder.decode_slot(data);
         let elapsed_ms = slot_t0.elapsed().as_millis() as u64;
-        assert!(elapsed_ms <= 15_000, "SLOT {} TIMEOUT: {}ms > 15s", seg, elapsed_ms);
+        assert!(
+            elapsed_ms <= 15_000,
+            "SLOT {} TIMEOUT: {}ms > 15s",
+            seg,
+            elapsed_ms
+        );
 
         let bl: Vec<_> = baseline.iter().filter(|(s, _)| *s == seg).collect();
         let mut matched = 0;
         for (_, bmsg) in &bl {
-            if results.iter().any(|d| norm(&d.msg) == norm(bmsg)) { matched += 1; }
+            if results.iter().any(|d| norm(&d.msg) == norm(bmsg)) {
+                matched += 1;
+            }
         }
         total_matched += matched;
-        println!("  Seg {}: decoded {} | matched {}/{} | {}ms", seg, results.len(), matched, bl.len(), elapsed_ms);
+        println!(
+            "  Seg {}: decoded {} | matched {}/{} | {}ms",
+            seg,
+            results.len(),
+            matched,
+            bl.len(),
+            elapsed_ms
+        );
+
+        let remaining_baseline = baseline.iter().filter(|(s, _)| *s > seg).count();
+        assert!(
+            total_matched + remaining_baseline >= severe_floor,
+            "STREAM LONG sensitivity abort at seg {}: matched {} + remaining {} < {}",
+            seg,
+            total_matched,
+            remaining_baseline,
+            severe_floor,
+        );
     }
 
     let rate = total_matched as f64 / baseline.len() as f64 * 100.0;
     println!("\n[STREAM LONG DECODE SUMMARY]");
-    println!("  Total matched: {}/{} ({:.1}%)", total_matched, baseline.len(), rate);
-    assert!(rate >= 70.0, "STREAM LONG: {:.1}% < 70%", rate);
+    println!(
+        "  Total matched: {}/{} ({:.1}%)",
+        total_matched,
+        baseline.len(),
+        rate
+    );
+    assert!(
+        total_matched >= target_matched,
+        "STREAM LONG: {}/{} < {}",
+        total_matched,
+        baseline.len(),
+        target_matched
+    );
 }

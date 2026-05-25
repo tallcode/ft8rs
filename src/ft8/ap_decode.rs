@@ -20,13 +20,14 @@ use super::decode::{
 };
 use crate::util::pack_jt77::{pack77, is_stdcall};
 
-const NDOWN: usize = 60;
 const ICOS7: [usize; 7] = [3, 1, 4, 0, 6, 5, 2];
 
 /// Result of AP decode
 #[derive(Clone, Debug)]
 pub struct ApDecodeResult {
     pub msg: String,
+    pub freq: f64,
+    pub dt: f64,
     pub snr: f64,
     pub nharderrors: i32,
 }
@@ -59,7 +60,7 @@ pub fn ft8_a7d(
     let mut ibest: isize = 0;
 
     // ── First downsample at f1 ──
-    let (mut cd0_re, mut cd0_im) = ap_downsample(dd0, f1, &taper_data);
+    let (cd0_re, cd0_im) = ap_downsample(dd0, f1, &taper_data);
 
     // ── Time alignment ±10 ──
     let i0 = ((xdt + 0.5) * FS2).round() as isize;
@@ -88,8 +89,8 @@ pub fn ft8_a7d(
     // ── twkfreq1: frequency correction ──
     let mut a = [0.0f64; 5];
     a[0] = -delfbest;
-    (cd0_re, cd0_im) = twkfreq1(&cd0_re, &cd0_im, NP2, FS2, &a);
-    let _f1_refined = f1 + delfbest;
+    let _ = twkfreq1(&cd0_re, &cd0_im, NP2, FS2, &a);
+    let f1_refined = f1 + delfbest;
 
     // ── Second downsample with refined f1 ──
     let (cd0_re, cd0_im) = ap_downsample(dd0, f1 + delfbest, &taper_data);
@@ -108,6 +109,7 @@ pub fn ft8_a7d(
         .map(|(i, _)| i)
         .unwrap_or(4);
     ibest = idx as isize - 4 + ibest;
+    let xdt_refined = (ibest as f64 - 1.0) * DT2 - 0.5;
 
     // ── Extract soft symbols: 79 symbols × 8 tones ──
     // cs[tone][symbol], s8[tone][symbol]  (1-indexed for symbol, 0-indexed for tone)
@@ -298,7 +300,13 @@ pub fn ft8_a7d(
         if arg > 0.0 { (-24.0f64).max(10.0 * arg.log10() - 27.0) } else { -24.0 }
     };
 
-    Some(ApDecodeResult { msg: msgbest, snr: xsnr, nharderrors })
+    Some(ApDecodeResult {
+        msg: msgbest,
+        freq: f1_refined,
+        dt: xdt_refined,
+        snr: xsnr,
+        nharderrors,
+    })
 }
 
 /// Build imsg-th message variant. Matches ft8_a7.f90:140-200.

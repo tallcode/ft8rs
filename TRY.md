@@ -1,5 +1,143 @@
 # TRY.md — FT8 流式解码开发迭代记录
 
+## Iteration 11: 重新阅读 WSJT-X 与当前 Rust，修正计划（未跑解码测试）
+
+### 做了什么
+- 按开发前要求重新阅读关键 WSJT-X 路径：
+  - `wsjtx/lib/jt9a.f90`
+  - `wsjtx/lib/decoder.f90`
+  - `wsjtx/lib/ft8_decode.f90`
+  - `wsjtx/lib/ft8/ft8b.f90`
+  - `wsjtx/lib/ft8/sync8.f90`
+  - `wsjtx/lib/ft8/ft8_a7.f90`
+  - `wsjtx/lib/ft8/ft8_downsample.f90`
+  - `wsjtx/lib/ft8/get_spectrum_baseline.f90`
+  - `wsjtx/lib/ft8/subtractft8.f90`
+- 对照当前 Rust 代码：
+  - `src/stream/decoder.rs`
+  - `src/ft8/decode.rs`
+  - `src/ft8/ap_decode.rs`
+  - `tests/stream_decode_test.rs`
+- 更新 `STREAM.md`，记录当前真实差距。
+- 重写 `PLAN.md`，把计划调整为先做 WSJT-X 架构/参数/控制流对齐，再测试。
+
+### 关键新发现
+- `StreamDecoder::progressive_decode_slot` 名义上是 progressive，实际只做 full decode + AP，没有真正执行 `nzhsym=41/47/50`。
+- 当前 `sync8` 使用 `mlag=10`，WSJT-X 是 `mlag=13`。
+- 当前 `sync8` 的 `sbase` 来自 Rust 的 `compute_baseline(savg,...)`，WSJT-X 是 `get_spectrum_baseline(dd,nfa,nfb,sbase)`。
+- 当前 `ft8b` 没有 WSJT-X 的 `imetric=2` 逻辑；外层 pass 2/3 应该 square `s2`，并使用更严格的 hard sync gate。
+- 当前 `ft8b` 缺少第 5 个 regular metric pass `bmete`。
+- 当前 default decode path 里存在 ad-hoc AP masks；这不等价于 WSJT-X 的 `nappasses/naptypes/nQSOProgress` 体系。
+- 当前长测试只要求 `>=70%`，没有按用户要求断言 `>=366/449`。
+
+### 反思
+- 之前多轮记录里有“核心已完全对齐”的结论，但重新逐源码对照后，这个结论过早。
+- FFTW/rustfft、SNR fallback、AP 单点尝试的零增益不代表 WSJT-X 已对齐；更基础的 regular decode pass 和 `sync8/sbase` 仍有偏差。
+- 后续迭代必须先修正源码级偏差，不能继续用宽松测试阈值证明“可用”。
+
+### 测试
+- 本轮没有运行解码测试，符合“未完全对齐 WSJT-X 前不开始测试”的要求。
+
+## Iteration 12: 第一批 WSJT-X 对齐代码改造（仅编译校验）
+
+### 做了什么
+- 扩展 `DecodeOptions`，加入 WSJT-X 顶层参数位：
+  - `nfqso`
+  - `nftx`
+  - `nqso_progress`
+  - `ncontest`
+  - `napwid`
+  - `ft8_ap`
+  - `ap_cq_only`
+  - `nagain`
+  - `nzhsym`
+- 将默认候选数从 600 调整到 WSJT-X 顶层 `MAXCAND=1000`。
+- 修正 `sync8` 对齐点：
+  - `mlag=10` 改为 WSJT-X 的 `mlag=13`
+  - 候选生成改成按 `red` 排序、可加入 `red2` 第二峰、近重复置零、`nfqso +/- 10 Hz` 优先
+  - `sbase` 改为来自 `get_spectrum_baseline(dd,nfa,nfb)`，而不是 sync 频谱平均
+  - `get_spectrum_baseline` 按 WSJT-X 使用 Nuttall window 和 `NSPS*2/300/sum(window)` 归一化
+- 修正 `ft8b` regular pass 架构：
+  - 外层 depth=3 pass 数由 4 改为 WSJT-X 的 3
+  - pass 1 使用 `imetric=1`，pass 2/3 使用 `imetric=2`
+  - `imetric=2` 时对 `s2` 平方后再生成 bit metrics
+  - 增加第 5 个 regular metric `bmete`
+  - regular decode pass 从 4 个改为 WSJT-X 的 5 个：`llra/llrb/llrc/llrd/llre`
+  - hard sync gate 改为按 WSJT-X 的 `syncmin=6/7/8` 语义执行
+  - SNR false-positive gate/clamp 调整到 `-25 dB`
+  - 将原 ad-hoc AP masks 从默认路径拆出，避免冒充 WSJT-X `nappasses/naptypes`
+  - 移除“某个 pass 无解码就 break”的早停，允许 pass 2 的 `imetric=2` 继续尝试
+- 实现 `StreamDecoder` 的第一版真实阶段流：
+  - `nzhsym=41`：`41*3456` 边界后清零并 early decode
+  - `nzhsym=47`：对 early decode 做 refined subtract 并保存 `dd1`
+  - `nzhsym=50`：使用 `dd1` 的 cleaned prefix + 原始 remainder，再 full decode
+  - full 后继续执行现有 `ft8_a7d` AP
+- 将长测试断言从 `>=70%` 改为用户要求的 `>=366/449`。
+- 增加长测试灵敏度早停：如果累计匹配 + 剩余基线消息已经无法达到 `366-10`，立即失败。
+- 清理 `ap_decode.rs` 既有 warning，使 `cargo check` 输出干净。
+
+### 重要说明
+- 本轮仍未运行 release 解码测试，因为 `ft8b` 内部 AP 参数体系、cross-slot `ft8_a7_save` 的 `f0=-98` 抑制，以及长文件 slot timing 仍未完全对齐。
+- 当前 progressive 流程已经按 WSJT-X 源码的 `41/47/50` 阶段组织，但还需要继续校验 `3456` 边界与测试 harness 的 17 秒切片策略是否冲突。
+
+### 测试
+- `cargo check` ✅
+- 未运行 `cargo test --release ...` 解码测试。
+
+## Iteration 13: 文档收敛 + ft8_a7 previous/current 抑制对齐
+
+### 做了什么
+- 按用户要求删除旁支 Markdown 文档：
+  - `PLAN.md`
+  - `TODO_WSJT_X_ALIGNMENT.md`
+  - `REPORT.md`
+- 保留并继续维护：
+  - `STREAM.md`：技术报告/当前状态
+  - `TRY.md`：尝试记录
+  - `README.md`：不改
+- 扩展 `ApDecodeResult`，让 `ft8_a7d` 返回 refined `freq` 和 `dt`。
+- `StreamDecoder` 的 AP 合并结果不再用 `freq=0.0/dt=0.0`，而是保留 `ft8_a7d` refined 位置。
+- 在 AP 前先从当前 regular decode 中提取 current a7 entries，再用它们抑制 previous a7 entries：
+  - 当前 entry 与 previous entry 频率差 `<=3 Hz`
+  - previous fragment 包含当前 entry 的第二 token
+  - 符合条件则跳过该 previous entry，模拟 WSJT-X `ft8_a7_save` 中 `f0=-98` 的 "DO NOT USE"
+- 为 suppression 保存 `fragment`，用于近似 WSJT-X `msg0(i,j,k)` 的匹配语义。
+
+### 重要说明
+- 这轮补的是 AP 表行为，不是 `ft8b` 内部 AP pass。`nappasses/naptypes/nQSOProgress` 仍未实现。
+- CQ special fragment 现在按 decoded words 近似处理，后续如果 AP 差距明显，需要对照 `split77` 的 `nw` 分类做数值/行为校验。
+
+### 测试
+- `cargo check` ✅
+- 未运行 `cargo test --release ...` 解码测试。
+
+## Iteration 14: `nagain` 参数语义接入
+
+### 做了什么
+- 将 `DecodeOptions.nagain` 接入 decode core。
+- 对齐 WSJT-X `ft8_decode.f90` 中 `nagain` 的两个关键行为：
+  - 搜索频带从 `nfa/nfb` 改为 `nfqso +/- 20 Hz`
+  - `ft8b` SNR 选择从非 `nagain` 的 `xsnr2` 改为 `nagain` 的 adjacent-tone `xsnr`
+- `ft8b` 新增 `nagain` 参数，用于 SNR 选择；默认仍为 `false`。
+
+### 重要说明
+- 这不是 click-to-decode UI 行为，只是让核心解码参数语义与 WSJT-X 一致。
+- `nftx/napwid/ncontest/lapcqonly/lft8apon/nQSOProgress` 仍待继续接入，主要影响内部 AP pass 和 contest/Fox/Hound 分支。
+
+### 测试
+- `cargo check` ✅
+- 未运行 `cargo test --release ...` 解码测试。
+
+## Iteration 15: 删除未使用的 JTDX-style sync gate 残留
+
+### 做了什么
+- 删除 `src/ft8/decode.rs` 中未使用的 `passes_sync_gate` 函数。
+- 该函数包含 JTDX-style soft sync gate 逻辑，虽然默认路径已经不用，但继续保留会干扰 WSJT-X 对齐审查。
+- 默认路径现在只保留 WSJT-X hard sync gate：`nsync <= syncmin` 退出。
+
+### 测试
+- `cargo check` ✅
+
 ## Iteration 0: 现状分析
 
 - 完整阅读 wsjtx/lib/ft8_decode.f90 源码
@@ -279,4 +417,3 @@
 
 ### 剩余差距: ~67 条消息 (358 vs 420+)
 主要在 -16~-24dB 边际信号区域
-
