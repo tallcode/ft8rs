@@ -1,18 +1,20 @@
-use std::rc::Rc;
 /// FT8 decoder - Rust port of decode.ts
-
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
 use crate::util::constants::{N_LDPC, SAMPLE_RATE};
 use crate::util::decode174_91::{decode174_91, DecodeResult};
-use crate::util::{fft_complex, fft_r2c, sync8_fft_size};
 use crate::util::hashcall::HashCallBook;
 use crate::util::unpack_jt77::unpack77;
+use crate::util::{fft_complex, fft_r2c, sync8_fft_size};
+use std::rc::Rc;
 
 // ft8b internal timers: [downsample, sync8d_search, symbols+gate, bitmetrics, ldpc, total_fail]
 pub(crate) static FT8B_TIMERS: [std::sync::atomic::AtomicU64; 6] = [
-    std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
 ];
 
 /// sync8 spectral mode - different representations favour different SNR regimes.
@@ -43,7 +45,6 @@ pub(crate) const COSTAS_BLOCKS: usize = 7;
 pub(crate) const COSTAS_SYMBOL_LEN: usize = 32;
 pub(crate) const TAPER_SIZE: usize = 101;
 pub(crate) const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
-const MAX_DECODE_PASSES_DEPTH3: usize = 4;
 
 pub(crate) const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
 pub(crate) const DT2: f64 = 1.0 / FS2;
@@ -73,11 +74,19 @@ pub struct DecodeOptions {
     pub hash_call_book: Option<Rc<HashCallBook>>,
     pub mycall: Option<String>,
     pub hiscall: Option<String>,
+    pub nfqso: Option<f64>,
+    pub nftx: Option<f64>,
+    pub nqso_progress: Option<usize>,
+    pub ncontest: Option<usize>,
+    pub napwid: Option<f64>,
+    pub ft8_ap: Option<bool>,
+    pub ap_cq_only: Option<bool>,
+    pub nagain: Option<bool>,
+    pub nzhsym: Option<usize>,
     /// Sync spectral mode: Power (default), Amplitude (better for weak signals),
     /// AbsSum (robust against impulsive noise).
     pub sync_mode: Option<SyncMode>,
 }
-
 
 #[derive(Clone)]
 pub(crate) struct Candidate {
@@ -120,6 +129,7 @@ struct DecodeWorkspace {
     bmetb: Vec<f64>,
     bmetc: Vec<f64>,
     bmetd: Vec<f64>,
+    bmete: Vec<f64>,
     llr: Vec<f64>,
     apmask: Vec<i8>,
     ss: Vec<f64>,
@@ -141,6 +151,7 @@ fn create_decode_workspace() -> DecodeWorkspace {
         bmetb: vec![0.0; N_LDPC],
         bmetc: vec![0.0; N_LDPC],
         bmetd: vec![0.0; N_LDPC],
+        bmete: vec![0.0; N_LDPC],
         llr: vec![0.0; N_LDPC],
         apmask: vec![0; N_LDPC],
         ss: vec![0.0; 9],
@@ -235,8 +246,23 @@ pub fn decode_f64(samples: &[f64], options: DecodeOptions) -> Vec<DecodedMessage
     msgs
 }
 
+/// Decode directly from f64 samples and return the sbase noise baseline.
+pub fn decode_f64_with_sbase(
+    samples: &[f64],
+    options: DecodeOptions,
+) -> (Vec<DecodedMessage>, Vec<f64>) {
+    let t_start = std::time::Instant::now();
+    let len = samples.len().min(NMAX);
+    let dd = samples[..len].to_vec();
+    let t_dd = t_start.elapsed();
+    decode_from_f64(dd, options, t_dd, t_start)
+}
+
 /// Decode returning both messages and the sbase noise baseline.
-pub fn decode_with_sbase(samples: &[f32], options: DecodeOptions) -> (Vec<DecodedMessage>, Vec<f64>) {
+pub fn decode_with_sbase(
+    samples: &[f32],
+    options: DecodeOptions,
+) -> (Vec<DecodedMessage>, Vec<f64>) {
     let t_start = std::time::Instant::now();
     let sample_rate = options.sample_rate.unwrap_or(SAMPLE_RATE);
     let dd = if sample_rate == SAMPLE_RATE {
@@ -248,36 +274,43 @@ pub fn decode_with_sbase(samples: &[f32], options: DecodeOptions) -> (Vec<Decode
     decode_from_f64(dd, options, t_dd, t_start)
 }
 
-fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Duration, t_start: std::time::Instant) -> (Vec<DecodedMessage>, Vec<f64>) {
+fn decode_from_f64(
+    mut dd: Vec<f64>,
+    options: DecodeOptions,
+    t_dd: std::time::Duration,
+    t_start: std::time::Instant,
+) -> (Vec<DecodedMessage>, Vec<f64>) {
     // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
-    if dd.len() > NMAX { dd.truncate(NMAX); }
+    if dd.len() > NMAX {
+        dd.truncate(NMAX);
+    }
     let nfa = options.freq_low.unwrap_or(200.0);
     let nfb = options.freq_high.unwrap_or(3000.0);
     let syncmin = options.sync_min.unwrap_or(1.3);
     let depth = options.depth.unwrap_or(3);
-    let max_candidates = options.max_candidates.unwrap_or(600);
+    let max_candidates = options.max_candidates.unwrap_or(1000);
     let book = options.hash_call_book;
     let sync_mode = options.sync_mode.unwrap_or(SyncMode::Power);
+    let nfqso = options.nfqso.unwrap_or(0.0);
+    let nagain = options.nagain.unwrap_or(false);
     let mut residual = dd.clone();
 
     let mut cx_re = vec![0.0; NFFT1_LONG];
     let mut cx_im = vec![0.0; NFFT1_LONG];
-    cx_re[..residual.len().min(NFFT1_LONG)].copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
+    cx_re[..residual.len().min(NFFT1_LONG)]
+        .copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
     fft_complex(&mut cx_re, &mut cx_im, false);
     let t_cx = t_start.elapsed();
     let _workspace = create_decode_workspace();
 
     let mut decoded: Vec<DecodedMessage> = Vec::new();
     let mut seen_messages = std::collections::HashSet::new();
-    let max_passes = if depth >= 3 {
-        MAX_DECODE_PASSES_DEPTH3
-    } else {
-        1
-    };
-
+    let max_passes = if depth == 1 { 2 } else { 3 };
 
     #[allow(clippy::map_clone)]
-    fn count_candidate_frequencies(candidates: &[Candidate]) -> std::collections::HashMap<i32, usize> {
+    fn count_candidate_frequencies(
+        candidates: &[Candidate],
+    ) -> std::collections::HashMap<i32, usize> {
         let mut counts = std::collections::HashMap::new();
         for c in candidates {
             *counts.entry(c.freq as i32).or_insert(0) += 1;
@@ -293,24 +326,39 @@ fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Du
     let mut sbase: Vec<f64> = Vec::new();
 
     for pass_idx in 0..max_passes {
+        if pass_idx == 2 && decoded.is_empty() {
+            continue;
+        }
         let pass_syncmin = syncmin;
         cx_re.fill(0.0);
         cx_im.fill(0.0);
 
-    cx_re[..residual.len()].copy_from_slice(&residual);
+        cx_re[..residual.len()].copy_from_slice(&residual);
         fft_complex(&mut cx_re, &mut cx_im, false);
 
         let t0 = std::time::Instant::now();
-        let (candidates, pass_sbase) = sync8(&residual, nfa, nfb, pass_syncmin, max_candidates, sync_mode);
+        let (ifa, ifb) = if nagain {
+            (nfqso - 20.0, nfqso + 20.0)
+        } else {
+            (nfa, nfb)
+        };
+
+        let (candidates, pass_sbase) = sync8(
+            &residual,
+            ifa,
+            ifb,
+            pass_syncmin,
+            nfqso,
+            max_candidates,
+            sync_mode,
+        );
         if pass_idx == 0 {
             sbase = pass_sbase;
         }
         t_sync8_total += t0.elapsed();
 
-        // WSJT-X ft8_decode.f90: pass 1 uses ndeep=2 when depth=3 (maxosd=0),
-        // passes 2+ use full depth (maxosd=2). This avoids aggressive OSD on the
-        // first pass when the residual is still clean, reducing false positives.
-        let pass_depth = if pass_idx == 0 && depth >= 3 { 2 } else { depth };
+        // WSJT-X ft8_decode.f90: pass 1 uses imetric=1, passes 2/3 use imetric=2.
+        let pass_imetric = if pass_idx == 0 { 1 } else { 2 };
 
         let _coarse_frequency_uses = count_candidate_frequencies(&candidates);
         let _coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
@@ -321,10 +369,28 @@ fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Du
         let t_decode_start = std::time::Instant::now();
         for cand in &candidates {
             let mut cand_ws = create_decode_workspace();
-            let mut cand_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> = std::collections::HashMap::new();
-            let mut cand_freq_uses: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
-            if let Some(r) = ft8b(&residual, &cx_re, &cx_im, cand.freq, cand.dt, &sbase,
-                pass_depth, &book, None, None, None, &mut cand_ws, &mut cand_cache, &mut cand_freq_uses) {
+            let mut cand_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
+                std::collections::HashMap::new();
+            let mut cand_freq_uses: std::collections::HashMap<i32, usize> =
+                std::collections::HashMap::new();
+            if let Some(r) = ft8b(
+                &residual,
+                &cx_re,
+                &cx_im,
+                cand.freq,
+                cand.dt,
+                &sbase,
+                depth,
+                pass_imetric,
+                nagain,
+                &book,
+                None,
+                None,
+                None,
+                &mut cand_ws,
+                &mut cand_cache,
+                &mut cand_freq_uses,
+            ) {
                 let message_key = normalize_message_key(&r.msg);
                 if seen_messages.contains(&message_key) {
                     continue;
@@ -339,13 +405,12 @@ fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Du
                     itone: r.itone.to_vec(),
                 });
                 decoded_in_pass += 1;
-                crate::util::subtract_ft8::subtract_ft8(
-                    &mut residual, &r.itone, r.freq, r.dt,
-                );
+                crate::util::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
                 // Recompute FFT so next candidate sees cleaned residual
                 cx_re.fill(0.0);
                 cx_im.fill(0.0);
-                cx_re[..residual.len().min(NFFT1_LONG)].copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
+                cx_re[..residual.len().min(NFFT1_LONG)]
+                    .copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
                 fft_complex(&mut cx_re, &mut cx_im, false);
             }
         }
@@ -353,9 +418,7 @@ fn decode_from_f64(mut dd: Vec<f64>, options: DecodeOptions, t_dd: std::time::Du
         let _t_sub_start = std::time::Instant::now();
         t_subtract_total += _t_sub_start.elapsed();
 
-        if decoded_in_pass == 0 {
-            break;
-        }
+        let _ = decoded_in_pass;
     }
 
     let total = t_start.elapsed();
@@ -396,7 +459,11 @@ fn resample(input: &[f32], from_rate: usize, to_rate: usize, out_len: usize) -> 
             let src_idx = i as f64 * ratio;
             let lo = src_idx.floor() as usize;
             let frac = src_idx - lo as f64;
-            let v0 = if lo < input.len() { input[lo] as f64 } else { 0.0 };
+            let v0 = if lo < input.len() {
+                input[lo] as f64
+            } else {
+                0.0
+            };
             let v1 = if lo + 1 < input.len() {
                 input[lo + 1] as f64
             } else {
@@ -434,11 +501,21 @@ impl Sync8Buffers {
         let sz_x = half_size * 2;
         // sync2d can be up to half_size * width (full frequency range)
         let sz_sync2d = width * half_size;
-        if self.s.len() < sz_s { self.s.resize(sz_s, 0.0); }
-        if self.savg.len() < half_size { self.savg.resize(half_size, 0.0); }
-        if self.x_re.len() < sz_x { self.x_re.resize(sz_x, 0.0); }
-        if self.x_im.len() < sz_x { self.x_im.resize(sz_x, 0.0); }
-        if self.sync2d.len() < sz_sync2d { self.sync2d.resize(sz_sync2d, 0.0); }
+        if self.s.len() < sz_s {
+            self.s.resize(sz_s, 0.0);
+        }
+        if self.savg.len() < half_size {
+            self.savg.resize(half_size, 0.0);
+        }
+        if self.x_re.len() < sz_x {
+            self.x_re.resize(sz_x, 0.0);
+        }
+        if self.x_im.len() < sz_x {
+            self.x_im.resize(sz_x, 0.0);
+        }
+        if self.sync2d.len() < sz_sync2d {
+            self.sync2d.resize(sz_sync2d, 0.0);
+        }
         // zero buffers
         self.s[..sz_s].fill(0.0);
         self.savg[..half_size].fill(0.0);
@@ -450,6 +527,7 @@ pub(crate) fn sync8(
     nfa: f64,
     nfb: f64,
     syncmin: f64,
+    nfqso: f64,
     maxcand: usize,
     mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
@@ -495,7 +573,7 @@ pub(crate) fn sync8(
             }
         }
 
-        let sbase = compute_baseline(savg, nfa, nfb, df, half_size);
+        let sbase = get_spectrum_baseline(dd, nfa, nfb);
 
         let ia = (1.0_f64.max((nfa / df).round())) as usize;
         let ib = ((half_size - 14) as f64).min((nfb / df).round()) as usize;
@@ -582,23 +660,31 @@ pub(crate) fn sync8(
         }
 
         // Red + red2 per frequency bin (matching WSJT-X)
-        let mlag: isize = 10;
+        let mlag: isize = 13;
         let mlag2: isize = jz as isize;
         let iz = ib - ia + 1;
         let mut red = vec![0.0f64; iz];
         let mut red2 = vec![0.0f64; iz];
+        let mut jpeak = vec![0isize; iz];
+        let mut jpeak2 = vec![0isize; iz];
         for i in ia..=ib {
             let idx = i - ia;
             let mut best = -1.0;
             for j in (-mlag..=mlag).step_by(1) {
                 let v = sync2d[idx * width + (j + jz as isize) as usize];
-                if v > best { best = v; }
+                if v > best {
+                    best = v;
+                    jpeak[idx] = j;
+                }
             }
             red[idx] = best;
             let mut best2 = -1.0;
             for j in (-mlag2..=mlag2).step_by(1) {
                 let v = sync2d[idx * width + (j + jz as isize) as usize];
-                if v > best2 { best2 = v; }
+                if v > best2 {
+                    best2 = v;
+                    jpeak2[idx] = j;
+                }
             }
             red2[idx] = best2;
         }
@@ -609,89 +695,92 @@ pub(crate) fn sync8(
             let mut red_copy = red.clone();
             red_copy.select_nth_unstable_by(npctile, |a, b| a.partial_cmp(b).unwrap());
             let base = red_copy[npctile].max(1e-30);
-            for v in red.iter_mut() { *v /= base; }
+            for v in red.iter_mut() {
+                *v /= base;
+            }
         }
         {
             let mut red2_copy = red2.clone();
             red2_copy.select_nth_unstable_by(npctile, |a, b| a.partial_cmp(b).unwrap());
             let base2 = red2_copy[npctile].max(1e-30);
-            for v in red2.iter_mut() { *v /= base2; }
+            for v in red2.iter_mut() {
+                *v /= base2;
+            }
         }
 
-        // Push candidates from normalized red (matching WSJT-X: first per-bin, then second if different)
-        for i in ia..=ib {
-            let idx = i - ia;
+        let mut order: Vec<usize> = (0..iz).collect();
+        order.sort_by(|&a, &b| red[a].partial_cmp(&red[b]).unwrap());
+        let maxprecand = 1000usize;
+        for &idx in order.iter().rev().take(iz.min(maxprecand)) {
+            if candidate0.len() >= maxprecand {
+                break;
+            }
             if red[idx] >= syncmin && red[idx].is_finite() {
-                // Find best j for this frequency
-                let mut best_j: isize = 0;
-                let mut best_val = -1.0;
-                for j in (-mlag..=mlag).step_by(1) {
-                    let v = sync2d[idx * width + (j + jz as isize) as usize];
-                    if v > best_val { best_val = v; best_j = j; }
-                }
+                let i = ia + idx;
                 candidate0.push(Candidate {
                     freq: i as f64 * df,
-                    dt: (best_j as f64 - 0.5) * tstep,
+                    dt: (jpeak[idx] as f64 - 0.5) * tstep,
                     sync: red[idx],
                 });
             }
-            // Check mlag2 for second candidate
-            let mut best_j2: isize = 0;
-            let mut best_val2 = -1.0;
-            for j in (-mlag2..=mlag2).step_by(1) {
-                let v = sync2d[idx * width + (j + jz as isize) as usize];
-                if v > best_val2 { best_val2 = v; best_j2 = j; }
+            if jpeak2[idx] == jpeak[idx] || candidate0.len() >= maxprecand {
+                continue;
             }
             if red2[idx] >= syncmin && red2[idx].is_finite() {
-                // Skip if same time as first
-                let mut same_time = false;
-                for j in (-mlag..=mlag).step_by(1) {
-                    let v = sync2d[idx * width + (j + jz as isize) as usize];
-                    if v >= best_val2 - 1e-6 {
-                        let t1 = (j as f64 - 0.5) * tstep;
-                        let t2 = (best_j2 as f64 - 0.5) * tstep;
-                        if (t1 - t2).abs() < 0.001 { same_time = true; break; }
+                let i = ia + idx;
+                candidate0.push(Candidate {
+                    freq: i as f64 * df,
+                    dt: (jpeak2[idx] as f64 - 0.5) * tstep,
+                    sync: red2[idx],
+                });
+            }
+        }
+
+        for i in 0..candidate0.len() {
+            for j in 0..i {
+                let fdiff = candidate0[i].freq.abs() - candidate0[j].freq.abs();
+                let tdiff = (candidate0[i].dt - candidate0[j].dt).abs();
+                if fdiff.abs() < 4.0 && tdiff < 0.04 {
+                    if candidate0[i].sync >= candidate0[j].sync {
+                        candidate0[j].sync = 0.0;
+                    } else {
+                        candidate0[i].sync = 0.0;
                     }
                 }
-                if !same_time {
-                    candidate0.push(Candidate {
-                        freq: i as f64 * df,
-                        dt: (best_j2 as f64 - 0.5) * tstep,
-                        sync: red2[idx],
+            }
+        }
+
+        let mut sorted_idx: Vec<usize> = (0..candidate0.len()).collect();
+        sorted_idx.sort_by(|&a, &b| candidate0[a].sync.partial_cmp(&candidate0[b].sync).unwrap());
+
+        let mut candidates = Vec::with_capacity(maxcand);
+        for c in candidate0.iter_mut() {
+            if (c.freq - nfqso).abs() <= 10.0 && c.sync >= syncmin {
+                candidates.push(c.clone());
+                c.sync = 0.0;
+                if candidates.len() >= maxcand {
+                    break;
+                }
+            }
+        }
+
+        if candidates.len() < maxcand {
+            for &idx in sorted_idx.iter().rev() {
+                let c = &candidate0[idx];
+                if c.sync >= syncmin {
+                    candidates.push(Candidate {
+                        freq: c.freq.abs(),
+                        dt: c.dt,
+                        sync: c.sync,
                     });
-                }
-            }
-        }
-
-        // Dedup + filter in-place
-        let mut write_idx = 0;
-        for read_idx in 0..candidate0.len() {
-            let mut keep = true;
-            for j in 0..write_idx {
-                let fi = candidate0[read_idx].freq;
-                let fj = candidate0[j].freq;
-                let di = candidate0[read_idx].dt;
-                let dj = candidate0[j].dt;
-                if (fi - fj).abs() < 4.0 && (di - dj).abs() < 0.04 {
-                    if candidate0[read_idx].sync < candidate0[j].sync {
-                        keep = false;
+                    if candidates.len() >= maxcand {
+                        break;
                     }
                 }
             }
-            if keep && candidate0[read_idx].sync >= syncmin {
-                if read_idx != write_idx {
-                    candidate0[write_idx] = candidate0[read_idx].clone();
-                }
-                write_idx += 1;
-            }
         }
-        candidate0.truncate(write_idx);
 
-        candidate0.sort_by(|a, b| b.sync.partial_cmp(&a.sync).unwrap());
-
-        // Take only maxcand
-        let count = candidate0.len().min(maxcand);
-        (candidate0.drain(..count).collect(), sbase)
+        (candidates, sbase)
     })
 }
 
@@ -839,8 +928,10 @@ fn evpoly(a: &[f64], t: f64) -> f64 {
 fn nuttall_window(n: usize) -> Vec<f64> {
     let mut w = vec![0.0; n];
     let nf = n as f64;
-    let a0 = 0.355768; let a1 = 0.487396;
-    let a2 = 0.144232; let a3 = 0.012604;
+    let a0 = 0.355768;
+    let a1 = 0.487396;
+    let a2 = 0.144232;
+    let a3 = 0.012604;
     for i in 0..n {
         let x = 2.0 * std::f64::consts::PI * i as f64 / nf;
         w[i] = a0 - a1 * x.cos() + a2 * (2.0 * x).cos() - a3 * (3.0 * x).cos();
@@ -849,32 +940,47 @@ fn nuttall_window(n: usize) -> Vec<f64> {
 }
 
 /// WSJT-X get_spectrum_baseline: Welch method with Nuttall window.
-#[allow(dead_code)]
-fn get_spectrum_baseline(dd: &[f64]) -> Vec<f64> {
-    let nfft = NFFT1; let nh1 = nfft / 2; let nst = nh1;
-    let nf = if dd.len() > nfft { ((dd.len() - nfft) / nst + 1).min(93) } else { 1 };
+fn get_spectrum_baseline(dd: &[f64], mut nfa: f64, mut nfb: f64) -> Vec<f64> {
+    let nfft = NFFT1;
+    let nh1 = nfft / 2;
+    let nst = nh1;
+    let nf = 93usize;
     let window = nuttall_window(nfft);
+    let wsum: f64 = window.iter().sum();
+    let wscale = NSPS as f64 * 2.0 / 300.0 / wsum;
     let mut savg = vec![0.0; nh1];
     for j in 0..nf {
-        let ia = j * nst; let ib = ia + nfft;
-        if ib > dd.len() { break; }
-        let mut x_re = vec![0.0; nfft]; let mut x_im = vec![0.0; nfft];
-        for i in 0..nfft { x_re[i] = dd[ia + i] * window[i]; }
+        let ia = j * nst;
+        let ib = ia + nfft;
+        if ib > NMAX {
+            break;
+        }
+        let mut x_re = vec![0.0; nfft];
+        let mut x_im = vec![0.0; nfft];
+        for i in 0..nfft {
+            let sample = dd.get(ia + i).copied().unwrap_or(0.0);
+            x_re[i] = sample * window[i] * wscale;
+        }
         fft_r2c(&mut x_re, &mut x_im);
-        for i in 0..nh1 { savg[i] += x_re[i] * x_re[i] + x_im[i] * x_im[i]; }
+        for i in 0..nh1 {
+            savg[i] += x_re[i] * x_re[i] + x_im[i] * x_im[i];
+        }
     }
-    if nf > 0 { let s = 1.0 / nf as f64; for v in savg.iter_mut() { *v *= s; } }
+    let nwin = nfb - nfa;
+    if nfa < 100.0 {
+        nfa = 100.0;
+        if nwin < 100.0 {
+            nfb = nfa + nwin;
+        }
+    }
+    if nfb > 4910.0 {
+        nfb = 4910.0;
+        if nwin < 100.0 {
+            nfa = nfb - nwin;
+        }
+    }
     let df = SAMPLE_RATE as f64 / nfft as f64;
-    let ia = (1.0_f64.max((200.0 / df).round())) as usize;
-    let ib = ((nh1 - 1) as f64).min((3000.0 / df).round()) as usize;
-    let mut sbase = vec![0.0; nh1];
-    for i in 0..nh1 {
-        let lo = ia.max(i.saturating_sub(50)); let hi = ib.min(i + 50);
-        let mut sum = 0.0; let mut cnt = 0;
-        for j in lo..=hi { sum += savg[j]; cnt += 1; }
-        sbase[i] = if cnt > 0 { 10.0 * (1e-30f64.max(sum / cnt as f64)).log10() } else { 0.0 };
-    }
-    sbase
+    compute_baseline(&savg, nfa, nfb, df, nh1)
 }
 
 fn ft8b(
@@ -885,6 +991,8 @@ fn ft8b(
     xdt: f64,
     _sbase: &[f64],
     depth: usize,
+    imetric: usize,
+    nagain: bool,
     _book: &Option<std::rc::Rc<HashCallBook>>,
     mycall: Option<&str>,
     hiscall: Option<&str>,
@@ -896,8 +1004,12 @@ fn ft8b(
     let t0 = std::time::Instant::now();
 
     load_coarse_downsample(
-        cx_re, cx_im, f1, workspace,
-        coarse_downsample_cache, coarse_frequency_uses,
+        cx_re,
+        cx_im,
+        f1,
+        workspace,
+        coarse_downsample_cache,
+        coarse_frequency_uses,
     );
     let t1 = t0.elapsed();
 
@@ -907,24 +1019,41 @@ fn ft8b(
     ft8_downsample(cx_re, cx_im, f1, workspace);
     let t2 = t0.elapsed();
 
-    ibest = refine_time_offset(&workspace.cd0_re, &workspace.cd0_im, ibest, &mut workspace.ss);
+    ibest = refine_time_offset(
+        &workspace.cd0_re,
+        &workspace.cd0_im,
+        ibest,
+        &mut workspace.ss,
+    );
     let xdt = (ibest as f64 - 1.0) * DT2;
 
     extract_soft_symbols(ibest, workspace);
     let t3 = t0.elapsed();
 
-    // WSJT-X: nsync <= 6 bailout (= need >=7 sync Costas hits)
-    // Be strict: nsync < 7 → bail out (matches WSJT-X exactly)
-    let min_costas_hits: usize = 7;
+    // WSJT-X ft8b.f90: syncmin=6, imetric=2 => 7, depth<=2 => 8,
+    // and bailout is nsync <= syncmin.
+    let min_costas_hits: usize = if depth <= 2 {
+        9
+    } else if imetric == 2 {
+        8
+    } else {
+        7
+    };
     if !passes_sync_gate_strict(&workspace.s8, min_costas_hits) {
         // Accumulate timers before returning
         FT8B_TIMERS[0].fetch_add(t1.as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
-        FT8B_TIMERS[1].fetch_add((t2 - t1).as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
-        FT8B_TIMERS[2].fetch_add((t3 - t2).as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
+        FT8B_TIMERS[1].fetch_add(
+            (t2 - t1).as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        FT8B_TIMERS[2].fetch_add(
+            (t3 - t2).as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         return None;
     }
 
-    build_bit_metrics(workspace);
+    build_bit_metrics(workspace, imetric);
     let _t4 = t0.elapsed();
 
     // ── xbase: noise baseline at candidate frequency (for xsnr2) ──
@@ -961,18 +1090,21 @@ fn ft8b(
         return None;
     }
 
-    let (_xsnr, xsnr2) = compute_snr(&workspace.s8, &result.cw, xbase);
+    let (xsnr, xsnr2) = compute_snr(&workspace.s8, &result.cw, xbase);
 
     // WSJT-X ft8b.f90: when nagain=false (initial decode, not subtract+retry),
     // use xsnr2 (spectrum baseline) instead of xsnr (adjacent-tone).
     // nagain=false is the default case for standalone decode.
-    let snr = if xsnr2 < -24.0 { -24.0 } else { xsnr2 }; // nagain=false, clamped
+    let mut snr = if nagain { xsnr } else { xsnr2 };
 
     // WSJT-X ft8b.f90: false-positive bail-out
-    // if (nsync.le.10 .and. xsnr.lt.-24.0) then nbadcrc=1; return
+    // if (nsync.le.10 .and. xsnr.lt.-25.0) then nbadcrc=1; return
     let nsync = compute_nsync(&workspace.s8);
-    if nsync <= 10 && snr < -24.0 {
+    if nsync <= 10 && snr < -25.0 {
         return None;
+    }
+    if snr < -25.0 {
+        snr = -25.0;
     }
 
     // Compute itone from codeword (same as get_tones but as [i32; 79])
@@ -1035,7 +1167,7 @@ fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> isize {
     let i0_center = i0_raw.rem_euclid(NP2 as isize);
 
     let mut smax = 0.0;
-    let mut ibest_unwrapped = i0_raw;  // start with unwrapped
+    let mut ibest_unwrapped = i0_raw; // start with unwrapped
     let cs = build_costas_sync_templates();
     for offset in -10..=10 {
         let idx = (i0_center + offset).rem_euclid(NP2 as isize) as usize;
@@ -1068,8 +1200,7 @@ fn refine_time_offset(cd0_re: &[f64], cd0_im: &[f64], ibest: isize, ss: &mut [f6
     let cs = build_costas_sync_templates();
     for idt in -4..=4 {
         let idx = (ibest + idt).rem_euclid(NP2 as isize) as usize;
-        ss[(idt + 4) as usize] =
-            sync8d(cd0_re, cd0_im, idx, &cs.re, &cs.im);
+        ss[(idt + 4) as usize] = sync8d(cd0_re, cd0_im, idx, &cs.re, &cs.im);
     }
 
     let mut max_idx: isize = 4;
@@ -1163,61 +1294,12 @@ fn compute_nsync(s8: &[f64]) -> usize {
     nsync
 }
 
-#[allow(dead_code)]
-fn passes_sync_gate(s8: &[f64], min_costas_hits: usize) -> bool {
-    const SYNC_TIME_SHIFTS: [usize; 3] = [0, 36, 72];
-    let mut nsync = 0;
-    // ── SNR-based scoring (JTDX-style) ──
-    let mut nsyncscore = 0u32;
-    let mut scoreratio = 0.0f64;
-
-    for k in 0..COSTAS_BLOCKS {
-        for &offset in &SYNC_TIME_SHIFTS {
-            let mut max_tone = 0;
-            let mut max_val = -1.0;
-            let mut sum_noise = 0.0;
-            for t in 0..8 {
-                let v = s8[t * NN + k + offset];
-                sum_noise += v;
-                if v > max_val {
-                    max_val = v;
-                    max_tone = t;
-                }
-            }
-            // SNR per sync symbol: sync_tone / average of other 7 tones
-            let noise = (sum_noise - max_val) / 7.0;
-            if noise > 1e-12 && max_tone == COSTAS[k] as usize {
-                nsync += 1;
-                if max_val > noise {
-                    nsyncscore += 1;
-                    scoreratio += max_val / noise;
-                }
-            }
-        }
-    }
-
-    // ── JTDX-style soft gate: hard nsync threshold is lowered when per-symbol SNR is high ──
-    if nsyncscore > 0 {
-        scoreratio /= nsyncscore as f64;
-    }
-
-    // Hard gate: minimum Costas hits
-    if nsync < min_costas_hits {
-        // Soft override: if per-symbol SNR is very high, let borderline nsync through
-        if nsync >= 4 && nsyncscore >= nsync as u32 && scoreratio > 3.0 {
-            return true;
-        }
-        return false;
-    }
-
-    true
-}
-
-fn build_bit_metrics(workspace: &mut DecodeWorkspace) {
+fn build_bit_metrics(workspace: &mut DecodeWorkspace, imetric: usize) {
     workspace.bmeta.fill(0.0);
     workspace.bmetb.fill(0.0);
     workspace.bmetc.fill(0.0);
     workspace.bmetd.fill(0.0);
+    workspace.bmete.fill(0.0);
 
     for nsym in 1..=3 {
         let nt = 1 << (3 * nsym);
@@ -1255,6 +1337,11 @@ fn build_bit_metrics(workspace: &mut DecodeWorkspace) {
                         workspace.s2[i] = (s_re * s_re + s_im * s_im).sqrt();
                     }
                 }
+                if imetric == 2 {
+                    for i in 0..nt {
+                        workspace.s2[i] *= workspace.s2[i];
+                    }
+                }
 
                 let i32 = 1 + (k - 1) * 3 + (ihalf - 1) * 87;
                 for ib in 0..=ibmax {
@@ -1263,14 +1350,20 @@ fn build_bit_metrics(workspace: &mut DecodeWorkspace) {
                     for i in 0..nt {
                         let bit_set = (i & (1 << (ibmax - ib))) != 0;
                         if bit_set {
-                            if workspace.s2[i] > max1 { max1 = workspace.s2[i]; }
+                            if workspace.s2[i] > max1 {
+                                max1 = workspace.s2[i];
+                            }
                         } else {
-                            if workspace.s2[i] > max0 { max0 = workspace.s2[i]; }
+                            if workspace.s2[i] > max0 {
+                                max0 = workspace.s2[i];
+                            }
                         }
                     }
 
                     let idx = (i32 as isize + ib as isize - 1) as usize;
-                    if idx >= N_LDPC { continue; }
+                    if idx >= N_LDPC {
+                        continue;
+                    }
 
                     let bm = max1 - max0;
                     if nsym == 1 {
@@ -1287,10 +1380,18 @@ fn build_bit_metrics(workspace: &mut DecodeWorkspace) {
         }
     }
 
+    for i in 0..N_LDPC {
+        let vals = [workspace.bmeta[i], workspace.bmetb[i], workspace.bmetc[i]];
+        workspace.bmete[i] = *vals
+            .iter()
+            .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
+            .unwrap();
+    }
     normalize_bmet(&mut workspace.bmeta);
     normalize_bmet(&mut workspace.bmetb);
     normalize_bmet(&mut workspace.bmetc);
     normalize_bmet(&mut workspace.bmetd);
+    normalize_bmet(&mut workspace.bmete);
 }
 
 pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
@@ -1380,7 +1481,13 @@ fn sync8d(cd0_re: &[f64], cd0_im: &[f64], i0: usize, sync_re: &[f64], sync_im: &
     sync8d_isize(cd0_re, cd0_im, i0 as isize, sync_re, sync_im)
 }
 
-fn sync8d_isize(cd0_re: &[f64], cd0_im: &[f64], i0: isize, sync_re: &[f64], sync_im: &[f64]) -> f64 {
+fn sync8d_isize(
+    cd0_re: &[f64],
+    cd0_im: &[f64],
+    i0: isize,
+    sync_re: &[f64],
+    sync_im: &[f64],
+) -> f64 {
     let mut sync = 0.0;
     let stride = 36 * COSTAS_SYMBOL_LEN;
 
@@ -1464,14 +1571,6 @@ fn compute_snr(s8: &[f64], cw: &[u8], xbase: f64) -> (f64, f64) {
     }
     xsnr2 = 10.0 * xsnr2.log10() - 27.0;
 
-    // Clamp both to -24 dB floor
-    if xsnr < -24.0 {
-        xsnr = -24.0;
-    }
-    if xsnr2 < -24.0 {
-        xsnr2 = -24.0;
-    }
-
     (xsnr, xsnr2)
 }
 
@@ -1481,7 +1580,6 @@ fn estimate_snr(s8: &[f64], cw: &[u8]) -> f64 {
     let (xsnr, _) = compute_snr(s8, cw, 1e-6); // dummy xbase, unused
     xsnr
 }
-
 
 fn get_tones(cw: &[u8]) -> Vec<u8> {
     let mut tones = vec![0u8; 79];
@@ -1503,8 +1601,6 @@ fn get_tones(cw: &[u8]) -> Vec<u8> {
     tones
 }
 
-
-
 /// Encode callsign to 28-bit AP pattern, matching WSJT-X ft8apset.f90.
 fn encode_callsign_ap(call: &str) -> Option<Vec<i8>> {
     use crate::util::pack_jt77::pack77;
@@ -1522,7 +1618,11 @@ fn encode_callsign_ap(call: &str) -> Option<Vec<i8>> {
 
 fn encode_callsigns_ap(mycall: &str, hiscall: &str) -> Option<Vec<i8>> {
     use crate::util::pack_jt77::pack77;
-    let msg = format!("{} {} RRR", mycall.trim().to_uppercase(), hiscall.trim().to_uppercase());
+    let msg = format!(
+        "{} {} RRR",
+        mycall.trim().to_uppercase(),
+        hiscall.trim().to_uppercase()
+    );
     let bits77 = pack77(&msg);
     if bits77.len() == 77 && bits77[74] == 0 && bits77[75] == 0 && bits77[76] == 1 {
         let mut ap_bits = Vec::with_capacity(58);
@@ -1534,8 +1634,64 @@ fn encode_callsigns_ap(mycall: &str, hiscall: &str) -> Option<Vec<i8>> {
     None
 }
 
-fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Option<&str>, hiscall: Option<&str>) -> Option<DecodeResult> {
-    let maxosd_base = if depth >= 3 { 2 } else if depth >= 2 { 0 } else { -1 };
+fn try_decode_passes(
+    workspace: &mut DecodeWorkspace,
+    depth: usize,
+    _mycall: Option<&str>,
+    _hiscall: Option<&str>,
+) -> Option<DecodeResult> {
+    let maxosd_base = if depth >= 3 {
+        2
+    } else if depth >= 2 {
+        0
+    } else {
+        -1
+    };
+    let scalefac = 2.83;
+    let bmetrics = [
+        &workspace.bmeta,
+        &workspace.bmetb,
+        &workspace.bmetc,
+        &workspace.bmetd,
+        &workspace.bmete,
+    ];
+
+    // Passes 1-5: regular WSJT-X BP+OSD decoding with 5 bit metrics.
+    workspace.apmask.fill(0);
+
+    for ipass in 0..5 {
+        let metric = bmetrics[ipass];
+        for i in 0..N_LDPC {
+            workspace.llr[i] = scalefac * metric[i];
+        }
+
+        if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
+            // WSJT-X: nharderrors > 36 is rejected.
+            if result.nharderrors <= 36 {
+                return Some(result);
+            }
+        }
+    }
+
+    // Real WSJT-X AP passes depend on nQSOProgress/nappasses/naptypes and are
+    // intentionally not mixed into the default alignment path here.
+    None
+}
+
+#[allow(dead_code)]
+fn try_decode_ad_hoc_ap(
+    workspace: &mut DecodeWorkspace,
+    depth: usize,
+    mycall: Option<&str>,
+    hiscall: Option<&str>,
+) -> Option<DecodeResult> {
+    let maxosd_base = if depth >= 3 {
+        2
+    } else if depth >= 2 {
+        0
+    } else {
+        -1
+    };
     let scalefac = 2.83;
     let bmetrics = [
         &workspace.bmeta,
@@ -1544,36 +1700,16 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
         &workspace.bmetd,
     ];
 
-    // Passes 1-4: regular BP+OSD decoding with 4 bit metrics
-    workspace.apmask.fill(0);
-
-    for ipass in 0..4 {
-        let _maxosd = match ipass {
-            0|1|3=>maxosd_base,
-            2=>maxosd_base, // was 5 for depth≥3; WSJT-X uses maxosd=2 always, TRY.md: no measurable gain from deeper OSD
-            _=>maxosd_base,
-        };
-        let metric = bmetrics[ipass];
-        for i in 0..N_LDPC {
-            workspace.llr[i] = scalefac * metric[i];
-        }
-
-        if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
-            // WSJT-X: nharderrors > 36 则跳过. 我们放宽到 40 以捕获更弱信号
-            if result.nharderrors <= 36 {
-                return Some(result);
-            }
-        }
-    }
-
     // ── AP (A Priori) decoding passes ──
     // WSJT-X iaptype decoding: constrain known bits with strong LLR priors.
     // This is the key differentiator that lets WSJT-X decode 20/20 vs our 16/20.
     if depth >= 2 {
         // Compute apmag: max LLR magnitude * 1.01 (matches WSJT-X ft8b.f90)
-        let apmag = bmetrics[0].iter()
+        let apmag = bmetrics[0]
+            .iter()
             .map(|&x| (scalefac * x).abs())
-            .fold(0.0f64, f64::max) * 1.01;
+            .fold(0.0f64, f64::max)
+            * 1.01;
         if apmag > 0.1 {
             // Use the first metric (bmeta) as base LLR for AP passes
             for i in 0..N_LDPC {
@@ -1590,9 +1726,12 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
                 workspace.llr[i] = if i == 26 { apmag } else { -apmag };
             }
             // Constrain i3=1 (standard 2-call message)
-            workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
-            workspace.apmask[75] = 1; workspace.llr[75] = -apmag;  // i3 bit 1 = 0
-            workspace.apmask[76] = 1; workspace.llr[76] = apmag;   // i3 bit 2 = 1
+            workspace.apmask[74] = 1;
+            workspace.llr[74] = -apmag; // i3 bit 0 = 0
+            workspace.apmask[75] = 1;
+            workspace.llr[75] = -apmag; // i3 bit 1 = 0
+            workspace.apmask[76] = 1;
+            workspace.llr[76] = apmag; // i3 bit 2 = 1
 
             if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
                 if result.nharderrors <= 36 {
@@ -1602,9 +1741,12 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
 
             // ── AP Pass 6: CQ + alternate i3 ──
             // Try i3=2 (standard 2-call message with /R or /P)
-            workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
-            workspace.apmask[75] = 1; workspace.llr[75] = apmag;   // i3 bit 1 = 1
-            workspace.apmask[76] = 1; workspace.llr[76] = -apmag;  // i3 bit 2 = 0
+            workspace.apmask[74] = 1;
+            workspace.llr[74] = -apmag; // i3 bit 0 = 0
+            workspace.apmask[75] = 1;
+            workspace.llr[75] = apmag; // i3 bit 1 = 1
+            workspace.apmask[76] = 1;
+            workspace.llr[76] = -apmag; // i3 bit 2 = 0
 
             if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
                 if result.nharderrors <= 36 {
@@ -1619,12 +1761,18 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
             for i in 0..N_LDPC {
                 workspace.llr[i] = scalefac * bmetrics[0][i];
             }
-            workspace.apmask[71] = 1; workspace.llr[71] = -apmag;  // n3 bit 0 = 0
-            workspace.apmask[72] = 1; workspace.llr[72] = -apmag;  // n3 bit 1 = 0
-            workspace.apmask[73] = 1; workspace.llr[73] = -apmag;  // n3 bit 2 = 0 (n3=0)
-            workspace.apmask[74] = 1; workspace.llr[74] = -apmag;  // i3 bit 0 = 0
-            workspace.apmask[75] = 1; workspace.llr[75] = -apmag;  // i3 bit 1 = 0
-            workspace.apmask[76] = 1; workspace.llr[76] = apmag;   // i3 bit 2 = 1 (i3=1)
+            workspace.apmask[71] = 1;
+            workspace.llr[71] = -apmag; // n3 bit 0 = 0
+            workspace.apmask[72] = 1;
+            workspace.llr[72] = -apmag; // n3 bit 1 = 0
+            workspace.apmask[73] = 1;
+            workspace.llr[73] = -apmag; // n3 bit 2 = 0 (n3=0)
+            workspace.apmask[74] = 1;
+            workspace.llr[74] = -apmag; // i3 bit 0 = 0
+            workspace.apmask[75] = 1;
+            workspace.llr[75] = -apmag; // i3 bit 1 = 0
+            workspace.apmask[76] = 1;
+            workspace.llr[76] = apmag; // i3 bit 2 = 1 (i3=1)
 
             if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
                 if result.nharderrors <= 36 {
@@ -1633,8 +1781,10 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
             }
 
             // ── AP Pass 8: Constrain only n3=0, i3=2 ──
-            workspace.apmask[75] = 1; workspace.llr[75] = apmag;   // i3 bit 1 = 1
-            workspace.apmask[76] = 1; workspace.llr[76] = -apmag;  // i3 bit 2 = 0 (i3=2)
+            workspace.apmask[75] = 1;
+            workspace.llr[75] = apmag; // i3 bit 1 = 1
+            workspace.apmask[76] = 1;
+            workspace.llr[76] = -apmag; // i3 bit 2 = 0 (i3=2)
 
             if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
                 if result.nharderrors <= 36 {
@@ -1656,11 +1806,18 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
                             workspace.apmask[i] = 1;
                             workspace.llr[i] = apmag * mycall_bits[i] as f64;
                         }
-                        workspace.apmask[74] = 1; workspace.llr[74] = -apmag;
-                        workspace.apmask[75] = 1; workspace.llr[75] = -apmag;
-                        workspace.apmask[76] = 1; workspace.llr[76] = apmag;
-                        if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
-                            if result.nharderrors <= 36 { return Some(result); }
+                        workspace.apmask[74] = 1;
+                        workspace.llr[74] = -apmag;
+                        workspace.apmask[75] = 1;
+                        workspace.llr[75] = -apmag;
+                        workspace.apmask[76] = 1;
+                        workspace.llr[76] = apmag;
+                        if let Some(result) =
+                            decode174_91(&workspace.llr, &workspace.apmask, maxosd_base)
+                        {
+                            if result.nharderrors <= 36 {
+                                return Some(result);
+                            }
                         }
                     }
                 }
@@ -1675,11 +1832,18 @@ fn try_decode_passes(workspace: &mut DecodeWorkspace, depth: usize, mycall: Opti
                         workspace.apmask[i] = 1;
                         workspace.llr[i] = apmag * both_bits[i] as f64;
                     }
-                    workspace.apmask[74] = 1; workspace.llr[74] = -apmag;
-                    workspace.apmask[75] = 1; workspace.llr[75] = -apmag;
-                    workspace.apmask[76] = 1; workspace.llr[76] = apmag;
-                    if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
-                        if result.nharderrors <= 36 { return Some(result); }
+                    workspace.apmask[74] = 1;
+                    workspace.llr[74] = -apmag;
+                    workspace.apmask[75] = 1;
+                    workspace.llr[75] = -apmag;
+                    workspace.apmask[76] = 1;
+                    workspace.llr[76] = apmag;
+                    if let Some(result) =
+                        decode174_91(&workspace.llr, &workspace.apmask, maxosd_base)
+                    {
+                        if result.nharderrors <= 36 {
+                            return Some(result);
+                        }
                     }
                 }
             }
