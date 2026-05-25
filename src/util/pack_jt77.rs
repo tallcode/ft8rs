@@ -1,12 +1,11 @@
+use crate::util::constants::*;
 /// FT8 message packing – Rust port of packjt77.f90
 ///
 /// Supported message types:
 ///  0.0  Free text (≤13 chars from the 42-char FT8 alphabet)
 ///  1    Standard (two callsigns + grid/report/RR73/73)
 ///  4    One nonstandard (<hash>) call + one standard call
-
 use num_bigint::BigInt;
-use crate::util::constants::*;
 
 /// Pack a message into 77 bits.
 pub fn pack77(msg: &str) -> Vec<u8> {
@@ -309,7 +308,11 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
     let (igrid4, ir) = if parts.len() == 2 {
         (MAXGRID4 + 1, 0)
     } else if is_grid4(&last_upper) {
-        let ir = if parts.len() == 4 && parts[1] == "R" { 1 } else { 0 };
+        let ir = if parts.len() == 4 && parts[1] == "R" {
+            1
+        } else {
+            0
+        };
         (pack_grid4(&last_upper), ir)
     } else if last_upper == "RRR" {
         (MAXGRID4 + 2, 0)

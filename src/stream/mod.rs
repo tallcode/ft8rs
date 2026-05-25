@@ -1,3 +1,3 @@
 pub mod decoder;
 
-pub use decoder::{StreamDecoder, StreamDecodeConfig, StreamDecodedMessage};
+pub use decoder::{StreamDecodeConfig, StreamDecodedMessage, StreamDecoder};

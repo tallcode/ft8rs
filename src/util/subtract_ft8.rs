@@ -21,7 +21,7 @@ use crate::util::fft_complex;
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
-const NFRAME: usize = 1920 * 79;   // 151680
+const NFRAME: usize = 1920 * 79; // 151680
 const NFILT: usize = 4000;
 const HALF_FILT: usize = NFILT / 2; // 2000
 const SAMPLE_RATE: f64 = 12000.0;
@@ -79,8 +79,11 @@ fn erf_approx(x: f64) -> f64 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let ax = x.abs();
     let t = 1.0 / (1.0 + 0.3275911 * ax);
-    let y = 1.0 - (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t
-        + 0.254829592) * t) * (-ax * ax).exp();
+    let y = 1.0
+        - (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t
+            + 0.254829592)
+            * t)
+            * (-ax * ax).exp();
     sign * y
 }
 
@@ -135,7 +138,9 @@ fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
         cwave_re[k] = (idx as f64 * twopi_over_ntab).cos();
         cwave_im[k] = (idx as f64 * twopi_over_ntab).sin();
         phi += dphi[j];
-        while phi >= twopi { phi -= twopi; }
+        while phi >= twopi {
+            phi -= twopi;
+        }
     }
 
     let nramp = (nsps as f64 / 8.0).round() as usize;
@@ -171,11 +176,11 @@ fn lpf_convolve(camp_re: &[f64], camp_im: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let ext_len = NFRAME + NFILT; // 155680
     for j in 0..ext_len {
         let camp_idx = if j < HALF_FILT {
-            NFRAME - HALF_FILT + j  // circular prepend: camp end
+            NFRAME - HALF_FILT + j // circular prepend: camp end
         } else if j < HALF_FILT + NFRAME {
-            j - HALF_FILT             // main data
+            j - HALF_FILT // main data
         } else {
-            j - HALF_FILT - NFRAME    // circular append: camp beginning
+            j - HALF_FILT - NFRAME // circular append: camp beginning
         };
         ext_re[j] = camp_re[camp_idx];
         ext_im[j] = camp_im[camp_idx];
@@ -214,10 +219,16 @@ pub fn subtract_ft8(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64) {
 
 /// Subtract with optional dt refinement (WSJT-X lrefinedt).
 /// When refined=true, searches ±90 samples for optimal dt using energy minimization.
-pub fn subtract_ft8_refined(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: f64, refined: bool) {
+pub fn subtract_ft8_refined(
+    dd0: &mut Vec<f64>,
+    itone: &[i32; 79],
+    f0: f64,
+    dt: f64,
+    refined: bool,
+) {
     let (cref_re, cref_im) = gen_ft8wave(itone, f0);
     let nmax = 15 * 12000;
-    
+
     // dt refinement (WSJT-X lrefinedt)
     let refined_dt = if refined {
         let offset = refine_dt(dd0, &cref_re, &cref_im, f0, dt);
@@ -228,7 +239,7 @@ pub fn subtract_ft8_refined(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: 
     } else {
         dt
     };
-    
+
     let nstart = (refined_dt * SAMPLE_RATE).round() as isize + 1;
 
     // IQ mix: camp(i) = dd0[j] × conjg(cref(i))
@@ -258,20 +269,14 @@ pub fn subtract_ft8_refined(dd0: &mut Vec<f64>, itone: &[i32; 79], f0: f64, dt: 
 
 /// Refine dt by minimizing residual energy in signal band (WSJT-X lrefinedt).
 /// Tests offsets -90, 0, +90 samples and uses quadratic interpolation.
-fn refine_dt(
-    dd0: &[f64],
-    cref_re: &[f64],
-    cref_im: &[f64],
-    f0: f64,
-    dt: f64,
-) -> isize {
+fn refine_dt(dd0: &[f64], cref_re: &[f64], cref_im: &[f64], f0: f64, dt: f64) -> isize {
     let _nmax = 15 * 12000;
-    
+
     // Compute residual energy at three offsets
     let sqa = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, -90);
     let sq0 = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, 0);
     let sqb = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, 90);
-    
+
     // Quadratic interpolation to find minimum
     // Peakup: fits parabola through (-90, sqa), (0, sq0), (90, sqb)
     // Minimum at dx = 90 * (sqa - sqb) / (2 * (sqa - 2*sq0 + sqb))
@@ -294,7 +299,7 @@ fn compute_residual_energy(
 ) -> f64 {
     let nmax = 15 * 12000;
     let nstart = (dt * SAMPLE_RATE).round() as isize + 1 + offset;
-    
+
     // IQ mix
     let mut camp_re = vec![0.0f64; NFRAME];
     let mut camp_im = vec![0.0f64; NFRAME];
@@ -306,10 +311,10 @@ fn compute_residual_energy(
             camp_im[i] = -d * cref_im[i];
         }
     }
-    
+
     // LPF convolution
     let (cfilt_re, cfilt_im) = lpf_convolve(&camp_re, &camp_im);
-    
+
     // Compute residual and its energy in signal band
     let mut energy = 0.0;
     for i in 0..NFRAME {

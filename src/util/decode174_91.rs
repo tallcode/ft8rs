@@ -1,5 +1,4 @@
 /// LDPC (174,91) Belief Propagation decoder for FT8.
-
 use crate::util::constants::N_LDPC;
 use crate::util::crc::check_crc14;
 use crate::util::ldpc_tables::*;
@@ -139,7 +138,10 @@ pub fn bp_decode174_91_with_posteriors(
                 ncnt += 1;
             }
             if ncnt >= 5 && iter >= 10 && ncheck > 15 {
-                return BPResult { decoded: None, zsave };
+                return BPResult {
+                    decoded: None,
+                    zsave,
+                };
             }
         }
         nclast = ncheck;
@@ -183,7 +185,10 @@ pub fn bp_decode174_91_with_posteriors(
         }
     }
 
-    BPResult { decoded: None, zsave }
+    BPResult {
+        decoded: None,
+        zsave,
+    }
 }
 
 /// BP decoder for (174,91) LDPC code (backward-compatible).

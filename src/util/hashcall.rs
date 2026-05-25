@@ -1,7 +1,6 @@
-/// Hash call table for resolving hashed FT8 callsigns.
-
-use std::cell::RefCell;
 use crate::util::constants::C38;
+/// Hash call table for resolving hashed FT8 callsigns.
+use std::cell::RefCell;
 
 const MAGIC: u64 = 47055833459;
 const MAX_HASH22_ENTRIES: usize = 1000;
@@ -10,7 +9,9 @@ fn ihashcall(c0: &str, m: usize) -> usize {
     let mut n8: u64 = 0;
     let mut count = 0;
     for c in c0.chars() {
-        if count >= 11 { break; }
+        if count >= 11 {
+            break;
+        }
         let uc = c.to_ascii_uppercase();
         let j = C38.iter().position(|&x| x == uc as u8).unwrap_or(0) as u64;
         n8 = 38 * n8 + j;
@@ -52,10 +53,10 @@ impl HashCallBook {
         if trimmed.is_empty() || trimmed == "<...>" {
             return;
         }
-        
+
         // Strip < > if present
         let clean = if trimmed.starts_with('<') && trimmed.ends_with('>') {
-            &trimmed[1..trimmed.len()-1]
+            &trimmed[1..trimmed.len() - 1]
         } else if trimmed.starts_with('<') {
             if let Some(gt) = trimmed.find('>') {
                 &trimmed[1..gt]
@@ -65,11 +66,11 @@ impl HashCallBook {
         } else {
             trimmed
         };
-        
+
         if clean.len() < 3 {
             return;
         }
-        
+
         let cw = clean.to_uppercase();
 
         let n10 = ihashcall(&cw, 10);
@@ -137,7 +138,6 @@ impl HashCallBook {
         }
         calls
     }
-
 
     pub fn clone_book(&self) -> HashCallBook {
         HashCallBook {

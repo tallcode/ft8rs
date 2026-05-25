@@ -168,6 +168,7 @@ npass = 3                # or 2 at depth 1
 for ipass in 1..npass:
   newdat = true
   syncmin = 1.3          # depth 3
+  syncmin = 2.1          # depth <= 2
   imetric = 1 on pass 1
   imetric = 2 on pass 2 and pass 3
   if ipass == 3 and ndecodes == 0: cycle
@@ -213,6 +214,9 @@ WSJT-X `ft8b.f90` inner decode:
 Current `ft8rs` status after Iteration 12:
 
 - Outer decode now uses WSJT-X pass count: 2 passes at depth 1, otherwise 3.
+- Outer `sync8` threshold now follows WSJT-X defaults: `syncmin=2.1` for
+  `ndepth<=2`, otherwise `1.3`. `StreamDecodeConfig.sync_min=None` means use
+  this WSJT-X default; `Some(value)` is an explicit override for experiments.
 - Pass 1 uses `imetric=1`; passes 2/3 use `imetric=2`.
 - `imetric=2` now squares `s2` before bit metric extraction.
 - `bmete` has been added and the regular pass set is now

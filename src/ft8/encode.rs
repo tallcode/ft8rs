@@ -1,8 +1,7 @@
+use crate::ft8::constants::{COSTAS, GRAY_MAP};
 /// FT8 encoder.
-
 use crate::util::constants::G_HEX;
 use crate::util::pack_jt77::pack77;
-use crate::ft8::constants::{COSTAS, GRAY_MAP};
 
 fn generate_ldpc_g_matrix() -> Vec<Vec<u8>> {
     let k = 91;

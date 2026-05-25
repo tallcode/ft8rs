@@ -183,3 +183,25 @@
   calls 语义和测试匹配规范，但不能先用 display normalization 冒充解码提升。
 - 弱 CQ 重复 miss 更可能仍在 `sync8` candidate、bit metric/OSD 或 subtraction
   residual 细节里，需要继续回到源码差异。
+
+## Milestone 2 / Iteration 2: outer `syncmin` depth gate
+
+### 做了什么
+- 核对 `wsjtx/lib/ft8_decode.f90` 的外层 pass 逻辑：
+  - 每个 pass 默认 `syncmin=1.3`
+  - `ndepth<=2` 时覆盖为 `syncmin=2.1`
+- 修正 Rust 核心默认参数：
+  - `DecodeOptions.sync_min=None` 时按 depth 选择 WSJT-X 默认值
+  - depth 1/2 使用 `2.1`
+  - depth 3 使用 `1.3`
+- 修正流式配置层：
+  - `StreamDecodeConfig.sync_min` 改为 `Option<f64>`
+  - 默认 `None`，避免流式层永远显式传入 `1.3` 而绕过 WSJT-X depth gate
+  - `Some(value)` 保留为实验/对比用的显式覆盖
+- 增加轻量单元测试，锁定 depth 1/2/3 的默认 `syncmin`。
+
+### 反思
+- 这是有效的源码参数对齐点，但当前 milestone 长短测试默认 depth=3，
+  因此不应期待它直接提升 `381/449`。
+- 这个改动主要修正 depth 1/2 的候选入口门槛，避免浅 depth 模式比
+  WSJT-X 更松，造成额外候选和潜在误解码。

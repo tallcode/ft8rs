@@ -319,8 +319,10 @@ fn decode_from_f64(
     }
     let nfa = options.freq_low.unwrap_or(200.0);
     let nfb = options.freq_high.unwrap_or(3000.0);
-    let syncmin = options.sync_min.unwrap_or(1.3);
     let depth = options.depth.unwrap_or(3);
+    let syncmin = options
+        .sync_min
+        .unwrap_or_else(|| default_outer_sync_min(depth));
     let max_candidates = options.max_candidates.unwrap_or(1000);
     let book = options.hash_call_book;
     let sync_mode = options.sync_mode.unwrap_or(SyncMode::Power);
@@ -476,6 +478,14 @@ fn decode_from_f64(
         t_subtract_total.as_millis(), total.as_millis());
 
     (decoded, sbase, residual)
+}
+
+fn default_outer_sync_min(depth: usize) -> f64 {
+    if depth <= 2 {
+        2.1
+    } else {
+        1.3
+    }
 }
 
 fn normalize_message_key(msg: &str) -> String {
@@ -1679,10 +1689,7 @@ fn ft8_ap_set(mycall: Option<&str>, hiscall: Option<&str>, ncontest: usize) -> F
     };
     let mycall = mycall_raw.to_ascii_uppercase();
 
-    let hiscall_trimmed = hiscall
-        .map(str::trim)
-        .unwrap_or("")
-        .to_ascii_uppercase();
+    let hiscall_trimmed = hiscall.map(str::trim).unwrap_or("").to_ascii_uppercase();
     let no_hiscall = hiscall_trimmed.len() < 3;
     let hiscall_for_pack = if no_hiscall {
         "KA1ABC"
@@ -2035,7 +2042,14 @@ fn set_i3_001(workspace: &mut DecodeWorkspace, apmag: f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{finalize_sync8_candidates, Candidate};
+    use super::{default_outer_sync_min, finalize_sync8_candidates, Candidate};
+
+    #[test]
+    fn default_outer_sync_min_matches_wsjtx_depth_gate() {
+        assert_eq!(default_outer_sync_min(1), 2.1);
+        assert_eq!(default_outer_sync_min(2), 2.1);
+        assert_eq!(default_outer_sync_min(3), 1.3);
+    }
 
     #[test]
     fn sync8_candidate_order_matches_wsjtx_priority_rules() {
