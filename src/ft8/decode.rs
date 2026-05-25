@@ -437,12 +437,6 @@ fn decode_from_f64(
             ) {
                 let message_key = normalize_message_key(&r.msg);
                 crate::util::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
-                // Recompute FFT so next candidate sees cleaned residual
-                cx_re.fill(0.0);
-                cx_im.fill(0.0);
-                cx_re[..residual.len().min(NFFT1_LONG)]
-                    .copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
-                fft_complex(&mut cx_re, &mut cx_im, false);
                 if seen_messages.contains(&message_key) {
                     continue;
                 }
@@ -584,7 +578,9 @@ pub(crate) fn sync8(
     let width = 2 * jz + 1;
     let nssy = NSPS / NSTEP;
     let nfos = (SAMPLE_RATE as f64 / NSPS as f64 / df).round() as usize;
-    let jstrt = (0.5 / tstep).round() as usize;
+    // WSJT-X sync8.f90 uses implicit-integer jstrt. Assigning 0.5/tstep
+    // therefore truncates 12.5 to 12 rather than rounding to 13.
+    let jstrt = (0.5 / tstep) as usize;
 
     SYNC8_BUFS.with_borrow_mut(|b| {
         b.ensure(half_size, width);
