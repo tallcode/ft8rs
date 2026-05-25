@@ -138,6 +138,288 @@
 ### 测试
 - `cargo check` ✅
 
+## Iteration 16: `ft8b` 内部 AP pass 调度初步对齐
+
+### 做了什么
+- 在 `try_decode_passes` 中实现 WSJT-X 风格 AP pass 调度：
+  - regular pass 1-5 保持 `llra/llrb/llrc/llrd/llre`
+  - AP pass 从 6 开始
+  - AP pass 交替使用 `llra` / `llrc`
+  - `nappasses=(2,2,2,4,4,3)`
+  - `naptypes` 表按 `nQSOProgress` 选择 iaptype
+  - `lapcqonly` 时只跑 CQ AP
+  - `nzhsym<50` 不跑内部 AP
+  - `ncontest=6` Fox 模式不跑内部 AP
+- 删除旧的 `try_decode_ad_hoc_ap` 路径。
+- AP mask 改为用 `pack77` 生成真实 77-bit pattern，再按 iaptype 约束：
+  - iaptype 1: CQ
+  - iaptype 2: MyCall
+  - iaptype 3: MyCall + DxCall
+  - iaptype 4: MyCall + DxCall + RRR
+  - iaptype 5: MyCall + DxCall + 73
+  - iaptype 6: MyCall + DxCall + RR73
+- 接入 `nftx/napwid/ncontest/lapcqonly/lft8apon/nQSOProgress` 对 AP pass 的基础 gating。
+
+### 重要说明
+- 目前优先覆盖普通 FT8 非 contest 分支。
+- Contest-specific CQ masks（NA/EU VHF、FD、RTTY、WW、ARRL）和 Hound/Fox 细节还没完全展开。
+- `mycall/hiscall` 默认为 `None` 时，除 CQ 外的内部 AP pass 会自然跳过；后续需要由 stream config 或上层传入。
+
+### 测试
+- `cargo check` ✅
+- 未运行 `cargo test --release ...` 解码测试。
+
+## Iteration 17: StreamDecodeConfig 暴露 WSJT-X AP/QSO 参数
+
+### 做了什么
+- 扩展 `StreamDecodeConfig`，让独立 stream decoder 可以配置 WSJT-X 相关参数：
+  - `nfqso`
+  - `nftx`
+  - `nqso_progress`
+  - `ncontest`
+  - `napwid`
+  - `ft8_ap`
+  - `ap_cq_only`
+  - `nagain`
+  - `mycall`
+  - `hiscall`
+- `StreamDecoder::decode_options` 现在把这些参数传入 `DecodeOptions`。
+- 测试里的 config 改为 `..Default::default()`，避免未来继续加 WSJT-X 参数时反复改测试构造。
+
+### 重要说明
+- 这让内部 AP pass 的 iaptype 2-6 能在上层提供 `mycall/hiscall` 后真正生效。
+- 默认配置仍保持 SWL/普通接收风格：`mycall/hiscall=None`，`ncontest=0`，AP 开启但只有不依赖呼号的 CQ AP 会自然尝试。
+
+### 测试
+- `cargo check` ✅
+- 未运行 `cargo test --release ...` 解码测试。
+
+## Iteration 18: `ft8apset` 与 contest/Hound AP mask 对齐
+
+### 做了什么
+- 重新阅读并对照：
+  - `wsjtx/lib/ft8/ft8apset.f90`
+  - `wsjtx/lib/ft8/ft8b.f90` 的 `iaptype` 1-6 分支
+- 将上一轮“用 dummy message pack77 生成 AP bits”的临时实现替换为更接近 WSJT-X 的结构：
+  - 新增 `Ft8ApSet`，保存 `apsym(1:58)` 和 `aph10(1:10)`
+  - `apsym` 按 WSJT-X 从 `mycall hiscall RRR` 的前 58 bit 得到，并转换成 `-1/+1`
+  - `hiscall` 缺失时使用 WSJT-X 的 dummy `KA1ABC`，然后将 dxcall/AP hash 标为不可用
+  - 非标准 `mycall` 时按 WSJT-X 使用 `<MYCALL> hiscall RRR`
+  - `aph10` 按 WSJT-X `save_hash_call` 同源 hash 算法生成 10-bit `-1/+1`
+- 按 `ft8b.f90` 展开内部 AP mask：
+  - `iaptype=1`: CQ/CQ TEST/CQ FD/CQ RU/CQ WW/ARRL/Hound CQ patterns
+  - `iaptype=2`: MyCall，在 `ncontest` 0/1/2/3/4/5/7/8 下分别套用对应 bit 位和尾部类型约束
+  - `iaptype=3`: MyCall + DxCall，覆盖普通 contest、Field Day、RTTY、Hound 分支
+  - `iaptype=4/5/6`: RRR/73/RR73 tail，覆盖普通 contest、ARRL、Hound RR73 特例
+  - 保留 `ncontest=6` Fox 不跑内部 AP，Hound 只对低于 950 Hz 信号跑 AP
+- 修正 `decode174_91` 的 OSD 深度：
+  - WSJT-X 当前代码中 `ndepth=2` 没有启用注释掉的 `maxosd=0` 分支
+  - Rust 现在 `depth>=2` 均使用 `maxosd=2`，`depth=1` 才是 BP only
+- 清理了 `cargo fmt` 对无关文件造成的格式化外溢，只保留本轮相关文件改动。
+
+### 重要说明
+- 这轮是结构/参数继续对齐，不是性能或灵敏度调参。
+- AP masks 已经按 WSJT-X 分支展开，但还没有做逐 bit fixture 与 WSJT-X 输出比对；下一步应补这种小范围校验，再考虑 release 解码测试。
+- 未启动短/长 release 解码测试，仍遵守“完全对齐前不开始测试”的约束。
+
+### 测试
+- `cargo check` ✅
+- `git diff --check` ✅
+- 未运行 `cargo test --release ...` 解码测试。
+
+## Iteration 19: FFTW/RustFFT 双引擎定位确认
+
+### 做了什么
+- 重新确认当前代码里存在两条 FFT 路径：
+  - FFTW 路径：`sync8` 使用 `NFFT1=3840`
+  - RustFFT 路径：当前作为便携/对照路径使用 `4096`
+- 将双引擎策略记录到 `STREAM.md` 的 `FFT Engine Policy`。
+
+### 结论
+- 继续保留两个版本。
+- FFTW@3840 是 WSJT-X 对齐和最终验收路径。
+- RustFFT@4096 是方便编译、无 FFTW 环境、smoke test、行为对照的路径。
+- RustFFT@4096 不作为“完全对齐 WSJT-X”的依据，也不能用来放宽验收要求。
+
+### 技术原因
+- WSJT-X `sync8` 的关键 FFT 尺寸是 `NFFT1=3840`。
+- `12000/3840 = 3.125 Hz/bin`，FT8 tone spacing `6.25 Hz` 正好是 2 bins。
+- `4096` 下 `12000/4096 = 2.9296875 Hz/bin`，FT8 tone spacing 约为 2.1333 bins。
+- 这个差异会进入 sync grid、candidate ordering、`sbase`、subtraction residual
+  和低信噪比边界行为，不应混入 WSJT-X parity 结论。
+
+### 后续判断
+- RustFFT 不是不能做对齐路径，但应新增/验证 RustFFT@3840，而不是用
+  RustFFT@4096 承担对齐语义。
+- RustFFT@3840 只有在 candidate order、`sbase`、decode result 与 FFTW/WSJT-X
+  对比足够接近后，才可以成为 no-FFTW aligned engine。
+- 在此之前，release 验收和灵敏度目标都锁定 FFTW@3840。
+
+### 测试
+- 文档决策记录，无解码测试。
+
+## Iteration 20: 长文件 harness 回到 WSJT-X 15 秒窗口语义
+
+### 做了什么
+- 重新对照 `wsjtx/lib/jt9a.f90`：
+  - 普通 disk FT8 路径使用同一个 `id2(180000)` 共享窗口
+  - early pass 只是复制 `nzhsym*3456` 样本并清零尾部
+  - final pass 仍是完整 15 秒窗口
+- 修正 `tests/stream_decode_test.rs` 的长文件分段输入：
+  - 旧逻辑传入 `15s +/- 1s` 的 17 秒切片
+  - `StreamDecoder::decode_slot` 会取前 15 秒，导致有效 slot 左移 1 秒
+  - 新逻辑改为每段传入精确 15 秒窗口：`seg*sps .. (seg+1)*sps`
+- 更新 `STREAM.md`：
+  - 记录 harness 已回到 WSJT-X 180000-sample 窗口语义
+  - 增加当前开发计划
+  - 将近期待办从“修正 17 秒切片”改为“审计 live stream window handoff”
+
+### 重要说明
+- 这不是为了跑测试调结果，而是移除一个和 WSJT-X 窗口模型冲突的测试输入语义。
+- 仍未运行 release 解码测试；只是让后续测试不会把 17 秒切片误当成 decoder 对齐问题。
+
+### 测试
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
+## Iteration 21: HashCallBook 收集语义收紧
+
+### 做了什么
+- 检查 stream 层 `collect_book` 的 hashcall 保存逻辑。
+- 旧逻辑保存所有长度 >=3 且含数字的 token，可能把以下非呼号内容写入
+  `HashCallBook`：
+  - grid，例如 `FN20`、`JO40`
+  - 消息尾部，例如 `RR73`
+- 新增 `is_hashable_callsign_token`，保存前先过滤：
+  - 跳过 `CQ/DE/QRZ/DX/RRR/RR73/73/R/TU`
+  - 跳过 4 字符 Maidenhead grid
+  - 只接受由字母/数字/`/` 组成、同时含字母和数字的 token
+  - 保留 `<CALL>` 形式的可解析呼号，仍跳过 `<...>`
+- 更新 `STREAM.md`，记录 HashCallBook 现在更接近 WSJT-X callsign-only
+  hash table 语义。
+
+### 重要说明
+- 这是跨时隙 hashcallbook 共享的语义修正，不是灵敏度调参。
+- 后续仍应继续核对 `unpack77` 内部 save/lookup 与 WSJT-X `packjt77.f90`
+  的 `save_hash_call` 调用点是否完全一致。
+
+### 测试
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
+## Iteration 22: 移除 stream AP 调试 stderr 输出
+
+### 做了什么
+- 删除 `StreamDecoder` AP 循环里的 `[AP] HIT/MISS` `eprintln!`。
+- 原输出会在长文件流式解码时对每个 AP candidate 写 stderr：
+  - 污染纯 decoder 模块输出
+  - 增加长解码 I/O 开销
+  - 不对应 WSJT-X 核心解码路径的回调语义
+
+### 重要说明
+- 这是去除调试残留，不改变 AP 判定逻辑。
+- 后续如果需要 AP trace，应通过显式诊断接口或 feature flag，而不是默认核心路径 stderr。
+
+### 测试
+- `cargo check` ✅
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
+## Iteration 23: `ft8_a7_save` 的 `split77` 保存语义对齐
+
+### 做了什么
+- 重新阅读 `wsjtx/lib/ft8/ft8_a7.f90` 的 `ft8_a7_save`：
+  - 保存前调用 `split77`
+  - 如果 `w(1)(1:3) == 'CQ_'`，直接跳过 AP 表保存
+  - 默认保存 `trim(w1)//' '//trim(w2)`
+  - `CQ` 且第二词长度 `<=2` 时保存 `CQ w2 w3`
+  - 若最后一个词是 grid4，则追加到保存片段
+- 继续阅读 `wsjtx/lib/77bit/packjt77.f90` 的 `split77`：
+  - 会将 `CQ xxx CALL` 这种第三词是 callsign 的消息改写为
+    `CQ_xxx CALL`
+  - 随后 `ft8_a7_save` 会因为 `CQ_` 跳过这类 entry
+- 在 `src/stream/decoder.rs` 新增 `split77_words`，用于 stream 层 AP entry
+  提取前的同类 word normalization。
+- `extract_slot_entry` 现在基于 `split77_words` 保存 `fragment/call_1/call_2/grid4`，
+  避免把 WSJT-X 会跳过的 `CQ_` 特殊消息写入 previous/current AP 记忆。
+
+### 重要说明
+- 这是跨时隙 AP memory 的语义对齐，不是解码结果调参。
+- `split77_words` 当前只实现 `ft8_a7_save` 需要的 `CQ_` rewrite 子集；完整
+  `split77` 还有更多 pack/unpack 上下文，不应在 stream 层过度扩展。
+
+### 测试
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
+## Iteration 24: `sbase` 频率 bin 索引对齐
+
+### 做了什么
+- 对照 `wsjtx/lib/ft8/get_spectrum_baseline.f90` 与 `baseline.f90`：
+  - WSJT-X `cx` 是 `complex cx(0:NH1)`
+  - `s(1:NH1,j)=abs(cx(1:NH1))**2`，即跳过 DC bin 0
+  - `sbase` 是 Fortran 1-based 数组
+  - `ft8_decode.f90` 使用 `sbase(nint(f1/3.125))`
+- 修正 Rust `get_spectrum_baseline/compute_baseline`：
+  - `savg/sbase` 改为保留 index 0 不用
+  - FFT bin 1..NH1 存入 Vec index 1..NH1
+  - 后续 `sbase[nint(f/df)]` 可以直接按 WSJT-X 语义索引
+- 这同时影响 regular `ft8b` 的 `xsnr2` 和 stream AP `ft8_a7d` 的 `xbase`。
+
+### 重要说明
+- 这是数值坐标系修正，不是灵敏度调参。
+- `baseline` 多项式拟合本身仍需要与 WSJT-X 做数值 fixture 对比。
+
+### 测试
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
+## Iteration 25: 清理 RustFFT 测试冗余 `mut`
+
+### 做了什么
+- 清理 `src/util/fft_rustfft.rs` 单元测试中的两个 `unused_mut`。
+- 不改变 FFT 引擎逻辑，只消除 `cargo check --tests` 的冗余 warning。
+
+### 测试
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
+## Iteration 26: `decode174_91` OSD 调度细节对齐
+
+### 做了什么
+- 重新阅读：
+  - `wsjtx/lib/ft8/decode174_91.f90`
+  - `wsjtx/lib/ft8/bpdecode174_91.f90`
+  - `wsjtx/lib/ft8/osd174_91.f90`
+- 修正 Rust `decode174_91` 与 WSJT-X 的差异：
+  - `maxosd=0` 时，OSD 输入应为 channel LLR：`zsave(:,1)=llr`
+  - `maxosd>0` 时，OSD 输入应为 BP iteration 累计后验：`zsum`
+  - `maxosd` 按 WSJT-X 限制到最大 3
+  - 移除 BP-posterior OSD 失败后额外尝试 raw LLR 的非 WSJT-X fallback
+  - BP 成功时也计算 `dmin=sum(nxor*abs(llr))`，不再固定为 0
+  - OSD 成功后只在 `nharderrors > 0` 时接受，匹配 WSJT-X
+    `if(nharderror.gt.0) return`
+
+### 重要说明
+- 这是 LDPC decode 控制流对齐，不是性能或灵敏度调参。
+- `osd174_91` 本体仍是 Rust 简化实现，后续还需要继续对照 WSJT-X 的
+  preprocessing rule 和 `ndeep` 分支。
+
+### 测试
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- 未运行 release 解码测试。
+
 ## Iteration 0: 现状分析
 
 - 完整阅读 wsjtx/lib/ft8_decode.f90 源码

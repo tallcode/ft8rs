@@ -1,8 +1,9 @@
 /// FT8 decoder - Rust port of decode.ts
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
-use crate::util::constants::{N_LDPC, SAMPLE_RATE};
+use crate::util::constants::{C38, N_LDPC, SAMPLE_RATE};
 use crate::util::decode174_91::{decode174_91, DecodeResult};
 use crate::util::hashcall::HashCallBook;
+use crate::util::pack_jt77::{is_stdcall, pack77};
 use crate::util::unpack_jt77::unpack77;
 use crate::util::{fft_complex, fft_r2c, sync8_fft_size};
 use std::rc::Rc;
@@ -101,6 +102,25 @@ struct Ft8bResult {
     dt: f64,
     snr: f64,
     itone: [i32; 79],
+}
+
+#[derive(Clone)]
+struct Ft8bApOptions {
+    enabled: bool,
+    cq_only: bool,
+    nqso_progress: usize,
+    ncontest: usize,
+    nfqso: f64,
+    nftx: f64,
+    napwid: f64,
+    nzhsym: usize,
+    ap_set: Ft8ApSet,
+}
+
+#[derive(Clone)]
+struct Ft8ApSet {
+    apsym: [i8; 58],
+    aph10: [i8; 10],
 }
 
 pub(crate) struct SyncTemplate {
@@ -293,6 +313,20 @@ fn decode_from_f64(
     let sync_mode = options.sync_mode.unwrap_or(SyncMode::Power);
     let nfqso = options.nfqso.unwrap_or(0.0);
     let nagain = options.nagain.unwrap_or(false);
+    let ncontest = options.ncontest.unwrap_or(0);
+    let mycall = options.mycall.clone();
+    let hiscall = options.hiscall.clone();
+    let ap_options = Ft8bApOptions {
+        enabled: options.ft8_ap.unwrap_or(true),
+        cq_only: options.ap_cq_only.unwrap_or(false),
+        nqso_progress: options.nqso_progress.unwrap_or(0).min(5),
+        ncontest,
+        nfqso,
+        nftx: options.nftx.unwrap_or(0.0),
+        napwid: options.napwid.unwrap_or(50.0),
+        nzhsym: options.nzhsym.unwrap_or(50),
+        ap_set: ft8_ap_set(mycall.as_deref(), hiscall.as_deref(), ncontest),
+    };
     let mut residual = dd.clone();
 
     let mut cx_re = vec![0.0; NFFT1_LONG];
@@ -383,9 +417,8 @@ fn decode_from_f64(
                 depth,
                 pass_imetric,
                 nagain,
+                &ap_options,
                 &book,
-                None,
-                None,
                 None,
                 &mut cand_ws,
                 &mut cand_cache,
@@ -785,12 +818,14 @@ pub(crate) fn sync8(
 }
 
 pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Vec<f64> {
-    let mut sbase = vec![0.0; nh1];
+    // WSJT-X stores sbase(1:NH1), with FFT bin 0/DC omitted. Keep index 0
+    // unused so callers can use nint(f/df) directly, matching Fortran.
+    let mut sbase = vec![0.0; nh1 + 1];
     let ia = (1.0_f64.max((nfa / df).round())) as usize;
-    let ib = ((nh1 - 1) as f64).min((nfb / df).round()) as usize;
+    let ib = (nh1 as f64).min((nfb / df).round()) as usize;
 
     let db_range = (ib - ia + 1).max(1);
-    let mut sdb = vec![0.0; nh1];
+    let mut sdb = vec![0.0; nh1 + 1];
     for i in ia..=ib {
         sdb[i] = 10.0 * savg[i].max(1e-30).log10();
     }
@@ -799,7 +834,7 @@ pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: u
     let nlen = db_range / nseg;
     if nlen < 1 {
         let window = 50;
-        for i in 0..nh1 {
+        for i in 1..=nh1 {
             let lo = ia.max(i.saturating_sub(window));
             let hi = ib.min(i + window);
             let mut sum = 0.0;
@@ -828,9 +863,9 @@ pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: u
         if ja > ib || ja >= sdb.len() {
             break;
         }
-        let slice = &sdb[ja..=jb.min(sdb.len() - 1)];
+        let slice = &sdb[ja..=jb.min(nh1)];
         let pval = percentile(slice, npct);
-        for i in ja..=jb.min(sdb.len() - 1) {
+        for i in ja..=jb.min(nh1) {
             if sdb[i] <= pval {
                 env_x.push((i as isize - i0 as isize) as f64);
                 env_y.push(sdb[i]);
@@ -840,7 +875,7 @@ pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: u
 
     let a = polyfit(&env_x, &env_y, 5);
 
-    for i in ia..=ib.min(nh1 - 1) {
+    for i in ia..=ib.min(nh1) {
         let t = (i as isize - i0 as isize) as f64;
         sbase[i] = evpoly(&a, t) + 0.65;
     }
@@ -948,7 +983,7 @@ fn get_spectrum_baseline(dd: &[f64], mut nfa: f64, mut nfb: f64) -> Vec<f64> {
     let window = nuttall_window(nfft);
     let wsum: f64 = window.iter().sum();
     let wscale = NSPS as f64 * 2.0 / 300.0 / wsum;
-    let mut savg = vec![0.0; nh1];
+    let mut savg = vec![0.0; nh1 + 1];
     for j in 0..nf {
         let ia = j * nst;
         let ib = ia + nfft;
@@ -962,7 +997,7 @@ fn get_spectrum_baseline(dd: &[f64], mut nfa: f64, mut nfb: f64) -> Vec<f64> {
             x_re[i] = sample * window[i] * wscale;
         }
         fft_r2c(&mut x_re, &mut x_im);
-        for i in 0..nh1 {
+        for i in 1..=nh1 {
             savg[i] += x_re[i] * x_re[i] + x_im[i] * x_im[i];
         }
     }
@@ -993,9 +1028,8 @@ fn ft8b(
     depth: usize,
     imetric: usize,
     nagain: bool,
+    ap_options: &Ft8bApOptions,
     _book: &Option<std::rc::Rc<HashCallBook>>,
-    mycall: Option<&str>,
-    hiscall: Option<&str>,
     _sbase_welch: Option<&[f64]>,
     workspace: &mut DecodeWorkspace,
     coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
@@ -1070,7 +1104,7 @@ fn ft8b(
         }
     };
 
-    let result = try_decode_passes(workspace, depth, mycall, hiscall);
+    let result = try_decode_passes(workspace, depth, f1, ap_options);
     result.as_ref()?;
     let result = result.unwrap();
 
@@ -1601,253 +1635,387 @@ fn get_tones(cw: &[u8]) -> Vec<u8> {
     tones
 }
 
-/// Encode callsign to 28-bit AP pattern, matching WSJT-X ft8apset.f90.
-fn encode_callsign_ap(call: &str) -> Option<Vec<i8>> {
-    use crate::util::pack_jt77::pack77;
-    let msg = format!("{} K1ABC RRR", call.trim().to_uppercase());
-    let bits77 = pack77(&msg);
-    if bits77.len() == 77 && bits77[74] == 0 && bits77[75] == 0 && bits77[76] == 1 {
-        let mut ap_bits = Vec::with_capacity(28);
-        for i in 0..28 {
-            ap_bits.push(if bits77[i] == 1 { 1i8 } else { -1i8 });
+const MCQ: [i8; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
+];
+const MCQRU: [i8; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0,
+];
+const MCQFD: [i8; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0,
+];
+const MCQTEST: [i8; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0,
+];
+const MCQWW: [i8; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0,
+];
+const MRRR: [i8; 19] = [0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1];
+const M73: [i8; 19] = [0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1];
+const MRR73: [i8; 19] = [0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1];
+
+fn ft8_ap_set(mycall: Option<&str>, hiscall: Option<&str>, ncontest: usize) -> Ft8ApSet {
+    let mut apsym = [0i8; 58];
+    apsym[0] = 99;
+    apsym[29] = 99;
+    let mut aph10 = [0i8; 10];
+    aph10[0] = 99;
+
+    let Some(mycall_raw) = mycall.map(str::trim).filter(|s| s.len() >= 3) else {
+        return Ft8ApSet { apsym, aph10 };
+    };
+    let mycall = mycall_raw.to_ascii_uppercase();
+
+    let hiscall_trimmed = hiscall
+        .map(str::trim)
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    let no_hiscall = hiscall_trimmed.len() < 3;
+    let hiscall_for_pack = if no_hiscall {
+        "KA1ABC"
+    } else {
+        hiscall_trimmed.as_str()
+    };
+
+    if !no_hiscall {
+        let n10 = ihashcall_bits(hiscall_for_pack, 10);
+        for (i, slot) in aph10.iter_mut().enumerate() {
+            let bit = ((n10 >> (9 - i)) & 1) as i8;
+            *slot = 2 * bit - 1;
         }
-        return Some(ap_bits);
     }
-    None
+
+    let msg = if is_stdcall(&mycall) {
+        format!("{} {} RRR", mycall, hiscall_for_pack)
+    } else {
+        format!("<{}> {} RRR", mycall, hiscall_for_pack)
+    };
+    let bits = pack77(&msg);
+    if bits.len() != 77 {
+        return Ft8ApSet { apsym, aph10 };
+    }
+
+    let i3 = ((bits[74] as usize) << 2) | ((bits[75] as usize) << 1) | bits[76] as usize;
+    let unpacked = unpack77(&bits, None);
+    if ncontest == 7 && (i3 != 1 || unpacked.is_none()) {
+        return Ft8ApSet { apsym, aph10 };
+    }
+    if ncontest <= 5 && (i3 != 1 || unpacked.as_deref() != Some(msg.as_str())) {
+        return Ft8ApSet { apsym, aph10 };
+    }
+
+    for i in 0..58 {
+        apsym[i] = 2 * bits[i] as i8 - 1;
+    }
+    if no_hiscall {
+        apsym[29] = 99;
+        aph10[0] = 99;
+    }
+
+    Ft8ApSet { apsym, aph10 }
 }
 
-fn encode_callsigns_ap(mycall: &str, hiscall: &str) -> Option<Vec<i8>> {
-    use crate::util::pack_jt77::pack77;
-    let msg = format!(
-        "{} {} RRR",
-        mycall.trim().to_uppercase(),
-        hiscall.trim().to_uppercase()
-    );
-    let bits77 = pack77(&msg);
-    if bits77.len() == 77 && bits77[74] == 0 && bits77[75] == 0 && bits77[76] == 1 {
-        let mut ap_bits = Vec::with_capacity(58);
-        for i in 0..58 {
-            ap_bits.push(if bits77[i] == 1 { 1i8 } else { -1i8 });
+fn ihashcall_bits(call: &str, m: usize) -> usize {
+    let mut n8: u64 = 0;
+    let mut count = 0;
+    for c in call.chars() {
+        if count >= 11 {
+            break;
         }
-        return Some(ap_bits);
+        let uc = c.to_ascii_uppercase();
+        let j = C38.iter().position(|&x| x == uc as u8).unwrap_or(0) as u64;
+        n8 = 38 * n8 + j;
+        count += 1;
     }
-    None
+    while count < 11 {
+        let j = C38.iter().position(|&x| x == b' ').unwrap_or(0) as u64;
+        n8 = 38 * n8 + j;
+        count += 1;
+    }
+    const MAGIC: u64 = 47055833459;
+    let prod = MAGIC.wrapping_mul(n8);
+    ((prod >> (64 - m as u32)) & ((1u64 << m as u32) - 1)) as usize
 }
 
 fn try_decode_passes(
     workspace: &mut DecodeWorkspace,
     depth: usize,
-    _mycall: Option<&str>,
-    _hiscall: Option<&str>,
+    f1: f64,
+    ap_options: &Ft8bApOptions,
 ) -> Option<DecodeResult> {
-    let maxosd_base = if depth >= 3 {
-        2
-    } else if depth >= 2 {
-        0
-    } else {
-        -1
-    };
+    let maxosd_base = if depth >= 2 { 2 } else { -1 };
     let scalefac = 2.83;
-    let bmetrics = [
-        &workspace.bmeta,
-        &workspace.bmetb,
-        &workspace.bmetc,
-        &workspace.bmetd,
-        &workspace.bmete,
-    ];
-
     // Passes 1-5: regular WSJT-X BP+OSD decoding with 5 bit metrics.
     workspace.apmask.fill(0);
 
-    for ipass in 0..5 {
-        let metric = bmetrics[ipass];
+    let nappasses = [2usize, 2, 2, 4, 4, 3];
+    let naptypes = [
+        [1usize, 2, 0, 0],
+        [2usize, 3, 0, 0],
+        [2usize, 3, 0, 0],
+        [3usize, 4, 5, 6],
+        [3usize, 4, 5, 6],
+        [3usize, 1, 2, 0],
+    ];
+
+    let mut npasses = if (ap_options.enabled || ap_options.ncontest == 7)
+        && ap_options.nzhsym >= 50
+        && depth >= 2
+    {
+        if ap_options.cq_only {
+            7
+        } else {
+            5 + 2 * nappasses[ap_options.nqso_progress]
+        }
+    } else {
+        5
+    };
+    if ap_options.ncontest == 6 {
+        npasses = 5;
+    }
+
+    for ipass in 1..=npasses {
         for i in 0..N_LDPC {
-            workspace.llr[i] = scalefac * metric[i];
+            let metric = match ipass {
+                1 => workspace.bmeta[i],
+                2 => workspace.bmetb[i],
+                3 => workspace.bmetc[i],
+                4 => workspace.bmetd[i],
+                5 => workspace.bmete[i],
+                _ if (ipass - 5) % 2 == 1 => workspace.bmeta[i],
+                _ => workspace.bmetc[i],
+            };
+            workspace.llr[i] = scalefac * metric;
+        }
+
+        workspace.apmask.fill(0);
+        if ipass > 5 {
+            let apmag = workspace.llr.iter().map(|x| x.abs()).fold(0.0f64, f64::max) * 1.1;
+            let iaptype = if ap_options.cq_only {
+                1
+            } else {
+                naptypes[ap_options.nqso_progress][(ipass - 6) / 2]
+            };
+
+            if iaptype == 0 || !apply_wsjt_ap_mask(workspace, ap_options, iaptype, apmag, f1) {
+                continue;
+            }
         }
 
         if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
-            // WSJT-X: nharderrors > 36 is rejected.
             if result.nharderrors <= 36 {
                 return Some(result);
             }
         }
     }
 
-    // Real WSJT-X AP passes depend on nQSOProgress/nappasses/naptypes and are
-    // intentionally not mixed into the default alignment path here.
     None
 }
 
-#[allow(dead_code)]
-fn try_decode_ad_hoc_ap(
+fn apply_wsjt_ap_mask(
     workspace: &mut DecodeWorkspace,
-    depth: usize,
-    mycall: Option<&str>,
-    hiscall: Option<&str>,
-) -> Option<DecodeResult> {
-    let maxosd_base = if depth >= 3 {
-        2
-    } else if depth >= 2 {
-        0
-    } else {
-        -1
+    ap: &Ft8bApOptions,
+    iaptype: usize,
+    apmag: f64,
+    f1: f64,
+) -> bool {
+    if ap.ncontest == 6 {
+        return false;
+    }
+    if ap.ncontest == 7 && f1 > 950.0 {
+        return false;
+    }
+    if ap.ncontest <= 5
+        && iaptype >= 3
+        && (ap.nfqso - f1).abs() > ap.napwid
+        && (ap.nftx - f1).abs() > ap.napwid
+    {
+        return false;
+    }
+    if iaptype >= 2 && ap.ap_set.apsym[0] > 1 {
+        return false;
+    }
+    if ap.ncontest == 7 && iaptype >= 2 && ap.ap_set.aph10[0] > 1 {
+        return false;
+    }
+    if iaptype >= 3 && ap.ap_set.apsym[29] > 1 {
+        return false;
+    }
+
+    match iaptype {
+        1 => apply_cq_ap_mask(workspace, ap.ncontest, apmag),
+        2 => apply_mycall_ap_mask(workspace, ap, apmag),
+        3 => apply_mycall_dxcall_ap_mask(workspace, ap, apmag),
+        4 | 5 | 6 => apply_tail_ap_mask(workspace, ap, iaptype, apmag),
+        _ => false,
+    }
+}
+
+fn apply_cq_ap_mask(workspace: &mut DecodeWorkspace, ncontest: usize, apmag: f64) -> bool {
+    let pattern = match ncontest {
+        0 | 7 => &MCQ,
+        1 | 2 | 8 => &MCQTEST,
+        3 => &MCQFD,
+        4 => &MCQRU,
+        5 => &MCQWW,
+        _ => return false,
     };
-    let scalefac = 2.83;
-    let bmetrics = [
-        &workspace.bmeta,
-        &workspace.bmetb,
-        &workspace.bmetc,
-        &workspace.bmetd,
-    ];
+    set_bits_from_zero_one(workspace, 1, pattern, apmag);
+    set_i3_001(workspace, apmag);
+    true
+}
 
-    // ── AP (A Priori) decoding passes ──
-    // WSJT-X iaptype decoding: constrain known bits with strong LLR priors.
-    // This is the key differentiator that lets WSJT-X decode 20/20 vs our 16/20.
-    if depth >= 2 {
-        // Compute apmag: max LLR magnitude * 1.01 (matches WSJT-X ft8b.f90)
-        let apmag = bmetrics[0]
-            .iter()
-            .map(|&x| (scalefac * x).abs())
-            .fold(0.0f64, f64::max)
-            * 1.01;
-        if apmag > 0.1 {
-            // Use the first metric (bmeta) as base LLR for AP passes
-            for i in 0..N_LDPC {
-                workspace.llr[i] = scalefac * bmetrics[0][i];
-            }
+fn apply_mycall_ap_mask(workspace: &mut DecodeWorkspace, ap: &Ft8bApOptions, apmag: f64) -> bool {
+    match ap.ncontest {
+        0 | 1 | 5 | 8 => {
+            set_signs(workspace, 1, &ap.ap_set.apsym[..29], apmag);
+            set_i3_001(workspace, apmag);
+            true
+        }
+        2 => {
+            set_signs(workspace, 1, &ap.ap_set.apsym[..28], apmag);
+            set_sign(workspace, 72, -1, apmag);
+            set_sign(workspace, 73, 1, apmag);
+            set_sign(workspace, 74, -1, apmag);
+            set_range_sign(workspace, 75, 77, -1, apmag);
+            true
+        }
+        3 => {
+            set_signs(workspace, 1, &ap.ap_set.apsym[..28], apmag);
+            set_range_sign(workspace, 75, 77, -1, apmag);
+            true
+        }
+        4 => {
+            set_signs(workspace, 2, &ap.ap_set.apsym[..28], apmag);
+            set_sign(workspace, 75, -1, apmag);
+            set_range_sign(workspace, 76, 77, 1, apmag);
+            true
+        }
+        7 => {
+            set_signs(workspace, 29, &ap.ap_set.apsym[..28], apmag);
+            set_signs(workspace, 57, &ap.ap_set.aph10, apmag);
+            set_range_sign(workspace, 72, 73, -1, apmag);
+            set_sign(workspace, 74, 1, apmag);
+            set_range_sign(workspace, 75, 77, -1, apmag);
+            true
+        }
+        _ => false,
+    }
+}
 
-            // ── AP Pass 5: CQ call mask ──
-            // Constrain bits 0-28 to "CQ" pattern (n28a=2, ipa=0)
-            // and bits 74-76 to i3=1 (standard message with grid)
-            workspace.apmask.fill(0);
-            // Set CQ pattern: n28a=2 → bit 26=1, others 0; ipa=0
-            for i in 0..29 {
-                workspace.apmask[i] = 1;
-                workspace.llr[i] = if i == 26 { apmag } else { -apmag };
-            }
-            // Constrain i3=1 (standard 2-call message)
-            workspace.apmask[74] = 1;
-            workspace.llr[74] = -apmag; // i3 bit 0 = 0
-            workspace.apmask[75] = 1;
-            workspace.llr[75] = -apmag; // i3 bit 1 = 0
-            workspace.apmask[76] = 1;
-            workspace.llr[76] = apmag; // i3 bit 2 = 1
+fn apply_mycall_dxcall_ap_mask(
+    workspace: &mut DecodeWorkspace,
+    ap: &Ft8bApOptions,
+    apmag: f64,
+) -> bool {
+    match ap.ncontest {
+        0 | 1 | 2 | 5 | 7 | 8 => {
+            set_signs(workspace, 1, &ap.ap_set.apsym, apmag);
+            set_i3_001(workspace, apmag);
+            true
+        }
+        3 => {
+            set_signs(workspace, 1, &ap.ap_set.apsym[..28], apmag);
+            set_signs(workspace, 29, &ap.ap_set.apsym[29..57], apmag);
+            set_mask_range(workspace, 72, 74);
+            set_range_sign(workspace, 75, 77, -1, apmag);
+            true
+        }
+        4 => {
+            set_signs(workspace, 2, &ap.ap_set.apsym[..28], apmag);
+            set_signs(workspace, 30, &ap.ap_set.apsym[29..57], apmag);
+            set_sign(workspace, 75, -1, apmag);
+            set_range_sign(workspace, 76, 77, 1, apmag);
+            true
+        }
+        _ => false,
+    }
+}
 
-            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
-                if result.nharderrors <= 36 {
-                    return Some(result);
-                }
-            }
+fn apply_tail_ap_mask(
+    workspace: &mut DecodeWorkspace,
+    ap: &Ft8bApOptions,
+    iaptype: usize,
+    apmag: f64,
+) -> bool {
+    if iaptype == 5 && ap.ncontest == 7 {
+        return false;
+    }
+    if ap.ncontest <= 5 || ap.ncontest == 8 || (ap.ncontest == 7 && iaptype == 6) {
+        set_mask_range(workspace, 1, 77);
+        set_signs(workspace, 1, &ap.ap_set.apsym, apmag);
+        let tail = match iaptype {
+            4 => &MRRR,
+            5 => &M73,
+            _ => &MRR73,
+        };
+        set_bits_from_zero_one(workspace, 59, tail, apmag);
+        return true;
+    }
+    if ap.ncontest == 7 && iaptype == 4 {
+        set_signs(workspace, 1, &ap.ap_set.apsym[..28], apmag);
+        set_signs(workspace, 57, &ap.ap_set.aph10, apmag);
+        set_range_sign(workspace, 72, 73, -1, apmag);
+        set_sign(workspace, 74, 1, apmag);
+        set_range_sign(workspace, 75, 77, -1, apmag);
+        return true;
+    }
+    false
+}
 
-            // ── AP Pass 6: CQ + alternate i3 ──
-            // Try i3=2 (standard 2-call message with /R or /P)
-            workspace.apmask[74] = 1;
-            workspace.llr[74] = -apmag; // i3 bit 0 = 0
-            workspace.apmask[75] = 1;
-            workspace.llr[75] = apmag; // i3 bit 1 = 1
-            workspace.apmask[76] = 1;
-            workspace.llr[76] = -apmag; // i3 bit 2 = 0
+fn set_bits_from_zero_one(
+    workspace: &mut DecodeWorkspace,
+    start_1based: usize,
+    bits: &[i8],
+    apmag: f64,
+) {
+    for (offset, &bit) in bits.iter().enumerate() {
+        set_sign(
+            workspace,
+            start_1based + offset,
+            if bit == 0 { -1 } else { 1 },
+            apmag,
+        );
+    }
+}
 
-            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
-                if result.nharderrors <= 36 {
-                    return Some(result);
-                }
-            }
+fn set_signs(workspace: &mut DecodeWorkspace, start_1based: usize, signs: &[i8], apmag: f64) {
+    for (offset, &sign) in signs.iter().enumerate() {
+        set_sign(workspace, start_1based + offset, sign, apmag);
+    }
+}
 
-            // ── AP Pass 7: Message type only constraint ──
-            // Only constrain i3/n3 without assuming specific message content.
-            // i3=1, n3=0: standard 2-call with grid
-            workspace.apmask.fill(0);
-            for i in 0..N_LDPC {
-                workspace.llr[i] = scalefac * bmetrics[0][i];
-            }
-            workspace.apmask[71] = 1;
-            workspace.llr[71] = -apmag; // n3 bit 0 = 0
-            workspace.apmask[72] = 1;
-            workspace.llr[72] = -apmag; // n3 bit 1 = 0
-            workspace.apmask[73] = 1;
-            workspace.llr[73] = -apmag; // n3 bit 2 = 0 (n3=0)
-            workspace.apmask[74] = 1;
-            workspace.llr[74] = -apmag; // i3 bit 0 = 0
-            workspace.apmask[75] = 1;
-            workspace.llr[75] = -apmag; // i3 bit 1 = 0
-            workspace.apmask[76] = 1;
-            workspace.llr[76] = apmag; // i3 bit 2 = 1 (i3=1)
+fn set_range_sign(
+    workspace: &mut DecodeWorkspace,
+    start_1based: usize,
+    end_1based: usize,
+    sign: i8,
+    apmag: f64,
+) {
+    for idx in start_1based..=end_1based {
+        set_sign(workspace, idx, sign, apmag);
+    }
+}
 
-            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
-                if result.nharderrors <= 36 {
-                    return Some(result);
-                }
-            }
-
-            // ── AP Pass 8: Constrain only n3=0, i3=2 ──
-            workspace.apmask[75] = 1;
-            workspace.llr[75] = apmag; // i3 bit 1 = 1
-            workspace.apmask[76] = 1;
-            workspace.llr[76] = -apmag; // i3 bit 2 = 0 (i3=2)
-
-            if let Some(result) = decode174_91(&workspace.llr, &workspace.apmask, maxosd_base) {
-                if result.nharderrors <= 36 {
-                    return Some(result);
-                }
-            }
-            // ── AP Pass 9: MYCALL ??? ??? (iaptype=2) ──
-            // ── AP Pass 10: MYCALL HISCALL ??? (iaptype=3) ──
-            // Framework implemented; requires explicit mycall/hiscall parameters.
-            // Disabled by default (None).
-            if mycall.is_some() {
-                if let Some(mycall_str) = mycall {
-                    if let Some(mycall_bits) = encode_callsign_ap(mycall_str) {
-                        workspace.apmask.fill(0);
-                        for i in 0..N_LDPC {
-                            workspace.llr[i] = scalefac * bmetrics[0][i];
-                        }
-                        for i in 0..28 {
-                            workspace.apmask[i] = 1;
-                            workspace.llr[i] = apmag * mycall_bits[i] as f64;
-                        }
-                        workspace.apmask[74] = 1;
-                        workspace.llr[74] = -apmag;
-                        workspace.apmask[75] = 1;
-                        workspace.llr[75] = -apmag;
-                        workspace.apmask[76] = 1;
-                        workspace.llr[76] = apmag;
-                        if let Some(result) =
-                            decode174_91(&workspace.llr, &workspace.apmask, maxosd_base)
-                        {
-                            if result.nharderrors <= 36 {
-                                return Some(result);
-                            }
-                        }
-                    }
-                }
-            }
-            if let (Some(mycall_str), Some(hiscall_str)) = (mycall, hiscall) {
-                if let Some(both_bits) = encode_callsigns_ap(mycall_str, hiscall_str) {
-                    workspace.apmask.fill(0);
-                    for i in 0..N_LDPC {
-                        workspace.llr[i] = scalefac * bmetrics[0][i];
-                    }
-                    for i in 0..58 {
-                        workspace.apmask[i] = 1;
-                        workspace.llr[i] = apmag * both_bits[i] as f64;
-                    }
-                    workspace.apmask[74] = 1;
-                    workspace.llr[74] = -apmag;
-                    workspace.apmask[75] = 1;
-                    workspace.llr[75] = -apmag;
-                    workspace.apmask[76] = 1;
-                    workspace.llr[76] = apmag;
-                    if let Some(result) =
-                        decode174_91(&workspace.llr, &workspace.apmask, maxosd_base)
-                    {
-                        if result.nharderrors <= 36 {
-                            return Some(result);
-                        }
-                    }
-                }
-            }
+fn set_mask_range(workspace: &mut DecodeWorkspace, start_1based: usize, end_1based: usize) {
+    for idx in start_1based..=end_1based {
+        if idx <= N_LDPC {
+            workspace.apmask[idx - 1] = 1;
         }
     }
-    None
+}
+
+fn set_sign(workspace: &mut DecodeWorkspace, idx_1based: usize, sign: i8, apmag: f64) {
+    if idx_1based == 0 || idx_1based > N_LDPC {
+        return;
+    }
+    let idx = idx_1based - 1;
+    workspace.apmask[idx] = 1;
+    workspace.llr[idx] = if sign > 0 { apmag } else { -apmag };
+}
+
+fn set_i3_001(workspace: &mut DecodeWorkspace, apmag: f64) {
+    set_sign(workspace, 75, -1, apmag);
+    set_sign(workspace, 76, -1, apmag);
+    set_sign(workspace, 77, 1, apmag);
 }
