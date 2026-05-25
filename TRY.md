@@ -500,6 +500,69 @@
 - `git diff --check` ✅
 - 未运行 release 解码测试。
 
+## Iteration 30: 开始 release 验收测试，补 FFTW 链接门禁
+
+### 做了什么
+- 按要求先提交并 push 测试前 checkpoint：
+  - `3629b9e Prepare WSJT-X stream tests`
+- 首次运行短测时发现默认 linker 找不到 `libfftw3`：
+  - `ld: library 'fftw3' not found`
+- 安装 Homebrew `fftw` 后，用显式库路径完成 FFTW@3840 release 短测。
+- 更新 `build.rs`：
+  - 支持 `FFTW_DIR`
+  - 自动加入常见 Homebrew FFTW 库路径 `/opt/homebrew/lib` 和 `/usr/local/lib`
+  - 修正 `rerun-if-changed` 到真实 FFTW wrapper 文件
+- 测试门禁继续收紧：stream acceptance tests 现在不仅要求 release，还硬断言
+  `engine_name() == "FFTW"`，避免误用 RustFFT@4096 做验收。
+
+### 测试结果
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - Engine: `FFTW`
+  - 21 unique messages
+  - 3.5s
+  - 满足 `>=19` 和 `<15s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ❌
+  - Engine: `FFTW`
+  - 每段耗时均小于 15s，最慢约 4.8s
+  - 最终 `361/449`
+  - 未达到验收线 `366/449`，差 5 条
+
+### 反思
+- 性能约束已经满足，当前瓶颈是最后几条灵敏度/一致性差距。
+- 结果在严重灵敏度早停线 `366-10` 以上，因此不是大面积崩坏；下一步应按
+  缺失段继续查 WSJT-X 对齐，而不是调整阈值。
+
+## Iteration 31: residual/sbase/AP 输入继续对齐，长测仍差 5 条
+
+### 做了什么
+- 对照 `wsjtx/lib/ft8_decode.f90` 和 `wsjtx/lib/ft8/ft8b.f90` 后修正三处
+  residual 相关差异：
+  - WSJT-X `ft8b` 在 valid codeword 后先 subtract，再由外层判断 duplicate；
+    Rust 现在也对 duplicate valid decode 先 subtract/recompute FFT，再跳过保存。
+  - WSJT-X 每个 pass 的 `sync8` 都刷新 `sbase`，本 pass 的 `ft8b` 使用当前
+    residual baseline；Rust 不再只保存 pass 1 的 `sbase`。
+  - WSJT-X full regular decode 之后把清理过的 `dd` 传给 `ft8_a7d`；Rust
+    stream AP 现在使用 full decode 返回的 residual，而不是 raw slot buffer。
+- 在长测里加了 `FT8RS_PRINT_MISSES=1` 诊断开关，只在需要时打印每段未匹配
+  baseline 消息，默认不增加输出。
+
+### 测试结果
+- `cargo check` ✅
+- `cargo check --tests` ✅（未执行测试；仅编译 test target）
+- `git diff --check` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `3.6s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ❌
+  - 每段仍均小于 `15s`
+  - 最终仍为 `361/449`
+
+### 反思
+- 这三处是 WSJT-X 结构对齐，虽然本轮没有提升最终 matched count，但代码路径
+  更接近 Fortran。
+- 当前剩余差距更可能在 candidate/LLR/OSD/AP fixture 的数值细节，需要继续用
+  小 fixture 或按 miss 集中段做对照，而不是扩大搜索或放松阈值。
+
 ## Iteration 0: 现状分析
 
 - 完整阅读 wsjtx/lib/ft8_decode.f90 源码
