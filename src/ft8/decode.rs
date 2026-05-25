@@ -1222,33 +1222,27 @@ fn load_coarse_downsample(
 }
 
 fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> isize {
-    // TS: Math.round((xdt + 0.5) * FS2)
-    // The +0.5 centers the search in the middle of the window.
-    // Returns UNWRAPPED ibest (may be negative), matching TS behavior.
     let i0_raw = ((xdt + 0.5) * FS2).round() as isize;
-    let i0_center = i0_raw.rem_euclid(NP2 as isize);
-
     let mut smax = 0.0;
-    let mut ibest_unwrapped = i0_raw; // start with unwrapped
+    let mut ibest = i0_raw;
     let cs = build_costas_sync_templates();
     for offset in -10..=10 {
-        let idx = (i0_center + offset).rem_euclid(NP2 as isize) as usize;
-        let sync = sync8d(cd0_re, cd0_im, idx, &cs.re, &cs.im);
+        let idx = i0_raw + offset;
+        let sync = sync8d_isize(cd0_re, cd0_im, idx, &cs.re, &cs.im);
         if sync > smax {
             smax = sync;
-            ibest_unwrapped = i0_raw + offset;
+            ibest = idx;
         }
     }
-    ibest_unwrapped
+    ibest
 }
 
 fn find_best_frequency_shift(cd0_re: &[f64], cd0_im: &[f64], ibest: isize) -> f64 {
     let mut smax = 0.0;
     let mut delfbest = 0.0;
     let templates = build_frequency_shift_sync_templates();
-    let idx = ibest.rem_euclid(NP2 as isize) as usize;
     for tpl in templates {
-        let sync = sync8d(cd0_re, cd0_im, idx, &tpl.re, &tpl.im);
+        let sync = sync8d_isize(cd0_re, cd0_im, ibest, &tpl.re, &tpl.im);
         if sync > smax {
             smax = sync;
             delfbest = tpl.delf;
@@ -1261,8 +1255,7 @@ fn refine_time_offset(cd0_re: &[f64], cd0_im: &[f64], ibest: isize, ss: &mut [f6
     ss.fill(0.0);
     let cs = build_costas_sync_templates();
     for idt in -4..=4 {
-        let idx = (ibest + idt).rem_euclid(NP2 as isize) as usize;
-        ss[(idt + 4) as usize] = sync8d(cd0_re, cd0_im, idx, &cs.re, &cs.im);
+        ss[(idt + 4) as usize] = sync8d_isize(cd0_re, cd0_im, ibest + idt, &cs.re, &cs.im);
     }
 
     let mut max_idx: isize = 4;
@@ -1537,10 +1530,6 @@ fn ft8_downsample(cx_re: &[f64], cx_im: &[f64], f0: f64, workspace: &mut DecodeW
         workspace.cd0_re[i] *= DOWNSAMPLE_SCALE;
         workspace.cd0_im[i] *= DOWNSAMPLE_SCALE;
     }
-}
-
-fn sync8d(cd0_re: &[f64], cd0_im: &[f64], i0: usize, sync_re: &[f64], sync_im: &[f64]) -> f64 {
-    sync8d_isize(cd0_re, cd0_im, i0 as isize, sync_re, sync_im)
 }
 
 fn sync8d_isize(

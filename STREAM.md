@@ -254,13 +254,18 @@ Current `ft8rs` status after Iteration 12:
     of reusing pass 1 for later passes.
   - stream-level `ft8_a7d` now receives the full-decode residual rather than the
     raw slot buffer.
+  - AP decodes from `ft8_a7d` are now saved into the same-parity cross-slot AP
+    memory, matching WSJT-X calling `ft8_a7_save` after an AP decode.
+  - `ft8b` time/frequency refinement now calls `sync8d` with signed indices and
+    no modulo wrapping. WSJT-X `sync8d` treats out-of-range Costas blocks as
+    zero; wrapping negative `i0` to the end of `cd0` was a structural mismatch.
 
 Current release-test status:
 
 - Short file `210703_133430.wav`: `21` unique messages in about `3.5s`, passes
   the `>=19` / `<15s` requirement on FFTW.
-- Long file `230208_140300.wav`: every segment is under `15s`, but current
-  matched count is `361/449`, below the required `366/449`.
+- Long file `230208_140300.wav`: every segment is under `15s`; current matched
+  count is `381/449`, passing the required `366/449`.
 
 ## AP / Cross-slot Memory
 
