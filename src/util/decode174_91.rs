@@ -32,7 +32,12 @@ pub struct BPResult {
 }
 
 pub fn bp_decode174_91_with_posteriors(
-    llr: &[f64], apmask: &[i8], max_iterations: usize, maxosd: usize,
+    llr: &[f64],
+    apmask: &[i8],
+    max_iterations: usize,
+    nosd: usize,
+    bp_save_limit: usize,
+    channel_llr_osd: bool,
 ) -> BPResult {
     let n = N_LDPC;
     let m = M_LDPC;
@@ -43,7 +48,10 @@ pub fn bp_decode174_91_with_posteriors(
     let mut zn = vec![0.0; n];
     let mut cw = vec![0i8; n];
     let mut zsum = vec![0.0; n];
-    let mut zsave: Vec<Vec<f64>> = vec![vec![0.0; n]; maxosd];
+    let mut zsave: Vec<Vec<f64>> = vec![vec![0.0; n]; nosd];
+    if channel_llr_osd && nosd >= 1 {
+        zsave[0].copy_from_slice(llr);
+    }
 
     // Initialize messages to checks
     for j in 0..m {
@@ -75,7 +83,7 @@ pub fn bp_decode174_91_with_posteriors(
         for i in 0..n {
             zsum[i] += zn[i];
         }
-        if iter >= 1 && iter <= maxosd {
+        if iter >= 1 && iter <= bp_save_limit && iter <= zsave.len() {
             zsave[iter - 1].copy_from_slice(&zsum);
         }
 
@@ -102,9 +110,11 @@ pub fn bp_decode174_91_with_posteriors(
             let bits91: Vec<u8> = cw[..KK].iter().map(|&b| b as u8).collect();
             if check_crc14(&bits91) {
                 let mut nharderrors = 0;
+                let mut dmin = 0.0;
                 for i in 0..n {
                     if ((2 * cw[i] as i32 - 1) as f64) * llr[i] < 0.0 {
                         nharderrors += 1;
+                        dmin += llr[i].abs();
                     }
                 }
                 return BPResult {
@@ -112,7 +122,7 @@ pub fn bp_decode174_91_with_posteriors(
                         message91: bits91,
                         cw: cw.iter().map(|&b| b as u8).collect(),
                         nharderrors,
-                        dmin: 0.0,
+                        dmin,
                         ntype: 1,
                     }),
                     zsave,
@@ -178,21 +188,29 @@ pub fn bp_decode174_91_with_posteriors(
 
 /// BP decoder for (174,91) LDPC code (backward-compatible).
 pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Option<DecodeResult> {
-    bp_decode174_91_with_posteriors(llr, apmask, max_iterations, 0).decoded
+    bp_decode174_91_with_posteriors(llr, apmask, max_iterations, 0, 0, false).decoded
 }
 
 /// Hybrid BP + OSD decoder.
 pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeResult> {
     let max_iterations: usize = 30;
-    let nosd = if maxosd < 0 {
-        0
+    let maxosd = maxosd.min(3);
+    let (nosd, bp_save_limit, channel_llr_osd) = if maxosd < 0 {
+        (0, 0, false)
     } else if maxosd == 0 {
-        1
+        (1, 0, true)
     } else {
-        maxosd as usize
+        (maxosd as usize, maxosd as usize, false)
     };
 
-    let bp = bp_decode174_91_with_posteriors(llr, apmask, max_iterations, nosd);
+    let bp = bp_decode174_91_with_posteriors(
+        llr,
+        apmask,
+        max_iterations,
+        nosd,
+        bp_save_limit,
+        channel_llr_osd,
+    );
 
     if let Some(result) = bp.decoded {
         return Some(result);
@@ -202,15 +220,11 @@ pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeR
     if nosd >= 1 {
         for i in 0..nosd {
             if let Some(result) = osd_decode174_91(&bp.zsave[i], apmask, 2) {
-                return Some(result);
+                if result.nharderrors > 0 {
+                    return Some(result);
+                }
             }
         }
-        // Fallback to raw LLRs
-        if let Some(result) = osd_decode174_91(llr, apmask, 2) {
-            return Some(result);
-        }
-    } else if maxosd == 0 {
-        return osd_decode174_91(llr, apmask, 1);
     }
 
     None

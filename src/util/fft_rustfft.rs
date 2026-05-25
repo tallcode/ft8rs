@@ -122,7 +122,7 @@ mod tests {
     fn test_fft_roundtrip_4096() {
         let n = 4096;
         let mut re = vec![0.0; n];
-        let mut im = vec![0.0; n];
+        let im = vec![0.0; n];
         re[100] = 1.0;
         
         let mut re_fwd = re.clone();
@@ -162,7 +162,7 @@ mod tests {
     fn test_fft_roundtrip_192000() {
         let n = 192000;
         let mut re = vec![0.0; n];
-        let mut im = vec![0.0; n];
+        let im = vec![0.0; n];
         re[1000] = 1.0;
         
         let mut re_fwd = re.clone();

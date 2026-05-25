@@ -39,6 +39,41 @@ outside the decode module. For WSJT-X parity, the decoder core should treat each
 FT8 analysis window as a 180000-sample 12 kHz buffer, with explicit zero padding
 when simulating partial `nzhsym` passes.
 
+## FFT Engine Policy
+
+Current decision: keep both FFT engines, with different responsibilities.
+
+- `FFTW @ 3840` is the WSJT-X alignment and acceptance path.
+- `RustFFT @ 4096` is retained as a portable fallback and comparison path.
+
+Rationale:
+
+- WSJT-X `sync8` uses `NFFT1=3840`, so `12000/3840 = 3.125 Hz/bin`.
+- FT8 tone spacing is 6.25 Hz, exactly 2 FFT bins at 3840.
+- With `RustFFT @ 4096`, `12000/4096 = 2.9296875 Hz/bin`, so one FT8
+  tone spacing is about 2.1333 bins. This changes the sync grid, candidate
+  ordering, `sbase`, subtraction residuals, and low-SNR edge behavior.
+- Therefore `RustFFT @ 4096` may be useful, and may sometimes decode similar
+  counts, but it is not a strict WSJT-X parity path.
+
+Operational policy:
+
+- Final WSJT-X parity claims and release acceptance tests must use FFTW at
+  3840.
+- Candidate/sbase/subtraction/AP numerical comparisons against WSJT-X should
+  use FFTW at 3840 only.
+- RustFFT at 4096 remains useful for no-FFTW builds, smoke tests, and diagnosing
+  whether a difference is caused by FFT sizing or by decoder logic.
+- RustFFT should not be removed, but its results should not be used to relax or
+  reinterpret WSJT-X alignment requirements.
+
+Possible future direction:
+
+- Add a `RustFFT @ 3840` mode after the WSJT-X-aligned FFTW path stabilizes.
+- If RustFFT at 3840 matches candidate ordering, `sbase`, and decode results
+  closely enough, it can become a no-FFTW aligned engine.
+- Until that evidence exists, only FFTW at 3840 is the alignment baseline.
+
 ## WSJT-X Streaming / Disk Control Flow
 
 ### Source entry points
@@ -104,6 +139,9 @@ Current `ft8rs` status after Iteration 12:
 - `sbase` now comes from `get_spectrum_baseline(dd,nfa,nfb)`.
 - Remaining risk: the Rust `baseline` polynomial helper still needs a numerical
   parity check against WSJT-X `baseline.f90`/`polyfit` on the reference files.
+- `sbase` indexing now follows the WSJT-X 1-based convention: FFT bin 0/DC is
+  omitted and Vec index 0 is unused, so `sbase[nint(f/3.125)]` maps to the same
+  bin as Fortran `sbase(nint(f/3.125))`.
 - `SyncMode::Amplitude` and `SyncMode::AbsSum` remain non-WSJT-X comparison
   modes. Default alignment mode is `Power`.
 
@@ -146,9 +184,13 @@ WSJT-X `ft8b.f90` inner decode:
 - If AP is enabled, extra AP passes start at pass 6 and use `nappasses` and
   `naptypes` keyed by `nQSOProgress`.
 - `nzhsym<50` disables AP passes inside `ft8b`.
-- `decode174_91` uses `maxosd=2` for depth 3; depth 1 is BP only.
+- `decode174_91` uses `maxosd=2` for depth 2/3; depth 1 is BP only.
 - SNR uses `xsnr2` when `nagain=false`; false positive filter is
   `nsync <= 10 && xsnr < -25.0`.
+- `decode174_91` now distinguishes WSJT-X `maxosd=0` channel-LLR OSD from
+  `maxosd>0` BP-posterior OSD, caps `maxosd` at 3, removes the non-WSJT-X raw
+  fallback after BP-posterior OSD, computes BP-success `dmin`, and only accepts
+  OSD results when `nharderrors > 0` like WSJT-X.
 
 Current `ft8rs` status after Iteration 12:
 
@@ -160,15 +202,32 @@ Current `ft8rs` status after Iteration 12:
 - The previous pass-1 depth override has been removed.
 - The SNR false-positive gate/clamp now uses `-25 dB`.
 - Ad-hoc AP masks have been removed from the default regular decode path.
+- Iteration 16 added the first WSJT-X-style internal AP pass scheduler:
+  - `nappasses=(2,2,2,4,4,3)`
+  - `naptypes` table for QSO progress 0-5
+  - AP pass metric alternation `llra/llrc`
+  - AP pass count is controlled by `lft8apon`, `lapcqonly`, `ncontest`, and
+    `nzhsym>=50`
+  - Initial default non-contest iaptype 1-6 masks were generated from real
+    `pack77` bit patterns instead of hand-coded partial masks.
+- Iteration 17 exposed WSJT-X AP/QSO parameters through `StreamDecodeConfig`:
+  `nfqso`, `nftx`, `nQSOProgress`, `ncontest`, `napwid`, `lft8apon`,
+  `lapcqonly`, `nagain`, `mycall`, and `hiscall`.
+- Iteration 18 replaced the provisional AP bit generation with a closer port of
+  WSJT-X `ft8apset.f90` + `ft8b.f90` AP mask branches:
+  - `apsym(1:58)` is now derived from `pack77(mycall hiscall RRR)` with the
+    same dummy-hiscall and standard/nonstandard-call gates.
+  - `aph10` is now generated from the WSJT-X 10-bit callsign hash for Hound AP.
+  - `iaptype` 1-6 now apply the contest-specific CQ/MyCall/MyCall+DxCall/tail
+    masks for `ncontest` 0-5, 7, and 8, while `ncontest=6` remains disabled.
+  - `ndepth=2` now uses `maxosd=2`, matching the active WSJT-X code path.
 - Remaining gaps:
-  - `ft8b` still does not implement the full WSJT-X internal AP
-    `nappasses/naptypes/nQSOProgress` system.
   - `nagain` is now consumed for the WSJT-X `nfqso +/- 20 Hz` search window and
     adjacent-tone SNR selection.
-  - `nftx`, `napwid`, `ncontest`, `lapcqonly`, and `lft8apon` are represented
-    in options but not all are consumed by the decode core yet.
-  - `nzhsym` is represented at the stream orchestration level but not yet used
-    inside `ft8b` for every WSJT-X branch.
+  - AP masks now follow the WSJT-X branch structure, but still need bit-level
+    regression checks against WSJT-X for contest and Hound examples.
+  - `nzhsym` is represented at the stream orchestration level and gates internal
+    AP, but long-decode slot timing still needs reconciliation with WSJT-X.
 
 ## AP / Cross-slot Memory
 
@@ -201,11 +260,17 @@ Current `ft8rs` status after Iteration 13:
   - CQ special fragment handling is approximated from decoded words; it should
     be checked against `split77` word classification if AP sensitivity remains
     short.
-- `ft8b` internal AP pass system is not equivalent to WSJT-X. The separate
-  `ft8_a7d` implementation is closer but depends on accurate previous-slot
-  memory and `sbase`.
+- `ft8b` internal AP pass scheduling and masks are now structurally close to
+  WSJT-X. The separate `ft8_a7d` implementation still depends on accurate
+  previous-slot memory and `sbase`.
 - `HashCallBook` is shared through `Rc<HashCallBook>`, which is the right
   architectural direction for cross-slot hash resolution.
+- Stream-level hash collection now filters decoded tokens before saving them to
+  the shared `HashCallBook`, avoiding grid/report tokens such as `FN20` or
+  `RR73`. This keeps the table closer to WSJT-X callsign-only hash semantics.
+- Stream-level `ft8_a7_save` entry extraction now uses a `split77`-like word
+  normalization before saving `call_1 call_2`, including the WSJT-X `CQ xxx
+  CALL -> CQ_xxx CALL` rewrite and subsequent `CQ_` skip.
 
 ## Current Tests and Constraints
 
@@ -229,22 +294,37 @@ Current local test harness status:
 
 - `test_stream_decode_long_audio` now asserts `total_matched >= 366`.
 - The long test now has a severe sensitivity early abort at `366-10`.
-- Long-file segmentation still uses `15 s +/- 1 s` overlap and calls
-  `decode_slot` on a 17 s slice. The stream decoder currently takes the first
-  15 s of that slice, so the leading 1 s changes slot timing. This must be
-  reconciled with WSJT-X `jt9a.f90` timing before treating results as final.
+- Long-file segmentation now feeds exact 15 s windows to `decode_slot`, matching
+  WSJT-X `jt9a.f90` use of the 180000-sample shared decode buffer. The previous
+  `15 s +/- 1 s` overlap harness shifted the effective slot by 1 s because the
+  decoder consumed the first 15 s of a 17 s slice.
 
 ## Near-term Alignment Priorities
 
-1. Consume the remaining WSJT-X parameters in the decode core:
-   `nftx`, `napwid`, `ncontest`, `lapcqonly`, `lft8apon`, `nQSOProgress`.
-2. Implement or explicitly defer the full `ft8b` internal AP
-   `nappasses/naptypes` path after regular decode parity is stable.
-3. Reconcile long-file slot timing with WSJT-X instead of relying on the current
-   17 s test slice.
-4. Numerically compare `get_spectrum_baseline` against WSJT-X output.
-5. Only after the above alignment work, run release tests with timeout and
+1. Add bit-level AP-mask regression checks against WSJT-X for contest and Hound
+   examples.
+2. Audit live-stream window handoff against WSJT-X `nzhsym` progress; the file
+   harness now uses exact 15 s slots, but soundcard buffering still needs the
+   same 180000-sample window contract.
+3. Numerically compare `get_spectrum_baseline` against WSJT-X output.
+4. Only after the above alignment work, run release tests with timeout and
    sensitivity assertions.
+
+## Current Development Plan
+
+After the latest requirement restatement, the active plan is:
+
+1. Keep FFTW@3840 and RustFFT@4096, but use only FFTW@3840 for WSJT-X parity
+   claims and acceptance tests.
+2. Finish source-level control-flow parity before release decode tests:
+   `jt9a.f90` windowing, `ft8_decode.f90` `41/47/50` state, `ft8b.f90`
+   regular/AP passes, and `ft8_a7` same-parity memory.
+3. Add focused non-release parity checks where they do not decode whole files:
+   AP mask bit fixtures, baseline numerical fixtures, and candidate ordering
+   fixtures.
+4. Keep the stream decoder independent from UI and soundcard/file I/O.
+5. Only when the above parity checks are in place, run the required release
+   stream tests with per-slot timeout and sensitivity aborts.
 
 ## Documentation Policy
 

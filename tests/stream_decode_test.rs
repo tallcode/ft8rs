@@ -1,9 +1,6 @@
-use ft8rs::ft8::decode::{decode, DecodeOptions, SyncMode};
 use ft8rs::stream::{StreamDecodeConfig, StreamDecoder};
 use ft8rs::util::engine_name;
-use ft8rs::HashCallBook;
 use std::collections::HashSet;
-use std::rc::Rc;
 
 fn norm(msg: &str) -> String {
     msg.split_whitespace()
@@ -83,11 +80,9 @@ fn test_stream_decode_short_audio() {
     let (_sr, samples) = load_wav("tests/ft8/210703_133430.wav");
 
     let mut decoder = StreamDecoder::new(StreamDecodeConfig {
-        freq_low: 100.0,
-        freq_high: 3000.0,
-        sync_min: 1.3,
         max_candidates: 300,
-        depth: 3,
+        freq_low: 100.0,
+        ..Default::default()
     });
 
     let results = decoder.decode_slot(&samples);
@@ -141,11 +136,7 @@ fn test_stream_decode_long_audio() {
     );
 
     let config = StreamDecodeConfig {
-        freq_low: 200.0,
-        freq_high: 3000.0,
-        sync_min: 1.3,
-        max_candidates: 1000,
-        depth: 3,
+        ..Default::default()
     };
     let mut decoder = StreamDecoder::new(config);
 
@@ -154,8 +145,8 @@ fn test_stream_decode_long_audio() {
     let severe_floor = target_matched.saturating_sub(10);
 
     for seg in 0..nseg {
-        let seg_start = (seg as isize * sps as isize - 12000).max(0) as usize;
-        let seg_end = ((seg + 1) as isize * sps as isize + 12000).min(s12k.len() as isize) as usize;
+        let seg_start = seg * sps;
+        let seg_end = ((seg + 1) * sps).min(s12k.len());
         let data = &s12k[seg_start..seg_end];
 
         let slot_t0 = std::time::Instant::now();

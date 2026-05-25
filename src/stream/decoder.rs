@@ -3,6 +3,7 @@ use std::rc::Rc;
 use crate::ft8::ap_decode::{ft8_a7d, ApDecodeResult};
 use crate::ft8::decode::{decode_f64_with_sbase, DecodeOptions, DecodedMessage, SyncMode};
 use crate::util::hashcall::HashCallBook;
+use crate::util::pack_jt77::is_stdcall;
 use crate::util::subtract_ft8::subtract_ft8_refined;
 
 const SAMPLE_RATE: u32 = 12000;
@@ -32,6 +33,16 @@ pub struct StreamDecodeConfig {
     pub sync_min: f64,
     pub max_candidates: usize,
     pub depth: usize,
+    pub nfqso: f64,
+    pub nftx: f64,
+    pub nqso_progress: usize,
+    pub ncontest: usize,
+    pub napwid: f64,
+    pub ft8_ap: bool,
+    pub ap_cq_only: bool,
+    pub nagain: bool,
+    pub mycall: Option<String>,
+    pub hiscall: Option<String>,
 }
 
 impl Default for StreamDecodeConfig {
@@ -42,6 +53,16 @@ impl Default for StreamDecodeConfig {
             sync_min: 1.3,
             max_candidates: 1000,
             depth: 3,
+            nfqso: 0.0,
+            nftx: 0.0,
+            nqso_progress: 0,
+            ncontest: 0,
+            napwid: 50.0,
+            ft8_ap: true,
+            ap_cq_only: false,
+            nagain: false,
+            mycall: None,
+            hiscall: None,
         }
     }
 }
@@ -162,17 +183,8 @@ impl StreamDecoder {
                 if let Some(r) = result {
                     let norm_r = normal(&r.msg);
                     if !ap_msgs.iter().any(|a| normal(&a.msg) == norm_r) {
-                        eprintln!(
-                            "[AP] HIT: msg='{}' freq={:.1}Hz dt={:.2}",
-                            r.msg, r.freq, r.dt
-                        );
                         ap_msgs.push(r);
                     }
-                } else {
-                    eprintln!(
-                        "[AP] MISS: {} {} @ {:.1}Hz dt={:.2}",
-                        entry.call_1, entry.call_2, entry.freq, entry.dt
-                    );
                 }
             }
             ap_msgs
@@ -184,12 +196,8 @@ impl StreamDecoder {
 
         fn collect_book(book: &mut Rc<HashCallBook>, msg: &str) {
             for part in msg.split_whitespace() {
-                let p = part.trim();
-                if p.len() >= 3
-                    && p.chars()
-                        .all(|c| c.is_alphanumeric() || c == '/' || c == '<' || c == '>')
-                    && p.chars().any(|c| c.is_numeric())
-                {
+                let p = part.trim_matches(|c: char| c == ';' || c == ',');
+                if is_hashable_callsign_token(p) {
                     book.save(p);
                 }
             }
@@ -247,11 +255,18 @@ impl StreamDecoder {
             depth: Some(self.config.depth),
             max_candidates: Some(self.config.max_candidates),
             hash_call_book: Some(book),
-            mycall: None,
-            hiscall: None,
+            mycall: self.config.mycall.clone(),
+            hiscall: self.config.hiscall.clone(),
+            nfqso: Some(self.config.nfqso),
+            nftx: Some(self.config.nftx),
+            nqso_progress: Some(self.config.nqso_progress),
+            ncontest: Some(self.config.ncontest),
+            napwid: Some(self.config.napwid),
+            ft8_ap: Some(self.config.ft8_ap && nzhsym == 50),
+            ap_cq_only: Some(self.config.ap_cq_only),
+            nagain: Some(self.config.nagain),
             sync_mode: Some(SyncMode::Power),
             nzhsym: Some(nzhsym),
-            ft8_ap: Some(nzhsym == 50),
             ..Default::default()
         }
     }
@@ -276,8 +291,8 @@ fn partial_window(samples: &[f64], nzhsym: usize) -> Vec<f64> {
 /// Extract call_1/call_2/grid4/xbase from a decoded message.
 /// Matches WSJT-X ft8_a7_save logic.
 fn extract_slot_entry(d: &DecodedMessage, sbase: &[f64]) -> Option<SlotDecodeEntry> {
-    let parts: Vec<&str> = d.msg.split_whitespace().collect();
-    if parts.len() < 2 {
+    let words = split77_words(&d.msg);
+    if words.len() < 2 {
         return None;
     }
 
@@ -286,31 +301,31 @@ fn extract_slot_entry(d: &DecodedMessage, sbase: &[f64]) -> Option<SlotDecodeEnt
         return None;
     }
 
-    let (fragment, call_1, call_2) = if parts[0] == "CQ" && parts.len() >= 3 && parts[1].len() <= 2 {
-        (
-            format!("CQ {} {}", parts[1], parts[2]),
-            "CQ".to_string(),
-            parts[1].to_string(),
-        )
-    } else {
-        (
-            format!("{} {}", parts[0], parts[1]),
-            parts[0].to_string(),
-            parts[1].to_string(),
-        )
-    };
-
-    // CQ_ special format — skip for AP
-    if call_1.starts_with("CQ_") {
+    if words[0].starts_with("CQ_") {
         return None;
     }
 
+    let (fragment, call_1, call_2) = if words[0] == "CQ" && words.len() >= 3 && words[1].len() <= 2
+    {
+        (
+            format!("CQ {} {}", words[1], words[2]),
+            "CQ".to_string(),
+            words[1].clone(),
+        )
+    } else {
+        (
+            format!("{} {}", words[0], words[1]),
+            words[0].clone(),
+            words[1].clone(),
+        )
+    };
+
     // Extract grid4
     let mut grid4 = String::from("    ");
-    if parts.len() >= 3 {
-        let last = parts.last().unwrap();
+    if words.len() >= 3 {
+        let last = words.last().unwrap();
         if is_grid4(last) {
-            grid4 = last.to_string();
+            grid4 = last.clone();
         }
     }
 
@@ -334,6 +349,21 @@ fn extract_slot_entry(d: &DecodedMessage, sbase: &[f64]) -> Option<SlotDecodeEnt
         freq: d.freq,
         xbase,
     })
+}
+
+fn split77_words(msg: &str) -> Vec<String> {
+    let mut words: Vec<String> = msg
+        .split_whitespace()
+        .map(|w| w.to_ascii_uppercase())
+        .collect();
+    if words.len() >= 3 && words[0] == "CQ" {
+        let call = words[2].trim_end_matches("/R").trim_end_matches("/P");
+        if is_stdcall(call) {
+            words[0] = format!("CQ_{}", words[1]);
+            words.remove(1);
+        }
+    }
+    words
 }
 
 fn suppress_previous_a7_entries(
@@ -363,6 +393,27 @@ fn is_grid4(s: &str) -> bool {
         && bytes[2] <= b'9'
         && bytes[3] >= b'0'
         && bytes[3] <= b'9'
+}
+
+fn is_hashable_callsign_token(token: &str) -> bool {
+    let t = token.trim();
+    if t.len() < 3 || t == "<...>" || t.eq_ignore_ascii_case("CQ") {
+        return false;
+    }
+    if matches!(
+        t.to_ascii_uppercase().as_str(),
+        "DE" | "QRZ" | "DX" | "RRR" | "RR73" | "73" | "R" | "TU"
+    ) {
+        return false;
+    }
+    let bare = t.trim_start_matches('<').trim_end_matches('>');
+    if is_grid4(bare) {
+        return false;
+    }
+    bare.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '/')
+        && bare.chars().any(|c| c.is_ascii_alphabetic())
+        && bare.chars().any(|c| c.is_ascii_digit())
 }
 
 fn normal(msg: &str) -> String {
