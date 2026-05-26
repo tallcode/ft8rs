@@ -1,3 +1,9 @@
-pub mod decoder;
+pub mod session;
+pub mod slot;
+pub mod time;
 
-pub use decoder::{StreamDecodeConfig, StreamDecodedMessage, StreamDecoder};
+pub use session::{
+    StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage, WsjtxDecodeConfig,
+};
+pub use slot::{decode_12k_slots, decode_12k_slots_streaming, TimestampedDecode};
+pub use time::SlotTimestamp;

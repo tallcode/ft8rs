@@ -2,7 +2,7 @@
 name = "ft8rs"
 version = "0.1.0"
 edition = "2021"
-description = "FT8/FT4 encoder/decoder in pure Rust"
+description = "WSJT-X-aligned FT8 streaming decoder"
 license = "GPL-3.0"
 
 [[bin]]

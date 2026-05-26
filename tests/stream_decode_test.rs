@@ -1,4 +1,5 @@
-use ft8rs::stream::{StreamDecodeConfig, StreamDecoder};
+use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
+use ft8rs::stream::{StreamDecodeConfig, StreamDecodeSession};
 use ft8rs::util::engine_name;
 use std::collections::HashSet;
 
@@ -86,42 +87,6 @@ fn normalize_message_token_for_match(token: &str) -> String {
         }
     }
     token
-}
-
-fn load_wav(path: &str) -> (u32, Vec<f32>) {
-    let r = hound::WavReader::open(path).unwrap();
-    let spec = r.spec();
-    let s: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Int => r
-            .into_samples::<i32>()
-            .map(|v| {
-                let v = v.unwrap();
-                match spec.bits_per_sample {
-                    16 => v as f32 / 32768.0,
-                    24 => v as f32 / 8_388_608.0,
-                    32 => v as f32 / 2_147_483_648.0,
-                    _ => panic!(),
-                }
-            })
-            .collect(),
-        hound::SampleFormat::Float => r.into_samples::<f32>().map(|v| v.unwrap()).collect(),
-    };
-    (spec.sample_rate, s)
-}
-
-fn resample(src: &[f32], f: u32, t: u32) -> Vec<f32> {
-    let ratio = f as f64 / t as f64;
-    let n = ((src.len() as f64) / ratio).ceil() as usize;
-    let mut o = Vec::with_capacity(n);
-    for i in 0..n {
-        let s = i as f64 * ratio;
-        let lo = s.floor() as usize;
-        let fr = s - lo as f64;
-        let v0 = *src.get(lo).unwrap_or(&0.0) as f64;
-        let v1 = *src.get(lo + 1).unwrap_or(&0.0) as f64;
-        o.push((v0 * (1.0 - fr) + v1 * fr) as f32);
-    }
-    o
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -243,10 +208,11 @@ fn assert_release_mode() {
 fn test_stream_decode_short_audio() {
     assert_release_mode();
     let t0 = std::time::Instant::now();
-    let (_sr, samples) = load_wav("tests/ft8/210703_133430.wav");
+    let audio = read_wav_mono_f32("tests/ft8/210703_133430.wav").unwrap();
+    let samples = resample_linear(&audio.samples, audio.sample_rate, 12000);
 
-    let mut decoder = StreamDecoder::new(StreamDecodeConfig {
-        freq_low: 100.0,
+    let mut decoder = StreamDecodeSession::new(StreamDecodeConfig {
+        nfa: 100.0,
         ..Default::default()
     });
 
@@ -287,8 +253,8 @@ fn test_stream_decode_short_audio() {
 #[test]
 fn test_stream_decode_long_audio() {
     assert_release_mode();
-    let (sr, all) = load_wav("tests/ft8/230208_140300.wav");
-    let s12k = resample(&all, sr, 12000);
+    let audio = read_wav_mono_f32("tests/ft8/230208_140300.wav").unwrap();
+    let s12k = resample_linear(&audio.samples, audio.sample_rate, 12000);
     let sps = 15 * 12000;
     let dur_12k = s12k.len() as f64 / 12000.0;
     let nseg = (dur_12k / 15.0).ceil() as usize;
@@ -310,7 +276,7 @@ fn test_stream_decode_long_audio() {
     let config = StreamDecodeConfig {
         ..Default::default()
     };
-    let mut decoder = StreamDecoder::new(config);
+    let mut decoder = StreamDecodeSession::new(config);
 
     let mut total_matched = 0;
     let accepted_floor = 422usize;

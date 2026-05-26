@@ -4,6 +4,7 @@ pub mod decode174_91;
 pub mod fft_fftw;
 pub mod fft_rustfft;
 pub mod hashcall;
+pub mod ldpc;
 pub mod ldpc_tables;
 pub mod pack_jt77;
 pub mod subtract_ft8;

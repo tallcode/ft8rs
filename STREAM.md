@@ -131,11 +131,6 @@ WSJT-X `sync8.f90`:
   Costas correlation loop, then converts to Rust 0-based indices only at the
   `s` access boundary. Missing this conversion shifts the sync spectrum by one
   `NSTEP` (`480` samples, `0.04s`).
-- `FT8RS_DUMP_SYNC8=1` enables a Rust-side numeric fixture for source-level
-  comparison. Set it to a number such as `FT8RS_DUMP_SYNC8=8` to control the
-  per-call row limit. The dump includes `call_id`, `ia/ib`, `df`, `tstep`,
-  `jstrt`, `nssy`, `nfos`, pre-candidate `jpeak/jpeak2/red/red2`, and final
-  `(freq,xdt,sync)` candidates sent to `ft8b`.
 - Uses Costas correlation for full `abc` and late `bc` sync blocks.
 - Uses `mlag=13` for `red/jpeak` and `mlag2=JZ` for `red2/jpeak2`.
 - Normalizes `red` and `red2` by the 40th percentile over frequency bins.
@@ -476,6 +471,44 @@ Current local test harness status:
   final non-empty tail window at EOF. This preserves the 180000-sample decode
   buffer contract for full slots while avoiding a silent drop of a nearly full
   final FT8 slot in file-stream tests.
+
+## CLI and Module Boundary
+
+The decoder remains a pure library path. `StreamDecodeSession::decode_slot`
+accepts one stream slot of audio samples and owns the WSJT-X-aligned decode
+state, including the shared `HashCallBook` and same-parity AP memory.
+
+File input is now a thin adapter around that library path:
+
+- `input::audio`: WAV loading, channel folding to mono, and simple linear resampling.
+- `stream::time`: WSJT-X-style slot timestamp parsing/formatting, including
+  `YYMMDD_HHMMSS` inference from file names.
+- `stream::slot`: generic 12 kHz / 15-second slot iteration, EOF tail flush,
+  timestamp attachment, and preservation of one `StreamDecodeSession` instance
+  across slots.
+- `input::file`: WAV file entry point; reads/resamples audio and delegates slot
+  driving to `stream::slot`.
+- `input::soundcard`: reserved soundcard entry point; intentionally stubbed
+  until capture and system-time segmentation are verified.
+- `main`: CLI argument parsing and streaming decode-line printing only. File
+  CLI prints each slot immediately after it is decoded and uses `====` between
+  adjacent slots.
+
+Decoder-facing configuration now uses WSJT-X-style names where practical:
+`nfa`, `nfb`, `syncmin`, `ndepth`, `ncand`, `nQSOProgress`, `lft8apon`,
+`lapcqonly`, and `nzhsym`. The older `StreamDecodeConfig` name remains as a
+type alias for callers, but its concrete type is `WsjtxDecodeConfig`.
+
+The first CLI target is:
+
+```text
+ft8rs --fft-engine fftw file tests/ft8/230208_140300.wav
+ft8rs --fft-engine fftw file some.wav --start-time 230208_140300
+```
+
+The soundcard subcommand is reserved but intentionally returns "not
+implemented" until the capture backend and system-time segmentation can be
+added and verified separately from decoder alignment.
 
 ## Near-term Alignment Priorities
 
