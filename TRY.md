@@ -166,3 +166,36 @@
   - `ft8b` 的 `maxloc(ss)`、`ibest`、`xdt=(ibest-1)*dt2` 链路。
   - `ft8_a7d` AP brute-force 的 `imsg`、`s8(0:7,1:NN)`、`dmm(1:206)` 下标。
 - 若源码审计没有明显缺口，再用剩余 miss 做单条 trace 对比。
+
+## Milestone 3: subtractft8 1-based sample index 修复
+
+### 问题
+- WSJT-X `subtractft8.f90` 内部 `nstart` 和 `j` 都是 Fortran 1-based sample index。
+- Fortran 循环 `do i=1,nframe; j=nstart-1+i` 的第一轮访问 `dd(nstart)`。
+- Rust 之前写成 `for i in 0..NFRAME { j=nstart-1+i; dd0[j-1] }`，第一轮实际访问 `dd0[nstart-2]`，比 WSJT-X 早 `1` 个 sample。
+- 同样的偏移存在于主 subtract 和 `lrefinedt` 的 residual energy 评估，导致 refined offset 选择和最终 residual 写回都偏 1 sample。
+
+### 修复
+- 增加 `wsjtx_subtract_sample_index(nstart_1based, rust_i)`，明确 Rust `i=0` 对应 Fortran `i=1`，因此 `j=nstart+rust_i`。
+- 四处统一改为该映射：
+  - `subtract_ft8_refined()` 的 IQ mix。
+  - `subtract_ft8_refined()` 的 subtract 写回。
+  - `compute_residual_energy()` 的 IQ mix。
+  - `compute_residual_energy()` 的 residual energy 计算。
+- 添加单测锁住 `nstart` 映射，避免后续再次误减。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo test --release subtract_sample_index_matches_wsjtx_one_based_loop -- --nocapture` ✅
+- `cargo check --tests` ✅
+- `git diff --check` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `4.4s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `402/449`
+  - 每段均小于 `15s`
+
+### 结果
+- 长测从第二里程碑稳定基线 `401/449` 提升到 `402/449`。
+- 这是 residual/subtract 链路的源码对齐收益，不是阈值调整。
