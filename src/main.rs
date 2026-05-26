@@ -76,7 +76,7 @@ fn main() {
     let config = StreamDecodeConfig::default();
     let mut decoder = StreamDecoder::new(config);
 
-    let total_slots = samples_12k.len() / samples_per_slot;
+    let total_slots = samples_12k.len().div_ceil(samples_per_slot);
     let t0 = Instant::now();
 
     for slot in 0..total_slots {

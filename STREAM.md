@@ -416,6 +416,19 @@ Current `ft8rs` status after Iteration 13:
   WAV is about `284.47 s`; the final `230208_140730` slot has about `14.47 s`
   of audio and must still be sent to `decode_slot` at EOF. This moved the long
   release result from `402/449` to `420/449`.
+- Test matching now treats resolved hash display forms such as `<RK4FF>` and
+  `RK4FF` as the same message, while keeping unresolved `<...>` distinct. This
+  removes display-only false `-/+` diff rows and moves the protected long result
+  from `420/449` to `422/449`.
+- The long-file harness keeps a timing-offset diagnostic based on matched
+  messages: `baseline_drift - decoded_dt`. For `230208_140300.wav` the estimate
+  is very stable, with median about `+0.785 s` and p10/p90 about
+  `+0.745..+0.825 s`, suggesting the WAV sample 0 is closer to
+  `230208_140300.785` than exactly `230208_140300.000`. A diagnostic run with
+  `FT8RS_SLOT_START_OFFSET_SEC=0.785` centers this residual near zero but drops
+  the score to `416/449`, so this must remain an investigation signal rather
+  than a scoring shortcut until WSJT-X file windowing, padding, and AP memory are
+  compared more deeply.
 
 ## Current Tests and Constraints
 
@@ -424,7 +437,7 @@ Requested acceptance:
 - Short stream decode: `tests/ft8/210703_133430.wav`, at least 19/20 messages,
   each decode under 15 s.
 - Long stream decode: `tests/ft8/230208_140300.wav`, current protected floor
-  `420/449`, every segment under 15 s. The next milestone target is `430/449`.
+  `422/449`, every segment under 15 s. The next milestone target is `430/449`.
 
 Test rules:
 
@@ -437,8 +450,8 @@ Test rules:
 
 Current local test harness status:
 
-- `test_stream_decode_long_audio` now asserts `total_matched >= 420`.
-- The long test now has a severe sensitivity early abort at `420-10`.
+- `test_stream_decode_long_audio` now asserts `total_matched >= 422`.
+- The long test now has a severe sensitivity early abort at `422-10`.
 - Long-file segmentation feeds 15 s windows to `decode_slot` and flushes the
   final non-empty tail window at EOF. This preserves the 180000-sample decode
   buffer contract for full slots while avoiding a silent drop of a nearly full
@@ -447,13 +460,15 @@ Current local test harness status:
 ## Near-term Alignment Priorities
 
 1. Continue source-level architecture comparison, starting with remaining
-   `ft8_decode`/`ft8b`/`ft8_a7` control-flow differences that affect the 29
+   `ft8_decode`/`ft8b`/`ft8_a7` control-flow differences that affect the 27
    current misses.
 2. Use the latest miss-only diff to trace architecture gaps before changing
    parameters.
-3. Audit source-level parameter differences only after the control flow is
+3. Keep the recording-start offset diagnostic in the loop when comparing file
+   windowing, padding, and cross-slot AP memory against WSJT-X.
+4. Audit source-level parameter differences only after the control flow is
    accounted for.
-4. Use miss-driven parameter checks last, keeping FFTW@3840 release tests and
+5. Use miss-driven parameter checks last, keeping FFTW@3840 release tests and
    per-slot timeout/sensitivity guards in place.
 
 ## Current Development Plan
