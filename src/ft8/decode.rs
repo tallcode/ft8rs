@@ -654,6 +654,7 @@ pub(crate) fn sync8(
         let sync2d = &mut b.sync2d[..];
         let candidate0 = &mut b.candidate0;
         candidate0.clear();
+        savg.fill(0.0);
 
         for j in 0..NHSYM {
             let ia = j * NSTEP;

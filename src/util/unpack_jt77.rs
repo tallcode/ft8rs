@@ -224,10 +224,17 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
             if ir == 0 {
                 Some(format!("{} {} {}", c1, c2, grid))
             } else {
-                Some(format!("{} {} R {}", c1, c2, grid))
+                if is_cq_head(&c1) {
+                    None
+                } else {
+                    Some(format!("{} {} R {}", c1, c2, grid))
+                }
             }
         } else {
             let irpt = igrid4 - MAXGRID4;
+            if is_cq_head(&c1) && irpt >= 2 {
+                return None;
+            }
             match irpt {
                 1 => Some(format!("{} {}", c1, c2)),
                 2 => Some(format!("{} {} RRR", c1, c2)),
@@ -301,5 +308,28 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         Some(msg)
     } else {
         None
+    }
+}
+
+fn is_cq_head(call: &str) -> bool {
+    let c = call.trim_end();
+    c == "CQ" || c.starts_with("CQ ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unpack77;
+    use crate::util::pack_jt77::pack77;
+
+    #[test]
+    fn cq_r_grid_is_rejected_like_wsjtx() {
+        let bits = pack77("CQ K1ABC R FN42");
+        assert!(unpack77(&bits, None).is_none());
+    }
+
+    #[test]
+    fn cq_ack_report_is_rejected_like_wsjtx() {
+        let bits = pack77("CQ K1ABC RRR");
+        assert!(unpack77(&bits, None).is_none());
     }
 }

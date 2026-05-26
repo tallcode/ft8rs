@@ -116,3 +116,46 @@
   2. 通过 miss 查找架构上的差异。
   3. 通过源代码查找参数差异。
   4. 通过 miss 查找参数差异。
+
+## Milestone 3: 目标 420，第一轮 1-based/0-based 审计
+
+### 本轮目标
+- 在第二里程碑 `401/449` 基线上，先清理记录、保住成果，再继续从源码层面排查容易忽略的 Fortran 1-based/Rust 0-based 差异。
+- 不为了涨分改阈值；所有改动必须能指向 WSJT-X 源码语义。
+
+### 已处理的源码差异
+- `pack77_1` 的 `R GRID` 判定：
+  - WSJT-X 检查第三个词 `w(3) == 'R '`。
+  - Rust 之前误看第二个词，现改为 `parts[2] == "R"`。
+- `split77/chkcall` 的标准呼号判定：
+  - WSJT-X `split77` 调 `chkcall(w(3))`，`RR73`、`73` 这类报告词不能被当作标准呼号。
+  - Rust `parse_callsign` 之前只限制 suffix 字母数 `<=3`，会把 `RR73` 误判为标准呼号；现按 `chkcall` 收紧为必须有 `1..=3` 个字母 suffix，并补齐首两位字母和 `Q` 前缀规则。
+  - 注意：AP 路径的 `is_stdcall()` 仍保留 WSJT-X `q65_set_list.f90:stdcall` 风格，因为它本来就比 `chkcall` 松，不能混用。
+- `unpack77` 的 CQ invalid guard：
+  - WSJT-X 对 `CQ ... R GRID` 判 invalid。
+  - WSJT-X 对 `CQ ... RRR/73/report` 这类 `irpt>=2` 判 invalid。
+  - Rust 现补齐对应拒绝逻辑。
+- `sync8` 的线程局部 `savg` 每次进入前清零，保持 Fortran `savg=0.` 的生命周期语义；当前 `sbase` 已走独立 Welch 路径，这个改动主要是清理潜在状态残留。
+
+### 需要记住的细节
+- `RR73` 同时满足 4 字符 grid 形态 `RR73`，WSJT-X `pack77_1` 后续会先按 grid 分支处理；因此不能用 `CQ K1ABC RR73` 来测试 `irpt=3` invalid guard，测试应使用 `RRR` 或 `73`。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `git diff --check` ✅
+- `cargo test --release util::pack_jt77::tests -- --nocapture` ✅
+- `cargo test --release util::unpack_jt77::tests -- --nocapture` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `4.3s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `401/449`
+  - 每段均小于 `15s`
+
+### 下一步
+- 继续 1-based/0-based 审计：
+  - `ft8_downsample` 的 `cshift/i0/ib` 边界。
+  - `ft8b` 的 `maxloc(ss)`、`ibest`、`xdt=(ibest-1)*dt2` 链路。
+  - `ft8_a7d` AP brute-force 的 `imsg`、`s8(0:7,1:NN)`、`dmm(1:206)` 下标。
+- 若源码审计没有明显缺口，再用剩余 miss 做单条 trace 对比。

@@ -104,7 +104,14 @@ fn parse_callsign(raw: &str) -> CallsignParse {
         }
     }
 
-    let standard = (1..=2).contains(&iarea) && nplet >= 1 && npdig < iarea && nslet <= 3;
+    let first_two_have_letter = chars.iter().take(2).any(|c| c.is_ascii_uppercase());
+    let q_prefix_ok = chars.first() != Some(&'Q') || call.starts_with("QU1RK");
+    let standard = (1..=2).contains(&iarea)
+        && first_two_have_letter
+        && q_prefix_ok
+        && nplet >= 1
+        && npdig < iarea
+        && (1..=3).contains(&nslet);
 
     CallsignParse {
         basecall: call,
@@ -308,7 +315,7 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
     let (igrid4, ir) = if parts.len() == 2 {
         (MAXGRID4 + 1, 0)
     } else if is_grid4(&last_upper) {
-        let ir = if parts.len() == 4 && parts[1] == "R" {
+        let ir = if parts.len() == 4 && parts[2] == "R" {
             1
         } else {
             0
@@ -573,5 +580,18 @@ mod tests {
         assert!(is_stdcall("IW1PUR"));
         assert!(is_stdcall("DL8YHR"));
         assert!(!is_stdcall("KN87"));
+    }
+
+    #[test]
+    fn type1_r_grid_uses_third_word_like_wsjtx() {
+        let bits = super::pack77("K1ABC W9XYZ R FN42");
+        let msg = crate::util::unpack_jt77::unpack77(&bits, None).unwrap();
+        assert_eq!(msg, "K1ABC W9XYZ R FN42");
+    }
+
+    #[test]
+    fn report_tokens_are_not_standard_callsigns_for_split77() {
+        assert!(!super::parse_callsign("RR73").is_standard);
+        assert!(!super::parse_callsign("73").is_standard);
     }
 }

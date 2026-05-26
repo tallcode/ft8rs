@@ -138,6 +138,25 @@ WSJT-X `sync8.f90`:
   if the peak lag differs.
 - Near-dupe pruning is in candidate order: if `df<4 Hz` and `dt<0.04 s`, keep
   only the stronger sync candidate.
+
+## `packjt77/unpack77` Alignment Details
+
+WSJT-X uses different callsign predicates in different contexts; they should not
+be collapsed into one Rust helper.
+
+- `split77` and `pack77_1` call `chkcall`, which requires a plausible standard
+  base callsign: a digit in position 2 or 3, at least one suffix letter after the
+  digit, at most three suffix letters, and no ordinary `Q...` prefix except the
+  documented `QU1RK` placeholder.
+- AP code uses `stdcall`-style checks in other places, which are intentionally
+  looser. `is_stdcall()` therefore remains separate from the `pack77` internal
+  callsign parser.
+- For Type 1 `R GRID`, WSJT-X checks the third word `w(3)`, not the second word.
+  In Rust zero-based terms this is `parts[2]`.
+- `unpack77` rejects CQ messages that decode as `CQ ... R GRID` or as CQ with
+  `irpt>=2` (`RRR`, `73`, or reports). `RR73` is a special trap: it also matches
+  the 4-character grid shape `RR73`, and WSJT-X `pack77_1` tests the grid branch
+  before the report branch when materializing `igrid4`.
 - Prioritizes candidates within 10 Hz of `nfqso`, then appends remaining
   candidates in descending sync order.
 - Returns `sbase` from `get_spectrum_baseline(dd,nfa,nfb,sbase)`, not from the
