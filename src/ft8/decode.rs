@@ -455,7 +455,7 @@ fn decode_from_f64(
             std::collections::HashMap::new();
         let mut decoded_in_pass = 0;
 
-        // ── Candidate decoding: sequential with immediate subtraction (matching WSJT-X) ──
+        // ── Candidate decoding: sequential with immediate subtraction (matching WSJT-X ft8b) ──
         let t_decode_start = std::time::Instant::now();
         for cand in &candidates {
             let mut cand_ws = create_decode_workspace();
@@ -1343,7 +1343,9 @@ pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: u
         }
     }
 
-    let a = polyfit(&env_x, &env_y, 5);
+    // WSJT-X baseline.f90 uses nterms=5, i.e. five coefficients a(1:5)
+    // and a degree-4 polynomial. Rust polyfit() takes the degree.
+    let a = polyfit(&env_x, &env_y, 4);
 
     for i in ia..=ib.min(nh1) {
         let t = (i as isize - i0 as isize) as f64;

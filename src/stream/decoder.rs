@@ -120,8 +120,11 @@ impl StreamDecoder {
 
         // ── Stage 1: nzhsym=41 early decode ──
         let early_dd = partial_window(&raw, 41);
-        let (early_results, _) =
-            decode_f64_with_sbase(&early_dd, self.decode_options(41, Rc::clone(&book)));
+        let (early_results, _) = if self.config.depth == 1 {
+            (Vec::new(), Vec::new())
+        } else {
+            decode_f64_with_sbase(&early_dd, self.decode_options(41, Rc::clone(&book)))
+        };
 
         // ── Stage 2: nzhsym=47 early subtraction only ──
         let mut dd1 = partial_window(&raw, 47);
@@ -177,7 +180,9 @@ impl StreamDecoder {
         for entry in &ap_candidates {
             trace_ap_memory("CAND", self.jseq, entry);
         }
-        let ap_results = if ap_candidates.is_empty() {
+        let ap_allowed =
+            self.config.ft8_ap && self.config.ncontest != 6 && self.config.ncontest != 7;
+        let ap_results = if !ap_allowed || ap_candidates.is_empty() {
             Vec::new()
         } else {
             let mut ap_msgs: Vec<ApDecodeResult> = Vec::new();

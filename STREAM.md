@@ -115,6 +115,11 @@ shared decode buffer. For example, `41*3456 = 141696` samples and
 180000-sample decode window and zero everything after `nzhsym*3456` for
 `nzhsym<50`.
 
+When `ndepth=1`, WSJT-X returns immediately for `nzhsym<50`; the stream decoder
+therefore skips the 41/47 early path in depth-1 mode and decodes only the final
+50-symbol window. External `ft8_a7d` AP also follows the WSJT-X guard:
+`lft8apon` must be enabled and contest modes 6/7 are excluded.
+
 ## `sync8` Alignment Details
 
 WSJT-X `sync8.f90`:
@@ -216,6 +221,9 @@ Current `ft8rs` status after Iteration 12:
 - The Rust `pctile` equivalent now uses Fortran `nint(npts*0.01*npct)` ranking
   instead of a ceil percentile, and the lower-envelope sample set follows
   WSJT-X's fixed 1000-point cap.
+- `baseline.f90` uses `nterms=5`, which means five coefficients and therefore a
+  degree-4 polynomial. Rust `polyfit()` takes a degree argument, so the aligned
+  call is `polyfit(..., 4)`, not `polyfit(..., 5)`.
 - `SyncMode::Amplitude` and `SyncMode::AbsSum` remain non-WSJT-X comparison
   modes. Default alignment mode is `Power`.
 
@@ -240,6 +248,12 @@ for ipass in 1..npass:
       ft8b subtracts from dd when lsubtract=true
       ft8_a7_save(jseq, xdt, f1, msg37)
 ```
+
+In WSJT-X regular decode, subtraction is performed inside `ft8b.f90` immediately
+after a valid codeword/message is found and before control returns to
+`ft8_decode.f90` for duplicate filtering. The Rust port returns from `ft8b` and
+then performs the same subtraction in the outer loop, so this subtraction must
+remain before the Rust duplicate filter to preserve the effective WSJT-X order.
 
 WSJT-X `ft8b.f90` inner decode:
 
