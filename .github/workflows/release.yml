@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     name: Build ${{ matrix.package_name }}
@@ -29,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -120,7 +123,7 @@ jobs:
           Compress-Archive -Path "dist\$pkg" -DestinationPath "${{ matrix.artifact_name }}" -Force
 
       - name: Upload packaged binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.package_name }}
           path: ${{ matrix.artifact_name }}
@@ -133,7 +136,7 @@ jobs:
 
     steps:
       - name: Download packaged binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
 
@@ -146,7 +149,7 @@ jobs:
           find artifacts -maxdepth 2 -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ft8rs ${{ steps.meta.outputs.tag }}
