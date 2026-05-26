@@ -238,16 +238,66 @@
 ## Milestone 4: 目标 430
 
 ### 目标
-- 当前保护线：`420/449`。
+- 当前保护线：`422/449`。
 - 第四里程碑目标：`430/449`。
 - 继续坚持 WSJT-X 对齐优先，不通过放宽阈值或扩大非 WSJT-X 搜索追分。
 
 ### 排查顺序
 1. 通过源代码继续查架构差异，优先 `ft8_decode` 外层控制流、`ft8b` AP pass、`ft8_a7` 跨时隙记忆。
-2. 用最新 `29` 条 miss 反查架构差异。
+2. 用最新 `27` 条 miss 反查架构差异。
 3. 源码层面确认参数差异。
 4. 最后才用 miss 做参数差异定位。
 
 ### 当前线索
-- 最新 miss-only diff 已经去掉尾段假 miss，剩余 29 条才是真正需要排查的对象。
+- 最新 diff 已经去掉尾段假 miss，后续还需要排除 hash/display 形态造成的假 `-/+`。
 - `230208_140730` 只剩 `<...> IK4LZH JN54` 一条未匹配；这个片段本身不再是切窗问题。
+
+## Milestone 4: diff 加回 extra 与录音起点偏移估计
+
+### 问题
+- 只看 miss-only diff 不够定位，extra decode 也能暴露 hash/display、时间窗和 baseline 口径差异。
+- 长测 `230208_140300.csv` 的 `Drift` 与 Rust 解码输出 `dt` 存在稳定差值，怀疑 WAV 文件起点不是精确 `230208_140300.000`。
+
+### 修复
+- diff CSV 恢复 `Tag=+`：
+  - `Tag=-` 为 baseline 有但当前未匹配。
+  - `Tag=+` 为当前解码有但同 segment baseline 未消耗。
+  - 匹配逻辑改为一条 baseline 消耗一条 decoded result，避免重复消息被错误多次匹配。
+- 长测统计所有匹配消息的 `baseline_drift - decoded_dt`，输出 mean/median/p10/p90。
+- 增加默认关闭的 `FT8RS_SLOT_START_OFFSET_SEC` 诊断参数，用于按推测的绝对 slot 起点平移文件窗口；非零时只做诊断，不触发正式验收断言。
+- CLI 文件入口也从整除 slot 数改为 `div_ceil`，避免实际文件流解码跳过 EOF 尾段。
+
+### 结果
+- `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture`：
+  - `420/449`
+  - diff 为 `29` 条 `-`，`13` 条 `+`
+  - `baseline_drift - decoded_dt`：
+    - mean `+0.760s`
+    - median `+0.785s`
+    - p10 `+0.745s`
+    - p90 `+0.825s`
+    - n `420`
+- 这说明差值非常集中，更像固定录音起点偏移，而不是随机 drift 误差。按当前符号约定，WAV sample 0 更接近 `230208_140300.785`。
+- `FT8RS_SLOT_START_OFFSET_SEC=0.785 cargo test --release test_stream_decode_long_audio -- --nocapture`：
+  - `416/449`
+  - offset residual median 变成 `+0.000s`
+  - 这确认时间偏移估计方向是对的，但直接按 CSV 绝对 slot 边界重切窗反而少 4 条；后续要继续对比 WSJT-X 文件窗口、padding 和 AP memory，而不能简单把 offset 当成追分开关。
+
+## Milestone 4: diff 匹配展示归一化
+
+### 问题
+- diff 中出现字符串展示差异造成的假 `-/+`：
+  - `EA5/DH0YAH RK4FF RR73` vs `EA5/DH0YAH <RK4FF> RR73`
+  - `RK4FF EA5/DH0YAH 73` vs `<RK4FF> EA5/DH0YAH 73`
+- 这些消息实际内容一致，尖括号只是 hash/display 形态，不应该作为 miss/extra。
+
+### 修复
+- 测试匹配归一化时把 `<CALL>` 归一为 `CALL`。
+- `<...>` 保持原样，因为它表示未知 hash，不能安全等同于具体呼号。
+
+### 结果
+- `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture`：
+  - `422/449`
+  - diff 为 `27` 条 `-`，`11` 条 `+`
+  - `baseline_drift - decoded_dt` 仍然稳定：median `+0.785s`
+- 长测保护线从 `420/449` 提升到 `422/449`。
