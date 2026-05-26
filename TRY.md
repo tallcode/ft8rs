@@ -301,3 +301,36 @@
   - diff 为 `27` 条 `-`，`11` 条 `+`
   - `baseline_drift - decoded_dt` 仍然稳定：median `+0.785s`
 - 长测保护线从 `420/449` 提升到 `422/449`。
+
+## Milestone 4: offset sweep 临时实验
+
+### 目的
+- 验证 `+0.785s` 录音起点偏移是否应该直接作为正式切窗 offset。
+- 对比多个 offset 下的匹配数、extra/miss、弱信号 extra、晚到大 drift miss 和 timing residual。
+
+### 临时测试
+- 临时新增 `tests/tmp_offset_sweep.rs`，跑完后删除，不保留在仓库。
+- 测试使用 release + FFTW。
+- 三个完整解码产物永久保留：
+  - `tests/ft8/230208_140300_decode_no_offset.csv`
+  - `tests/ft8/230208_140300_decode_offset_0785.csv`
+  - `tests/ft8/230208_140300_decode_offset_diff.csv`
+
+### 结果
+
+| offset | decoded | matched | misses | extras | weak extras | late drift misses | residual median | p10 | p90 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.000 | 433 | 422 | 27 | 11 | 4 | 6 | +0.785 | +0.745 | +0.825 |
+| 0.250 | 435 | 424 | 25 | 11 | 4 | 6 | +0.535 | +0.490 | +0.575 |
+| 0.500 | 437 | 426 | 23 | 11 | 4 | 6 | +0.285 | +0.240 | +0.325 |
+| 0.785 | 425 | 418 | 31 | 7 | 2 | 10 | +0.000 | -0.045 | +0.040 |
+| 1.000 | 420 | 412 | 37 | 8 | 3 | 13 | -0.215 | -0.255 | -0.175 |
+
+### 结论
+- `0.785s` 偏移估计是真实的：它能把 `baseline_drift - decoded_dt` residual 拉到 0 附近。
+- 但最佳匹配数出现在 `0.500s`，达到 `426/449`，不是 residual 归零的 `0.785s`。
+- offset 越接近/超过 `0.785s`，大 drift late misses 明显变多：
+  - `0.500s` late drift misses = `6`
+  - `0.785s` late drift misses = `10`
+  - `1.000s` late drift misses = `13`
+- 这支持之前判断：正式方向不应是简单把 slot 窗口硬平移到 `0.785s`，而要继续对齐 WSJT-X 文件窗口、padding、长文件连续缓冲和跨时隙 AP memory。

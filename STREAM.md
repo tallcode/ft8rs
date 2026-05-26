@@ -429,6 +429,12 @@ Current `ft8rs` status after Iteration 13:
   the score to `416/449`, so this must remain an investigation signal rather
   than a scoring shortcut until WSJT-X file windowing, padding, and AP memory are
   compared more deeply.
+- A temporary offset sweep confirmed this: `0.500 s` gives the best observed
+  score so far (`426/449`), while `0.785 s` centers the timing residual but only
+  reaches `418/449`, and `1.000 s` falls to `412/449`. Late large-drift misses
+  increase as the offset grows. This points toward a WSJT-X window/padding or
+  continuous-buffer alignment issue rather than a simple global timestamp
+  correction.
 
 ## Current Tests and Constraints
 
@@ -465,7 +471,9 @@ Current local test harness status:
 2. Use the latest miss-only diff to trace architecture gaps before changing
    parameters.
 3. Keep the recording-start offset diagnostic in the loop when comparing file
-   windowing, padding, and cross-slot AP memory against WSJT-X.
+   windowing, padding, long-file continuous buffering, and cross-slot AP memory
+   against WSJT-X. The current best diagnostic offset is around `0.500 s` for
+   matched count, while `0.785 s` best explains the reported drift origin.
 4. Audit source-level parameter differences only after the control flow is
    accounted for.
 5. Use miss-driven parameter checks last, keeping FFTW@3840 release tests and
