@@ -1,6 +1,6 @@
+use ft8rs::fft_engine_name;
 use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
 use ft8rs::stream::{StreamDecodeConfig, StreamDecodeSession};
-use ft8rs::util::engine_name;
 use std::collections::HashSet;
 
 #[derive(Clone, Debug)]
@@ -198,7 +198,7 @@ fn assert_release_mode() {
         "stream decode acceptance tests must be run with --release"
     );
     assert_eq!(
-        engine_name(),
+        fft_engine_name(),
         "FFTW",
         "stream decode acceptance tests must use FFTW@3840"
     );
@@ -236,7 +236,7 @@ fn test_stream_decode_short_audio() {
 
     println!(
         "\n[ENGINE={}] [STREAM SHORT DECODE] {} unique messages in {:.1}s",
-        engine_name(),
+        fft_engine_name(),
         unique_msgs.len(),
         elapsed.as_secs_f64()
     );
@@ -267,7 +267,7 @@ fn test_stream_decode_long_audio() {
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
     println!(
         "\n[ENGINE={}] [STREAM LONG DECODE] {} segments, {} baseline messages, slot_start_offset={:+.3}s",
-        engine_name(),
+        fft_engine_name(),
         nseg,
         baseline.len(),
         start_offset_sec

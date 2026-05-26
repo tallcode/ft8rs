@@ -153,16 +153,56 @@
   - `422/449`
   - 每段均小于 `15s`
   - timing residual median 仍为 `+0.785s`
+
+## Engineering: util 收口与时间职责拆分
+
+### 目的
+- 让解码器保持相对独立，上层不要直接依赖内部 `util` 模块。
+- `stream::time` 只表达 slot 时间，不承担文件名解析职责。
+- 单一 owner 的 util 代码合并回 owner，减少“公共工具箱”膨胀。
+
+### 改动
+- `stream::time::SlotTimestamp` 只保留：
+  - `parse`
+  - `add_seconds`
+  - `format` / `Display`
+- 文件名时间戳推断移动到 `input::file::infer_start_time_from_path`。
+- `util` 从公开模块改为 crate-internal：
+  - 上层仍可通过 root 使用 `HashCallBook`。
+  - 测试和上层可通过 root 使用 `fft_engine_name`，不再访问 `ft8rs::util`。
+- 合并单一 owner util：
+  - `util::crc` 合入 `ft8::decode174_91`。
+  - `util::ldpc` 合入 `ft8::ap_decode`，只服务 AP brute-force codeword 生成。
+- 删除未使用 FFT API：
+  - `fft_c2r`
+  - `next_pow2`
+  - 对应 FFTW c2r plan/cache/FFI 和 RustFFT wrapper。
+- 将只服务 FT8/JT77 解码器的协议模块从 `util` 移到 `src/ft8`：
+  - `constants` -> `ft8::protocol`
+  - `pack_jt77`
+  - `unpack_jt77`
+  - `decode174_91`
+  - `ldpc_tables`
+  - `hashcall`
+  - `subtract_ft8`
+- `util` 现在只保留 FFT dispatcher/engine 这种真正跨层基础设施。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+  - 无 warning
 - `git diff --check` ✅
-- `cargo test --release util::pack_jt77::tests -- --nocapture` ✅
-- `cargo test --release util::unpack_jt77::tests -- --nocapture` ✅
-- `cargo test --release stream::session::tests -- --nocapture` ✅
+- `cargo test --release ft8::pack_jt77::tests -- --nocapture` ✅
+- `cargo test --release ft8::unpack_jt77::tests -- --nocapture` ✅
+- `target/release/ft8rs --fft-engine fftw file tests/ft8/210703_133430.wav` ✅
+  - CLI 短文件仍输出 `21` 条。
 - `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
   - `21` unique messages
-  - 约 `4.4s`
+  - 约 `4.2s`
 - `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
-  - `401/449`
+  - `422/449`
   - 每段均小于 `15s`
+  - timing residual median 仍为 `+0.785s`
 
 ### 下一步
 - 继续 1-based/0-based 审计：
@@ -416,11 +456,10 @@
   - 负责 WAV 读取、整数/浮点样本转换、多通道折叠为 mono、线性重采样。
 - 新增 `stream::time` 模块：
   - 支持 `YYMMDD_HHMMSS`、`YYYYMMDD_HHMMSS`、`HHMMSS` 解析。
-  - 支持从 WSJT-X 风格文件名推断起始 slot 时间。
 - 新增 `stream::slot` 和 `input::file`：
   - `stream::slot` 负责文件样本按 12 kHz / 15 秒 slot 喂给解码 session。
   - 保留同一个 `StreamDecodeSession` 实例跨 slot 运行，继续共享 hashcallbook 和 AP memory。
-  - `input::file` 负责 WAV 文件入口、读取和重采样。
+  - `input::file` 负责 WSJT-X 风格文件名时间戳推断、WAV 文件入口、读取和重采样。
   - EOF 时保留最后一个非空尾 slot，与当前测试 harness 的行为一致。
 - 重写 CLI：
   - `ft8rs --fft-engine fftw file <wav> [--start-time ...]`

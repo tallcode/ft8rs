@@ -1,4 +1,4 @@
-use crate::util::constants::*;
+use crate::ft8::protocol::*;
 /// FT8 message packing – Rust port of packjt77.f90
 ///
 /// Supported message types:
@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn type1_r_grid_uses_third_word_like_wsjtx() {
         let bits = super::pack77("K1ABC W9XYZ R FN42");
-        let msg = crate::util::unpack_jt77::unpack77(&bits, None).unwrap();
+        let msg = crate::ft8::unpack_jt77::unpack77(&bits, None).unwrap();
         assert_eq!(msg, "K1ABC W9XYZ R FN42");
     }
 

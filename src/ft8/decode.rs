@@ -1,10 +1,10 @@
 /// FT8 decoder - Rust port of decode.ts
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
-use crate::util::constants::{C38, N_LDPC, SAMPLE_RATE};
-use crate::util::decode174_91::{decode174_91, DecodeResult};
-use crate::util::hashcall::HashCallBook;
-use crate::util::pack_jt77::{is_stdcall, pack77};
-use crate::util::unpack_jt77::unpack77;
+use crate::ft8::decode174_91::{decode174_91, DecodeResult};
+use crate::ft8::hashcall::HashCallBook;
+use crate::ft8::pack_jt77::{is_stdcall, pack77};
+use crate::ft8::protocol::{C38, N_LDPC, SAMPLE_RATE};
+use crate::ft8::unpack_jt77::unpack77;
 use crate::util::{fft_complex, fft_r2c, sync8_fft_size};
 use std::rc::Rc;
 
@@ -427,7 +427,7 @@ fn decode_from_f64(
                 &mut cand_freq_uses,
             ) {
                 let message_key = normalize_message_key(&r.msg);
-                crate::util::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
+                crate::ft8::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
                 if seen_messages.contains(&message_key) {
                     continue;
                 }

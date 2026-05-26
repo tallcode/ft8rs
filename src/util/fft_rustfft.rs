@@ -108,15 +108,6 @@ pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
     });
 }
 
-/// Next power of 2 >= n
-#[inline]
-pub fn next_pow2(n: usize) -> usize {
-    if n <= 1 {
-        return 1;
-    }
-    1 << (usize::BITS - n.leading_zeros())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,17 +191,4 @@ pub fn fft_r2c(re: &mut [f64], im: &mut [f64]) {
         re[i] = 0.0;
         im[i] = 0.0;
     }
-}
-
-/// Complex-to-real inverse FFT via fft_complex inverse.
-#[inline]
-pub fn fft_c2r(re: &mut [f64], im: &mut [f64]) {
-    let n = re.len();
-    debug_assert_eq!(im.len(), n);
-    let nh = n / 2 + 1;
-    for i in nh..n {
-        re[i] = 0.0;
-        im[i] = 0.0;
-    }
-    fft_complex(re, im, true);
 }

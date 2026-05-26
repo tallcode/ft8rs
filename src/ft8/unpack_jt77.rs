@@ -1,5 +1,5 @@
-use crate::util::constants::*;
-use crate::util::hashcall::HashCallBook;
+use crate::ft8::hashcall::HashCallBook;
+use crate::ft8::protocol::*;
 /// FT8 message unpacking – Rust port of unpack77
 use num_bigint::BigInt;
 
@@ -319,7 +319,7 @@ fn is_cq_head(call: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::unpack77;
-    use crate::util::pack_jt77::pack77;
+    use crate::ft8::pack_jt77::pack77;
 
     #[test]
     fn cq_r_grid_is_rejected_like_wsjtx() {

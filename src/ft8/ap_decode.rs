@@ -18,7 +18,8 @@ use super::decode::{
     build_costas_sync_templates, normalize_bmet, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DOWNSAMPLE_BAUD,
     DOWNSAMPLE_DF, DOWNSAMPLE_SCALE, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TAPER_SIZE, TWO_PI,
 };
-use crate::util::pack_jt77::{is_stdcall, pack77};
+use crate::ft8::pack_jt77::{is_stdcall, pack77};
+use crate::ft8::protocol::G_HEX;
 
 const ICOS7: [usize; 7] = [3, 1, 4, 0, 6, 5, 2];
 
@@ -258,12 +259,12 @@ pub fn ft8_a7d(
 
         // WSJT-X genft8 does: pack77 → unpack77 → msgsent (normalized form)
         // We must use msgsent as msgbest, not raw msg
-        let msgsent = crate::util::unpack_jt77::unpack77(&msg77, None);
+        let msgsent = crate::ft8::unpack_jt77::unpack77(&msg77, None);
         if msgsent.is_none() {
             continue;
         }
 
-        let cw = crate::util::ldpc::codeword_174_91(&msg77);
+        let cw = codeword_174_91(&msg77);
         if cw.len() != 174 {
             continue;
         }
@@ -442,6 +443,59 @@ fn build_ap_message(
 fn is_cq_call_1(call_1: &str) -> bool {
     let c = call_1.trim_end();
     c == "CQ" || c.starts_with("CQ ")
+}
+
+fn codeword_174_91(msg77: &[u8]) -> Vec<u8> {
+    let g = generate_ldpc_g_matrix();
+    let poly = 0x2757u16;
+    let mut crc: u16 = 0;
+
+    for bit_idx in 0..96 {
+        let next_bit = if bit_idx < 77 { msg77[bit_idx] } else { 0 };
+        if (crc & 0x2000) != 0 {
+            crc = ((crc << 1) | next_bit as u16) ^ poly;
+        } else {
+            crc = (crc << 1) | next_bit as u16;
+        }
+        crc &= 0x3fff;
+    }
+
+    let mut msg91 = msg77.to_vec();
+    for i in 0..14 {
+        msg91.push(((crc >> (13 - i)) & 1) as u8);
+    }
+
+    let mut codeword = msg91.clone();
+    for row in g.iter().take(83) {
+        let mut sum = 0;
+        for j in 0..91 {
+            sum += msg91[j] * row[j];
+        }
+        codeword.push(sum % 2);
+    }
+    codeword
+}
+
+fn generate_ldpc_g_matrix() -> Vec<Vec<u8>> {
+    let k = 91;
+    let m = 83;
+    let mut gen = vec![vec![0u8; k]; m];
+
+    for i in 0..m {
+        let hex_str = G_HEX[i];
+        for j in 0..23 {
+            let byte = hex_str.as_bytes()[j];
+            let val = u8::from_str_radix(&format!("{}", byte as char), 16).unwrap_or(0);
+            let limit = if j == 22 { 3 } else { 4 };
+            for jj in 1..=limit {
+                let col = j * 4 + jj - 1;
+                if (val & (1 << (4 - jj))) != 0 {
+                    gen[i][col] = 1;
+                }
+            }
+        }
+    }
+    gen
 }
 
 #[cfg(test)]

@@ -37,6 +37,17 @@ where
     decode_12k_slots_streaming(&samples_12k, options.start_time, options.config, on_slot)
 }
 
+pub fn infer_start_time_from_path(path: impl AsRef<Path>) -> Option<SlotTimestamp> {
+    let stem = path.as_ref().file_stem()?.to_string_lossy();
+    let stem = stem.as_ref();
+    let suffix = stem
+        .as_bytes()
+        .windows(13)
+        .rposition(|window| is_timestamp_bytes(window))
+        .map(|idx| &stem[idx..idx + 13])?;
+    SlotTimestamp::parse(suffix).ok()
+}
+
 fn read_wav_12k(path: impl AsRef<Path>) -> Result<Vec<f32>, String> {
     let audio = read_wav_mono_f32(path)?;
     Ok(resample_linear(
@@ -44,4 +55,22 @@ fn read_wav_12k(path: impl AsRef<Path>) -> Result<Vec<f32>, String> {
         audio.sample_rate,
         SAMPLE_RATE,
     ))
+}
+
+fn is_timestamp_bytes(window: &[u8]) -> bool {
+    window.len() == 13
+        && window[6] == b'_'
+        && window[..6].iter().all(u8::is_ascii_digit)
+        && window[7..].iter().all(u8::is_ascii_digit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::infer_start_time_from_path;
+
+    #[test]
+    fn infers_start_time_from_wsjtx_filename() {
+        let ts = infer_start_time_from_path("tests/ft8/230208_140300.wav").unwrap();
+        assert_eq!(ts.format(), "230208_140300");
+    }
 }

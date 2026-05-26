@@ -9,7 +9,6 @@ type PlanHandle = *mut std::ffi::c_void;
 
 extern "C" {
     fn fftw_plan_dft_r2c_1d(n: i32, input: *mut f64, output: *mut f64, flags: u32) -> PlanHandle;
-    fn fftw_plan_dft_c2r_1d(n: i32, input: *mut f64, output: *mut f64, flags: u32) -> PlanHandle;
     fn fftw_plan_dft_1d(
         n: i32,
         input: *mut f64,
@@ -20,7 +19,6 @@ extern "C" {
 
     fn fftw_execute_dft(plan: PlanHandle, input: *const f64, output: *mut f64);
     fn fftw_execute_dft_r2c(plan: PlanHandle, input: *const f64, output: *mut f64);
-    fn fftw_execute_dft_c2r(plan: PlanHandle, input: *const f64, output: *mut f64);
 
     fn fftw_destroy_plan(plan: PlanHandle);
 }
@@ -71,28 +69,6 @@ impl PlanAndBuffers {
         }
     }
 
-    fn c2r(n: usize) -> Self {
-        let _g = PLANNING_MUTEX.lock().unwrap();
-        let mut buf_in = vec![0.0f64; n + 2];
-        let mut buf_out = vec![0.0f64; n];
-        let plan = unsafe {
-            fftw_plan_dft_c2r_1d(
-                n as i32,
-                buf_in.as_mut_ptr(),
-                buf_out.as_mut_ptr(),
-                FFTW_ESTIMATE,
-            )
-        };
-        if plan.is_null() {
-            panic!("FFTW c2r plan failed for n={n}");
-        }
-        Self {
-            plan,
-            buf_in,
-            buf_out,
-        }
-    }
-
     fn c2c(n: usize, forward: bool) -> Self {
         let _g = PLANNING_MUTEX.lock().unwrap();
         let len = n * 2;
@@ -124,7 +100,6 @@ use std::collections::HashMap;
 /// Per-thread plan cache.
 struct PlanCache {
     r2c: HashMap<usize, PlanAndBuffers>,
-    c2r: HashMap<usize, PlanAndBuffers>,
     c2c_fwd: HashMap<usize, PlanAndBuffers>,
     c2c_bwd: HashMap<usize, PlanAndBuffers>,
 }
@@ -136,7 +111,6 @@ impl PlanCache {
     fn new() -> Self {
         Self {
             r2c: HashMap::new(),
-            c2r: HashMap::new(),
             c2c_fwd: HashMap::new(),
             c2c_bwd: HashMap::new(),
         }
@@ -144,10 +118,6 @@ impl PlanCache {
 
     fn get_r2c(&mut self, n: usize) -> &mut PlanAndBuffers {
         self.r2c.entry(n).or_insert_with(|| PlanAndBuffers::r2c(n))
-    }
-
-    fn get_c2r(&mut self, n: usize) -> &mut PlanAndBuffers {
-        self.c2r.entry(n).or_insert_with(|| PlanAndBuffers::c2r(n))
     }
 
     fn get_c2c(&mut self, n: usize, forward: bool) -> &mut PlanAndBuffers {
@@ -224,40 +194,6 @@ pub fn fft_r2c(re: &mut [f64], im: &mut [f64]) {
     });
 }
 
-/// Complex-to-real inverse FFT (c2r).
-/// Input: `re[..nh]`/`im[..nh]` complex bins; output: `re[..n]` real data.
-#[inline]
-pub fn fft_c2r(re: &mut [f64], im: &mut [f64]) {
-    let n = re.len();
-    debug_assert_eq!(im.len(), n);
-    let nh = n / 2 + 1;
-
-    PC.with_borrow_mut(|pc| {
-        let pb = pc.get_c2r(n);
-        let plan = pb.plan;
-        let in_ptr = pb.buf_in.as_mut_ptr();
-        let out_ptr = pb.buf_out.as_mut_ptr();
-
-        unsafe {
-            for i in 0..nh {
-                *in_ptr.add(2 * i) = re[i];
-                *in_ptr.add(2 * i + 1) = im[i];
-            }
-            fftw_execute_dft_c2r(plan, in_ptr, out_ptr);
-            std::ptr::copy_nonoverlapping(out_ptr, re.as_mut_ptr(), n);
-        }
-    });
-}
-
-/// Next power of 2 (kept for compatibility).
-#[inline]
-pub fn next_pow2(n: usize) -> usize {
-    if n <= 1 {
-        return 1;
-    }
-    1 << (usize::BITS - n.leading_zeros())
-}
-
 // ──────────────────────────────── Tests ─────────────────────────────────────
 
 #[cfg(test)]
@@ -302,23 +238,6 @@ mod tests {
         for i in 0..nh {
             assert!((re1[i] - re2[i]).abs() < 1e-9, "re@{i}");
             assert!((im1[i] - im2[i]).abs() < 1e-9, "im@{i}");
-        }
-    }
-
-    #[test]
-    fn c2r_roundtrip() {
-        let n = 3840;
-        let mut re: Vec<f64> = (0..n).map(|i| (i as f64 * 0.05).sin()).collect();
-        let mut im = vec![0.0; n];
-        let orig = re.clone();
-        fft_r2c(&mut re, &mut im);
-        fft_c2r(&mut re, &mut im);
-        let s = 1.0 / n as f64;
-        for i in 0..n {
-            re[i] *= s;
-        }
-        for i in 0..n {
-            assert!((re[i] - orig[i]).abs() < 1e-9, "{i}");
         }
     }
 

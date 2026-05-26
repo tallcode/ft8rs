@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use ft8rs::input::{decode_wav_file_streaming, open_soundcard_stream, FileDecodeOptions};
+use ft8rs::input::{
+    decode_wav_file_streaming, infer_start_time_from_path, open_soundcard_stream, FileDecodeOptions,
+};
 use ft8rs::stream::StreamDecodeConfig;
 use ft8rs::SlotTimestamp;
 
@@ -95,7 +97,7 @@ fn run() -> Result<(), String> {
 fn run_file(args: FileArgs) -> Result<(), String> {
     let start_time = match args.start_time {
         Some(value) => SlotTimestamp::parse(&value)?,
-        None => SlotTimestamp::infer_from_path(&args.input).ok_or_else(|| {
+        None => infer_start_time_from_path(&args.input).ok_or_else(|| {
             format!(
                 "could not infer start time from {}; pass --start-time YYMMDD_HHMMSS",
                 args.input.display()
