@@ -53,6 +53,7 @@ target/release/ft8rs
 ```bash
 target/release/ft8rs --help
 target/release/ft8rs file --help
+target/release/ft8rs soundcard --help
 ```
 
 ## 运行 CLI
@@ -79,7 +80,11 @@ YYMMDD_HHMMSS SNR DT FREQ MESSAGE
 210703_133430 -25 -0.8  1197 CQ F5RXL IN94
 ```
 
-CLI 的 stdout 只输出解码信息。文件会按 15 秒 slot 流式解码，解完一段立即输出一段；段与段之间使用 `====` 分隔。
+CLI 的 stdout 只输出解码信息和段结束分隔符。文件会按 15 秒 slot 流式解码，解完一段立即输出一段；每段消息后面紧跟较长分隔符，并标出本段解码数量：
+
+```text
+==================== slot complete: 14 decodes ====================
+```
 
 ### 显式指定起始时间
 
@@ -123,13 +128,28 @@ target/release/ft8rs --fft-engine rustfft file tests/ft8/210703_133430.wav
 
 ### 声卡入口
 
-声卡命令入口已预留：
+不带 `--device` 时列出系统输入设备：
 
 ```bash
-target/release/ft8rs soundcard --device default
+target/release/ft8rs soundcard
 ```
 
-当前会返回未实现。声卡采集、系统时间分段和实时输出会在后续单独接入和验证。
+输出会标出输入设备索引、host、设备名、默认设备标记和默认输入格式。
+
+带 `--device` 时进入声卡采集解码入口。`--device` 可以使用上面列表里的 `Index`，也可以使用完整设备名：
+
+```bash
+target/release/ft8rs soundcard --device 0
+target/release/ft8rs soundcard --device "MacBook Pro Microphone"
+```
+
+测试时可以限制监听段数：
+
+```bash
+target/release/ft8rs soundcard --device "VB-Cable A" --slots 2
+```
+
+声卡输入按系统 UTC 时间对齐到下一个 15 秒 slot 后开始采集，解完一段立即输出一段，每段消息后面使用同样的分隔符，并标出本段解码数量。
 
 ## 测试
 

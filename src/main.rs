@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ft8rs::input::{
-    decode_wav_file_streaming, infer_start_time_from_path, open_soundcard_stream, FileDecodeOptions,
+    decode_soundcard_streaming, decode_wav_file_streaming, infer_start_time_from_path,
+    list_soundcards, FileDecodeOptions, SoundcardFormatInfo,
 };
 use ft8rs::stream::StreamDecodeConfig;
 use ft8rs::SlotTimestamp;
@@ -31,7 +32,7 @@ struct Cli {
 enum Command {
     /// Decode a WAV file as a timestamped FT8 stream
     File(FileArgs),
-    /// Decode live audio from a soundcard
+    /// List or listen to live audio input devices
     Soundcard(SoundcardArgs),
 }
 
@@ -68,9 +69,14 @@ struct FileArgs {
 
 #[derive(Args)]
 struct SoundcardArgs {
-    /// Soundcard device name or index
+    /// Input device selector: use the Index shown by `ft8rs soundcard`, or the full device name.
+    /// Omit this option to list input devices.
     #[arg(long)]
     device: Option<String>,
+
+    /// Stop after this many 15-second slots. Omit to keep listening.
+    #[arg(long)]
+    slots: Option<usize>,
 }
 
 fn main() {
@@ -122,37 +128,79 @@ fn run_file(args: FileArgs) -> Result<(), String> {
         config.lft8apon = false;
     }
 
-    let mut first_slot = true;
     decode_wav_file_streaming(
         &args.input,
         FileDecodeOptions { start_time, config },
-        |timestamp, rows| {
-            if !first_slot {
-                println!("====");
-            }
-            first_slot = false;
-
-            for row in rows {
-                println!(
-                    "{} {:>3} {:+.1} {:>5.0} {}",
-                    timestamp,
-                    row.snr.round() as i32,
-                    row.dt,
-                    row.freq.round(),
-                    row.msg
-                );
-            }
-            use std::io::Write;
-            std::io::stdout()
-                .flush()
-                .map_err(|err| format!("failed to flush stdout: {err}"))
-        },
+        |timestamp, rows| print_slot_rows(timestamp, &rows),
     )
 }
 
 fn run_soundcard(args: SoundcardArgs) -> Result<(), String> {
-    open_soundcard_stream(ft8rs::input::SoundcardDecodeOptions {
-        device: args.device,
-        config: StreamDecodeConfig::default(),
-    })
+    if args.device.is_none() {
+        return run_soundcard_ls();
+    }
+
+    decode_soundcard_streaming(
+        ft8rs::input::SoundcardDecodeOptions {
+            device: args.device,
+            config: StreamDecodeConfig::default(),
+            max_slots: args.slots,
+        },
+        |timestamp, rows| print_slot_rows(timestamp, &rows),
+    )
+}
+
+fn print_slot_rows(
+    timestamp: SlotTimestamp,
+    rows: &[ft8rs::stream::StreamDecodedMessage],
+) -> Result<(), String> {
+    for row in rows {
+        println!(
+            "{} {:>3} {:+.1} {:>5.0} {}",
+            timestamp,
+            row.snr.round() as i32,
+            row.dt,
+            row.freq.round(),
+            row.msg
+        );
+    }
+    println!(
+        "==================== slot complete: {} decodes ====================",
+        rows.len()
+    );
+    use std::io::Write;
+    std::io::stdout()
+        .flush()
+        .map_err(|err| format!("failed to flush stdout: {err}"))
+}
+
+fn run_soundcard_ls() -> Result<(), String> {
+    let devices = list_soundcards()?;
+    if devices.is_empty() {
+        println!("No audio input devices found.");
+        return Ok(());
+    }
+
+    println!(
+        "{:<5} {:<12} {:<40} {:<10} Default input format",
+        "Index", "Host", "Name", "Default"
+    );
+    for device in devices {
+        let default_mark = if device.is_default_input { "yes" } else { "-" };
+        let format = format_soundcard_format(&device.input);
+
+        println!(
+            "{:<5} {:<12} {:<40} {:<10} {}",
+            device.index, device.host, device.name, default_mark, format
+        );
+    }
+
+    Ok(())
+}
+
+fn format_soundcard_format(format: &SoundcardFormatInfo) -> String {
+    format!(
+        "{}ch/{}Hz/{}",
+        format.channels, format.sample_rate, format.sample_format
+    )
 }
