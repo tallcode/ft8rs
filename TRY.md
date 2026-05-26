@@ -334,3 +334,69 @@
   - `0.785s` late drift misses = `10`
   - `1.000s` late drift misses = `13`
 - 这支持之前判断：正式方向不应是简单把 slot 窗口硬平移到 `0.785s`，而要继续对齐 WSJT-X 文件窗口、padding、长文件连续缓冲和跨时隙 AP memory。
+
+## Milestone 4: duplicate-gated subtract 假设核对与撤回
+
+### 问题
+- 只看 `wsjtx/lib/ft8_decode.f90` 外层 duplicate check，容易误以为 regular subtract 应该在 `.not.ldupe` 之后执行。
+- 临时把 Rust subtract 移到 duplicate check 之后，短测仍为 `21`，但长测从保护线 `422/449` 降到 `421/449`。
+
+### 核对结论
+- 继续打开 `wsjtx/lib/ft8/ft8b.f90` 后确认，WSJT-X regular subtract 实际在 `ft8b` 内部完成：
+  - valid codeword/message 后设置 `nbadcrc=0`
+  - `call get_ft8_tones_from_77bits(...)`
+  - `if(lsubtract) call subtractft8(dd0,itone,f1,xdt,.false.)`
+  - 然后才返回 `ft8_decode.f90` 做外层 duplicate check
+- 因此 Rust “ft8b 返回成功后立刻 subtract，再做 `seen_messages` duplicate filter” 才是有效控制流对齐。
+
+### 处理
+- 撤回 duplicate-gated subtract 临时代码。
+- 保留文档结论：regular decode 的 subtract 位置要按 `ft8b.f90` 的有效执行顺序判断，不能只看 `ft8_decode.f90` 外层 duplicate check。
+
+## Milestone 4: baseline polynomial 阶数对齐
+
+### 问题
+- 继续对照 `wsjtx/lib/ft8/baseline.f90` 时发现，WSJT-X 的 `nterms=5` 表示 5 个系数 `a(1:5)`：
+  - `a1 + t*(a2 + t*(a3 + t*(a4 + t*a5)))`
+  - 这是 4 次多项式。
+- Rust `polyfit(&env_x, &env_y, 5)` 的参数语义是 degree，实际生成 6 个系数，变成 5 次多项式。
+
+### 修复
+- 将 baseline 拟合从 `polyfit(..., 5)` 改为 `polyfit(..., 4)`。
+- 保持其他 baseline 结构不变：10 段、10 percentile lower envelope、最多 1000 个点、`+0.65 dB` 偏移。
+
+### 待验证
+- 该改动会影响 `sbase -> xbase -> xsnr2`，预期主要影响低 SNR 边界消息的接受/拒绝和排序。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `git diff --check` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 每段均小于 `15s`
+  - timing residual median `+0.785s`
+
+## Milestone 4: stream 控制流小对齐
+
+### 修复
+- `ndepth=1` 时，WSJT-X `ft8_decode.f90` 在 `nzhsym<50` 直接返回，不运行 41/47 early decode。Rust stream 现在在 depth 1 下跳过 41 阶段，最终只跑 50 阶段。
+- 外部 `ft8_a7d` 现在受 `ft8_ap` 和 contest 6/7 约束：
+  - `lft8apon=false` 时不运行。
+  - `ncontest==6` 或 `ncontest==7` 时不运行，匹配 WSJT-X 外层 A7 条件。
+
+### 影响
+- 默认长测配置为 `depth=3, ft8_ap=true, ncontest=0`，因此预期不改变当前分数。
+- 该修复主要是避免其他配置路径偏离 WSJT-X。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `git diff --check` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 每段均小于 `15s`
