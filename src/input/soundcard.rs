@@ -48,6 +48,36 @@ pub fn decode_soundcard_streaming<F>(
 where
     F: FnMut(SlotTimestamp, Vec<StreamDecodedMessage>) -> Result<(), String>,
 {
+    decode_soundcard_slots(options, |decoder, timestamp, samples_12k| {
+        let results = decoder.decode_slot(samples_12k);
+        on_slot(timestamp, results)
+    })
+}
+
+pub fn decode_soundcard_streaming_decodes<F, G>(
+    options: SoundcardDecodeOptions,
+    mut on_decode: F,
+    mut on_slot_complete: G,
+) -> Result<(), String>
+where
+    F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
+{
+    decode_soundcard_slots(options, |decoder, timestamp, samples_12k| {
+        let results = decoder
+            .decode_slot_streaming(samples_12k, |decode| on_decode(timestamp.clone(), decode))?;
+        on_slot_complete(timestamp, results.len())
+    })
+}
+
+pub fn open_soundcard_stream(options: SoundcardDecodeOptions) -> Result<(), String> {
+    decode_soundcard_streaming(options, |_timestamp, _rows| Ok(()))
+}
+
+fn decode_soundcard_slots<F>(options: SoundcardDecodeOptions, mut on_slot: F) -> Result<(), String>
+where
+    F: FnMut(&mut StreamDecodeSession, SlotTimestamp, &[f32]) -> Result<(), String>,
+{
     let selector = options.device.as_deref().unwrap_or("default");
     let (device, info) = select_input_device(selector)?;
     let supported_config = device.default_input_config().map_err(|err| {
@@ -113,16 +143,11 @@ where
             SlotTimestamp::from_unix_seconds_utc(first_slot_start + slot_index as i64 * 15);
         let native = collect_slot_samples(&rx, samples_per_slot)?;
         let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
-        let results = decoder.decode_slot(&samples_12k);
-        on_slot(timestamp, results)?;
+        on_slot(&mut decoder, timestamp, &samples_12k)?;
         slot_index += 1;
     }
 
     Ok(())
-}
-
-pub fn open_soundcard_stream(options: SoundcardDecodeOptions) -> Result<(), String> {
-    decode_soundcard_streaming(options, |_timestamp, _rows| Ok(()))
 }
 
 fn input_devices_with_info() -> Result<Vec<(cpal::Device, SoundcardDeviceInfo)>, String> {

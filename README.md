@@ -12,7 +12,7 @@
 当前状态：
 
 - 文件流式 CLI 已可用。
-- 声卡输入 CLI 入口已预留，但采集后端尚未实现。
+- 声卡输入 CLI 可列出输入设备，并可按系统时间对齐 FT8 slot 后实时采集解码。
 - 主要验收基线仍以 release 模式测试为准。
 - README 只记录如何编译、运行和验证；详细对齐记录见 `STREAM.md`，迭代尝试见 `TRY.md`。
 
@@ -80,10 +80,10 @@ YYMMDD_HHMMSS SNR DT FREQ MESSAGE
 210703_133430 -25 -0.8  1197 CQ F5RXL IN94
 ```
 
-CLI 的 stdout 只输出解码信息和段结束分隔符。文件会按 15 秒 slot 流式解码，解完一段立即输出一段；每段消息后面紧跟较长分隔符，并标出本段解码数量：
+CLI 的 stdout 只输出解码信息和段结束分隔符。文件会按 15 秒 slot 流式解码，并在解码阶段内逐条输出：`nzhsym=41` 早期结果会先打印，随后补充完整 slot 和 AP 阶段新结果。每段消息后面紧跟较长分隔符，并标出本段解码数量：
 
 ```text
-==================== slot complete: 14 decodes ====================
+---------- slot done: 14 decodes ----------
 ```
 
 ### 显式指定起始时间
@@ -149,7 +149,7 @@ target/release/ft8rs soundcard --device "MacBook Pro Microphone"
 target/release/ft8rs soundcard --device "VB-Cable A" --slots 2
 ```
 
-声卡输入按系统 UTC 时间对齐到下一个 15 秒 slot 后开始采集，解完一段立即输出一段，每段消息后面使用同样的分隔符，并标出本段解码数量。
+声卡输入按系统 UTC 时间对齐到下一个 15 秒 slot 后开始采集，每段采集完成后进入同一套渐进解码输出路径：早期结果先打印，完整 slot 和 AP 阶段继续补充新结果。每段消息后面使用同样的分隔符，并标出本段解码数量。
 
 ## 测试
 

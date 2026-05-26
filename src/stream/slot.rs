@@ -42,6 +42,34 @@ where
     Ok(())
 }
 
+pub fn decode_12k_slots_streaming_decodes<F, G>(
+    samples_12k: &[f32],
+    start_time: SlotTimestamp,
+    config: StreamDecodeConfig,
+    mut on_decode: F,
+    mut on_slot_complete: G,
+) -> Result<(), String>
+where
+    F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
+{
+    let samples_per_slot = SAMPLE_RATE as usize * SLOT_SECONDS;
+    let total_slots = samples_12k.len().div_ceil(samples_per_slot);
+    let mut decoder = StreamDecodeSession::new(config);
+
+    for slot in 0..total_slots {
+        let start = slot * samples_per_slot;
+        let end = (start + samples_per_slot).min(samples_12k.len());
+        let timestamp = start_time.add_seconds((slot * SLOT_SECONDS) as i64);
+        let results = decoder.decode_slot_streaming(&samples_12k[start..end], |decode| {
+            on_decode(timestamp.clone(), decode)
+        })?;
+        on_slot_complete(timestamp, results.len())?;
+    }
+
+    Ok(())
+}
+
 fn collect_12k_slots(
     samples_12k: &[f32],
     start_time: SlotTimestamp,

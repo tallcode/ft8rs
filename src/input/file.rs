@@ -2,7 +2,10 @@ use std::path::Path;
 
 use crate::input::audio::{read_wav_mono_f32, resample_linear};
 use crate::stream::session::{StreamDecodeConfig, StreamDecodedMessage};
-use crate::stream::slot::{decode_12k_slots, decode_12k_slots_streaming, TimestampedDecode};
+use crate::stream::slot::{
+    decode_12k_slots, decode_12k_slots_streaming, decode_12k_slots_streaming_decodes,
+    TimestampedDecode,
+};
 use crate::stream::time::SlotTimestamp;
 
 const SAMPLE_RATE: u32 = 12_000;
@@ -35,6 +38,26 @@ where
 {
     let samples_12k = read_wav_12k(path)?;
     decode_12k_slots_streaming(&samples_12k, options.start_time, options.config, on_slot)
+}
+
+pub fn decode_wav_file_streaming_decodes<F, G>(
+    path: impl AsRef<Path>,
+    options: FileDecodeOptions,
+    on_decode: F,
+    on_slot_complete: G,
+) -> Result<(), String>
+where
+    F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
+{
+    let samples_12k = read_wav_12k(path)?;
+    decode_12k_slots_streaming_decodes(
+        &samples_12k,
+        options.start_time,
+        options.config,
+        on_decode,
+        on_slot_complete,
+    )
 }
 
 pub fn infer_start_time_from_path(path: impl AsRef<Path>) -> Option<SlotTimestamp> {

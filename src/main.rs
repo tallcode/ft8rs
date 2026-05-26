@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use ft8rs::input::{
-    decode_soundcard_streaming, decode_wav_file_streaming, infer_start_time_from_path,
-    list_soundcards, FileDecodeOptions, SoundcardFormatInfo,
+    decode_soundcard_streaming_decodes, decode_wav_file_streaming_decodes,
+    infer_start_time_from_path, list_soundcards, FileDecodeOptions, SoundcardFormatInfo,
 };
-use ft8rs::stream::StreamDecodeConfig;
+use ft8rs::stream::{StreamDecodeConfig, StreamDecodedMessage};
 use ft8rs::SlotTimestamp;
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
@@ -128,10 +128,11 @@ fn run_file(args: FileArgs) -> Result<(), String> {
         config.lft8apon = false;
     }
 
-    decode_wav_file_streaming(
+    decode_wav_file_streaming_decodes(
         &args.input,
         FileDecodeOptions { start_time, config },
-        |timestamp, rows| print_slot_rows(timestamp, &rows),
+        print_decode_row,
+        print_slot_complete,
     )
 }
 
@@ -140,34 +141,35 @@ fn run_soundcard(args: SoundcardArgs) -> Result<(), String> {
         return run_soundcard_ls();
     }
 
-    decode_soundcard_streaming(
+    decode_soundcard_streaming_decodes(
         ft8rs::input::SoundcardDecodeOptions {
             device: args.device,
             config: StreamDecodeConfig::default(),
             max_slots: args.slots,
         },
-        |timestamp, rows| print_slot_rows(timestamp, &rows),
+        print_decode_row,
+        print_slot_complete,
     )
 }
 
-fn print_slot_rows(
-    timestamp: SlotTimestamp,
-    rows: &[ft8rs::stream::StreamDecodedMessage],
-) -> Result<(), String> {
-    for row in rows {
-        println!(
-            "{} {:>3} {:+.1} {:>5.0} {}",
-            timestamp,
-            row.snr.round() as i32,
-            row.dt,
-            row.freq.round(),
-            row.msg
-        );
-    }
+fn print_decode_row(timestamp: SlotTimestamp, row: &StreamDecodedMessage) -> Result<(), String> {
     println!(
-        "==================== slot complete: {} decodes ====================",
-        rows.len()
+        "{} {:>3} {:+.1} {:>5.0} {}",
+        timestamp,
+        row.snr.round() as i32,
+        row.dt,
+        row.freq.round(),
+        row.msg
     );
+    flush_stdout()
+}
+
+fn print_slot_complete(_timestamp: SlotTimestamp, count: usize) -> Result<(), String> {
+    println!("---------- slot done: {count:>2} decodes ----------");
+    flush_stdout()
+}
+
+fn flush_stdout() -> Result<(), String> {
     use std::io::Write;
     std::io::stdout()
         .flush()
