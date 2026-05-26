@@ -148,11 +148,17 @@ be collapsed into one Rust helper.
   base callsign: a digit in position 2 or 3, at least one suffix letter after the
   digit, at most three suffix letters, and no ordinary `Q...` prefix except the
   documented `QU1RK` placeholder.
+- `chkcall` assignment order matters: it tests position 2 and then position 3,
+  so a callsign with digits in both positions uses the third character as the
+  call area. Rust mirrors this with two independent assignments, not `else if`.
 - AP code uses `stdcall`-style checks in other places, which are intentionally
   looser. `is_stdcall()` therefore remains separate from the `pack77` internal
   callsign parser.
 - For Type 1 `R GRID`, WSJT-X checks the third word `w(3)`, not the second word.
   In Rust zero-based terms this is `parts[2]`.
+- For two-word Type 1 messages, WSJT-X rejects a second word containing `/`;
+  this prevents `CALL1 CALL2/R` from being treated as a normal two-word standard
+  message.
 - `unpack77` rejects CQ messages that decode as `CQ ... R GRID` or as CQ with
   `irpt>=2` (`RRR`, `73`, or reports). `RR73` is a special trap: it also matches
   the 4-character grid shape `RR73`, and WSJT-X `pack77_1` tests the grid branch
