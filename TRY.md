@@ -141,6 +141,116 @@
 ### 验证
 - `cargo fmt` ✅
 - `cargo check --tests` ✅
+
+## Streaming: 声卡实时 `nzhsym=41/47/50` 分阶段调度
+
+### 目标
+- 不改变解码器数学逻辑和灵敏度，只把原来“收满 15 秒后顺序跑 41/47/50”的适配层改成实时触发。
+- 对齐 WSJT-X 的流式节奏：
+  - `nzhsym=41`：采到 `41*3456/12000 = 11.808s` 后先解强信号。
+  - `nzhsym=47`：采到 `13.536s` 后做 early subtract。
+  - `nzhsym=50`：采到完整 slot 后做 full decode + AP。
+
+### 改动
+- `StreamDecodeSession` 拆出可显式调用的 stage API：
+  - `start_slot_decode`
+  - `decode_slot_nzhsym41`
+  - `subtract_slot_nzhsym47`
+  - `decode_slot_nzhsym50_and_finish`
+- 原 `decode_slot_streaming` 改为调用同一套 stage API，保证文件/测试路径和声卡路径共用解码流程。
+- 声卡 `decode_soundcard_streaming_decodes` 改为实时 staged collector：
+  - 采到 41 threshold 后立即运行 early decode 并输出。
+  - 采到 47 threshold 后执行 subtract。
+  - 收满 15 秒后执行 full/AP，并输出 slot done。
+- 声卡采集增加 `NativeSampleCollector` carry buffer：
+  - 原实现如果一个 audio chunk 超出 slot 末尾，会截断并丢掉尾部。
+  - 现在把超出的 native samples 留给下一个 slot，避免长期运行时 slot 边界漂移。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `4.4s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 总耗时约 `83.88s`
+  - 每段均小于 `15s`
+  - timing residual median 仍为 `+0.785s`
+- `cargo build --release` ✅
+- `target/release/ft8rs soundcard --device "VB-Cable A" --slots 2` ✅
+  - 实测两段正常输出，slot done 分别为 `9` 和 `6` decodes。
+
+## Performance: WSJT-X `newdat`/`save cx` 对齐
+
+### 对照结论
+- WSJT-X `ft8_downsample.f90` 使用 `save x,cx` 保存 192000 点长 FFT。
+- `ft8_decode.f90` 在 AP 循环前设置一次 `newdat=.true.`；第一次 `ft8_a7d` 调用刷新长 FFT，后续 AP 候选复用同一个 `cx`。
+- `ft8_a7d` 内部第二次 refined downsample 传 `.false.`，同样复用该 `cx`，只重新抽取频带、taper、cshift 和 3200 点 IFFT。
+
+### 改动
+- 新增 `ApDownsampleCache`，显式保存一个 slot residual 的长 FFT。
+- `StreamDecodeSession` 在 AP 候选循环前创建一次 cache，所有 `ft8_a7d` 候选共享。
+- `ft8_a7d` 保留独立入口；单独调用时会创建自己的 cache，行为兼容。
+- `ap_downsample` 改为从 cache 中抽带，保持 WSJT-X `ft8_downsample` 的 `ib/it/i0/taper/cshift/IFFT/fac` 链路不变。
+- `gen_ft8wave` 增加 65536 点 complex phase table cache，对齐 WSJT-X 的 `ctab(0:NTAB-1)` 缓存方式。
+
+### 说明
+- 这轮没有减少候选数、没有修改门限、没有关闭 AP、没有改变 `nzhsym=41/47/50` 流程。
+- AP cache 是明确收益点：Rust 原来每个 AP 候选做两次 192000 点 FFT；WSJT-X 是每个 AP stage 做一次长 FFT。
+- `ctab` 查表主要是 WSJT-X 对齐和避免重复三角函数；在当前长测里收益不明显，瓶颈更可能仍在 subtract 的 LPF FFT 和候选 LDPC/OSD。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `4.5s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 总耗时约 `85.13s`
+  - 每段均小于 `15s`
+  - timing residual median 仍为 `+0.785s`
+
+## Performance: 第一轮不降灵敏度优化
+
+### 目标
+- 只减少 Rust 实现中的重复计算和重复分配。
+- 不降低 `ncand`、`ndepth`，不关闭 AP，不改 sync gate，不改变 WSJT-X 对齐参数。
+
+### 有效改动
+- 删除 `decode_from_f64` 进入 pass loop 前的一次未使用 FFT。
+  - 该 FFT 后续每个 pass 都会重新计算，结果没有被读取。
+- `decode_from_f64` 的候选解码工作区从“每个 candidate 新建一次”改为“每个 pass 复用一次”。
+  - 对齐 WSJT-X 固定数组反复覆盖的风格。
+  - `ft8b` 会重写 `cd0/s8/cs/metrics/llr/apmask` 等候选局部状态。
+- 去掉 `ft8b` 内重复的 hard sync 统计。
+  - 原来先 `compute_nsync()`，再通过 `passes_sync_gate_strict()` 再算一遍。
+  - 现在直接用同一个 `nsync` 做 gate 和低 SNR false-positive gate。
+- 避免同一个 codeword 的 tone 序列重复生成。
+  - `compute_snr()` 和 `itone` 输出共用同一份 `tones`。
+
+### 无效尝试
+- 尝试把 pass 内 coarse downsample cache 激活。
+  - 结果长测从约 `88s` 变慢到约 `107s`。
+  - 原因是缓存整段 `NFFT2` 复数数组需要大块 clone，收益抵不过内存拷贝。
+  - 已撤回。
+- 尝试把 `sync8` 的 `red/red2/jpeak/order` 等小数组放进 thread-local buffer。
+  - 短测稳定变慢到约 `5.8s`。
+  - 推测局部新建小 `Vec` 更利于当前编译器优化和 cache locality。
+  - 已撤回。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `4.4s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 总耗时约 `86.05s`
+  - 每段均小于 `15s`
+  - timing residual median 仍为 `+0.785s`
 - `git diff --check` ✅
 - `cargo run --release -- --fft-engine fftw file tests/ft8/210703_133430.wav` ✅
   - CLI 短文件仍输出 `21` 条。

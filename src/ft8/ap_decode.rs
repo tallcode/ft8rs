@@ -33,6 +33,26 @@ pub struct ApDecodeResult {
     pub nharderrors: i32,
 }
 
+/// WSJT-X `ft8_downsample` state for one unchanged `dd0` buffer.
+///
+/// The Fortran routine keeps the long `cx` FFT in `save` storage and refreshes
+/// it only when `newdat=.true.`. AP decode sets `newdat=.true.` once before the
+/// previous-slot loop, so all `ft8_a7d` calls for the slot share this spectrum.
+pub(crate) struct ApDownsampleCache {
+    cx_re: Vec<f64>,
+    cx_im: Vec<f64>,
+}
+
+impl ApDownsampleCache {
+    pub(crate) fn new(dd0: &[f64]) -> Self {
+        let mut cx_re = dd0.to_vec();
+        cx_re.resize(NFFT1_LONG, 0.0);
+        let mut cx_im = vec![0.0f64; NFFT1_LONG];
+        crate::util::fft_complex(&mut cx_re, &mut cx_im, false);
+        Self { cx_re, cx_im }
+    }
+}
+
 /// WSJT-X ft8_a7d: AP decode at known (call_1, call_2, grid4, xdt, f1) position.
 ///
 /// dd0: 15s audio at 12kHz
@@ -43,6 +63,19 @@ pub struct ApDecodeResult {
 /// xbase: noise baseline estimate at f1
 pub fn ft8_a7d(
     dd0: &[f64],
+    call_1: &str,
+    call_2: &str,
+    grid4: &str,
+    xdt: f64,
+    f1: f64,
+    xbase: f64,
+) -> Option<ApDecodeResult> {
+    let downsample_cache = ApDownsampleCache::new(dd0);
+    ft8_a7d_with_downsample_cache(&downsample_cache, call_1, call_2, grid4, xdt, f1, xbase)
+}
+
+pub(crate) fn ft8_a7d_with_downsample_cache(
+    downsample_cache: &ApDownsampleCache,
     call_1: &str,
     call_2: &str,
     grid4: &str,
@@ -61,7 +94,7 @@ pub fn ft8_a7d(
     let mut ibest: isize = 0;
 
     // ── First downsample at f1 ──
-    let (cd0_re, cd0_im) = ap_downsample(dd0, f1, &taper_data);
+    let (cd0_re, cd0_im) = ap_downsample(downsample_cache, f1, &taper_data);
 
     // ── Time alignment ±10 ──
     let i0 = ((xdt + 0.5) * FS2).round() as isize;
@@ -96,7 +129,7 @@ pub fn ft8_a7d(
     let f1_refined = f1 + delfbest;
 
     // ── Second downsample with refined f1 ──
-    let (cd0_re, cd0_im) = ap_downsample(dd0, f1 + delfbest, &taper_data);
+    let (cd0_re, cd0_im) = ap_downsample(downsample_cache, f1 + delfbest, &taper_data);
 
     // ── Time refinement ±4 ──
     let mut ss = [0.0f64; 9];
@@ -591,12 +624,11 @@ fn build_taper() -> &'static [f64; 101] {
     })
 }
 
-fn ap_downsample(dd0: &[f64], f0: f64, taper: &[f64; 101]) -> (Vec<f64>, Vec<f64>) {
-    let mut re = dd0.to_vec();
-    re.resize(NFFT1_LONG, 0.0);
-    let mut im = vec![0.0f64; NFFT1_LONG];
-    crate::util::fft_complex(&mut re, &mut im, false);
-
+fn ap_downsample(
+    downsample_cache: &ApDownsampleCache,
+    f0: f64,
+    taper: &[f64; 101],
+) -> (Vec<f64>, Vec<f64>) {
     let df = DOWNSAMPLE_DF;
     let baud = DOWNSAMPLE_BAUD;
     let i0 = (f0 / df).round() as usize;
@@ -612,8 +644,8 @@ fn ap_downsample(dd0: &[f64], f0: f64, taper: &[f64; 101]) -> (Vec<f64>, Vec<f64
         if k >= NFFT2 {
             break;
         }
-        cd0_re[k] = re[i];
-        cd0_im[k] = im[i];
+        cd0_re[k] = downsample_cache.cx_re[i];
+        cd0_im[k] = downsample_cache.cx_im[i];
         k += 1;
     }
 

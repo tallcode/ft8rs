@@ -1,6 +1,7 @@
+use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::ft8::ap_decode::{ft8_a7d, ApDecodeResult};
+use crate::ft8::ap_decode::{ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache};
 use crate::ft8::decode::{
     decode_f64_with_sbase, decode_f64_with_sbase_and_residual, DecodeOptions, DecodedMessage,
     SyncMode,
@@ -82,6 +83,15 @@ pub struct StreamDecodedMessage {
     pub itone: [i32; 79],
 }
 
+pub struct StreamSlotDecodeState {
+    dd0: Vec<f64>,
+    seen: HashSet<String>,
+    merged: Vec<StreamDecodedMessage>,
+    early_results: Vec<DecodedMessage>,
+    dd1: Vec<f64>,
+    early_subtracted: Vec<bool>,
+}
+
 pub struct StreamDecodeSession {
     params: WsjtxDecodeConfig,
     book: Rc<HashCallBook>,
@@ -120,60 +130,80 @@ impl StreamDecodeSession {
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
         let results = self.ft8_decode_slot(samples, on_decode)?;
-        // Toggle parity for next slot (simulates UTC progression mod 5)
-        self.jseq = 1 - self.jseq;
         Ok(results)
     }
 
-    /// Full progressive decode matching WSJT-X flow:
-    /// 1. nzhsym=41: early decode on a zero-padded partial buffer.
-    /// 2. nzhsym=47: subtract early decodes from the partial buffer and save dd1.
-    /// 3. nzhsym=50: decode full buffer with early-cleaned prefix.
-    /// 4. AP decode using prev_slot entries of SAME parity (ft8_a7d).
-    /// 5. Save current slot entries for next same-parity slot.
-    fn ft8_decode_slot<F>(
+    pub fn start_slot_decode(&self) -> StreamSlotDecodeState {
+        StreamSlotDecodeState {
+            dd0: vec![0.0; NMAX],
+            seen: HashSet::new(),
+            merged: Vec::new(),
+            early_results: Vec::new(),
+            dd1: vec![0.0; NMAX],
+            early_subtracted: Vec::new(),
+        }
+    }
+
+    pub fn decode_slot_nzhsym41<F>(
+        &self,
+        state: &mut StreamSlotDecodeState,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        state.dd0 = dd0_from_samples(samples);
+        let early_dd = dd0_partial_nzhsym(&state.dd0, 41);
+        let book = Rc::clone(&self.book);
+        let (early_results, _) = if self.params.ndepth == 1 {
+            (Vec::new(), Vec::new())
+        } else {
+            decode_f64_with_sbase(&early_dd, self.ft8_decode_options(41, book))
+        };
+        state.early_results = early_results;
+        for d in &state.early_results {
+            push_regular_decode(
+                &mut state.seen,
+                &mut state.merged,
+                &self.book,
+                d,
+                &mut on_decode,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn subtract_slot_nzhsym47(&self, state: &mut StreamSlotDecodeState, samples: &[f32]) {
+        state.dd0 = dd0_from_samples(samples);
+        state.dd1 = dd0_partial_nzhsym(&state.dd0, 47);
+        state.early_subtracted = vec![false; state.early_results.len()];
+        let lrefinedt = self.params.ndepth > 2;
+        for (idx, d) in state.early_results.iter().enumerate() {
+            if d.dt < 0.396 {
+                let mut itone = [0i32; 79];
+                itone.copy_from_slice(&d.itone[..79]);
+                subtract_ft8_refined(&mut state.dd1, &itone, d.freq, d.dt + 0.5, lrefinedt);
+                state.early_subtracted[idx] = true;
+            }
+        }
+    }
+
+    pub fn decode_slot_nzhsym50_and_finish<F>(
         &mut self,
+        mut state: StreamSlotDecodeState,
         samples: &[f32],
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        let dd0 = dd0_from_samples(samples);
-        let book = Rc::clone(&self.book);
-        let mut seen = std::collections::HashSet::new();
-        let mut merged = Vec::new();
-
-        // ── Stage 1: nzhsym=41 early decode ──
-        let early_dd = dd0_partial_nzhsym(&dd0, 41);
-        let (early_results, _) = if self.params.ndepth == 1 {
-            (Vec::new(), Vec::new())
-        } else {
-            decode_f64_with_sbase(&early_dd, self.ft8_decode_options(41, Rc::clone(&book)))
-        };
-        for d in &early_results {
-            push_regular_decode(&mut seen, &mut merged, &self.book, d, &mut on_decode)?;
-        }
-
-        // ── Stage 2: nzhsym=47 early subtraction only ──
-        let mut dd1 = dd0_partial_nzhsym(&dd0, 47);
-        let mut early_subtracted = vec![false; early_results.len()];
-        let lrefinedt = self.params.ndepth > 2;
-        for (idx, d) in early_results.iter().enumerate() {
-            if d.dt < 0.396 {
-                let mut itone = [0i32; 79];
-                itone.copy_from_slice(&d.itone[..79]);
-                subtract_ft8_refined(&mut dd1, &itone, d.freq, d.dt + 0.5, lrefinedt);
-                early_subtracted[idx] = true;
-            }
-        }
-
-        // ── Stage 3: nzhsym=50 full decode with early-cleaned prefix ──
-        let mut full_dd = dd0.clone();
+        state.dd0 = dd0_from_samples(samples);
+        let mut full_dd = state.dd0.clone();
         let clean_prefix = (47 * NZHSYM_STRIDE).min(NMAX);
-        full_dd[..clean_prefix].copy_from_slice(&dd1[..clean_prefix]);
-        for (idx, d) in early_results.iter().enumerate() {
-            if !early_subtracted[idx] {
+        full_dd[..clean_prefix].copy_from_slice(&state.dd1[..clean_prefix]);
+        for (idx, d) in state.early_results.iter().enumerate() {
+            if !state.early_subtracted.get(idx).copied().unwrap_or(false) {
                 let mut itone = [0i32; 79];
                 itone.copy_from_slice(&d.itone[..79]);
                 subtract_ft8_refined(&mut full_dd, &itone, d.freq, d.dt + 0.5, true);
@@ -181,20 +211,23 @@ impl StreamDecodeSession {
         }
         let (full_results, sbase, full_residual) = decode_f64_with_sbase_and_residual(
             &full_dd,
-            self.ft8_decode_options(50, Rc::clone(&book)),
+            self.ft8_decode_options(50, Rc::clone(&self.book)),
         );
 
         // Build current a7 table entries before AP. WSJT-X ft8_a7_save uses
         // these current entries to suppress previous entries already accounted
         // for by a regular decode in this sequence.
-        let all_regular: Vec<&DecodedMessage> =
-            early_results.iter().chain(full_results.iter()).collect();
+        let all_regular: Vec<&DecodedMessage> = state
+            .early_results
+            .iter()
+            .chain(full_results.iter())
+            .collect();
         let mut entries_to_save: Vec<A7SaveEntry> = all_regular
             .iter()
             .copied()
             .filter_map(|d| ft8_a7_save_entry(d, &sbase))
             .collect();
-        // ── Stage 4: AP decode using prev_slot entries of SAME parity ──
+
         let previous_entries = if self.jseq == 0 {
             &self.prev_even
         } else {
@@ -206,10 +239,11 @@ impl StreamDecodeSession {
         let ap_results = if !ap_allowed || ap_candidates.is_empty() {
             Vec::new()
         } else {
+            let downsample_cache = ApDownsampleCache::new(&full_residual);
             let mut ap_msgs: Vec<ApDecodeResult> = Vec::new();
             for entry in &ap_candidates {
-                let result = ft8_a7d(
-                    &full_residual,
+                let result = ft8_a7d_with_downsample_cache(
+                    &downsample_cache,
                     &entry.call_1,
                     &entry.call_2,
                     &entry.grid4,
@@ -227,9 +261,14 @@ impl StreamDecodeSession {
             ap_msgs
         };
 
-        // ── Stage 5: Merge full + AP results, dedup ──
         for d in &full_results {
-            push_regular_decode(&mut seen, &mut merged, &self.book, d, &mut on_decode)?;
+            push_regular_decode(
+                &mut state.seen,
+                &mut state.merged,
+                &self.book,
+                d,
+                &mut on_decode,
+            )?;
         }
 
         for r in &ap_results {
@@ -237,7 +276,7 @@ impl StreamDecodeSession {
                 entries_to_save.push(entry);
             }
             let key = normal(&r.msg);
-            if seen.insert(key) {
+            if state.seen.insert(key) {
                 let decode = StreamDecodedMessage {
                     freq: r.freq,
                     dt: r.dt,
@@ -248,19 +287,39 @@ impl StreamDecodeSession {
                 };
                 collect_book(&self.book, &decode.msg);
                 on_decode(&decode)?;
-                merged.push(decode);
+                state.merged.push(decode);
             }
         }
 
-        // ── Stage 6: Save current slot entries for next same-parity slot ──
-        // Matches WSJT-X: ndec(jseq,1) → ndec(jseq,0) at next UTC change
+        // Matches WSJT-X: ndec(jseq,1) → ndec(jseq,0) at next UTC change.
         if self.jseq == 0 {
             self.prev_even = entries_to_save;
         } else {
             self.prev_odd = entries_to_save;
         }
+        self.jseq = 1 - self.jseq;
 
-        Ok(merged)
+        Ok(state.merged)
+    }
+
+    /// Full progressive decode matching WSJT-X flow:
+    /// 1. nzhsym=41: early decode on a zero-padded partial buffer.
+    /// 2. nzhsym=47: subtract early decodes from the partial buffer and save dd1.
+    /// 3. nzhsym=50: decode full buffer with early-cleaned prefix.
+    /// 4. AP decode using prev_slot entries of SAME parity (ft8_a7d).
+    /// 5. Save current slot entries for next same-parity slot.
+    fn ft8_decode_slot<F>(
+        &mut self,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        let mut state = self.start_slot_decode();
+        self.decode_slot_nzhsym41(&mut state, samples, &mut on_decode)?;
+        self.subtract_slot_nzhsym47(&mut state, samples);
+        self.decode_slot_nzhsym50_and_finish(state, samples, on_decode)
     }
 
     fn ft8_decode_options(&self, nzhsym: usize, book: Rc<HashCallBook>) -> DecodeOptions {
