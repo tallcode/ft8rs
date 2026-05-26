@@ -533,7 +533,8 @@ pub fn is_stdcall(callsign: &str) -> bool {
         }
     }
 
-    if iarea < 2 || iarea > 3 {
+    // WSJT-X stdcall uses 1-based iarea in [2, 3]. Rust indices are 0-based.
+    if !(1..=2).contains(&iarea) {
         return false;
     }
 
@@ -557,5 +558,20 @@ pub fn is_stdcall(callsign: &str) -> bool {
         }
     }
 
-    nplet >= 1 && (npdig as i32) < iarea - 1 && nslet <= 3
+    nplet >= 1 && (npdig as i32) < iarea && nslet <= 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_stdcall;
+
+    #[test]
+    fn stdcall_matches_wsjtx_one_based_iarea() {
+        assert!(is_stdcall("D1DX"));
+        assert!(is_stdcall("R6KEE"));
+        assert!(is_stdcall("F1PPH"));
+        assert!(is_stdcall("IW1PUR"));
+        assert!(is_stdcall("DL8YHR"));
+        assert!(!is_stdcall("KN87"));
+    }
 }

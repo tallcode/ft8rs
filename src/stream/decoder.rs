@@ -6,7 +6,6 @@ use crate::ft8::decode::{
     SyncMode,
 };
 use crate::util::hashcall::HashCallBook;
-use crate::util::pack_jt77::is_stdcall;
 use crate::util::subtract_ft8::subtract_ft8_refined;
 
 const SAMPLE_RATE: u32 = 12000;
@@ -161,6 +160,9 @@ impl StreamDecoder {
             .copied()
             .filter_map(|d| extract_slot_entry(d, &sbase))
             .collect();
+        for entry in &entries_to_save {
+            trace_ap_memory("SAVE", self.jseq, entry);
+        }
 
         // ── Stage 4: AP decode using prev_slot entries of SAME parity ──
         let previous_entries = if self.jseq == 0 {
@@ -168,12 +170,19 @@ impl StreamDecoder {
         } else {
             &self.prev_odd
         };
+        for entry in previous_entries {
+            trace_ap_memory("PREV", self.jseq, entry);
+        }
         let ap_candidates = suppress_previous_a7_entries(previous_entries, &entries_to_save);
+        for entry in &ap_candidates {
+            trace_ap_memory("CAND", self.jseq, entry);
+        }
         let ap_results = if ap_candidates.is_empty() {
             Vec::new()
         } else {
             let mut ap_msgs: Vec<ApDecodeResult> = Vec::new();
             for entry in &ap_candidates {
+                trace_ap_entry(self.jseq, entry);
                 let result = ft8_a7d(
                     &full_residual,
                     &entry.call_1,
@@ -184,6 +193,7 @@ impl StreamDecoder {
                     entry.xbase,
                 );
                 if let Some(r) = result {
+                    trace_ap_result(self.jseq, entry, &r);
                     let norm_r = normal(&r.msg);
                     if !ap_msgs.iter().any(|a| normal(&a.msg) == norm_r) {
                         ap_msgs.push(r);
@@ -373,7 +383,7 @@ fn split77_words(msg: &str) -> Vec<String> {
         .collect();
     if words.len() >= 3 && words[0] == "CQ" {
         let call = words[2].trim_end_matches("/R").trim_end_matches("/P");
-        if is_stdcall(call) {
+        if is_wsjtx_chkcall(call) {
             words[0] = format!("CQ_{}", words[1]);
             words.remove(1);
         }
@@ -430,9 +440,201 @@ fn is_hashable_callsign_token(token: &str) -> bool {
         && bare.chars().any(|c| c.is_ascii_digit())
 }
 
+fn is_wsjtx_chkcall(token: &str) -> bool {
+    let w = token.trim().to_ascii_uppercase();
+    if w.is_empty()
+        || w.len() > 11
+        || w.contains('.')
+        || w.contains('+')
+        || w.contains('-')
+        || w.contains('?')
+    {
+        return false;
+    }
+    if w.len() > 6 && !w.contains('/') {
+        return false;
+    }
+
+    let base = if let Some(i0) = w.find('/') {
+        let left = &w[..i0];
+        let right = &w[i0 + 1..];
+        if left.len().max(right.len()) > 6 || left.is_empty() || right.is_empty() {
+            return false;
+        }
+        if left.len() <= right.len() {
+            right
+        } else {
+            left
+        }
+    } else {
+        w.as_str()
+    };
+
+    let bytes = base.as_bytes();
+    let nbc = bytes.len();
+    if nbc > 6 || nbc < 3 {
+        return false;
+    }
+    if !bytes[0].is_ascii_uppercase() && !bytes[1].is_ascii_uppercase() {
+        return false;
+    }
+    if bytes[0] == b'Q' && !base.starts_with("QU1RK") {
+        return false;
+    }
+
+    let digit_pos = if bytes[1].is_ascii_digit() {
+        Some(1usize)
+    } else if bytes[2].is_ascii_digit() {
+        Some(2usize)
+    } else {
+        None
+    };
+    let Some(digit_pos) = digit_pos else {
+        return false;
+    };
+    if digit_pos + 1 == nbc {
+        return false;
+    }
+    bytes[digit_pos + 1..]
+        .iter()
+        .all(|b| b.is_ascii_uppercase())
+        && (1..=3).contains(&(nbc - digit_pos - 1))
+}
+
 fn normal(msg: &str) -> String {
     msg.split_whitespace()
         .map(|w| w.trim().to_uppercase())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn trace_ap_entry(jseq: usize, entry: &SlotDecodeEntry) {
+    if !trace_entry_matches(entry) {
+        return;
+    }
+    eprintln!(
+        "[TRACE_AP_ENTRY] jseq={} fragment=\"{}\" call_1=\"{}\" call_2=\"{}\" grid4=\"{}\" dt={:.3} freq={:.3} xbase={:.6e}",
+        jseq,
+        entry.fragment,
+        entry.call_1,
+        entry.call_2,
+        entry.grid4.trim(),
+        entry.dt,
+        entry.freq,
+        entry.xbase
+    );
+}
+
+fn trace_ap_result(jseq: usize, entry: &SlotDecodeEntry, result: &ApDecodeResult) {
+    if !trace_entry_matches(entry) && !trace_message_matches(&result.msg, result.freq) {
+        return;
+    }
+    eprintln!(
+        "[TRACE_AP_RESULT] jseq={} source=\"{}\" freq={:.3} dt={:.3} snr={:.1} nhard={} msg=\"{}\"",
+        jseq, entry.fragment, result.freq, result.dt, result.snr, result.nharderrors, result.msg
+    );
+}
+
+fn trace_ap_memory(kind: &str, jseq: usize, entry: &SlotDecodeEntry) {
+    if !trace_entry_matches(entry) {
+        return;
+    }
+    eprintln!(
+        "[TRACE_AP_{}] jseq={} fragment=\"{}\" call_1=\"{}\" call_2=\"{}\" grid4=\"{}\" dt={:.3} freq={:.3} xbase={:.6e}",
+        kind,
+        jseq,
+        entry.fragment,
+        entry.call_1,
+        entry.call_2,
+        entry.grid4.trim(),
+        entry.dt,
+        entry.freq,
+        entry.xbase
+    );
+}
+
+fn trace_entry_matches(entry: &SlotDecodeEntry) -> bool {
+    let Ok(raw) = std::env::var("FT8RS_TRACE_TARGETS") else {
+        return false;
+    };
+    let freq_tol = trace_freq_tol();
+    let call_1 = entry.call_1.to_ascii_uppercase();
+    let call_2 = entry.call_2.to_ascii_uppercase();
+    for item in raw.split(';') {
+        let mut parts = item.trim().splitn(3, ':');
+        let Some(freq_raw) = parts.next() else {
+            continue;
+        };
+        let Ok(freq) = freq_raw.trim().parse::<f64>() else {
+            continue;
+        };
+        if (freq - entry.freq).abs() > freq_tol {
+            continue;
+        }
+        let label = parts.nth(1).unwrap_or("").to_ascii_uppercase();
+        if label.contains(&call_2) && (call_1 == "CQ" || label.contains(&call_1)) {
+            return true;
+        }
+    }
+    false
+}
+
+fn trace_message_matches(msg: &str, freq: f64) -> bool {
+    let Ok(raw) = std::env::var("FT8RS_TRACE_TARGETS") else {
+        return false;
+    };
+    let freq_tol = trace_freq_tol();
+    let msg = normal(msg);
+    for item in raw.split(';') {
+        let mut parts = item.trim().splitn(3, ':');
+        let Some(freq_raw) = parts.next() else {
+            continue;
+        };
+        let Ok(target_freq) = freq_raw.trim().parse::<f64>() else {
+            continue;
+        };
+        if (target_freq - freq).abs() > freq_tol {
+            continue;
+        }
+        let label = parts.nth(1).unwrap_or("").to_ascii_uppercase();
+        if !label.is_empty() && msg == normal(&label) {
+            return true;
+        }
+    }
+    false
+}
+
+fn trace_freq_tol() -> f64 {
+    std::env::var("FT8RS_TRACE_FREQ_TOL")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
+        .unwrap_or(8.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_wsjtx_chkcall, split77_words};
+
+    #[test]
+    fn split77_words_does_not_treat_grid_as_cq_call() {
+        assert!(!is_wsjtx_chkcall("KN87"));
+        assert_eq!(
+            split77_words("CQ D1DX KN87"),
+            vec!["CQ".to_string(), "D1DX".to_string(), "KN87".to_string()]
+        );
+    }
+
+    #[test]
+    fn split77_words_keeps_cq_dx_call_rewrite() {
+        assert!(is_wsjtx_chkcall("DL8YHR"));
+        assert_eq!(
+            split77_words("CQ DX DL8YHR JO41"),
+            vec![
+                "CQ_DX".to_string(),
+                "DL8YHR".to_string(),
+                "JO41".to_string()
+            ]
+        );
+    }
 }
