@@ -123,7 +123,7 @@ jobs:
           Compress-Archive -Path "dist\$pkg" -DestinationPath "${{ matrix.artifact_name }}" -Force
 
       - name: Upload packaged binary
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.package_name }}
           path: ${{ matrix.artifact_name }}
@@ -136,7 +136,7 @@ jobs:
 
     steps:
       - name: Download packaged binaries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 
