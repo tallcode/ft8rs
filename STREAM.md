@@ -487,11 +487,25 @@ File input is now a thin adapter around that library path:
   across slots.
 - `input::file`: WAV file entry point; infers `YYMMDD_HHMMSS` from file names,
   reads/resamples audio, and delegates slot driving to `stream::slot`.
-- `input::soundcard`: reserved soundcard entry point; intentionally stubbed
-  until capture and system-time segmentation are verified.
+- `input::soundcard`: live input-device adapter. With no `--device`, it lists
+  input devices. With `--device <index-or-name>`, it captures audio, aligns to
+  system 15-second slots, resamples to 12 kHz, and drives the streaming decode
+  stages.
 - `main`: CLI argument parsing and streaming decode-line printing only. File
-  CLI prints each slot immediately after it is decoded and uses `====` between
-  adjacent slots.
+  and soundcard CLI paths print decode rows as soon as the stream session emits
+  them, then print a compact slot-complete separator with the decode count.
+
+Soundcard decoding uses a small worker pipeline:
+
+- The input thread owns the CPAL stream and keeps consuming native audio while
+  decode work is running.
+- The decode worker owns one `StreamDecodeSession`, so `HashCallBook`, AP
+  memory, residual subtract order, and `nzhsym=41/47/50` state remain
+  sequential and WSJT-X-aligned.
+- Stage commands are sent at the native-sample thresholds corresponding to
+  `nzhsym=41`, `47`, and full slot `50`.
+- The input thread polls decode events while collecting audio, so strong
+  early decodes can be printed before the slot completes.
 
 Decoder-facing configuration now uses WSJT-X-style names where practical:
 `nfa`, `nfb`, `syncmin`, `ndepth`, `ncand`, `nQSOProgress`, `lft8apon`,
@@ -506,16 +520,40 @@ constants all live under the decoder tree. Upper layers should use the
 decoder/session/input APIs and explicit root re-exports (`HashCallBook`,
 `fft_engine_name`) rather than depending on shared utility modules.
 
-The first CLI target is:
+The primary CLI targets are:
 
 ```text
 ft8rs --fft-engine fftw file tests/ft8/230208_140300.wav
 ft8rs --fft-engine fftw file some.wav --start-time 230208_140300
+ft8rs soundcard
+ft8rs soundcard --device "VB-Cable A" --slots 2
 ```
 
-The soundcard subcommand is reserved but intentionally returns "not
-implemented" until the capture backend and system-time segmentation can be
-added and verified separately from decoder alignment.
+`--device` accepts either the listed input-device index or the full device name.
+
+## Current Performance Notes
+
+The current performance work intentionally avoids changing sensitivity-related
+parameters, candidate search space, AP pass semantics, or residual subtract
+order.
+
+- Optional timer tracing is available with `FT8RS_TRACE_TIMERS=1`.
+  - It is silent by default and is not part of normal CLI output.
+  - It measures stream stages, decode passes, candidate loops, and `ft8b`
+    sub-stages.
+- Timing showed LDPC/OSD dominates the current short-test cost.
+- Implemented no-algorithm-change optimizations:
+  - cache the LDPC generator matrix with `OnceLock`;
+  - reuse OSD work buffers in the inner pattern loop;
+  - encode into an existing codeword buffer instead of allocating a new `Vec`;
+  - use unstable reliability sorting, where sort stability has no WSJT-X
+    semantic role.
+
+Current release baseline after this work:
+
+- Short stream decode: `21` unique messages, about `3.3 s`.
+- Long stream decode: `422/449`, about `66.8 s` total, all slots under `15 s`,
+  slowest observed slot about `4.13 s`.
 
 ## Near-term Alignment Priorities
 

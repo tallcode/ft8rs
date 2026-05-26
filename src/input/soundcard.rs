@@ -3,7 +3,8 @@ use crate::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
 
 use cpal::traits::StreamTrait;
 use cpal::traits::{DeviceTrait, HostTrait};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::audio::resample_linear;
@@ -64,32 +65,90 @@ where
     F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
     G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
 {
-    decode_soundcard_slots_staged(options, |decoder, timestamp, collector, sample_rate| {
-        let mut slot_state = decoder.start_slot_decode();
+    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
+    let (cmd_tx, event_rx) = start_decode_worker(options.config);
+
+    let first_slot_start = next_slot_start_unix_seconds()?;
+    sleep_until_unix_seconds(first_slot_start)?;
+    drain_pending_audio(&rx);
+
+    let mut collector = NativeSampleCollector::new(&rx);
+    let mut slot_index = 0usize;
+    loop {
+        if options
+            .max_slots
+            .is_some_and(|max_slots| slot_index >= max_slots)
+        {
+            break;
+        }
+
+        let timestamp =
+            SlotTimestamp::from_unix_seconds_utc(first_slot_start + slot_index as i64 * 15);
         let mut native = Vec::with_capacity(sample_rate as usize * SLOT_SECONDS as usize);
         let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 8);
 
         let nzhsym41_native = native_samples_for_nzhsym(sample_rate, 41);
-        collector.collect_until(&mut native, nzhsym41_native, deadline)?;
+        collector.collect_until_with_events(
+            &mut native,
+            nzhsym41_native,
+            deadline,
+            &event_rx,
+            &mut on_decode,
+            &mut on_slot_complete,
+        )?;
         let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
-        decoder.decode_slot_nzhsym41(&mut slot_state, &samples_12k, |decode| {
-            on_decode(timestamp.clone(), decode)
-        })?;
+        send_worker_command(
+            &cmd_tx,
+            DecodeWorkerCommand::Nzhsym41 {
+                timestamp: timestamp.clone(),
+                samples_12k,
+            },
+        )?;
 
         let nzhsym47_native = native_samples_for_nzhsym(sample_rate, 47);
-        collector.collect_until(&mut native, nzhsym47_native, deadline)?;
+        collector.collect_until_with_events(
+            &mut native,
+            nzhsym47_native,
+            deadline,
+            &event_rx,
+            &mut on_decode,
+            &mut on_slot_complete,
+        )?;
         let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
-        decoder.subtract_slot_nzhsym47(&mut slot_state, &samples_12k);
+        send_worker_command(
+            &cmd_tx,
+            DecodeWorkerCommand::Nzhsym47 {
+                timestamp: timestamp.clone(),
+                samples_12k,
+            },
+        )?;
 
         let samples_per_slot = sample_rate as usize * SLOT_SECONDS as usize;
-        collector.collect_until(&mut native, samples_per_slot, deadline)?;
+        collector.collect_until_with_events(
+            &mut native,
+            samples_per_slot,
+            deadline,
+            &event_rx,
+            &mut on_decode,
+            &mut on_slot_complete,
+        )?;
         let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
-        let results =
-            decoder.decode_slot_nzhsym50_and_finish(slot_state, &samples_12k, |decode| {
-                on_decode(timestamp.clone(), decode)
-            })?;
-        on_slot_complete(timestamp, results.len())
-    })
+        send_worker_command(
+            &cmd_tx,
+            DecodeWorkerCommand::Nzhsym50 {
+                timestamp,
+                samples_12k,
+            },
+        )?;
+
+        drain_decode_events_until_slot_complete(&event_rx, &mut on_decode, &mut on_slot_complete)?;
+        slot_index += 1;
+    }
+
+    let _ = cmd_tx.send(DecodeWorkerCommand::Stop);
+    drop(stream);
+
+    Ok(())
 }
 
 pub fn open_soundcard_stream(options: SoundcardDecodeOptions) -> Result<(), String> {
@@ -133,44 +192,186 @@ where
     Ok(())
 }
 
-fn decode_soundcard_slots_staged<F>(
-    options: SoundcardDecodeOptions,
-    mut on_slot: F,
+enum DecodeWorkerCommand {
+    Nzhsym41 {
+        timestamp: SlotTimestamp,
+        samples_12k: Vec<f32>,
+    },
+    Nzhsym47 {
+        timestamp: SlotTimestamp,
+        samples_12k: Vec<f32>,
+    },
+    Nzhsym50 {
+        timestamp: SlotTimestamp,
+        samples_12k: Vec<f32>,
+    },
+    Stop,
+}
+
+enum DecodeWorkerEvent {
+    Decode {
+        timestamp: SlotTimestamp,
+        decode: StreamDecodedMessage,
+    },
+    SlotComplete {
+        timestamp: SlotTimestamp,
+        count: usize,
+    },
+    Error(String),
+}
+
+fn start_decode_worker(
+    config: StreamDecodeConfig,
+) -> (Sender<DecodeWorkerCommand>, Receiver<DecodeWorkerEvent>) {
+    let (cmd_tx, cmd_rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut decoder = StreamDecodeSession::new(config);
+        let mut slot_state = None;
+        while let Ok(command) = cmd_rx.recv() {
+            let result = match command {
+                DecodeWorkerCommand::Nzhsym41 {
+                    timestamp,
+                    samples_12k,
+                } => {
+                    let mut state = decoder.start_slot_decode();
+                    let event_tx = event_tx.clone();
+                    let stage_result =
+                        decoder.decode_slot_nzhsym41(&mut state, &samples_12k, |decode| {
+                            event_tx
+                                .send(DecodeWorkerEvent::Decode {
+                                    timestamp: timestamp.clone(),
+                                    decode: decode.clone(),
+                                })
+                                .map_err(|err| err.to_string())
+                        });
+                    if stage_result.is_ok() {
+                        slot_state = Some(state);
+                    }
+                    stage_result.map(|_| None)
+                }
+                DecodeWorkerCommand::Nzhsym47 {
+                    timestamp,
+                    samples_12k,
+                } => {
+                    if let Some(state) = slot_state.as_mut() {
+                        decoder.subtract_slot_nzhsym47(state, &samples_12k);
+                        Ok(None)
+                    } else {
+                        Err(format!("{timestamp}: received nzhsym=47 before nzhsym=41"))
+                    }
+                }
+                DecodeWorkerCommand::Nzhsym50 {
+                    timestamp,
+                    samples_12k,
+                } => {
+                    if let Some(state) = slot_state.take() {
+                        let event_tx = event_tx.clone();
+                        decoder
+                            .decode_slot_nzhsym50_and_finish(state, &samples_12k, |decode| {
+                                event_tx
+                                    .send(DecodeWorkerEvent::Decode {
+                                        timestamp: timestamp.clone(),
+                                        decode: decode.clone(),
+                                    })
+                                    .map_err(|err| err.to_string())
+                            })
+                            .map(|results| {
+                                Some(DecodeWorkerEvent::SlotComplete {
+                                    timestamp,
+                                    count: results.len(),
+                                })
+                            })
+                    } else {
+                        Err(format!("{timestamp}: received nzhsym=50 before nzhsym=41"))
+                    }
+                }
+                DecodeWorkerCommand::Stop => break,
+            };
+
+            match result {
+                Ok(Some(event)) => {
+                    if event_tx.send(event).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    let _ = event_tx.send(DecodeWorkerEvent::Error(err));
+                    break;
+                }
+            }
+        }
+    });
+    (cmd_tx, event_rx)
+}
+
+fn send_worker_command(
+    tx: &Sender<DecodeWorkerCommand>,
+    command: DecodeWorkerCommand,
+) -> Result<(), String> {
+    tx.send(command)
+        .map_err(|err| format!("soundcard decode worker stopped: {err}"))
+}
+
+fn handle_decode_event<F, G>(
+    event: DecodeWorkerEvent,
+    on_decode: &mut F,
+    on_slot_complete: &mut G,
+) -> Result<bool, String>
+where
+    F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
+{
+    match event {
+        DecodeWorkerEvent::Decode { timestamp, decode } => {
+            on_decode(timestamp, &decode)?;
+            Ok(false)
+        }
+        DecodeWorkerEvent::SlotComplete { timestamp, count } => {
+            on_slot_complete(timestamp, count)?;
+            Ok(true)
+        }
+        DecodeWorkerEvent::Error(err) => Err(err),
+    }
+}
+
+fn drain_available_decode_events<F, G>(
+    event_rx: &Receiver<DecodeWorkerEvent>,
+    on_decode: &mut F,
+    on_slot_complete: &mut G,
+) -> Result<bool, String>
+where
+    F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
+{
+    let mut slot_complete = false;
+    while let Ok(event) = event_rx.try_recv() {
+        slot_complete |= handle_decode_event(event, on_decode, on_slot_complete)?;
+    }
+    Ok(slot_complete)
+}
+
+fn drain_decode_events_until_slot_complete<F, G>(
+    event_rx: &Receiver<DecodeWorkerEvent>,
+    on_decode: &mut F,
+    on_slot_complete: &mut G,
 ) -> Result<(), String>
 where
-    F: FnMut(
-        &mut StreamDecodeSession,
-        SlotTimestamp,
-        &mut NativeSampleCollector<'_>,
-        u32,
-    ) -> Result<(), String>,
+    F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
 {
-    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
-
-    let first_slot_start = next_slot_start_unix_seconds()?;
-    sleep_until_unix_seconds(first_slot_start)?;
-    drain_pending_audio(&rx);
-
-    let mut decoder = StreamDecodeSession::new(options.config);
-    let mut collector = NativeSampleCollector::new(&rx);
-    let mut slot_index = 0usize;
     loop {
-        if options
-            .max_slots
-            .is_some_and(|max_slots| slot_index >= max_slots)
-        {
-            break;
+        if drain_available_decode_events(event_rx, on_decode, on_slot_complete)? {
+            return Ok(());
         }
-
-        let timestamp =
-            SlotTimestamp::from_unix_seconds_utc(first_slot_start + slot_index as i64 * 15);
-        on_slot(&mut decoder, timestamp, &mut collector, sample_rate)?;
-        slot_index += 1;
+        let event = event_rx
+            .recv()
+            .map_err(|err| format!("soundcard decode worker stopped: {err}"))?;
+        if handle_decode_event(event, on_decode, on_slot_complete)? {
+            return Ok(());
+        }
     }
-
-    drop(stream);
-
-    Ok(())
 }
 
 fn start_input_stream(
@@ -401,6 +602,55 @@ impl<'a> NativeSampleCollector<'a> {
                 self.carry.extend_from_slice(&chunk[remaining..]);
             }
         }
+        Ok(())
+    }
+
+    fn collect_until_with_events<F, G>(
+        &mut self,
+        out: &mut Vec<f32>,
+        target_len: usize,
+        deadline: Instant,
+        event_rx: &Receiver<DecodeWorkerEvent>,
+        on_decode: &mut F,
+        on_slot_complete: &mut G,
+    ) -> Result<(), String>
+    where
+        F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+        G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
+    {
+        self.take_from_carry(out, target_len);
+        while out.len() < target_len {
+            let _ = drain_available_decode_events(event_rx, on_decode, on_slot_complete)?;
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(format!(
+                    "timed out collecting soundcard slot: got {}/{} samples",
+                    out.len(),
+                    target_len
+                ));
+            }
+            let timeout = deadline
+                .saturating_duration_since(now)
+                .min(Duration::from_millis(50));
+            match self.rx.recv_timeout(timeout) {
+                Ok(chunk) => {
+                    let remaining = target_len - out.len();
+                    if chunk.len() <= remaining {
+                        out.extend_from_slice(&chunk);
+                    } else {
+                        out.extend_from_slice(&chunk[..remaining]);
+                        self.carry.extend_from_slice(&chunk[remaining..]);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(err) => {
+                    return Err(format!(
+                        "soundcard input stopped while collecting audio: {err}"
+                    ))
+                }
+            }
+        }
+        let _ = drain_available_decode_events(event_rx, on_decode, on_slot_complete)?;
         Ok(())
     }
 

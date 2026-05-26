@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use crate::ft8::ap_decode::{ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache};
 use crate::ft8::decode::{
@@ -94,7 +95,7 @@ pub struct StreamSlotDecodeState {
 
 pub struct StreamDecodeSession {
     params: WsjtxDecodeConfig,
-    book: Rc<HashCallBook>,
+    book: HashCallBook,
     /// Entries from the previous slot of the SAME parity for AP decode.
     /// Matches WSJT-X ndec(jseq,0).
     prev_even: Vec<A7SaveEntry>,
@@ -107,7 +108,7 @@ impl StreamDecodeSession {
     pub fn new(params: WsjtxDecodeConfig) -> Self {
         Self {
             params,
-            book: Rc::new(HashCallBook::new()),
+            book: HashCallBook::new(),
             prev_even: Vec::new(),
             prev_odd: Vec::new(),
             jseq: 0,
@@ -153,15 +154,22 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
+        let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         let early_dd = dd0_partial_nzhsym(&state.dd0, 41);
-        let book = Rc::clone(&self.book);
+        let t_decode = Instant::now();
         let (early_results, _) = if self.params.ndepth == 1 {
             (Vec::new(), Vec::new())
         } else {
-            decode_f64_with_sbase(&early_dd, self.ft8_decode_options(41, book))
+            decode_f64_with_sbase(&early_dd, self.ft8_decode_options(41))
         };
+        trace_timer(
+            "stream.nzhsym41.decode",
+            t_decode,
+            Some(format!("regular={}", early_results.len())),
+        );
         state.early_results = early_results;
+        let t_emit = Instant::now();
         for d in &state.early_results {
             push_regular_decode(
                 &mut state.seen,
@@ -171,22 +179,39 @@ impl StreamDecodeSession {
                 &mut on_decode,
             )?;
         }
+        trace_timer(
+            "stream.nzhsym41.emit",
+            t_emit,
+            Some(format!("merged={}", state.merged.len())),
+        );
+        trace_timer("stream.nzhsym41.total", t_stage, None);
         Ok(())
     }
 
     pub fn subtract_slot_nzhsym47(&self, state: &mut StreamSlotDecodeState, samples: &[f32]) {
+        let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         state.dd1 = dd0_partial_nzhsym(&state.dd0, 47);
         state.early_subtracted = vec![false; state.early_results.len()];
         let lrefinedt = self.params.ndepth > 2;
+        let mut subtracted = 0usize;
         for (idx, d) in state.early_results.iter().enumerate() {
             if d.dt < 0.396 {
                 let mut itone = [0i32; 79];
                 itone.copy_from_slice(&d.itone[..79]);
                 subtract_ft8_refined(&mut state.dd1, &itone, d.freq, d.dt + 0.5, lrefinedt);
                 state.early_subtracted[idx] = true;
+                subtracted += 1;
             }
         }
+        trace_timer(
+            "stream.nzhsym47.subtract",
+            t_stage,
+            Some(format!(
+                "early={} subtracted={subtracted}",
+                state.early_results.len()
+            )),
+        );
     }
 
     pub fn decode_slot_nzhsym50_and_finish<F>(
@@ -198,25 +223,39 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
+        let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         let mut full_dd = state.dd0.clone();
         let clean_prefix = (47 * NZHSYM_STRIDE).min(NMAX);
         full_dd[..clean_prefix].copy_from_slice(&state.dd1[..clean_prefix]);
+        let mut late_subtracted = 0usize;
         for (idx, d) in state.early_results.iter().enumerate() {
             if !state.early_subtracted.get(idx).copied().unwrap_or(false) {
                 let mut itone = [0i32; 79];
                 itone.copy_from_slice(&d.itone[..79]);
                 subtract_ft8_refined(&mut full_dd, &itone, d.freq, d.dt + 0.5, true);
+                late_subtracted += 1;
             }
         }
-        let (full_results, sbase, full_residual) = decode_f64_with_sbase_and_residual(
-            &full_dd,
-            self.ft8_decode_options(50, Rc::clone(&self.book)),
+        trace_timer(
+            "stream.nzhsym50.prepare",
+            t_stage,
+            Some(format!("late_subtracted={late_subtracted}")),
+        );
+
+        let t_full = Instant::now();
+        let (full_results, sbase, full_residual) =
+            decode_f64_with_sbase_and_residual(&full_dd, self.ft8_decode_options(50));
+        trace_timer(
+            "stream.nzhsym50.decode",
+            t_full,
+            Some(format!("regular={}", full_results.len())),
         );
 
         // Build current a7 table entries before AP. WSJT-X ft8_a7_save uses
         // these current entries to suppress previous entries already accounted
         // for by a regular decode in this sequence.
+        let t_a7_save = Instant::now();
         let all_regular: Vec<&DecodedMessage> = state
             .early_results
             .iter()
@@ -227,7 +266,13 @@ impl StreamDecodeSession {
             .copied()
             .filter_map(|d| ft8_a7_save_entry(d, &sbase))
             .collect();
+        trace_timer(
+            "stream.a7_save",
+            t_a7_save,
+            Some(format!("entries={}", entries_to_save.len())),
+        );
 
+        let t_ap = Instant::now();
         let previous_entries = if self.jseq == 0 {
             &self.prev_even
         } else {
@@ -260,7 +305,17 @@ impl StreamDecodeSession {
             }
             ap_msgs
         };
+        trace_timer(
+            "stream.ft8_a7d",
+            t_ap,
+            Some(format!(
+                "candidates={} decoded={}",
+                ap_candidates.len(),
+                ap_results.len()
+            )),
+        );
 
+        let t_merge = Instant::now();
         for d in &full_results {
             push_regular_decode(
                 &mut state.seen,
@@ -290,6 +345,11 @@ impl StreamDecodeSession {
                 state.merged.push(decode);
             }
         }
+        trace_timer(
+            "stream.merge",
+            t_merge,
+            Some(format!("merged={}", state.merged.len())),
+        );
 
         // Matches WSJT-X: ndec(jseq,1) → ndec(jseq,0) at next UTC change.
         if self.jseq == 0 {
@@ -299,6 +359,11 @@ impl StreamDecodeSession {
         }
         self.jseq = 1 - self.jseq;
 
+        trace_timer(
+            "stream.nzhsym50.total",
+            t_stage,
+            Some(format!("merged={}", state.merged.len())),
+        );
         Ok(state.merged)
     }
 
@@ -322,7 +387,7 @@ impl StreamDecodeSession {
         self.decode_slot_nzhsym50_and_finish(state, samples, on_decode)
     }
 
-    fn ft8_decode_options(&self, nzhsym: usize, book: Rc<HashCallBook>) -> DecodeOptions {
+    fn ft8_decode_options(&self, nzhsym: usize) -> DecodeOptions {
         DecodeOptions {
             sample_rate: Some(SAMPLE_RATE as usize),
             nfa: Some(self.params.nfa),
@@ -330,7 +395,7 @@ impl StreamDecodeSession {
             syncmin: self.params.syncmin,
             ndepth: Some(self.params.ndepth),
             ncand: Some(self.params.ncand),
-            hashcallbook: Some(book),
+            hashcallbook: Some(self.book.clone_book()),
             mycall: self.params.mycall.clone(),
             hiscall: self.params.hiscall.clone(),
             nfqso: Some(self.params.nfqso),
@@ -606,6 +671,26 @@ fn normal(msg: &str) -> String {
         .map(|w| w.trim().to_uppercase())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn trace_timers_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("FT8RS_TRACE_TIMERS")
+            .ok()
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    })
+}
+
+fn trace_timer(label: &str, start: Instant, detail: Option<String>) {
+    if !trace_timers_enabled() {
+        return;
+    }
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    match detail {
+        Some(detail) => eprintln!("[ft8rs-timer] {label}: {elapsed_ms:.1} ms ({detail})"),
+        None => eprintln!("[ft8rs-timer] {label}: {elapsed_ms:.1} ms"),
+    }
 }
 
 #[cfg(test)]

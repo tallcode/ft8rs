@@ -1,6 +1,7 @@
 /// LDPC (174,91) Belief Propagation decoder for FT8.
 use crate::ft8::ldpc_tables::*;
 use crate::ft8::protocol::N_LDPC;
+use std::sync::OnceLock;
 
 const KK: usize = 91;
 const M_LDPC: usize = N_LDPC - KK; // 83
@@ -262,7 +263,7 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
 
     // Sort by reliability (descending)
     let mut indices: Vec<usize> = (0..n).collect();
-    indices.sort_by(|&a, &b| absllr[b].partial_cmp(&absllr[a]).unwrap());
+    indices.sort_unstable_by(|&a, &b| absllr[b].partial_cmp(&absllr[a]).unwrap());
 
     // Reorder generator matrix columns
     let mut genmrb = vec![0u8; k * n];
@@ -346,13 +347,18 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
             for slot in misub.iter_mut().take(k).skip(k - iorder) {
                 *slot = 1;
             }
+            let mut mi = vec![0u8; k];
+            let mut me = vec![0u8; k];
+            let mut ce = vec![0u8; n];
+            let mut e2 = vec![0u8; n - k];
+            let mut e2sub = vec![0u8; n - k];
             let mut iflag = Some(k - iorder);
             while let Some(flag) = iflag {
                 let iend = if iorder == nord && !npre1 { flag } else { 0 };
                 let mut d1 = 0.0;
-                let mut e2sub = vec![0u8; n - k];
+                e2sub.fill(0);
                 for n1 in (iend..=flag).rev() {
-                    let mut mi = misub.clone();
+                    mi.copy_from_slice(&misub);
                     mi[n1] = 1;
                     if mi
                         .iter()
@@ -363,9 +369,11 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
                         continue;
                     }
 
-                    let me: Vec<u8> = m0.iter().zip(mi.iter()).map(|(&a, &b)| a ^ b).collect();
-                    let (e2, nd1kpt) = if n1 == flag {
-                        let ce = mrb_encode(&me, &genmrb, n);
+                    for j in 0..k {
+                        me[j] = m0[j] ^ mi[j];
+                    }
+                    let nd1kpt = if n1 == flag {
+                        mrb_encode_into(&me, &genmrb, n, &mut ce);
                         for j in k..n {
                             e2sub[j - k] = ce[j] ^ hdec[j] as u8;
                         }
@@ -376,19 +384,20 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
                             .take(k)
                             .map(|((&m, &h), &a)| (m ^ h as u8) as f64 * a)
                             .sum();
-                        let nd = e2sub.iter().take(nt).filter(|&&b| b == 1).count() + 1;
-                        (e2sub.clone(), nd)
+                        e2.copy_from_slice(&e2sub);
+                        e2sub.iter().take(nt).filter(|&&b| b == 1).count() + 1
                     } else {
-                        let mut e2 = e2sub.clone();
+                        e2.copy_from_slice(&e2sub);
                         for j in k..n {
                             e2[j - k] ^= genmrb[n1 * n + j];
                         }
-                        let nd = e2.iter().take(nt).filter(|&&b| b == 1).count() + 2;
-                        (e2, nd)
+                        e2.iter().take(nt).filter(|&&b| b == 1).count() + 2
                     };
 
                     if nd1kpt <= ntheta {
-                        let ce = mrb_encode(&me, &genmrb, n);
+                        if n1 != flag {
+                            mrb_encode_into(&me, &genmrb, n, &mut ce);
+                        }
                         let dd = if n1 == flag {
                             d1 + e2sub
                                 .iter()
@@ -404,7 +413,7 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
                         };
                         if dd < dmin {
                             dmin = dd;
-                            best_cw = ce;
+                            best_cw.copy_from_slice(&ce);
                         }
                     }
                 }
@@ -440,6 +449,13 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
 
 fn mrb_encode(message: &[u8], genmrb: &[u8], n: usize) -> Vec<u8> {
     let mut codeword = vec![0u8; n];
+    mrb_encode_into(message, genmrb, n, &mut codeword);
+    codeword
+}
+
+fn mrb_encode_into(message: &[u8], genmrb: &[u8], n: usize, codeword: &mut [u8]) {
+    debug_assert_eq!(codeword.len(), n);
+    codeword.fill(0);
     for (i, &bit) in message.iter().enumerate() {
         if bit != 1 {
             continue;
@@ -449,7 +465,6 @@ fn mrb_encode(message: &[u8], genmrb: &[u8], n: usize) -> Vec<u8> {
             codeword[j] ^= genmrb[row + j];
         }
     }
-    codeword
 }
 
 fn nextpat91(mi: &mut [u8], iorder: usize) -> Option<usize> {
@@ -461,45 +476,52 @@ fn nextpat91(mi: &mut [u8], iorder: usize) -> Option<usize> {
         }
     }
     let ind = ind?;
-    let mut ms = vec![0u8; k];
-    ms[..ind].copy_from_slice(&mi[..ind]);
-    ms[ind] = 1;
-    ms[ind + 1] = 0;
+
+    mi[ind] = 1;
+    mi[ind + 1..].fill(0);
     if ind + 1 < k {
-        let ones = ms.iter().filter(|&&b| b == 1).count();
+        let ones = mi[..=ind].iter().filter(|&&b| b == 1).count();
         let nz = iorder.saturating_sub(ones);
-        for slot in ms.iter_mut().take(k).skip(k - nz) {
+        for slot in mi.iter_mut().take(k).skip(k - nz) {
             *slot = 1;
         }
     }
-    mi.copy_from_slice(&ms);
     mi.iter().position(|&b| b == 1)
 }
 
-fn get_generator() -> Vec<u8> {
-    let k = KK;
-    let n = N_LDPC;
+fn get_generator() -> &'static [u8] {
+    static GENERATOR: OnceLock<Vec<u8>> = OnceLock::new();
+    GENERATOR
+        .get_or_init(|| {
+            let k = KK;
+            let n = N_LDPC;
 
-    let mut gen = vec![0u8; k * n];
-    for i in 0..k {
-        gen[i * n + i] = 1;
-    }
+            let mut gen = vec![0u8; k * n];
+            for i in 0..k {
+                gen[i * n + i] = 1;
+            }
 
-    use crate::ft8::protocol::G_HEX;
-    for m_idx in 0..83 {
-        let hex_str = G_HEX[m_idx];
-        for j in 0..23 {
-            let byte = hex_str.as_bytes()[j];
-            let val = u8::from_str_radix(&format!("{}", byte as char), 16).unwrap_or(0);
-            let limit = if j == 22 { 3 } else { 4 };
-            for jj in 1..=limit {
-                let col = j * 4 + jj - 1;
-                if col < k && (val & (1 << (4 - jj))) != 0 {
-                    gen[col * n + k + m_idx] = 1;
+            use crate::ft8::protocol::G_HEX;
+            for (m_idx, hex_str) in G_HEX.iter().enumerate().take(83) {
+                for j in 0..23 {
+                    let byte = hex_str.as_bytes()[j];
+                    let val = match byte {
+                        b'0'..=b'9' => byte - b'0',
+                        b'a'..=b'f' => byte - b'a' + 10,
+                        b'A'..=b'F' => byte - b'A' + 10,
+                        _ => 0,
+                    };
+                    let limit = if j == 22 { 3 } else { 4 };
+                    for jj in 1..=limit {
+                        let col = j * 4 + jj - 1;
+                        if col < k && (val & (1 << (4 - jj))) != 0 {
+                            gen[col * n + k + m_idx] = 1;
+                        }
+                    }
                 }
             }
-        }
-    }
 
-    gen
+            gen
+        })
+        .as_slice()
 }

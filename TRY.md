@@ -142,6 +142,82 @@
 - `cargo fmt` ✅
 - `cargo check --tests` ✅
 
+## Streaming: 声卡 decode worker pipeline
+
+### 目标
+- 让声卡主循环继续按时间采样，不在执行 `nzhsym=41/47/50` 时停止主动消费音频队列。
+- decode worker 独占 `StreamDecodeSession`，保证 decoder 内部状态、AP memory、hashcallbook 仍然按顺序更新。
+- 不并行 classic candidate/subtract loop，避免改变 WSJT-X 对齐的 residual subtract 顺序。
+
+### 改动
+- `StreamDecodeSession` 的 callbook 从 `Rc<HashCallBook>` 改为 session 独占 `HashCallBook`。
+  - 进入底层 decoder 时传 `clone_book()` 快照。
+  - 这样 `StreamDecodeSession` 可以被 worker thread 独占持有。
+- 声卡 decode rows 路径新增 worker command/event：
+  - `Nzhsym41`
+  - `Nzhsym47`
+  - `Nzhsym50`
+  - `Decode`
+  - `SlotComplete`
+- 声卡主线程按样本阈值采集并发送 stage command：
+  - 发送 `Nzhsym41` 后继续采集到 47 threshold。
+  - 发送 `Nzhsym47` 后继续采集到完整 slot。
+  - 发送 `Nzhsym50` 后等待 `SlotComplete`。
+- `NativeSampleCollector` 增加 decode event polling：
+  - 采样等待期间每隔最多 50ms 处理 worker 输出，避免 early decode 行被主线程长时间压住。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `4.4s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 总耗时约 `83.58s`
+  - 每段均小于 `15s`
+  - timing residual median 仍为 `+0.785s`
+- `cargo build --release` ✅
+- `target/release/ft8rs soundcard --device "VB-Cable A" --slots 2` ✅
+  - 实测两段正常输出，slot done 分别为 `8` 和 `14` decodes。
+
+## Performance: LDPC/OSD 无灵敏度损失优化
+
+### 目标
+- 先不改搜索空间、候选阈值、AP/pass 控制流，避免为了速度牺牲 WSJT-X 对齐和灵敏度。
+- 找出短测耗时主要来源，优先处理 Rust 实现中的重复分配和重复构建。
+
+### 定位
+- 增加可选计时：`FT8RS_TRACE_TIMERS=1`。
+  - 默认不输出，不影响 CLI 正常流式 decode rows。
+  - trace 覆盖 stream stage、decode pass、candidate loop、ft8b 内部阶段。
+- 计时显示瓶颈集中在候选 `ft8b -> try_decode_passes -> decode174_91` 的 LDPC/OSD 路径。
+  - FFT、sync8、downsample、soft symbol 提取不是当前主耗时。
+
+### 改动
+- `decode174_91` 的 generator matrix 改为 `OnceLock` 缓存。
+  - 原实现每次 OSD 都重新解析并构建 `91x174` 矩阵。
+  - 现在进程内只构建一次。
+- OSD 内层循环复用工作缓冲。
+  - `mi/me/ce/e2` 从每个 pattern 分配改为每个 order 分配一次。
+  - `e2sub` 从每个 pattern 分配改为每个 order 分配一次并复用。
+  - 新增 `mrb_encode_into`，避免每次 encode 返回新 `Vec`。
+  - `nextpat91` 去掉临时 `ms` 分配，直接原地更新 pattern。
+- OSD 可靠度排序改为 `sort_unstable_by`，排序稳定性不参与任何 WSJT-X 语义。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `3.3s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 总耗时约 `66.80s`
+  - 最慢单段约 `4.13s`
+  - 每段均小于 `15s`
+  - timing residual median 仍为 `+0.785s`
+
 ## Streaming: 声卡实时 `nzhsym=41/47/50` 分阶段调度
 
 ### 目标
