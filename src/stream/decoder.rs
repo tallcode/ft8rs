@@ -482,13 +482,13 @@ fn is_wsjtx_chkcall(token: &str) -> bool {
         return false;
     }
 
-    let digit_pos = if bytes[1].is_ascii_digit() {
-        Some(1usize)
-    } else if bytes[2].is_ascii_digit() {
-        Some(2usize)
-    } else {
-        None
-    };
+    let mut digit_pos = None;
+    if bytes[1].is_ascii_digit() {
+        digit_pos = Some(1usize);
+    }
+    if bytes[2].is_ascii_digit() {
+        digit_pos = Some(2usize);
+    }
     let Some(digit_pos) = digit_pos else {
         return false;
     };
@@ -636,5 +636,10 @@ mod tests {
                 "JO41".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn chkcall_uses_third_character_digit_when_both_second_and_third_are_digits() {
+        assert!(is_wsjtx_chkcall("A12BC"));
     }
 }

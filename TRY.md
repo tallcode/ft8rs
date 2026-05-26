@@ -136,6 +136,12 @@
   - WSJT-X 对 `CQ ... RRR/73/report` 这类 `irpt>=2` 判 invalid。
   - Rust 现补齐对应拒绝逻辑。
 - `sync8` 的线程局部 `savg` 每次进入前清零，保持 Fortran `savg=0.` 的生命周期语义；当前 `sbase` 已走独立 Welch 路径，这个改动主要是清理潜在状态残留。
+- stream AP memory 的 `chkcall` 镜像：
+  - WSJT-X `chkcall.f90` 先检查第 2 位数字、再检查第 3 位数字；如果两者都是数字，第 3 位会覆盖为 call area。
+  - Rust 之前用 `if/else if`，会提前选第 2 位；现改成和 Fortran 赋值顺序一致。
+- `pack77_1` 两词消息 guard：
+  - WSJT-X `nwords==2` 且第二词包含 `/` 时直接 return。
+  - Rust 现拒绝 `CALL1 CALL2/R` 这类两词 Type 1 形态，避免 AP brute-force 产生 WSJT-X 不会产生的候选。
 
 ### 需要记住的细节
 - `RR73` 同时满足 4 字符 grid 形态 `RR73`，WSJT-X `pack77_1` 后续会先按 grid 分支处理；因此不能用 `CQ K1ABC RR73` 来测试 `irpt=3` invalid guard，测试应使用 `RRR` 或 `73`。
@@ -146,9 +152,10 @@
 - `git diff --check` ✅
 - `cargo test --release util::pack_jt77::tests -- --nocapture` ✅
 - `cargo test --release util::unpack_jt77::tests -- --nocapture` ✅
+- `cargo test --release stream::decoder::tests -- --nocapture` ✅
 - `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
   - `21` unique messages
-  - 约 `4.3s`
+  - 约 `4.4s`
 - `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
   - `401/449`
   - 每段均小于 `15s`

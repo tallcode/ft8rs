@@ -304,6 +304,9 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
     if !ok1 || !ok2 {
         return None;
     }
+    if parts.len() == 2 && w2.contains('/') {
+        return None;
+    }
 
     let i1psfx = ipa == 1 && (w1.ends_with("/P") || w1.contains("/P "));
     let i2psfx = ipb == 1 && (w2.ends_with("/P") || w2.contains("/P "));
@@ -593,5 +596,10 @@ mod tests {
     fn report_tokens_are_not_standard_callsigns_for_split77() {
         assert!(!super::parse_callsign("RR73").is_standard);
         assert!(!super::parse_callsign("73").is_standard);
+    }
+
+    #[test]
+    fn two_word_type1_rejects_second_call_slash_like_wsjtx() {
+        assert!(super::try_pack_type1(&["K1ABC".into(), "W9XYZ/R".into()]).is_none());
     }
 }
