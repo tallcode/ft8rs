@@ -78,6 +78,21 @@ fn gsfk_pulse_cached() -> &'static Vec<f64> {
     })
 }
 
+/// WSJT-X `gen_ft8wave` caches `ctab(0:NTAB-1)` after the first call.
+fn complex_phase_table_cached() -> &'static Vec<(f64, f64)> {
+    static CTAB: OnceLock<Vec<(f64, f64)>> = OnceLock::new();
+    CTAB.get_or_init(|| {
+        let ntab = 65536usize;
+        let twopi_over_ntab = 2.0 * PI / ntab as f64;
+        (0..ntab)
+            .map(|i| {
+                let phi = i as f64 * twopi_over_ntab;
+                (phi.cos(), phi.sin())
+            })
+            .collect()
+    })
+}
+
 /// Abramowitz & Stegun 7.1.26 erf approximation.
 fn erf_approx(x: f64) -> f64 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
@@ -103,6 +118,7 @@ fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
 
     let pulse = gsfk_pulse_cached();
     let pulse_len = pulse.len();
+    let ctab = complex_phase_table_cached();
 
     let dphi_len = (nsym + 2) * nsps;
     let mut dphi = vec![0.0f64; dphi_len];
@@ -139,8 +155,9 @@ fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
     for j in nsps..(nsps + nwave) {
         let k = j - nsps;
         let idx = ((phi / twopi_over_ntab) as usize) % ntab;
-        cwave_re[k] = (idx as f64 * twopi_over_ntab).cos();
-        cwave_im[k] = (idx as f64 * twopi_over_ntab).sin();
+        let (re, im) = ctab[idx];
+        cwave_re[k] = re;
+        cwave_im[k] = im;
         phi += dphi[j];
         while phi >= twopi {
             phi -= twopi;

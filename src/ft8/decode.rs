@@ -352,25 +352,10 @@ fn decode_from_f64(
 
     let mut cx_re = vec![0.0; NFFT1_LONG];
     let mut cx_im = vec![0.0; NFFT1_LONG];
-    cx_re[..residual.len().min(NFFT1_LONG)]
-        .copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
-    fft_complex(&mut cx_re, &mut cx_im, false);
-    let _workspace = create_decode_workspace();
 
     let mut decoded: Vec<DecodedMessage> = Vec::new();
     let mut seen_messages = std::collections::HashSet::new();
     let max_passes = if ndepth == 1 { 2 } else { 3 };
-
-    #[allow(clippy::map_clone)]
-    fn count_candidate_frequencies(
-        candidates: &[Candidate],
-    ) -> std::collections::HashMap<i32, usize> {
-        let mut counts = std::collections::HashMap::new();
-        for c in candidates {
-            *counts.entry(c.freq as i32).or_insert(0) += 1;
-        }
-        counts
-    }
 
     // WSJT-X sync8 refreshes sbase for each pass on the current residual.
     let mut sbase: Vec<f64> = Vec::new();
@@ -399,16 +384,13 @@ fn decode_from_f64(
         // WSJT-X ft8_decode.f90: pass 1 uses imetric=1, passes 2/3 use imetric=2.
         let pass_imetric = if pass_idx == 0 { 1 } else { 2 };
 
-        let _coarse_frequency_uses = count_candidate_frequencies(&candidates);
-        let _coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
+        let mut cand_ws = create_decode_workspace();
+        let mut no_coarse_frequency_uses: std::collections::HashMap<i32, usize> =
+            std::collections::HashMap::new();
+        let mut no_coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
             std::collections::HashMap::new();
         // ── Candidate decoding: sequential with immediate subtraction (matching WSJT-X ft8b) ──
         for cand in &candidates {
-            let mut cand_ws = create_decode_workspace();
-            let mut cand_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
-                std::collections::HashMap::new();
-            let mut cand_freq_uses: std::collections::HashMap<i32, usize> =
-                std::collections::HashMap::new();
             if let Some(r) = ft8b(
                 &residual,
                 &cx_re,
@@ -423,8 +405,8 @@ fn decode_from_f64(
                 &book,
                 None,
                 &mut cand_ws,
-                &mut cand_cache,
-                &mut cand_freq_uses,
+                &mut no_coarse_downsample_cache,
+                &mut no_coarse_frequency_uses,
             ) {
                 let message_key = normalize_message_key(&r.msg);
                 crate::ft8::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
@@ -1079,7 +1061,7 @@ fn ft8b(
         7
     };
     let nsync = compute_nsync(&workspace.s8);
-    if !passes_sync_gate_strict(&workspace.s8, min_costas_hits) {
+    if nsync < min_costas_hits {
         return None;
     }
 
@@ -1119,7 +1101,8 @@ fn ft8b(
         return None;
     }
 
-    let (xsnr, xsnr2) = compute_snr(&workspace.s8, &result.cw, xbase);
+    let tones = get_tones(&result.cw);
+    let (xsnr, xsnr2) = compute_snr(&workspace.s8, &tones, xbase);
 
     // WSJT-X ft8b.f90: when nagain=false (initial decode, not subtract+retry),
     // use xsnr2 (spectrum baseline) instead of xsnr (adjacent-tone).
@@ -1137,7 +1120,6 @@ fn ft8b(
 
     // Compute itone from codeword (same as get_tones but as [i32; 79])
     let mut itone = [0i32; 79];
-    let tones = get_tones(&result.cw);
     for i in 0..79 {
         itone[i] = tones[i] as i32;
     }
@@ -1274,30 +1256,6 @@ fn extract_soft_symbols(ibest: isize, workspace: &mut DecodeWorkspace) {
             workspace.s8[idx] = (re * re + im * im).sqrt();
         }
     }
-}
-
-fn passes_sync_gate_strict(s8: &[f64], min_costas_hits: usize) -> bool {
-    const SYNC_TIME_SHIFTS: [usize; 3] = [0, 36, 72];
-    let mut nsync = 0;
-
-    for k in 0..COSTAS_BLOCKS {
-        for &offset in &SYNC_TIME_SHIFTS {
-            let mut max_tone = 0;
-            let mut max_val = -1.0;
-            for t in 0..8 {
-                let v = s8[t * NN + k + offset];
-                if v > max_val {
-                    max_val = v;
-                    max_tone = t;
-                }
-            }
-            if max_tone == COSTAS[k] as usize {
-                nsync += 1;
-            }
-        }
-    }
-
-    nsync >= min_costas_hits
 }
 
 /// Compute nsync count matching WSJT-X ft8b.f90: count of correct Costas tones.
@@ -1568,8 +1526,7 @@ fn is_valid_message_type(message77: &[u8]) -> bool {
 ///
 /// WSJT-X uses xsnr2 when nagain=false (initial decode), xsnr when nagain=true
 /// (after subtract+retry). xbase is the noise power at f1 from the sync8 baseline.
-fn compute_snr(s8: &[f64], cw: &[u8], xbase: f64) -> (f64, f64) {
-    let itone = get_tones(cw);
+fn compute_snr(s8: &[f64], itone: &[u8], xbase: f64) -> (f64, f64) {
     let mut xsig = 0.0;
     let mut xnoi = 0.0;
 
@@ -1605,7 +1562,8 @@ fn compute_snr(s8: &[f64], cw: &[u8], xbase: f64) -> (f64, f64) {
 /// Legacy SNR estimate (adjacent-tone only, for compatibility).
 #[allow(dead_code)]
 fn estimate_snr(s8: &[f64], cw: &[u8]) -> f64 {
-    let (xsnr, _) = compute_snr(s8, cw, 1e-6); // dummy xbase, unused
+    let tones = get_tones(cw);
+    let (xsnr, _) = compute_snr(s8, &tones, 1e-6); // dummy xbase, unused
     xsnr
 }
 

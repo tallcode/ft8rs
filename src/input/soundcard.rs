@@ -10,6 +10,7 @@ use super::audio::resample_linear;
 
 const TARGET_SAMPLE_RATE: u32 = 12_000;
 const SLOT_SECONDS: u64 = 15;
+const NZHSYM_STRIDE: usize = 3456;
 
 #[derive(Clone, Debug)]
 pub struct SoundcardDecodeOptions {
@@ -63,9 +64,30 @@ where
     F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
     G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
 {
-    decode_soundcard_slots(options, |decoder, timestamp, samples_12k| {
-        let results = decoder
-            .decode_slot_streaming(samples_12k, |decode| on_decode(timestamp.clone(), decode))?;
+    decode_soundcard_slots_staged(options, |decoder, timestamp, collector, sample_rate| {
+        let mut slot_state = decoder.start_slot_decode();
+        let mut native = Vec::with_capacity(sample_rate as usize * SLOT_SECONDS as usize);
+        let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 8);
+
+        let nzhsym41_native = native_samples_for_nzhsym(sample_rate, 41);
+        collector.collect_until(&mut native, nzhsym41_native, deadline)?;
+        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+        decoder.decode_slot_nzhsym41(&mut slot_state, &samples_12k, |decode| {
+            on_decode(timestamp.clone(), decode)
+        })?;
+
+        let nzhsym47_native = native_samples_for_nzhsym(sample_rate, 47);
+        collector.collect_until(&mut native, nzhsym47_native, deadline)?;
+        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+        decoder.subtract_slot_nzhsym47(&mut slot_state, &samples_12k);
+
+        let samples_per_slot = sample_rate as usize * SLOT_SECONDS as usize;
+        collector.collect_until(&mut native, samples_per_slot, deadline)?;
+        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+        let results =
+            decoder.decode_slot_nzhsym50_and_finish(slot_state, &samples_12k, |decode| {
+                on_decode(timestamp.clone(), decode)
+            })?;
         on_slot_complete(timestamp, results.len())
     })
 }
@@ -78,7 +100,83 @@ fn decode_soundcard_slots<F>(options: SoundcardDecodeOptions, mut on_slot: F) ->
 where
     F: FnMut(&mut StreamDecodeSession, SlotTimestamp, &[f32]) -> Result<(), String>,
 {
-    let selector = options.device.as_deref().unwrap_or("default");
+    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
+    let samples_per_slot = sample_rate as usize * SLOT_SECONDS as usize;
+
+    let first_slot_start = next_slot_start_unix_seconds()?;
+    sleep_until_unix_seconds(first_slot_start)?;
+    drain_pending_audio(&rx);
+
+    let mut decoder = StreamDecodeSession::new(options.config);
+    let mut collector = NativeSampleCollector::new(&rx);
+    let mut slot_index = 0usize;
+    loop {
+        if options
+            .max_slots
+            .is_some_and(|max_slots| slot_index >= max_slots)
+        {
+            break;
+        }
+
+        let timestamp =
+            SlotTimestamp::from_unix_seconds_utc(first_slot_start + slot_index as i64 * 15);
+        let mut native = Vec::with_capacity(samples_per_slot);
+        let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 5);
+        collector.collect_until(&mut native, samples_per_slot, deadline)?;
+        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+        on_slot(&mut decoder, timestamp, &samples_12k)?;
+        slot_index += 1;
+    }
+
+    drop(stream);
+
+    Ok(())
+}
+
+fn decode_soundcard_slots_staged<F>(
+    options: SoundcardDecodeOptions,
+    mut on_slot: F,
+) -> Result<(), String>
+where
+    F: FnMut(
+        &mut StreamDecodeSession,
+        SlotTimestamp,
+        &mut NativeSampleCollector<'_>,
+        u32,
+    ) -> Result<(), String>,
+{
+    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
+
+    let first_slot_start = next_slot_start_unix_seconds()?;
+    sleep_until_unix_seconds(first_slot_start)?;
+    drain_pending_audio(&rx);
+
+    let mut decoder = StreamDecodeSession::new(options.config);
+    let mut collector = NativeSampleCollector::new(&rx);
+    let mut slot_index = 0usize;
+    loop {
+        if options
+            .max_slots
+            .is_some_and(|max_slots| slot_index >= max_slots)
+        {
+            break;
+        }
+
+        let timestamp =
+            SlotTimestamp::from_unix_seconds_utc(first_slot_start + slot_index as i64 * 15);
+        on_slot(&mut decoder, timestamp, &mut collector, sample_rate)?;
+        slot_index += 1;
+    }
+
+    drop(stream);
+
+    Ok(())
+}
+
+fn start_input_stream(
+    selector: Option<&str>,
+) -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), String> {
+    let selector = selector.unwrap_or("default");
     let (device, info) = select_input_device(selector)?;
     let supported_config = device.default_input_config().map_err(|err| {
         format!(
@@ -88,7 +186,6 @@ where
     })?;
     let sample_rate = supported_config.sample_rate().0;
     let channels = supported_config.channels() as usize;
-    let samples_per_slot = sample_rate as usize * SLOT_SECONDS as usize;
 
     let (tx, rx) = mpsc::channel();
     let stream_config = supported_config.clone().into();
@@ -125,29 +222,7 @@ where
         .play()
         .map_err(|err| format!("failed to start input stream for {}: {err}", info.name))?;
 
-    let first_slot_start = next_slot_start_unix_seconds()?;
-    sleep_until_unix_seconds(first_slot_start)?;
-    drain_pending_audio(&rx);
-
-    let mut decoder = StreamDecodeSession::new(options.config);
-    let mut slot_index = 0usize;
-    loop {
-        if options
-            .max_slots
-            .is_some_and(|max_slots| slot_index >= max_slots)
-        {
-            break;
-        }
-
-        let timestamp =
-            SlotTimestamp::from_unix_seconds_utc(first_slot_start + slot_index as i64 * 15);
-        let native = collect_slot_samples(&rx, samples_per_slot)?;
-        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
-        on_slot(&mut decoder, timestamp, &samples_12k)?;
-        slot_index += 1;
-    }
-
-    Ok(())
+    Ok((stream, rx, sample_rate))
 }
 
 fn input_devices_with_info() -> Result<Vec<(cpal::Device, SoundcardDeviceInfo)>, String> {
@@ -284,33 +359,70 @@ where
     out
 }
 
-fn collect_slot_samples(
-    rx: &Receiver<Vec<f32>>,
-    samples_per_slot: usize,
-) -> Result<Vec<f32>, String> {
-    let mut out = Vec::with_capacity(samples_per_slot);
-    let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 5);
-    while out.len() < samples_per_slot {
-        let now = Instant::now();
-        if now >= deadline {
-            return Err(format!(
-                "timed out collecting soundcard slot: got {}/{} samples",
-                out.len(),
-                samples_per_slot
-            ));
-        }
-        let timeout = deadline.saturating_duration_since(now);
-        let chunk = rx
-            .recv_timeout(timeout)
-            .map_err(|err| format!("soundcard input stopped while collecting audio: {err}"))?;
-        let remaining = samples_per_slot - out.len();
-        if chunk.len() <= remaining {
-            out.extend_from_slice(&chunk);
-        } else {
-            out.extend_from_slice(&chunk[..remaining]);
+struct NativeSampleCollector<'a> {
+    rx: &'a Receiver<Vec<f32>>,
+    carry: Vec<f32>,
+}
+
+impl<'a> NativeSampleCollector<'a> {
+    fn new(rx: &'a Receiver<Vec<f32>>) -> Self {
+        Self {
+            rx,
+            carry: Vec::new(),
         }
     }
-    Ok(out)
+
+    fn collect_until(
+        &mut self,
+        out: &mut Vec<f32>,
+        target_len: usize,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        self.take_from_carry(out, target_len);
+        while out.len() < target_len {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(format!(
+                    "timed out collecting soundcard slot: got {}/{} samples",
+                    out.len(),
+                    target_len
+                ));
+            }
+            let timeout = deadline.saturating_duration_since(now);
+            let chunk = self
+                .rx
+                .recv_timeout(timeout)
+                .map_err(|err| format!("soundcard input stopped while collecting audio: {err}"))?;
+            let remaining = target_len - out.len();
+            if chunk.len() <= remaining {
+                out.extend_from_slice(&chunk);
+            } else {
+                out.extend_from_slice(&chunk[..remaining]);
+                self.carry.extend_from_slice(&chunk[remaining..]);
+            }
+        }
+        Ok(())
+    }
+
+    fn take_from_carry(&mut self, out: &mut Vec<f32>, target_len: usize) {
+        if self.carry.is_empty() || out.len() >= target_len {
+            return;
+        }
+        let needed = target_len - out.len();
+        if self.carry.len() <= needed {
+            out.extend_from_slice(&self.carry);
+            self.carry.clear();
+        } else {
+            out.extend_from_slice(&self.carry[..needed]);
+            self.carry.drain(..needed);
+        }
+    }
+}
+
+fn native_samples_for_nzhsym(sample_rate: u32, nzhsym: usize) -> usize {
+    let samples_12k = nzhsym * NZHSYM_STRIDE;
+    ((samples_12k as u64 * sample_rate as u64) + TARGET_SAMPLE_RATE as u64 - 1) as usize
+        / TARGET_SAMPLE_RATE as usize
 }
 
 fn drain_pending_audio(rx: &Receiver<Vec<f32>>) {
