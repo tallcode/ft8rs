@@ -52,8 +52,20 @@ pub fn ft8_a7d(
     let one = build_one_table();
     let costas = build_costas_sync_templates();
     let taper_data = build_taper();
+    let trace_ap = trace_ap_target(call_1, call_2, f1);
+    if trace_ap {
+        eprintln!(
+            "[TRACE_AP_START] call_1=\"{}\" call_2=\"{}\" grid4=\"{}\" xdt={:.3} freq={:.3} xbase={:.6e}",
+            call_1.trim(),
+            call_2.trim(),
+            grid4.trim(),
+            xdt,
+            f1,
+            xbase
+        );
+    }
 
-    let std_1 = is_stdcall(call_1) || call_1.starts_with("CQ ");
+    let std_1 = is_stdcall(call_1) || is_cq_call_1(call_1);
     let std_2 = is_stdcall(call_2);
 
     let mut delfbest: f64 = 0.0;
@@ -314,6 +326,32 @@ pub fn ft8_a7d(
         }
     }
 
+    // SNR — WSJT-X ft8_a7.f90: xsnr = max(-25, db(pbest/xbase/3e6 - 1) - 27).
+    // AP decode s8 has WSJT-X scale (no /1000), so 3e6 divisor is correct.
+    let xsnr = {
+        let arg = pbest / xbase / 3e6 - 1.0;
+        if arg > 0.0 {
+            (-25.0f64).max(10.0 * arg.log10() - 27.0)
+        } else {
+            -25.0
+        }
+    };
+    if trace_ap {
+        eprintln!(
+            "[TRACE_AP_BEST] call_1=\"{}\" call_2=\"{}\" best_imsg={} dmin={:.3} dmin2={:.3} ratio={:.3} nhard={} pbest={:.6e} snr={:.1} msg=\"{}\"",
+            call_1.trim(),
+            call_2.trim(),
+            best_imsg,
+            dmin,
+            dmin2,
+            dmin2 / dmin,
+            nharderrors,
+            pbest,
+            xsnr,
+            msgbest
+        );
+    }
+
     // Validation
     if dmin > 100.0 || dmin2 / dmin < 1.3 {
         return None;
@@ -325,17 +363,6 @@ pub fn ft8_a7d(
         return None;
     }
 
-    // SNR — WSJT-X ft8b.f90: xsnr2 = xsig/(xbase*3e6)-1
-    // AP decode s8 has WSJT-X scale (no /1000), so 3e6 divisor is correct.
-    let xsnr = {
-        let arg = pbest / xbase / 3e6 - 1.0;
-        if arg > 0.0 {
-            (-25.0f64).max(10.0 * arg.log10() - 27.0)
-        } else {
-            -25.0
-        }
-    };
-
     Some(ApDecodeResult {
         msg: msgbest,
         freq: f1_refined,
@@ -345,7 +372,7 @@ pub fn ft8_a7d(
     })
 }
 
-/// Build imsg-th message variant. Matches ft8_a7.f90:140-200.
+/// Build imsg-th message variant. Matches the ft8_a7.f90 imsg loop.
 fn build_ap_message(
     call_1: &str,
     call_2: &str,
@@ -366,7 +393,7 @@ fn build_ap_message(
 
     let base = format!("{} {}", call_1.trim(), call_2.trim());
 
-    if call_1.starts_with("CQ ") && i != 5 {
+    if is_cq_call_1(call_1) && i != 5 {
         return format!("QU1RK {}", call_2.trim());
     }
 
@@ -436,6 +463,66 @@ fn build_ap_message(
             format!("{} {}", msg.trim_end(), report)
         }
         _ => msg,
+    }
+}
+
+fn is_cq_call_1(call_1: &str) -> bool {
+    let c = call_1.trim_end();
+    c == "CQ" || c.starts_with("CQ ")
+}
+
+fn trace_ap_target(call_1: &str, call_2: &str, freq: f64) -> bool {
+    let Ok(raw) = std::env::var("FT8RS_TRACE_TARGETS") else {
+        return false;
+    };
+    let freq_tol = std::env::var("FT8RS_TRACE_FREQ_TOL")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
+        .unwrap_or(8.0);
+    let call_1 = call_1.trim().to_ascii_uppercase();
+    let call_2 = call_2.trim().to_ascii_uppercase();
+    for item in raw.split(';') {
+        let mut parts = item.trim().splitn(3, ':');
+        let Some(freq_raw) = parts.next() else {
+            continue;
+        };
+        let Ok(target_freq) = freq_raw.trim().parse::<f64>() else {
+            continue;
+        };
+        if (target_freq - freq).abs() > freq_tol {
+            continue;
+        }
+        let label = parts.nth(1).unwrap_or("").to_ascii_uppercase();
+        if label.contains(&call_2) && (call_1 == "CQ" || label.contains(&call_1)) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_ap_message;
+
+    #[test]
+    fn ap_message_imsg5_nonstandard_calls_matches_wsjtx_cq_override() {
+        let msg = build_ap_message("EA5/DH0YAH", "RK4FF/P", "JN00", false, false, 5);
+        assert_eq!(msg, "CQ RK4FF/P");
+    }
+
+    #[test]
+    fn ap_message_imsg5_standard_call_preserves_grid_override() {
+        let msg = build_ap_message("K1ABC", "W9XYZ", "FN42", true, true, 5);
+        assert_eq!(msg, "CQ W9XYZ FN42");
+    }
+
+    #[test]
+    fn ap_message_compact_cq_call_matches_fortran_padded_cq() {
+        let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 1);
+        assert_eq!(msg, "QU1RK D1DX");
+        let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 5);
+        assert_eq!(msg, "CQ D1DX KN87");
     }
 }
 

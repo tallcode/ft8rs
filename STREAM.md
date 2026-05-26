@@ -122,6 +122,15 @@ WSJT-X `sync8.f90`:
 - Computes `s(i,j)` using power spectrum, `real(cx(i))**2 + aimag(cx(i))**2`.
 - Uses `NFFT1=3840`, `df=3.125 Hz`, `JZ=62`, and WSJT-X's
   implicit-integer `jstrt=0.5/tstep` truncation (`12`, not rounded `13`).
+- Keeps `m`, `m36`, and `m72` as WSJT-X 1-based time-bin variables in the
+  Costas correlation loop, then converts to Rust 0-based indices only at the
+  `s` access boundary. Missing this conversion shifts the sync spectrum by one
+  `NSTEP` (`480` samples, `0.04s`).
+- `FT8RS_DUMP_SYNC8=1` enables a Rust-side numeric fixture for source-level
+  comparison. Set it to a number such as `FT8RS_DUMP_SYNC8=8` to control the
+  per-call row limit. The dump includes `call_id`, `ia/ib`, `df`, `tstep`,
+  `jstrt`, `nssy`, `nfos`, pre-candidate `jpeak/jpeak2/red/red2`, and final
+  `(freq,xdt,sync)` candidates sent to `ft8b`.
 - Uses Costas correlation for full `abc` and late `bc` sync blocks.
 - Uses `mlag=13` for `red/jpeak` and `mlag2=JZ` for `red2/jpeak2`.
 - Normalizes `red` and `red2` by the 40th percentile over frequency bins.
@@ -270,8 +279,9 @@ Current release-test status:
 - Short file `210703_133430.wav`: `21` unique messages in about `3.5s`, passes
   the `>=19` / `<15s` requirement on FFTW.
 - Long file `230208_140300.wav`: every segment is under `15s`; current matched
-  count is `381/449`, passing the first milestone `381/449`; the second
-  milestone target is `400/449`.
+  count after the `sync8` 1-based time-bin fix, compact-CQ AP semantic fix,
+  stream `split77/chkcall` AP-memory fix, and WSJT-X `stdcall` 1-based/0-based
+  correction is `401/449`. This clears the second milestone target `400/449`.
 
 Second milestone policy:
 
@@ -317,6 +327,9 @@ Current `ft8rs` status after Iteration 13:
 - `ft8_a7d` AP sync refinement now uses `ctwk * Costas` for frequency tweak and
   plain Costas sync for second time refinement, matching WSJT-X `sync8d`.
 - `ft8_a7d` AP SNR clamp now uses WSJT-X's `-25 dB` floor.
+- `ft8_a7d` AP SNR keeps WSJT-X's `pbest/xbase/3e6` divisor because AP `s8`
+  is kept at `abs(csymb)` scale; only the regular `ft8b` Rust path stores
+  `s8` after `/1000` and therefore uses the `3.0` compensated divisor.
 - `HashCallBook` is shared through `Rc<HashCallBook>`, which is the right
   architectural direction for cross-slot hash resolution.
 - Stream-level hash collection now filters decoded tokens before saving them to
@@ -328,6 +341,22 @@ Current `ft8rs` status after Iteration 13:
 - Stream-level `ft8_a7_save` entry extraction now uses a `split77`-like word
   normalization before saving `call_1 call_2`, including the WSJT-X `CQ xxx
   CALL -> CQ_xxx CALL` rewrite and subsequent `CQ_` skip.
+- `ft8_a7d` now treats compact Rust `call_1=="CQ"` the same as Fortran's padded
+  `character*12` value whose `call_1(1:3)` is `"CQ "`. This keeps CQ AP message
+  construction on the WSJT-X `QU1RK` / `imsg=5` branch even though the release
+  long score remains unchanged at `379/449`.
+- The stream `split77` emulation now uses a local WSJT-X `chkcall.f90`-style
+  predicate for the CQ rewrite test. This prevents grid tokens such as `KN87`
+  from being treated as callsigns in `CQ D1DX KN87`; those messages are now saved
+  into the cross-slot AP memory instead of being skipped as `CQ_...` fragments.
+  This raised the release long score from `379/449` to `384/449`.
+- `pack_jt77::is_stdcall()` now accounts for Fortran's 1-based `iarea` index
+  when ported to Rust's 0-based indexing. WSJT-X accepts call-area positions
+  `2..3`; Rust must therefore accept indices `1..2`. The previous off-by-one
+  made calls such as `D1DX`, `F1PPH`, `R6KEE`, and `IW1PUR` look non-standard,
+  causing `ft8_a7d` CQ `imsg=5` variants to drop the grid and try `CQ CALL`
+  instead of `CQ CALL GRID`. Restoring this WSJT-X `stdcall` behavior raised the
+  release long score from `384/449` to `401/449`.
 
 ## Current Tests and Constraints
 
