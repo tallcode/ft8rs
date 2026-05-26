@@ -163,6 +163,32 @@ be collapsed into one Rust helper.
   `irpt>=2` (`RRR`, `73`, or reports). `RR73` is a special trap: it also matches
   the 4-character grid shape `RR73`, and WSJT-X `pack77_1` tests the grid branch
   before the report branch when materializing `igrid4`.
+
+## `subtractft8` Alignment Details
+
+WSJT-X `subtractft8.f90` keeps `nstart` and `j` as Fortran 1-based sample
+indices:
+
+```fortran
+nstart=dt*12000+1 + idt
+do i=1,nframe
+   j=nstart-1+i
+   if(j.ge.1.and.j.le.NMAX) camp(i)=dd(j)*conjg(cref(i))
+enddo
+```
+
+The Rust equivalent must therefore map Rust `i=0` to the same Fortran sample
+`j=nstart`. The correct access pattern is:
+
+```rust
+let j = nstart_1based + rust_i as isize;
+let sample = dd0[(j - 1) as usize];
+```
+
+Using `j=nstart-1+rust_i` shifts both IQ mixing and residual writeback one
+sample early. This matters because subtraction is coherent: the same 1-sample
+alignment is used to estimate the complex envelope, choose refined DT, and write
+the residual back into the decode window.
 - Prioritizes candidates within 10 Hz of `nfqso`, then appends remaining
   candidates in descending sync order.
 - Returns `sbase` from `get_spectrum_baseline(dd,nfa,nfb,sbase)`, not from the

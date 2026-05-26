@@ -31,6 +31,10 @@ const NSPS_WAVE: usize = 1920;
 // ext_len = NFRAME + NFILT = 155680, next pow2 = 262144
 const NFFT_CONV: usize = 262144;
 
+fn wsjtx_subtract_sample_index(nstart_1based: isize, rust_i: usize) -> isize {
+    nstart_1based + rust_i as isize
+}
+
 /// Precomputed FFT of the LPF window. Computed once and reused across all subtract calls.
 fn lpf_window_fft() -> &'static (Vec<f64>, Vec<f64>) {
     static WINDOW_FFT: OnceLock<(Vec<f64>, Vec<f64>)> = OnceLock::new();
@@ -246,7 +250,9 @@ pub fn subtract_ft8_refined(
     let mut camp_re = vec![0.0f64; NFRAME];
     let mut camp_im = vec![0.0f64; NFRAME];
     for i in 0..NFRAME {
-        let j = nstart - 1 + i as isize;
+        // WSJT-X keeps nstart/j as 1-based sample indices:
+        // Fortran i=1 gives j=nstart, so Rust i=0 must also map to j=nstart.
+        let j = wsjtx_subtract_sample_index(nstart, i);
         if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
             let d = dd0[(j - 1) as usize];
             camp_re[i] = d * cref_re[i];
@@ -259,7 +265,7 @@ pub fn subtract_ft8_refined(
 
     // Subtract: dd0[j] -= 2 × REAL(cfilt[i] × cref(i))
     for i in 0..NFRAME {
-        let j = nstart - 1 + i as isize;
+        let j = wsjtx_subtract_sample_index(nstart, i);
         if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
             let z_re = cfilt_re[i] * cref_re[i] - cfilt_im[i] * cref_im[i];
             dd0[(j - 1) as usize] -= 2.0 * z_re;
@@ -304,7 +310,8 @@ fn compute_residual_energy(
     let mut camp_re = vec![0.0f64; NFRAME];
     let mut camp_im = vec![0.0f64; NFRAME];
     for i in 0..NFRAME {
-        let j = nstart - 1 + i as isize;
+        // Keep the same 1-based nstart/j mapping as subtract_ft8_refined().
+        let j = wsjtx_subtract_sample_index(nstart, i);
         if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
             let d = dd0[(j - 1) as usize];
             camp_re[i] = d * cref_re[i];
@@ -318,7 +325,7 @@ fn compute_residual_energy(
     // Compute residual and its energy in signal band
     let mut energy = 0.0;
     for i in 0..NFRAME {
-        let j = nstart - 1 + i as isize;
+        let j = wsjtx_subtract_sample_index(nstart, i);
         if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
             let z_re = cfilt_re[i] * cref_re[i] - cfilt_im[i] * cref_im[i];
             let residual = dd0[(j - 1) as usize] - 2.0 * z_re;
@@ -326,4 +333,14 @@ fn compute_residual_energy(
         }
     }
     energy
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn subtract_sample_index_matches_wsjtx_one_based_loop() {
+        let nstart = 6001;
+        assert_eq!(super::wsjtx_subtract_sample_index(nstart, 0), nstart);
+        assert_eq!(super::wsjtx_subtract_sample_index(nstart, 1), nstart + 1);
+    }
 }
