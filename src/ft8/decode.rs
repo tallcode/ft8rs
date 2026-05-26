@@ -1222,8 +1222,8 @@ fn ft8b(
         return None;
     }
 
-    let message77: Vec<u8> = result.message91[..77].to_vec();
-    if !is_valid_message_type(&message77) {
+    let message77 = &result.message91[..77];
+    if !is_valid_message_type(message77) {
         if let Some(stats) = stats.as_deref_mut() {
             stats.decode_failures += 1;
             add_elapsed(&mut stats.post, t_post);
@@ -1231,7 +1231,7 @@ fn ft8b(
         return None;
     }
 
-    let msg = unpack77(&message77, _book.as_ref());
+    let msg = unpack77(message77, _book.as_ref());
     let Some(msg) = msg else {
         if let Some(stats) = stats.as_deref_mut() {
             stats.decode_failures += 1;
