@@ -1,4 +1,4 @@
-/// Shared constants used by the FT8 decoder.
+/// Shared WSJT-X FT8/JT77 protocol constants used by the decoder.
 
 pub const SAMPLE_RATE: usize = 12_000;
 

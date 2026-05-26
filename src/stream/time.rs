@@ -1,5 +1,3 @@
-use std::path::Path;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SlotTimestamp {
     prefix: Option<String>,
@@ -21,17 +19,6 @@ impl SlotTimestamp {
             prefix: None,
             seconds_of_day,
         })
-    }
-
-    pub fn infer_from_path(path: impl AsRef<Path>) -> Option<Self> {
-        let stem = path.as_ref().file_stem()?.to_string_lossy();
-        let stem = stem.as_ref();
-        let suffix = stem
-            .as_bytes()
-            .windows(13)
-            .rposition(|window| is_timestamp_bytes(window))
-            .map(|idx| &stem[idx..idx + 13])?;
-        Self::parse(suffix).ok()
     }
 
     pub fn add_seconds(&self, seconds: i64) -> Self {
@@ -79,13 +66,6 @@ fn validate_date_prefix(prefix: &str) -> Result<(), String> {
     }
 }
 
-fn is_timestamp_bytes(window: &[u8]) -> bool {
-    window.len() == 13
-        && window[6] == b'_'
-        && window[..6].iter().all(u8::is_ascii_digit)
-        && window[7..].iter().all(u8::is_ascii_digit)
-}
-
 impl std::fmt::Display for SlotTimestamp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.format())
@@ -107,11 +87,5 @@ mod tests {
     fn parses_time_only() {
         let ts = SlotTimestamp::parse("235950").unwrap();
         assert_eq!(ts.add_seconds(15).format(), "000005");
-    }
-
-    #[test]
-    fn infers_from_wav_filename() {
-        let ts = SlotTimestamp::infer_from_path("tests/ft8/230208_140300.wav").unwrap();
-        assert_eq!(ts.format(), "230208_140300");
     }
 }

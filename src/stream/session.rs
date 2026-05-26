@@ -5,8 +5,8 @@ use crate::ft8::decode::{
     decode_f64_with_sbase, decode_f64_with_sbase_and_residual, DecodeOptions, DecodedMessage,
     SyncMode,
 };
-use crate::util::hashcall::HashCallBook;
-use crate::util::subtract_ft8::subtract_ft8_refined;
+use crate::ft8::hashcall::HashCallBook;
+use crate::ft8::subtract_ft8::subtract_ft8_refined;
 
 const SAMPLE_RATE: u32 = 12000;
 const NMAX: usize = 15 * 12_000;
@@ -354,7 +354,7 @@ fn ft8_a7_save_entry_from_parts(
 
     // Compute xbase from sbase (matching WSJT-X: 10^(0.1*(sbase(nint(f1/3.125))-40.0)))
     let xbase = {
-        let df = crate::util::sync8_df();
+        let df = crate::ft8::sync8_df();
         let freq_bin = (freq / df).round() as usize;
         if freq_bin < sbase.len() && freq_bin > 0 {
             10.0_f64.powf(0.1 * (sbase[freq_bin] - 40.0))

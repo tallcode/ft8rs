@@ -1,17 +1,15 @@
 /// LDPC (174,91) Belief Propagation decoder for FT8.
-use crate::util::constants::N_LDPC;
-use crate::util::crc::check_crc14;
-use crate::util::ldpc_tables::*;
+use crate::ft8::ldpc_tables::*;
+use crate::ft8::protocol::N_LDPC;
 
 const KK: usize = 91;
 const M_LDPC: usize = N_LDPC - KK; // 83
+const CRC14_POLY: u16 = 0x2757;
 
 pub struct DecodeResult {
     pub message91: Vec<u8>,
     pub cw: Vec<u8>,
     pub nharderrors: usize,
-    pub dmin: f64,
-    pub ntype: usize,
 }
 
 fn platanh(x: f64) -> f64 {
@@ -22,6 +20,34 @@ fn platanh(x: f64) -> f64 {
         return -18.71;
     }
     0.5 * ((1.0 + x) / (1.0 - x)).ln()
+}
+
+fn check_crc14(bits91: &[u8]) -> bool {
+    let received_crc = bits_to_int(&bits91[77..91]);
+    let computed_crc = compute_crc14(&bits91[..77]);
+    received_crc == computed_crc
+}
+
+fn compute_crc14(msg77: &[u8]) -> u16 {
+    let mut crc: u16 = 0;
+    for bit_idx in 0..96 {
+        let next_bit = if bit_idx < 77 { msg77[bit_idx] } else { 0 };
+        if (crc & 0x2000) != 0 {
+            crc = ((crc << 1) | next_bit as u16) ^ CRC14_POLY;
+        } else {
+            crc = (crc << 1) | next_bit as u16;
+        }
+        crc &= 0x3fff;
+    }
+    crc
+}
+
+fn bits_to_int(bits: &[u8]) -> u16 {
+    let mut val: u16 = 0;
+    for &b in bits {
+        val = (val << 1) | b as u16;
+    }
+    val
 }
 
 /// BP decoding result with accumulated posteriors for OSD.
@@ -109,11 +135,9 @@ pub fn bp_decode174_91_with_posteriors(
             let bits91: Vec<u8> = cw[..KK].iter().map(|&b| b as u8).collect();
             if check_crc14(&bits91) {
                 let mut nharderrors = 0;
-                let mut dmin = 0.0;
                 for i in 0..n {
                     if ((2 * cw[i] as i32 - 1) as f64) * llr[i] < 0.0 {
                         nharderrors += 1;
-                        dmin += llr[i].abs();
                     }
                 }
                 return BPResult {
@@ -121,8 +145,6 @@ pub fn bp_decode174_91_with_posteriors(
                         message91: bits91,
                         cw: cw.iter().map(|&b| b as u8).collect(),
                         nharderrors,
-                        dmin,
-                        ntype: 1,
                     }),
                     zsave,
                 };
@@ -189,11 +211,6 @@ pub fn bp_decode174_91_with_posteriors(
         decoded: None,
         zsave,
     }
-}
-
-/// BP decoder for (174,91) LDPC code (backward-compatible).
-pub fn bp_decode174_91(llr: &[f64], apmask: &[i8], max_iterations: usize) -> Option<DecodeResult> {
-    bp_decode174_91_with_posteriors(llr, apmask, max_iterations, 0, 0, false).decoded
 }
 
 /// Hybrid BP + OSD decoder.
@@ -407,21 +424,17 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
         return None;
     }
 
-    let mut dmin_orig = 0.0;
     let mut nhe = 0;
     for i in 0..n {
         let hard = if llr[i] >= 0.0 { 1 } else { 0 };
         let x = (final_cw[i] as i8 ^ hard) as usize;
         nhe += x;
-        dmin_orig += x as f64 * absllr[i];
     }
 
     Some(DecodeResult {
         message91: bits91,
         cw: final_cw,
         nharderrors: nhe,
-        dmin: dmin_orig,
-        ntype: 2,
     })
 }
 
@@ -472,7 +485,7 @@ fn get_generator() -> Vec<u8> {
         gen[i * n + i] = 1;
     }
 
-    use crate::util::constants::G_HEX;
+    use crate::ft8::protocol::G_HEX;
     for m_idx in 0..83 {
         let hex_str = G_HEX[m_idx];
         for j in 0..23 {

@@ -1,14 +1,5 @@
-pub mod constants;
-pub mod crc;
-pub mod decode174_91;
-pub mod fft_fftw;
-pub mod fft_rustfft;
-pub mod hashcall;
-pub mod ldpc;
-pub mod ldpc_tables;
-pub mod pack_jt77;
-pub mod subtract_ft8;
-pub mod unpack_jt77;
+pub(crate) mod fft_fftw;
+pub(crate) mod fft_rustfft;
 
 /// Dual-engine FFT dispatcher.
 ///
@@ -91,25 +82,5 @@ pub fn fft_r2c(re: &mut [f64], im: &mut [f64]) {
         fft_rustfft::fft_r2c(re, im);
     } else {
         fft_fftw::fft_r2c(re, im);
-    }
-}
-
-/// Complex-to-real inverse FFT.
-#[inline]
-pub fn fft_c2r(re: &mut [f64], im: &mut [f64]) {
-    if is_rustfft() {
-        fft_rustfft::fft_c2r(re, im);
-    } else {
-        fft_fftw::fft_c2r(re, im);
-    }
-}
-
-/// Next power of 2.
-#[inline]
-pub fn next_pow2(n: usize) -> usize {
-    if is_rustfft() {
-        fft_rustfft::next_pow2(n)
-    } else {
-        fft_fftw::next_pow2(n)
     }
 }

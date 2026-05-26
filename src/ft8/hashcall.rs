@@ -1,4 +1,4 @@
-use crate::util::constants::C38;
+use crate::ft8::protocol::C38;
 /// Hash call table for resolving hashed FT8 callsigns.
 use std::cell::RefCell;
 

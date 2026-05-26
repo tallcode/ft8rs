@@ -481,13 +481,12 @@ state, including the shared `HashCallBook` and same-parity AP memory.
 File input is now a thin adapter around that library path:
 
 - `input::audio`: WAV loading, channel folding to mono, and simple linear resampling.
-- `stream::time`: WSJT-X-style slot timestamp parsing/formatting, including
-  `YYMMDD_HHMMSS` inference from file names.
+- `stream::time`: WSJT-X-style slot timestamp parsing/formatting.
 - `stream::slot`: generic 12 kHz / 15-second slot iteration, EOF tail flush,
   timestamp attachment, and preservation of one `StreamDecodeSession` instance
   across slots.
-- `input::file`: WAV file entry point; reads/resamples audio and delegates slot
-  driving to `stream::slot`.
+- `input::file`: WAV file entry point; infers `YYMMDD_HHMMSS` from file names,
+  reads/resamples audio, and delegates slot driving to `stream::slot`.
 - `input::soundcard`: reserved soundcard entry point; intentionally stubbed
   until capture and system-time segmentation are verified.
 - `main`: CLI argument parsing and streaming decode-line printing only. File
@@ -498,6 +497,14 @@ Decoder-facing configuration now uses WSJT-X-style names where practical:
 `nfa`, `nfb`, `syncmin`, `ndepth`, `ncand`, `nQSOProgress`, `lft8apon`,
 `lapcqonly`, and `nzhsym`. The older `StreamDecodeConfig` name remains as a
 type alias for callers, but its concrete type is `WsjtxDecodeConfig`.
+
+`util` is crate-internal and should only contain true cross-cutting
+infrastructure. At the moment that means FFT dispatch/engine code. FT8/JT77
+protocol tools are owned by `src/ft8`: pack/unpack, LDPC decode tables,
+hashcallbook, subtractft8, CRC-14, AP 174/91 codeword generation, and protocol
+constants all live under the decoder tree. Upper layers should use the
+decoder/session/input APIs and explicit root re-exports (`HashCallBook`,
+`fft_engine_name`) rather than depending on shared utility modules.
 
 The first CLI target is:
 
