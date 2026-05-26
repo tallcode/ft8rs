@@ -40,6 +40,30 @@ impl SlotTimestamp {
             None => time,
         }
     }
+
+    pub fn from_unix_seconds_utc(seconds: i64) -> Self {
+        let days = seconds.div_euclid(86_400);
+        let seconds_of_day = seconds.rem_euclid(86_400) as u32;
+        let (year, month, day) = civil_from_days(days);
+        Self {
+            prefix: Some(format!("{:02}{month:02}{day:02}", year.rem_euclid(100))),
+            seconds_of_day,
+        }
+    }
+}
+
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096).div_euclid(365);
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2).div_euclid(153);
+    let day = doy - (153 * mp + 2).div_euclid(5) + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if month <= 2 { 1 } else { 0 };
+    (year as i32, month as u32, day as u32)
 }
 
 fn parse_hhmmss(value: &str) -> Result<u32, String> {
@@ -87,5 +111,11 @@ mod tests {
     fn parses_time_only() {
         let ts = SlotTimestamp::parse("235950").unwrap();
         assert_eq!(ts.add_seconds(15).format(), "000005");
+    }
+
+    #[test]
+    fn formats_unix_seconds_as_utc_wsjtx_timestamp() {
+        let ts = SlotTimestamp::from_unix_seconds_utc(1_675_864_980);
+        assert_eq!(ts.format(), "230208_140300");
     }
 }
