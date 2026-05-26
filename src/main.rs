@@ -1,10 +1,10 @@
 use std::path::PathBuf;
-use std::time::Instant;
 
-use clap::{Parser, ValueEnum};
-use hound::WavReader;
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use ft8rs::stream::{StreamDecodeConfig, StreamDecoder};
+use ft8rs::input::{decode_wav_file_streaming, open_soundcard_stream, FileDecodeOptions};
+use ft8rs::stream::StreamDecodeConfig;
+use ft8rs::SlotTimestamp;
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum FftEngine {
@@ -16,87 +16,141 @@ pub enum FftEngine {
 #[derive(Parser)]
 #[command(name = "ft8rs", about = "FT8 streaming decoder")]
 struct Cli {
-    /// Input WAV file
-    file: PathBuf,
-
     /// FFT engine to use
-    #[arg(long, value_enum, default_value_t = FftEngine::Fftw,
+    #[arg(long, global = true, value_enum, default_value_t = FftEngine::Fftw,
         help = "FFT engine: fftw (3840-pt, WSJT-X aligned) or rustfft (4096-pt)")]
     fft_engine: FftEngine,
+
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn load_wav_f32(path: &str) -> (u32, Vec<f32>) {
-    let r = WavReader::open(path).expect("Failed to open WAV");
-    let spec = r.spec();
-    let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Int => r
-            .into_samples::<i32>()
-            .map(|v| match spec.bits_per_sample {
-                16 => v.unwrap() as f32 / 32768.0,
-                24 => v.unwrap() as f32 / 8_388_608.0,
-                32 => v.unwrap() as f32 / 2_147_483_648.0,
-                _ => panic!("unsupported bits"),
-            })
-            .collect(),
-        hound::SampleFormat::Float => r.into_samples::<f32>().map(|v| v.unwrap()).collect(),
-    };
-    (spec.sample_rate, samples)
+#[derive(Subcommand)]
+enum Command {
+    /// Decode a WAV file as a timestamped FT8 stream
+    File(FileArgs),
+    /// Decode live audio from a soundcard
+    Soundcard(SoundcardArgs),
 }
 
-fn resample(src: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == to_rate {
-        return src.to_vec();
-    }
-    let ratio = from_rate as f64 / to_rate as f64;
-    let n = ((src.len() as f64) / ratio).ceil() as usize;
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let s = i as f64 * ratio;
-        let lo = s.floor() as usize;
-        let fr = s - lo as f64;
-        let v0 = *src.get(lo).unwrap_or(&0.0) as f64;
-        let v1 = *src.get(lo + 1).unwrap_or(&0.0) as f64;
-        out.push((v0 * (1.0 - fr) + v1 * fr) as f32);
-    }
-    out
+#[derive(Args)]
+struct FileArgs {
+    /// Input WAV file
+    input: PathBuf,
+
+    /// Timestamp for the first decoded slot, e.g. 230208_140300 or 140300.
+    /// If omitted, ft8rs tries to infer it from the file name.
+    #[arg(long)]
+    start_time: Option<String>,
+
+    /// Lower decode frequency bound in Hz
+    #[arg(long)]
+    low: Option<f64>,
+
+    /// Upper decode frequency bound in Hz
+    #[arg(long)]
+    high: Option<f64>,
+
+    /// WSJT-X decode depth
+    #[arg(long)]
+    depth: Option<usize>,
+
+    /// Maximum sync candidates per pass
+    #[arg(long)]
+    max_candidates: Option<usize>,
+
+    /// Disable AP decoding
+    #[arg(long)]
+    no_ap: bool,
+}
+
+#[derive(Args)]
+struct SoundcardArgs {
+    /// Soundcard device name or index
+    #[arg(long)]
+    device: Option<String>,
 }
 
 fn main() {
+    if let Err(err) = run() {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), String> {
     let cli = Cli::parse();
 
-    // Set FFT engine before any decoding
     match cli.fft_engine {
         FftEngine::Rustfft => std::env::set_var("FTRS_FFT", "rustfft"),
         FftEngine::Fftw => std::env::set_var("FTRS_FFT", "fftw"),
     }
-    let (sr, samples) = load_wav_f32(&cli.file.to_string_lossy());
-    let samples_12k = resample(&samples, sr, 12_000);
-    let samples_per_slot = 12_000 * 15;
 
-    let config = StreamDecodeConfig::default();
-    let mut decoder = StreamDecoder::new(config);
+    match cli.command {
+        Command::File(args) => run_file(args),
+        Command::Soundcard(args) => run_soundcard(args),
+    }
+}
 
-    let total_slots = samples_12k.len().div_ceil(samples_per_slot);
-    let t0 = Instant::now();
+fn run_file(args: FileArgs) -> Result<(), String> {
+    let start_time = match args.start_time {
+        Some(value) => SlotTimestamp::parse(&value)?,
+        None => SlotTimestamp::infer_from_path(&args.input).ok_or_else(|| {
+            format!(
+                "could not infer start time from {}; pass --start-time YYMMDD_HHMMSS",
+                args.input.display()
+            )
+        })?,
+    };
 
-    for slot in 0..total_slots {
-        let start = slot * samples_per_slot;
-        let end = (start + samples_per_slot).min(samples_12k.len());
-        let results = decoder.decode_slot(&samples_12k[start..end]);
-        for r in &results {
-            println!(
-                "{:+.1} {:>3} {:>5.0} {}",
-                r.dt,
-                r.snr.round(),
-                r.freq,
-                r.msg
-            );
-        }
+    let mut config = StreamDecodeConfig::default();
+    if let Some(low) = args.low {
+        config.nfa = low;
+    }
+    if let Some(high) = args.high {
+        config.nfb = high;
+    }
+    if let Some(depth) = args.depth {
+        config.ndepth = depth;
+    }
+    if let Some(max_candidates) = args.max_candidates {
+        config.ncand = max_candidates;
+    }
+    if args.no_ap {
+        config.lft8apon = false;
     }
 
-    eprintln!(
-        "Decoded {} slots in {:.1}s",
-        total_slots,
-        t0.elapsed().as_secs_f64()
-    );
+    let mut first_slot = true;
+    decode_wav_file_streaming(
+        &args.input,
+        FileDecodeOptions { start_time, config },
+        |timestamp, rows| {
+            if !first_slot {
+                println!("====");
+            }
+            first_slot = false;
+
+            for row in rows {
+                println!(
+                    "{} {:>3} {:+.1} {:>5.0} {}",
+                    timestamp,
+                    row.snr.round() as i32,
+                    row.dt,
+                    row.freq.round(),
+                    row.msg
+                );
+            }
+            use std::io::Write;
+            std::io::stdout()
+                .flush()
+                .map_err(|err| format!("failed to flush stdout: {err}"))
+        },
+    )
+}
+
+fn run_soundcard(args: SoundcardArgs) -> Result<(), String> {
+    open_soundcard_stream(ft8rs::input::SoundcardDecodeOptions {
+        device: args.device,
+        config: StreamDecodeConfig::default(),
+    })
 }

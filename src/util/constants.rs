@@ -1,8 +1,8 @@
-/// Shared constants used by FT8, FT4, pack77, etc.
+/// Shared constants used by the FT8 decoder.
 
 pub const SAMPLE_RATE: usize = 12_000;
 
-/// LDPC(174,91) code (shared by FT8 and FT4).
+/// FT8 LDPC(174,91) code length.
 pub const N_LDPC: usize = 174;
 
 #[rustfmt::skip]

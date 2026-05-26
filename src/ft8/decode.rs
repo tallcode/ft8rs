@@ -8,20 +8,6 @@ use crate::util::unpack_jt77::unpack77;
 use crate::util::{fft_complex, fft_r2c, sync8_fft_size};
 use std::rc::Rc;
 
-// ft8b internal timers: [downsample, sync8d_search, symbols+gate, bitmetrics, ldpc, total_fail]
-pub(crate) static FT8B_TIMERS: [std::sync::atomic::AtomicU64; 6] = [
-    std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0),
-];
-
-static SYNC8_DUMP_CALL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static FT8B_DUMP_CALL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static DECODE_TRACE_CALL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// sync8 spectral mode - different representations favour different SNR regimes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SyncMode {
@@ -68,24 +54,25 @@ pub struct DecodedMessage {
     pub itone: Vec<i32>,
 }
 
+#[allow(non_snake_case)]
 #[derive(Default)]
 pub struct DecodeOptions {
     pub sample_rate: Option<usize>,
-    pub freq_low: Option<f64>,
-    pub freq_high: Option<f64>,
-    pub sync_min: Option<f64>,
-    pub depth: Option<usize>,
-    pub max_candidates: Option<usize>,
-    pub hash_call_book: Option<Rc<HashCallBook>>,
+    pub nfa: Option<f64>,
+    pub nfb: Option<f64>,
+    pub syncmin: Option<f64>,
+    pub ndepth: Option<usize>,
+    pub ncand: Option<usize>,
+    pub hashcallbook: Option<Rc<HashCallBook>>,
     pub mycall: Option<String>,
     pub hiscall: Option<String>,
     pub nfqso: Option<f64>,
     pub nftx: Option<f64>,
-    pub nqso_progress: Option<usize>,
+    pub nQSOProgress: Option<usize>,
     pub ncontest: Option<usize>,
     pub napwid: Option<f64>,
-    pub ft8_ap: Option<bool>,
-    pub ap_cq_only: Option<bool>,
+    pub lft8apon: Option<bool>,
+    pub lapcqonly: Option<bool>,
     pub nagain: Option<bool>,
     pub nzhsym: Option<usize>,
     /// Sync spectral mode: Power (default), Amplitude (better for weak signals),
@@ -110,29 +97,17 @@ struct Ft8bResult {
 
 #[derive(Clone, Copy, Debug)]
 struct TimeSearchResult {
-    i0: isize,
     ibest: isize,
-    sync: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct FrequencySearchResult {
     delfbest: f64,
-    sync: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct TimeRefineResult {
     ibest: isize,
-    offset: isize,
-    sync: f64,
-}
-
-#[derive(Clone, Debug)]
-struct TraceTarget {
-    freq: f64,
-    dt: Option<f64>,
-    label: String,
 }
 
 #[derive(Clone)]
@@ -341,25 +316,21 @@ pub fn decode_with_sbase(
 fn decode_from_f64(
     mut dd: Vec<f64>,
     options: DecodeOptions,
-    t_dd: std::time::Duration,
-    t_start: std::time::Instant,
+    _t_dd: std::time::Duration,
+    _t_start: std::time::Instant,
 ) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
-    let trace_targets = trace_targets();
-    let trace_call = trace_targets
-        .as_ref()
-        .map(|_| DECODE_TRACE_CALL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1);
     // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
     if dd.len() > NMAX {
         dd.truncate(NMAX);
     }
-    let nfa = options.freq_low.unwrap_or(200.0);
-    let nfb = options.freq_high.unwrap_or(3000.0);
-    let depth = options.depth.unwrap_or(3);
+    let nfa = options.nfa.unwrap_or(200.0);
+    let nfb = options.nfb.unwrap_or(3000.0);
+    let ndepth = options.ndepth.unwrap_or(3);
     let syncmin = options
-        .sync_min
-        .unwrap_or_else(|| default_outer_sync_min(depth));
-    let max_candidates = options.max_candidates.unwrap_or(1000);
-    let book = options.hash_call_book;
+        .syncmin
+        .unwrap_or_else(|| default_outer_sync_min(ndepth));
+    let ncand = options.ncand.unwrap_or(1000);
+    let book = options.hashcallbook;
     let sync_mode = options.sync_mode.unwrap_or(SyncMode::Power);
     let nfqso = options.nfqso.unwrap_or(0.0);
     let nagain = options.nagain.unwrap_or(false);
@@ -367,9 +338,9 @@ fn decode_from_f64(
     let mycall = options.mycall.clone();
     let hiscall = options.hiscall.clone();
     let ap_options = Ft8bApOptions {
-        enabled: options.ft8_ap.unwrap_or(true),
-        cq_only: options.ap_cq_only.unwrap_or(false),
-        nqso_progress: options.nqso_progress.unwrap_or(0).min(5),
+        enabled: options.lft8apon.unwrap_or(true),
+        cq_only: options.lapcqonly.unwrap_or(false),
+        nqso_progress: options.nQSOProgress.unwrap_or(0).min(5),
         ncontest,
         nfqso,
         nftx: options.nftx.unwrap_or(0.0),
@@ -384,12 +355,11 @@ fn decode_from_f64(
     cx_re[..residual.len().min(NFFT1_LONG)]
         .copy_from_slice(&residual[..residual.len().min(NFFT1_LONG)]);
     fft_complex(&mut cx_re, &mut cx_im, false);
-    let t_cx = t_start.elapsed();
     let _workspace = create_decode_workspace();
 
     let mut decoded: Vec<DecodedMessage> = Vec::new();
     let mut seen_messages = std::collections::HashSet::new();
-    let max_passes = if depth == 1 { 2 } else { 3 };
+    let max_passes = if ndepth == 1 { 2 } else { 3 };
 
     #[allow(clippy::map_clone)]
     fn count_candidate_frequencies(
@@ -401,10 +371,6 @@ fn decode_from_f64(
         }
         counts
     }
-
-    let mut t_sync8_total = std::time::Duration::ZERO;
-    let mut t_decode_total = std::time::Duration::ZERO;
-    let mut t_subtract_total = std::time::Duration::ZERO;
 
     // WSJT-X sync8 refreshes sbase for each pass on the current residual.
     let mut sbase: Vec<f64> = Vec::new();
@@ -420,32 +386,15 @@ fn decode_from_f64(
         cx_re[..residual.len()].copy_from_slice(&residual);
         fft_complex(&mut cx_re, &mut cx_im, false);
 
-        let t0 = std::time::Instant::now();
         let (ifa, ifb) = if nagain {
             (nfqso - 20.0, nfqso + 20.0)
         } else {
             (nfa, nfb)
         };
 
-        let (candidates, pass_sbase) = sync8(
-            &residual,
-            ifa,
-            ifb,
-            pass_syncmin,
-            nfqso,
-            max_candidates,
-            sync_mode,
-        );
+        let (candidates, pass_sbase) =
+            sync8(&residual, ifa, ifb, pass_syncmin, nfqso, ncand, sync_mode);
         sbase = pass_sbase;
-        t_sync8_total += t0.elapsed();
-        trace_sync8_targets(
-            trace_call,
-            trace_targets.as_deref(),
-            options.nzhsym.unwrap_or(50),
-            pass_idx + 1,
-            pass_syncmin,
-            &candidates,
-        );
 
         // WSJT-X ft8_decode.f90: pass 1 uses imetric=1, passes 2/3 use imetric=2.
         let pass_imetric = if pass_idx == 0 { 1 } else { 2 };
@@ -453,10 +402,7 @@ fn decode_from_f64(
         let _coarse_frequency_uses = count_candidate_frequencies(&candidates);
         let _coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
             std::collections::HashMap::new();
-        let mut decoded_in_pass = 0;
-
         // ── Candidate decoding: sequential with immediate subtraction (matching WSJT-X ft8b) ──
-        let t_decode_start = std::time::Instant::now();
         for cand in &candidates {
             let mut cand_ws = create_decode_workspace();
             let mut cand_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
@@ -470,7 +416,7 @@ fn decode_from_f64(
                 cand.freq,
                 cand.dt,
                 &sbase,
-                depth,
+                ndepth,
                 pass_imetric,
                 nagain,
                 &ap_options,
@@ -480,13 +426,6 @@ fn decode_from_f64(
                 &mut cand_cache,
                 &mut cand_freq_uses,
             ) {
-                trace_decode_success(
-                    trace_call,
-                    trace_targets.as_deref(),
-                    options.nzhsym.unwrap_or(50),
-                    pass_idx + 1,
-                    &r,
-                );
                 let message_key = normalize_message_key(&r.msg);
                 crate::util::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
                 if seen_messages.contains(&message_key) {
@@ -501,31 +440,9 @@ fn decode_from_f64(
                     sync: cand.sync,
                     itone: r.itone.to_vec(),
                 });
-                decoded_in_pass += 1;
             }
         }
-        t_decode_total += t_decode_start.elapsed();
-        let _t_sub_start = std::time::Instant::now();
-        t_subtract_total += _t_sub_start.elapsed();
-
-        let _ = decoded_in_pass;
     }
-
-    let total = t_start.elapsed();
-    let t_dd_us = t_dd.as_micros();
-    let t_cx_us = t_cx.as_micros() - t_dd_us;
-
-    // Print ft8b timer breakdown
-    let ft8b_down = FT8B_TIMERS[0].swap(0, std::sync::atomic::Ordering::Relaxed);
-    let ft8b_sync8d = FT8B_TIMERS[1].swap(0, std::sync::atomic::Ordering::Relaxed);
-    let ft8b_symbols = FT8B_TIMERS[2].swap(0, std::sync::atomic::Ordering::Relaxed);
-    let ft8b_bmet = FT8B_TIMERS[3].swap(0, std::sync::atomic::Ordering::Relaxed);
-    let ft8b_ldpc = FT8B_TIMERS[4].swap(0, std::sync::atomic::Ordering::Relaxed);
-    eprintln!("[TIMER] copy={}ms, long_fft={}ms, sync8={}ms, decode={}ms (down={}ms,sync8d={}ms,symbols={}ms,bmet={}ms,ldpc={}ms), sub={}ms, total={}ms",
-        t_dd.as_millis(), t_cx_us/1000,
-        t_sync8_total.as_millis(), t_decode_total.as_millis(),
-        ft8b_down/1000, ft8b_sync8d/1000, ft8b_symbols/1000, ft8b_bmet/1000, ft8b_ldpc/1000,
-        t_subtract_total.as_millis(), total.as_millis());
 
     (decoded, sbase, residual)
 }
@@ -629,9 +546,6 @@ pub(crate) fn sync8(
     maxcand: usize,
     mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
-    let dump_limit = sync8_dump_limit();
-    let dump_call = dump_limit
-        .map(|_| SYNC8_DUMP_CALL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1);
     let jz = 62;
     let fft_size = sync8_fft_size();
     let half_size = fft_size / 2;
@@ -819,12 +733,6 @@ pub(crate) fn sync8(
 
         let mut order: Vec<usize> = (0..iz).collect();
         order.sort_by(|&a, &b| red[a].partial_cmp(&red[b]).unwrap());
-        if let (Some(call_id), Some(limit)) = (dump_call, dump_limit) {
-            dump_sync8_precandidates(
-                call_id, limit, nfa, nfb, syncmin, nfqso, ia, ib, df, tstep, jstrt, nssy, nfos,
-                &order, &red, &red2, &jpeak, &jpeak2,
-            );
-        }
         let maxprecand = 1000usize;
         for &idx in order.iter().rev().take(iz.min(maxprecand)) {
             if candidate0.len() >= maxprecand {
@@ -852,383 +760,9 @@ pub(crate) fn sync8(
         }
 
         let candidates = finalize_sync8_candidates(candidate0, syncmin, nfqso, maxcand);
-        if let (Some(call_id), Some(limit)) = (dump_call, dump_limit) {
-            dump_sync8_final_candidates(call_id, limit, &candidates);
-        }
 
         (candidates, sbase)
     })
-}
-
-fn sync8_dump_limit() -> Option<usize> {
-    let raw = std::env::var("FT8RS_DUMP_SYNC8").ok()?;
-    if raw.is_empty() || raw == "0" {
-        return None;
-    }
-    if raw == "1" {
-        return Some(25);
-    }
-    raw.parse::<usize>().ok().filter(|&n| n > 0).or(Some(25))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn dump_sync8_precandidates(
-    call_id: u64,
-    limit: usize,
-    nfa: f64,
-    nfb: f64,
-    syncmin: f64,
-    nfqso: f64,
-    ia: usize,
-    ib: usize,
-    df: f64,
-    tstep: f64,
-    jstrt: usize,
-    nssy: usize,
-    nfos: usize,
-    order: &[usize],
-    red: &[f64],
-    red2: &[f64],
-    jpeak: &[isize],
-    jpeak2: &[isize],
-) {
-    eprintln!(
-        "[SYNC8_DUMP] call={} nfa={:.3} nfb={:.3} syncmin={:.3} nfqso={:.3} ia={} ib={} df={:.9} tstep={:.9} jstrt={} nssy={} nfos={}",
-        call_id, nfa, nfb, syncmin, nfqso, ia, ib, df, tstep, jstrt, nssy, nfos
-    );
-
-    let mut rank = 0usize;
-    for &idx in order.iter().rev() {
-        if rank >= limit {
-            break;
-        }
-        let bin = ia + idx;
-        let freq = bin as f64 * df;
-        if red[idx] >= syncmin && red[idx].is_finite() {
-            rank += 1;
-            eprintln!(
-                "[SYNC8_PRE] call={} rank={} kind=red bin={} freq={:.6} xdt={:.9} sync={:.9} jpeak={} jpeak2={} red={:.9} red2={:.9}",
-                call_id,
-                rank,
-                bin,
-                freq,
-                (jpeak[idx] as f64 - 0.5) * tstep,
-                red[idx],
-                jpeak[idx],
-                jpeak2[idx],
-                red[idx],
-                red2[idx]
-            );
-        }
-        if rank >= limit {
-            break;
-        }
-        if jpeak2[idx] != jpeak[idx] && red2[idx] >= syncmin && red2[idx].is_finite() {
-            rank += 1;
-            eprintln!(
-                "[SYNC8_PRE] call={} rank={} kind=red2 bin={} freq={:.6} xdt={:.9} sync={:.9} jpeak={} jpeak2={} red={:.9} red2={:.9}",
-                call_id,
-                rank,
-                bin,
-                freq,
-                (jpeak2[idx] as f64 - 0.5) * tstep,
-                red2[idx],
-                jpeak[idx],
-                jpeak2[idx],
-                red[idx],
-                red2[idx]
-            );
-        }
-    }
-}
-
-fn dump_sync8_final_candidates(call_id: u64, limit: usize, candidates: &[Candidate]) {
-    for (rank, c) in candidates.iter().take(limit).enumerate() {
-        eprintln!(
-            "[SYNC8_FINAL] call={} rank={} freq={:.6} xdt={:.9} sync={:.9}",
-            call_id,
-            rank + 1,
-            c.freq,
-            c.dt,
-            c.sync
-        );
-    }
-}
-
-fn trace_targets() -> Option<&'static [TraceTarget]> {
-    static TARGETS: std::sync::OnceLock<Option<Vec<TraceTarget>>> = std::sync::OnceLock::new();
-    TARGETS
-        .get_or_init(|| parse_trace_targets())
-        .as_ref()
-        .map(Vec::as_slice)
-}
-
-fn parse_trace_targets() -> Option<Vec<TraceTarget>> {
-    let raw = std::env::var("FT8RS_TRACE_TARGETS").ok()?;
-    let mut targets = Vec::new();
-    for item in raw.split(';') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        let mut parts = item.splitn(3, ':');
-        let Some(freq_raw) = parts.next() else {
-            continue;
-        };
-        let Ok(freq) = freq_raw.trim().parse::<f64>() else {
-            continue;
-        };
-        let dt = parts.next().and_then(|v| {
-            let v = v.trim();
-            if v.is_empty() {
-                None
-            } else {
-                v.parse::<f64>().ok()
-            }
-        });
-        let label = parts
-            .next()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .unwrap_or("target")
-            .to_string();
-        targets.push(TraceTarget { freq, dt, label });
-    }
-    if targets.is_empty() {
-        None
-    } else {
-        Some(targets)
-    }
-}
-
-fn trace_freq_tolerance() -> f64 {
-    std::env::var("FT8RS_TRACE_FREQ_TOL")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|v| *v > 0.0)
-        .unwrap_or(8.0)
-}
-
-fn trace_dt_tolerance() -> f64 {
-    std::env::var("FT8RS_TRACE_DT_TOL")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|v| *v > 0.0)
-        .unwrap_or(0.8)
-}
-
-fn target_matches_freq(target: &TraceTarget, freq: f64) -> bool {
-    (target.freq - freq).abs() <= trace_freq_tolerance()
-}
-
-fn target_matches_internal_dt(target: &TraceTarget, xdt: f64) -> bool {
-    let Some(dt) = target.dt else {
-        return true;
-    };
-    let tol = trace_dt_tolerance();
-    (xdt - dt).abs() <= tol || (xdt - (dt + 0.5)).abs() <= tol
-}
-
-fn trace_sync8_targets(
-    call_id: Option<u64>,
-    targets: Option<&[TraceTarget]>,
-    nzhsym: usize,
-    pass: usize,
-    syncmin: f64,
-    candidates: &[Candidate],
-) {
-    let Some(targets) = targets else {
-        return;
-    };
-    for target in targets {
-        let mut printed = 0usize;
-        for (rank, c) in candidates.iter().enumerate() {
-            if !target_matches_freq(target, c.freq) || !target_matches_internal_dt(target, c.dt) {
-                continue;
-            }
-            printed += 1;
-            eprintln!(
-                "[TRACE_SYNC8] decode_call={} nzhsym={} pass={} target=\"{}\" rank={} freq={:.3} xdt={:.3} display_dt~{:.3} sync={:.6} syncmin={:.3}",
-                call_id.unwrap_or(0),
-                nzhsym,
-                pass,
-                target.label,
-                rank + 1,
-                c.freq,
-                c.dt,
-                c.dt - 0.5,
-                c.sync,
-                syncmin
-            );
-            if printed >= 8 {
-                break;
-            }
-        }
-        if printed == 0 {
-            eprintln!(
-                "[TRACE_SYNC8_MISS] decode_call={} nzhsym={} pass={} target=\"{}\" freq={:.3} dt={}",
-                call_id.unwrap_or(0),
-                nzhsym,
-                pass,
-                target.label,
-                target.freq,
-                target
-                    .dt
-                    .map(|v| format!("{:.3}", v))
-                    .unwrap_or_else(|| "*".to_string())
-            );
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn trace_ft8b_time_targets(
-    targets: Option<&[TraceTarget]>,
-    f1_candidate: f64,
-    xdt_candidate: f64,
-    depth: usize,
-    imetric: usize,
-    time0: TimeSearchResult,
-    freq0: FrequencySearchResult,
-    time1: TimeRefineResult,
-    f1_refined: f64,
-    xdt_refined: f64,
-    nsync: usize,
-    min_costas_hits: usize,
-    sync_gate_ok: bool,
-) {
-    let Some(targets) = targets else {
-        return;
-    };
-    for target in targets {
-        if !target_matches_freq(target, f1_candidate)
-            || !target_matches_internal_dt(target, xdt_candidate)
-        {
-            continue;
-        }
-        eprintln!(
-            "[TRACE_FT8B] target=\"{}\" f1_in={:.3} xdt_in={:.3} display_in~{:.3} depth={} imetric={} i0={} ibest0={} sync0={:.6} delfbest={:.3} fsync={:.6} ibest1={} dt_offset={} sync1={:.6} f1_refined={:.3} xdt_refined={:.3} display_refined={:.3} nsync={} gate_min={} gate_ok={}",
-            target.label,
-            f1_candidate,
-            xdt_candidate,
-            xdt_candidate - 0.5,
-            depth,
-            imetric,
-            time0.i0,
-            time0.ibest,
-            time0.sync,
-            freq0.delfbest,
-            freq0.sync,
-            time1.ibest,
-            time1.offset,
-            time1.sync,
-            f1_refined,
-            xdt_refined,
-            xdt_refined - 0.5,
-            nsync,
-            min_costas_hits,
-            sync_gate_ok
-        );
-    }
-}
-
-fn trace_decode_success(
-    call_id: Option<u64>,
-    targets: Option<&[TraceTarget]>,
-    nzhsym: usize,
-    pass: usize,
-    result: &Ft8bResult,
-) {
-    let Some(targets) = targets else {
-        return;
-    };
-    for target in targets {
-        if !target_matches_freq(target, result.freq) {
-            continue;
-        }
-        eprintln!(
-            "[TRACE_DECODE] decode_call={} nzhsym={} pass={} target=\"{}\" freq={:.3} xdt={:.3} display_dt={:.3} snr={:.1} msg=\"{}\"",
-            call_id.unwrap_or(0),
-            nzhsym,
-            pass,
-            target.label,
-            result.freq,
-            result.dt,
-            result.dt - 0.5,
-            result.snr,
-            result.msg
-        );
-    }
-}
-
-fn next_ft8b_dump_call() -> Option<u64> {
-    let limit = ft8b_dump_limit()?;
-    let call = FT8B_DUMP_CALL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    if call <= limit as u64 {
-        Some(call)
-    } else {
-        None
-    }
-}
-
-fn ft8b_dump_limit() -> Option<usize> {
-    let raw = std::env::var("FT8RS_DUMP_FT8B").ok()?;
-    if raw.is_empty() || raw == "0" {
-        return None;
-    }
-    if raw == "1" {
-        return Some(50);
-    }
-    raw.parse::<usize>().ok().filter(|&n| n > 0).or(Some(50))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn dump_ft8b_time_chain(
-    call_id: Option<u64>,
-    f1_candidate: f64,
-    xdt_candidate: f64,
-    depth: usize,
-    imetric: usize,
-    time0: TimeSearchResult,
-    freq0: FrequencySearchResult,
-    time1: TimeRefineResult,
-    f1_refined: f64,
-    xdt_refined: f64,
-    nsync: usize,
-    min_costas_hits: usize,
-    sync_gate_ok: bool,
-) {
-    let Some(call_id) = call_id else {
-        return;
-    };
-    eprintln!(
-        "[FT8B_TIME] call={} f1_in={:.6} xdt_in={:.9} depth={} imetric={} i0={} ibest0={} sync0={:.9} delfbest={:.3} fsync={:.9} ibest1={} dt_offset={} sync1={:.9} f1_refined={:.6} xdt_refined={:.9} nsync={} gate_min={} gate_ok={}",
-        call_id,
-        f1_candidate,
-        xdt_candidate,
-        depth,
-        imetric,
-        time0.i0,
-        time0.ibest,
-        time0.sync,
-        freq0.delfbest,
-        freq0.sync,
-        time1.ibest,
-        time1.offset,
-        time1.sync,
-        f1_refined,
-        xdt_refined,
-        nsync,
-        min_costas_hits,
-        sync_gate_ok
-    );
-}
-
-fn dump_ft8b_message(call_id: Option<u64>, msg: &str, snr: f64) {
-    let Some(call_id) = call_id else {
-        return;
-    };
-    eprintln!("[FT8B_MSG] call={} snr={:.3} msg={}", call_id, snr, msg);
 }
 
 fn finalize_sync8_candidates(
@@ -1510,11 +1044,6 @@ fn ft8b(
     coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
     coarse_frequency_uses: &mut std::collections::HashMap<i32, usize>,
 ) -> Option<Ft8bResult> {
-    let t0 = std::time::Instant::now();
-    let ft8b_dump_call = next_ft8b_dump_call();
-    let f1_candidate = f1;
-    let xdt_candidate = xdt;
-
     load_coarse_downsample(
         cx_re,
         cx_im,
@@ -1523,13 +1052,11 @@ fn ft8b(
         coarse_downsample_cache,
         coarse_frequency_uses,
     );
-    let t1 = t0.elapsed();
 
     let time0 = find_best_time_offset(&workspace.cd0_re, &workspace.cd0_im, xdt);
     let freq0 = find_best_frequency_shift(&workspace.cd0_re, &workspace.cd0_im, time0.ibest);
     f1 += freq0.delfbest;
     ft8_downsample(cx_re, cx_im, f1, workspace);
-    let t2 = t0.elapsed();
 
     let time1 = refine_time_offset(
         &workspace.cd0_re,
@@ -1541,7 +1068,6 @@ fn ft8b(
     let xdt = (ibest as f64 - 1.0) * DT2;
 
     extract_soft_symbols(ibest, workspace);
-    let t3 = t0.elapsed();
 
     // WSJT-X ft8b.f90: syncmin=6, imetric=2 => 7, depth<=2 => 8,
     // and bailout is nsync <= syncmin.
@@ -1553,53 +1079,11 @@ fn ft8b(
         7
     };
     let nsync = compute_nsync(&workspace.s8);
-    let sync_gate_ok = passes_sync_gate_strict(&workspace.s8, min_costas_hits);
-    dump_ft8b_time_chain(
-        ft8b_dump_call,
-        f1_candidate,
-        xdt_candidate,
-        depth,
-        imetric,
-        time0,
-        freq0,
-        time1,
-        f1,
-        xdt,
-        nsync,
-        min_costas_hits,
-        sync_gate_ok,
-    );
-    trace_ft8b_time_targets(
-        trace_targets(),
-        f1_candidate,
-        xdt_candidate,
-        depth,
-        imetric,
-        time0,
-        freq0,
-        time1,
-        f1,
-        xdt,
-        nsync,
-        min_costas_hits,
-        sync_gate_ok,
-    );
-    if !sync_gate_ok {
-        // Accumulate timers before returning
-        FT8B_TIMERS[0].fetch_add(t1.as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
-        FT8B_TIMERS[1].fetch_add(
-            (t2 - t1).as_micros() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        FT8B_TIMERS[2].fetch_add(
-            (t3 - t2).as_micros() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+    if !passes_sync_gate_strict(&workspace.s8, min_costas_hits) {
         return None;
     }
 
     build_bit_metrics(workspace, imetric);
-    let _t4 = t0.elapsed();
 
     // ── xbase: noise baseline at candidate frequency (for xsnr2) ──
     // sbase is built by sync8 with NFFT1=3840 → df=3.125 Hz/bin.
@@ -1657,8 +1141,6 @@ fn ft8b(
     for i in 0..79 {
         itone[i] = tones[i] as i32;
     }
-
-    dump_ft8b_message(ft8b_dump_call, &msg, snr);
 
     Some(Ft8bResult {
         msg,
@@ -1718,11 +1200,7 @@ fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> TimeSearch
             ibest = idx;
         }
     }
-    TimeSearchResult {
-        i0: i0_raw,
-        ibest,
-        sync: smax,
-    }
+    TimeSearchResult { ibest }
 }
 
 fn find_best_frequency_shift(
@@ -1740,10 +1218,7 @@ fn find_best_frequency_shift(
             delfbest = tpl.delf;
         }
     }
-    FrequencySearchResult {
-        delfbest,
-        sync: smax,
-    }
+    FrequencySearchResult { delfbest }
 }
 
 fn refine_time_offset(
@@ -1768,8 +1243,6 @@ fn refine_time_offset(
     }
     TimeRefineResult {
         ibest: ibest + max_idx - 4,
-        offset: max_idx - 4,
-        sync: max_val,
     }
 }
 

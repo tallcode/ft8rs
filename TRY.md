@@ -74,14 +74,6 @@
 - `ft8_a7d` CQ `imsg=5` 因此生成 `CQ CALL`，没有生成 WSJT-X 的 `CQ CALL GRID`。
 - 修正后长测从 `384/449` 提升到 `401/449`，达到第二里程碑目标。
 
-### 诊断工具
-- 默认关闭的 `FT8RS_DUMP_SYNC8`：
-  - 输出 `[SYNC8_PRE]` 和 `[SYNC8_FINAL]`，用于和 WSJT-X `sync8.f90` 数值 fixture 对比。
-- 默认关闭的 `FT8RS_TRACE_TARGETS`：
-  - 输出 `[TRACE_SYNC8]`、`[TRACE_FT8B]`、`[TRACE_DECODE]`、`[TRACE_AP_*]`，用于单条 miss 跟踪。
-- `FT8RS_PRINT_MISSES=1`：
-  - 输出长测剩余 miss，避免凭感觉选排查方向。
-
 ### 无效或撤回尝试
 - `sync8` 修正后临时把 candidate dt 改成 `(jpeak-1.5)*tstep` 可以回到 `381/449`，但这不是 WSJT-X 公式，已撤回。
 - CQ `call_1` padding 修复是正确源码语义，但单独没有提升分数；保留作为防回归。
@@ -150,9 +142,21 @@
 - `cargo fmt` ✅
 - `cargo check --tests` ✅
 - `git diff --check` ✅
+- `cargo run --release -- --fft-engine fftw file tests/ft8/210703_133430.wav` ✅
+  - CLI 短文件仍输出 `21` 条。
+- `target/release/ft8rs --fft-engine fftw file tests/ft8/230208_140300.wav --low 200 --high 210 --depth 1` ✅
+  - 长文件快速 smoke test 仍输出 19 个 slot 的段间分隔符。
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `4.6s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 每段均小于 `15s`
+  - timing residual median 仍为 `+0.785s`
+- `git diff --check` ✅
 - `cargo test --release util::pack_jt77::tests -- --nocapture` ✅
 - `cargo test --release util::unpack_jt77::tests -- --nocapture` ✅
-- `cargo test --release stream::decoder::tests -- --nocapture` ✅
+- `cargo test --release stream::session::tests -- --nocapture` ✅
 - `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
   - `21` unique messages
   - 约 `4.4s`
@@ -220,7 +224,7 @@
   - miss 行使用 baseline 原始字段，tag=`-`。
   - 为了便于直接查看当前缺口，diff 文件只写 miss，不混入 extra decode。
   - 默认不写文件；设置 `FT8RS_WRITE_DIFF=1` 时生成 `tests/ft8/230208_140300_diff.csv`。
-- 长测试分段数改为 `ceil(duration/15s)`，让文件流结束时的非空尾段也进入 `StreamDecoder::decode_slot`。
+- 长测试分段数改为 `ceil(duration/15s)`，让文件流结束时的非空尾段也进入 `StreamDecodeSession::decode_slot`。
 - 长测通过线从旧的 `366/449` 提高到当前已达成的 `420/449`，用于保住第三里程碑成果。
 - 删除尾段 flush 后不再需要的“音频窗口外 baseline”补偿逻辑。
 
@@ -400,3 +404,94 @@
 - `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
   - `422/449`
   - 每段均小于 `15s`
+
+## Engineering: CLI 与模块边界整理
+
+### 目的
+- 灵敏度追分暂时暂停，先把工程入口和模块边界整理清楚。
+- 保持解码核心不和 CLI/UI/文件读取耦合，方便后续继续逐函数对齐 WSJT-X 时减少看错文件、变量和控制流的概率。
+
+### 改动
+- 新增 `input::audio` 模块：
+  - 负责 WAV 读取、整数/浮点样本转换、多通道折叠为 mono、线性重采样。
+- 新增 `stream::time` 模块：
+  - 支持 `YYMMDD_HHMMSS`、`YYYYMMDD_HHMMSS`、`HHMMSS` 解析。
+  - 支持从 WSJT-X 风格文件名推断起始 slot 时间。
+- 新增 `stream::slot` 和 `input::file`：
+  - `stream::slot` 负责文件样本按 12 kHz / 15 秒 slot 喂给解码 session。
+  - 保留同一个 `StreamDecodeSession` 实例跨 slot 运行，继续共享 hashcallbook 和 AP memory。
+  - `input::file` 负责 WAV 文件入口、读取和重采样。
+  - EOF 时保留最后一个非空尾 slot，与当前测试 harness 的行为一致。
+- 重写 CLI：
+  - `ft8rs --fft-engine fftw file <wav> [--start-time ...]`
+  - 文件名可推断时间戳时不需要显式 `--start-time`。
+  - stdout 只输出解码信息：`timestamp snr dt freq msg`。
+  - `soundcard` 子命令先保留为未实现，后续单独接入声卡采集。
+- 清理 CLI 输出路径，stdout 只保留解码信息。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `target/release/ft8rs --fft-engine fftw file tests/ft8/210703_133430.wav` ✅
+  - 只输出 timestamped decode lines。
+
+### 基线验证
+- `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
+  - `21` unique messages
+  - 约 `4.4s`
+- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 每段均小于 `15s`
+  - timing residual median 仍为 `+0.785s`
+
+## Engineering: CLI 流式输出
+
+### 问题
+- 文件 CLI 之前通过 `decode_wav_file` 先收集完整文件的所有解码结果，最后统一输出。
+- 这不符合实时/流式使用方式：应该解码完一个 15 秒 slot 就立刻输出这一段。
+
+### 修复
+- 新增 `decode_wav_file_streaming`，文件读取和重采样后按 slot 调用回调。
+- CLI 改为使用 streaming 回调：
+  - 每解完一段立即打印该段解码结果。
+  - 段与段之间打印 `====`。
+  - 每段输出后 flush stdout。
+- README 说明 CLI 是逐段输出，段间用 `====` 分隔。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `cargo run --release -- --fft-engine fftw file tests/ft8/210703_133430.wav` ✅
+  - 短文件正常输出 `21` 条。
+- `target/release/ft8rs --fft-engine fftw file tests/ft8/230208_140300.wav --low 200 --high 210 --depth 1` ✅
+  - 长文件快速 smoke test 输出 19 个 slot 的段间分隔符。
+
+## Engineering: 输入层和 WSJT-X 命名整理
+
+### 目的
+- 解码器、流式 slot 适配层、文件入口、声卡入口分层更清楚。
+- decoder-facing 参数和关键内部结构向 WSJT-X 命名靠拢，减少继续对照 Fortran 时的错读。
+
+### 改动
+- 新增 `stream::slot`：
+  - 只负责 12 kHz 样本按 15 秒 slot 驱动 `StreamDecodeSession`。
+  - 保留同一个 `StreamDecodeSession` 跨 slot 运行，保持 hashcallbook 和 AP memory。
+- 新增 `input` 层：
+  - `input::file` 负责 WAV 读取、重采样，并调用 `stream::slot`。
+  - `input::soundcard` 保留声卡入口 stub。
+- 删除旧 `stream::file`：
+  - 避免文件 I/O 和流式 slot 适配混在同一层。
+- `StreamDecodeConfig` 改为兼容别名，具体类型为 `WsjtxDecodeConfig`。
+- 配置字段向 WSJT-X 对齐：
+  - `freq_low/freq_high` -> `nfa/nfb`
+  - `depth` -> `ndepth`
+  - `max_candidates` -> `ncand`
+  - `nqso_progress` -> `nQSOProgress`
+  - `ft8_ap/ap_cq_only` -> `lft8apon/lapcqonly`
+  - `sync_min` -> `syncmin`
+- `ft8::decode::DecodeOptions` 同步改成 decoder-facing WSJT-X 风格字段。
+- AP memory 内部结构从通用 `SlotDecodeEntry` 改为 `A7SaveEntry`，字段使用 `msg0/dt0/f0`。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
