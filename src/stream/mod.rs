@@ -5,5 +5,8 @@ pub mod time;
 pub use session::{
     StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage, WsjtxDecodeConfig,
 };
-pub use slot::{decode_12k_slots, decode_12k_slots_streaming, TimestampedDecode};
+pub use slot::{
+    decode_12k_slots, decode_12k_slots_streaming, decode_12k_slots_streaming_decodes,
+    TimestampedDecode,
+};
 pub use time::SlotTimestamp;

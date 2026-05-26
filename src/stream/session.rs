@@ -105,10 +105,24 @@ impl StreamDecodeSession {
     }
 
     pub fn decode_slot(&mut self, samples: &[f32]) -> Vec<StreamDecodedMessage> {
-        let results = self.ft8_decode_slot(samples);
+        let results = self
+            .decode_slot_streaming(samples, |_| Ok(()))
+            .expect("in-memory decode callback cannot fail");
+        results
+    }
+
+    pub fn decode_slot_streaming<F>(
+        &mut self,
+        samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        let results = self.ft8_decode_slot(samples, on_decode)?;
         // Toggle parity for next slot (simulates UTC progression mod 5)
         self.jseq = 1 - self.jseq;
-        results
+        Ok(results)
     }
 
     /// Full progressive decode matching WSJT-X flow:
@@ -117,9 +131,18 @@ impl StreamDecodeSession {
     /// 3. nzhsym=50: decode full buffer with early-cleaned prefix.
     /// 4. AP decode using prev_slot entries of SAME parity (ft8_a7d).
     /// 5. Save current slot entries for next same-parity slot.
-    fn ft8_decode_slot(&mut self, samples: &[f32]) -> Vec<StreamDecodedMessage> {
+    fn ft8_decode_slot<F>(
+        &mut self,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
         let dd0 = dd0_from_samples(samples);
         let book = Rc::clone(&self.book);
+        let mut seen = std::collections::HashSet::new();
+        let mut merged = Vec::new();
 
         // ── Stage 1: nzhsym=41 early decode ──
         let early_dd = dd0_partial_nzhsym(&dd0, 41);
@@ -128,6 +151,9 @@ impl StreamDecodeSession {
         } else {
             decode_f64_with_sbase(&early_dd, self.ft8_decode_options(41, Rc::clone(&book)))
         };
+        for d in &early_results {
+            push_regular_decode(&mut seen, &mut merged, &self.book, d, &mut on_decode)?;
+        }
 
         // ── Stage 2: nzhsym=47 early subtraction only ──
         let mut dd1 = dd0_partial_nzhsym(&dd0, 47);
@@ -201,34 +227,9 @@ impl StreamDecodeSession {
             ap_msgs
         };
 
-        // ── Stage 5: Merge early + full + AP results, dedup ──
-        let mut seen = std::collections::HashSet::new();
-        let mut merged = Vec::new();
-
-        fn collect_book(book: &mut Rc<HashCallBook>, msg: &str) {
-            for part in msg.split_whitespace() {
-                let p = part.trim_matches(|c: char| c == ';' || c == ',');
-                if is_hashable_callsign_token(p) {
-                    book.save(p);
-                }
-            }
-        }
-
-        for d in early_results.iter().chain(full_results.iter()) {
-            let key = normal(&d.msg);
-            if seen.insert(key) {
-                let mut itone = [0i32; 79];
-                itone.copy_from_slice(&d.itone[..79]);
-                merged.push(StreamDecodedMessage {
-                    freq: d.freq,
-                    dt: d.dt,
-                    snr: d.snr,
-                    msg: d.msg.clone(),
-                    sync: d.sync,
-                    itone,
-                });
-                collect_book(&mut self.book, &d.msg);
-            }
+        // ── Stage 5: Merge full + AP results, dedup ──
+        for d in &full_results {
+            push_regular_decode(&mut seen, &mut merged, &self.book, d, &mut on_decode)?;
         }
 
         for r in &ap_results {
@@ -237,15 +238,17 @@ impl StreamDecodeSession {
             }
             let key = normal(&r.msg);
             if seen.insert(key) {
-                merged.push(StreamDecodedMessage {
+                let decode = StreamDecodedMessage {
                     freq: r.freq,
                     dt: r.dt,
                     snr: r.snr,
                     msg: r.msg.clone(),
                     sync: 0.0,
                     itone: [0i32; 79],
-                });
-                collect_book(&mut self.book, &r.msg);
+                };
+                collect_book(&self.book, &decode.msg);
+                on_decode(&decode)?;
+                merged.push(decode);
             }
         }
 
@@ -257,7 +260,7 @@ impl StreamDecodeSession {
             self.prev_odd = entries_to_save;
         }
 
-        merged
+        Ok(merged)
     }
 
     fn ft8_decode_options(&self, nzhsym: usize, book: Rc<HashCallBook>) -> DecodeOptions {
@@ -403,6 +406,46 @@ fn suppress_previous_a7_entries(
         })
         .cloned()
         .collect()
+}
+
+fn push_regular_decode<F>(
+    seen: &mut std::collections::HashSet<String>,
+    merged: &mut Vec<StreamDecodedMessage>,
+    book: &HashCallBook,
+    d: &DecodedMessage,
+    on_decode: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+{
+    let key = normal(&d.msg);
+    if !seen.insert(key) {
+        return Ok(());
+    }
+
+    let mut itone = [0i32; 79];
+    itone.copy_from_slice(&d.itone[..79]);
+    let decode = StreamDecodedMessage {
+        freq: d.freq,
+        dt: d.dt,
+        snr: d.snr,
+        msg: d.msg.clone(),
+        sync: d.sync,
+        itone,
+    };
+    collect_book(book, &decode.msg);
+    on_decode(&decode)?;
+    merged.push(decode);
+    Ok(())
+}
+
+fn collect_book(book: &HashCallBook, msg: &str) {
+    for part in msg.split_whitespace() {
+        let p = part.trim_matches(|c: char| c == ';' || c == ',');
+        if is_hashable_callsign_token(p) {
+            book.save(p);
+        }
+    }
 }
 
 fn is_grid4(s: &str) -> bool {
