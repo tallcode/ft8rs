@@ -199,3 +199,55 @@
 ### 结果
 - 长测从第二里程碑稳定基线 `401/449` 提升到 `402/449`。
 - 这是 residual/subtract 链路的源码对齐收益，不是阈值调整。
+
+## Milestone 3 收口: diff 工具与 EOF 尾段 flush
+
+### 问题
+- `tests/ft8/230208_140300_diff.csv` 表头是 `Date-Time,SNR,Drift,Freq,Msg,Tag`，但所有数据行只有 5 列。
+- miss 行把 `-` 直接拼在 `Msg` 末尾，例如 `OZ1DYI SV1SSL 73-`，缺少 `Msg,Tag` 之间的逗号。
+- extra 行有 `,+`，但缺少 `Drift` 列，例如 `230208_140330,-4,1205,...,+`。
+- 初版 miss-only diff 有 19 条集中在 `230208_140730`，原因不是解码器全部漏掉，而是长测试用
+  `floor(duration/15s)` 只解完整 slot。`230208_140300.wav` 总长约 `284.47s`，最后一个
+  `230208_140730` slot 还有约 `14.47s` 音频，足够作为文件流尾段 flush 一次。
+- 复核之前提到的顺手小问题：
+  - `apmag`、`npasses`、SNR `-25 dB` floor 当前与 `wsjtx/lib/ft8/ft8b.f90` 主路径一致。
+  - `1.01 / 4+nappasses / -24 dB` 来自其他变体路径，不作为当前 FT8 主解码路径的修复依据。
+
+### 修复
+- 修正已提交的 `230208_140300_diff.csv`，所有数据行统一为 6 列。
+- 重构 long stream test 的 baseline 解析，保留 `Date-Time/SNR/Drift/Freq/Msg` 字段，而不只保存 normalized message。
+- 增加统一的 diff CSV writer：
+  - miss 行使用 baseline 原始字段，tag=`-`。
+  - 为了便于直接查看当前缺口，diff 文件只写 miss，不混入 extra decode。
+  - 默认不写文件；设置 `FT8RS_WRITE_DIFF=1` 时生成 `tests/ft8/230208_140300_diff.csv`。
+- 长测试分段数改为 `ceil(duration/15s)`，让文件流结束时的非空尾段也进入 `StreamDecoder::decode_slot`。
+- 长测通过线从旧的 `366/449` 提高到当前已达成的 `420/449`，用于保住第三里程碑成果。
+- 删除尾段 flush 后不再需要的“音频窗口外 baseline”补偿逻辑。
+
+### 验证
+- `cargo fmt` ✅
+- `cargo check --tests` ✅
+- `awk -F, 'NR==1{next} NF!=6{print}' tests/ft8/230208_140300_diff.csv` ✅ 无输出
+- `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+  - 生成 `tests/ft8/230208_140300_diff.csv`
+  - `420/449`
+  - `230208_140730` 真实参与解码，`19` 条中匹配 `18` 条
+  - diff 剩余 `29` 条 miss，全部 `Tag=-`
+  - 每段均小于 `15s`
+
+## Milestone 4: 目标 430
+
+### 目标
+- 当前保护线：`420/449`。
+- 第四里程碑目标：`430/449`。
+- 继续坚持 WSJT-X 对齐优先，不通过放宽阈值或扩大非 WSJT-X 搜索追分。
+
+### 排查顺序
+1. 通过源代码继续查架构差异，优先 `ft8_decode` 外层控制流、`ft8b` AP pass、`ft8_a7` 跨时隙记忆。
+2. 用最新 `29` 条 miss 反查架构差异。
+3. 源码层面确认参数差异。
+4. 最后才用 miss 做参数差异定位。
+
+### 当前线索
+- 最新 miss-only diff 已经去掉尾段假 miss，剩余 29 条才是真正需要排查的对象。
+- `230208_140730` 只剩 `<...> IK4LZH JN54` 一条未匹配；这个片段本身不再是切窗问题。

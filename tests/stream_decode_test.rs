@@ -2,6 +2,27 @@ use ft8rs::stream::{StreamDecodeConfig, StreamDecoder};
 use ft8rs::util::engine_name;
 use std::collections::HashSet;
 
+#[derive(Clone, Debug)]
+struct BaselineRow {
+    seg: usize,
+    date_time: String,
+    snr: String,
+    drift: String,
+    freq: String,
+    msg: String,
+    norm_msg: String,
+}
+
+#[derive(Clone, Debug)]
+struct DiffRow {
+    date_time: String,
+    snr: String,
+    drift: String,
+    freq: String,
+    msg: String,
+    tag: char,
+}
+
 fn norm(msg: &str) -> String {
     msg.split_whitespace()
         .map(|w| w.trim().to_uppercase())
@@ -45,7 +66,48 @@ fn resample(src: &[f32], f: u32, t: u32) -> Vec<f32> {
     o
 }
 
-fn parse_baseline(path: &str) -> Vec<(usize, String)> {
+fn segment_from_timestamp(ts: &str) -> usize {
+    if ts.len() >= 13 {
+        let t = &ts[ts.len() - 6..];
+        let h: usize = t[0..2].parse().unwrap_or(0);
+        let m: usize = t[2..4].parse().unwrap_or(0);
+        let s: usize = t[4..6].parse().unwrap_or(0);
+        (h * 3600 + m * 60 + s - (14 * 3600 + 3 * 60)) / 15
+    } else {
+        0
+    }
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn diff_row_to_csv(row: &DiffRow) -> String {
+    format!(
+        "{},{},{},{},{},{}",
+        csv_escape(&row.date_time),
+        csv_escape(&row.snr),
+        csv_escape(&row.drift),
+        csv_escape(&row.freq),
+        csv_escape(&row.msg),
+        row.tag
+    )
+}
+
+fn write_diff_csv(path: &str, rows: &[DiffRow]) {
+    let mut out = String::from("Date-Time,SNR,Drift,Freq,Msg,Tag\n");
+    for row in rows {
+        out.push_str(&diff_row_to_csv(row));
+        out.push('\n');
+    }
+    std::fs::write(path, out).unwrap();
+}
+
+fn parse_baseline(path: &str) -> Vec<BaselineRow> {
     let content = std::fs::read_to_string(path).unwrap();
     let mut results = Vec::new();
     for line in content.lines().skip(1) {
@@ -57,19 +119,17 @@ fn parse_baseline(path: &str) -> Vec<(usize, String)> {
         if parts.len() < 5 {
             continue;
         }
-        let ts = parts[0].trim();
-        let msg = parts[4].trim();
-        let nmsg = norm(msg);
-        let seg = if ts.len() >= 13 {
-            let t = &ts[ts.len() - 6..];
-            let h: usize = t[0..2].parse().unwrap_or(0);
-            let m: usize = t[2..4].parse().unwrap_or(0);
-            let s: usize = t[4..6].parse().unwrap_or(0);
-            (h * 3600 + m * 60 + s - (14 * 3600 + 3 * 60)) / 15
-        } else {
-            0
-        };
-        results.push((seg, nmsg));
+        let date_time = parts[0].trim().to_string();
+        let msg = parts[4].trim().to_string();
+        results.push(BaselineRow {
+            seg: segment_from_timestamp(&date_time),
+            date_time,
+            snr: parts[1].trim().to_string(),
+            drift: parts[2].trim().to_string(),
+            freq: parts[3].trim().to_string(),
+            norm_msg: norm(&msg),
+            msg,
+        });
     }
     results
 }
@@ -138,7 +198,7 @@ fn test_stream_decode_long_audio() {
     let s12k = resample(&all, sr, 12000);
     let sps = 15 * 12000;
     let dur_12k = s12k.len() as f64 / 12000.0;
-    let nseg = (dur_12k / 15.0).floor() as usize;
+    let nseg = (dur_12k / 15.0).ceil() as usize;
 
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
     println!(
@@ -154,8 +214,9 @@ fn test_stream_decode_long_audio() {
     let mut decoder = StreamDecoder::new(config);
 
     let mut total_matched = 0;
-    let target_matched = 366usize;
-    let severe_floor = target_matched.saturating_sub(10);
+    let accepted_floor = 420usize;
+    let severe_floor = accepted_floor.saturating_sub(10);
+    let mut diff_rows = Vec::new();
 
     for seg in 0..nseg {
         let seg_start = seg * sps;
@@ -172,14 +233,22 @@ fn test_stream_decode_long_audio() {
             elapsed_ms
         );
 
-        let bl: Vec<_> = baseline.iter().filter(|(s, _)| *s == seg).collect();
+        let bl: Vec<_> = baseline.iter().filter(|row| row.seg == seg).collect();
         let mut matched = 0;
         let mut missed = Vec::new();
-        for (_, bmsg) in &bl {
-            if results.iter().any(|d| norm(&d.msg) == norm(bmsg)) {
+        for row in &bl {
+            if results.iter().any(|d| norm(&d.msg) == row.norm_msg) {
                 matched += 1;
             } else {
-                missed.push((*bmsg).clone());
+                missed.push(row.norm_msg.clone());
+                diff_rows.push(DiffRow {
+                    date_time: row.date_time.clone(),
+                    snr: row.snr.clone(),
+                    drift: row.drift.clone(),
+                    freq: row.freq.clone(),
+                    msg: row.msg.clone(),
+                    tag: '-',
+                });
             }
         }
         total_matched += matched;
@@ -197,7 +266,7 @@ fn test_stream_decode_long_audio() {
             }
         }
 
-        let remaining_baseline = baseline.iter().filter(|(s, _)| *s > seg).count();
+        let remaining_baseline = baseline.iter().filter(|row| row.seg > seg).count();
         assert!(
             total_matched + remaining_baseline >= severe_floor,
             "STREAM LONG sensitivity abort at seg {}: matched {} + remaining {} < {}",
@@ -216,11 +285,14 @@ fn test_stream_decode_long_audio() {
         baseline.len(),
         rate
     );
+    if std::env::var("FT8RS_WRITE_DIFF").ok().as_deref() == Some("1") {
+        write_diff_csv("tests/ft8/230208_140300_diff.csv", &diff_rows);
+    }
     assert!(
-        total_matched >= target_matched,
+        total_matched >= accepted_floor,
         "STREAM LONG: {}/{} < {}",
         total_matched,
         baseline.len(),
-        target_matched
+        accepted_floor
     );
 }

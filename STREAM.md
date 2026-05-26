@@ -408,6 +408,14 @@ Current `ft8rs` status after Iteration 13:
   causing `ft8_a7d` CQ `imsg=5` variants to drop the grid and try `CQ CALL`
   instead of `CQ CALL GRID`. Restoring this WSJT-X `stdcall` behavior raised the
   release long score from `384/449` to `401/449`.
+- `subtractft8` sample indexing now maps Rust `i=0` to WSJT-X's first
+  Fortran-loop access `dd(nstart)`, not `dd(nstart-1)`. This fixes a one-sample
+  offset in both residual energy probing and final subtraction, raising the long
+  score from `401/449` to `402/449`.
+- The file-stream test now flushes the final non-empty tail slot. The long test
+  WAV is about `284.47 s`; the final `230208_140730` slot has about `14.47 s`
+  of audio and must still be sent to `decode_slot` at EOF. This moved the long
+  release result from `402/449` to `420/449`.
 
 ## Current Tests and Constraints
 
@@ -415,8 +423,8 @@ Requested acceptance:
 
 - Short stream decode: `tests/ft8/210703_133430.wav`, at least 19/20 messages,
   each decode under 15 s.
-- Long stream decode: `tests/ft8/230208_140300.wav`, at least 366/449 matches,
-  every segment under 15 s.
+- Long stream decode: `tests/ft8/230208_140300.wav`, current protected floor
+  `420/449`, every segment under 15 s. The next milestone target is `430/449`.
 
 Test rules:
 
@@ -429,23 +437,24 @@ Test rules:
 
 Current local test harness status:
 
-- `test_stream_decode_long_audio` now asserts `total_matched >= 366`.
-- The long test now has a severe sensitivity early abort at `366-10`.
-- Long-file segmentation now feeds exact 15 s windows to `decode_slot`, matching
-  WSJT-X `jt9a.f90` use of the 180000-sample shared decode buffer. The previous
-  `15 s +/- 1 s` overlap harness shifted the effective slot by 1 s because the
-  decoder consumed the first 15 s of a 17 s slice.
+- `test_stream_decode_long_audio` now asserts `total_matched >= 420`.
+- The long test now has a severe sensitivity early abort at `420-10`.
+- Long-file segmentation feeds 15 s windows to `decode_slot` and flushes the
+  final non-empty tail window at EOF. This preserves the 180000-sample decode
+  buffer contract for full slots while avoiding a silent drop of a nearly full
+  final FT8 slot in file-stream tests.
 
 ## Near-term Alignment Priorities
 
-1. Add bit-level AP-mask regression checks against WSJT-X for contest and Hound
-   examples.
-2. Audit live-stream window handoff against WSJT-X `nzhsym` progress; the file
-   harness now uses exact 15 s slots, but soundcard buffering still needs the
-   same 180000-sample window contract.
-3. Numerically compare `get_spectrum_baseline` against WSJT-X output.
-4. Only after the above alignment work, run release tests with timeout and
-   sensitivity assertions.
+1. Continue source-level architecture comparison, starting with remaining
+   `ft8_decode`/`ft8b`/`ft8_a7` control-flow differences that affect the 29
+   current misses.
+2. Use the latest miss-only diff to trace architecture gaps before changing
+   parameters.
+3. Audit source-level parameter differences only after the control flow is
+   accounted for.
+4. Use miss-driven parameter checks last, keeping FFTW@3840 release tests and
+   per-slot timeout/sensitivity guards in place.
 
 ## Current Development Plan
 
@@ -456,9 +465,9 @@ After the latest requirement restatement, the active plan is:
 2. Finish source-level control-flow parity before release decode tests:
    `jt9a.f90` windowing, `ft8_decode.f90` `41/47/50` state, `ft8b.f90`
    regular/AP passes, and `ft8_a7` same-parity memory.
-3. Add focused non-release parity checks where they do not decode whole files:
-   AP mask bit fixtures, baseline numerical fixtures, and candidate ordering
-   fixtures.
+3. Add focused parity checks where they do not slow down acceptance work:
+   AP mask bit fixtures, baseline numerical fixtures, candidate ordering
+   fixtures, and EOF tail-slot handling.
 4. Keep the stream decoder independent from UI and soundcard/file I/O.
 5. Only when the above parity checks are in place, run the required release
    stream tests with per-slot timeout and sensitivity aborts.
