@@ -29,8 +29,6 @@ pub(crate) const NDOWN: usize = 60;
 pub(crate) const NN: usize = 79;
 
 pub(crate) const NFFT1_LONG: usize = 192000;
-#[allow(dead_code)]
-const SYNC8_DF: f64 = SAMPLE_RATE as f64 / 4096.0; // 12000/4096 = 2.93 Hz/bin
 pub(crate) const NFFT2: usize = 3200;
 pub(crate) const NP2: usize = 2812;
 pub(crate) const COSTAS_BLOCKS: usize = 7;

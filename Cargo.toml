@@ -11,12 +11,12 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Compile-time: force rustfft engine (4096-point). Default is FFTW (3840).
-force-rustfft = []
+# Compile-time: default rustfft@3840. Enable fftw for WSJT-X-aligned FFTW@3840 tests.
+fftw = []
 
 [dependencies]
 rayon = "1"
-rustfft = "6"  # Dual-engine: rustfft for baseline comparison, FFTW for WSJT-X alignment
+rustfft = "6"
 
 hound = "3"
 num-bigint = "0.4"

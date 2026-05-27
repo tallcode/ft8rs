@@ -7,7 +7,8 @@
 - 提供一个独立的纯解码模块，不和 UI 耦合。
 - 支持从 WAV 文件按 FT8 slot 流式解码，输出带时间戳的解码行。
 - 后续支持指定声卡，按系统时间切分音频流并实时输出解码结果。
-- 默认使用 `FFTW @ 3840` 对齐 WSJT-X，同时保留 `rustfft @ 4096` 作为便携编译和对比路径。
+- 默认使用 `rustfft @ 3840`，无需外部 FFTW 运行库。
+- 可在编译时启用 `FFTW @ 3840`，作为 WSJT-X 对齐验证路径。
 
 当前状态：
 
@@ -20,19 +21,23 @@
 
 需要 Rust stable toolchain。
 
-默认 FFT 引擎是 FFTW，因此系统需要能链接 `libfftw3`。在 macOS 上通常可以用：
+默认构建使用 `rustfft @ 3840`，只需要 Rust stable toolchain。
+
+如果要运行 WSJT-X 对齐验证路径，可启用 `fftw` feature；此时系统需要能链接
+`libfftw3`。在 macOS 上通常可以用：
 
 ```bash
 brew install fftw
 ```
 
-如果只是需要更方便地编译和运行，可使用 `rustfft` 引擎：
+启用 FFTW 编译：
 
 ```bash
-cargo build --release --features force-rustfft
+cargo build --release --features fftw
 ```
 
-注意：WSJT-X 对齐和正式验收优先使用默认 `FFTW @ 3840`。
+编译后不能在运行时切换 FFT 引擎：默认产物是 `rustfft @ 3840`，带
+`--features fftw` 的产物是 `FFTW @ 3840`。
 
 ## 编译 CLI
 
@@ -48,12 +53,18 @@ cargo build --release
 target/release/ft8rs
 ```
 
+构建 FFTW 对齐版本：
+
+```bash
+cargo build --release --features fftw
+```
+
 查看帮助：
 
 ```bash
 target/release/ft8rs --help
 target/release/ft8rs file --help
-target/release/ft8rs soundcard --help
+target/release/ft8rs monitor --help
 ```
 
 ## 运行 CLI
@@ -63,7 +74,7 @@ target/release/ft8rs soundcard --help
 如果 WAV 文件名包含 WSJT-X 风格时间戳，例如 `210703_133430.wav`，可以直接运行：
 
 ```bash
-target/release/ft8rs --fft-engine fftw file tests/ft8/210703_133430.wav
+target/release/ft8rs file tests/ft8/210703_133430.wav
 ```
 
 输出格式：
@@ -91,19 +102,19 @@ CLI 的 stdout 只输出解码信息和段结束分隔符。文件会按 15 秒 
 如果文件名没有时间戳，使用 `--start-time`：
 
 ```bash
-target/release/ft8rs --fft-engine fftw file recording.wav --start-time 230208_140300
+target/release/ft8rs file recording.wav --start-time 230208_140300
 ```
 
 也可以只指定当天时间：
 
 ```bash
-target/release/ft8rs --fft-engine fftw file recording.wav --start-time 140300
+target/release/ft8rs file recording.wav --start-time 140300
 ```
 
 ### 指定频率范围和深度
 
 ```bash
-target/release/ft8rs --fft-engine fftw file tests/ft8/230208_140300.wav \
+target/release/ft8rs file tests/ft8/230208_140300.wav \
   --low 200 \
   --high 3000 \
   --depth 3 \
@@ -113,25 +124,15 @@ target/release/ft8rs --fft-engine fftw file tests/ft8/230208_140300.wav \
 禁用 AP 解码：
 
 ```bash
-target/release/ft8rs --fft-engine fftw file tests/ft8/230208_140300.wav --no-ap
+target/release/ft8rs file tests/ft8/230208_140300.wav --no-ap
 ```
 
-### 使用 rustfft 引擎
-
-运行时切换到 `rustfft @ 4096`：
-
-```bash
-target/release/ft8rs --fft-engine rustfft file tests/ft8/210703_133430.wav
-```
-
-`rustfft` 路径主要用于便携编译和对照，不作为 WSJT-X 对齐结论的默认依据。
-
-### 声卡入口
+### 实时监听入口
 
 不带 `--device` 时列出系统输入设备：
 
 ```bash
-target/release/ft8rs soundcard
+target/release/ft8rs monitor
 ```
 
 输出会标出输入设备索引、host、设备名、默认设备标记和默认输入格式。
@@ -139,14 +140,14 @@ target/release/ft8rs soundcard
 带 `--device` 时进入声卡采集解码入口。`--device` 可以使用上面列表里的 `Index`，也可以使用完整设备名：
 
 ```bash
-target/release/ft8rs soundcard --device 0
-target/release/ft8rs soundcard --device "MacBook Pro Microphone"
+target/release/ft8rs monitor --device 0
+target/release/ft8rs monitor --device "MacBook Pro Microphone"
 ```
 
 测试时可以限制监听段数：
 
 ```bash
-target/release/ft8rs soundcard --device "VB-Cable A" --slots 2
+target/release/ft8rs monitor --device "VB-Cable A" --slots 2
 ```
 
 声卡输入按系统 UTC 时间对齐到下一个 15 秒 slot 后开始采集，每段采集完成后进入同一套渐进解码输出路径：早期结果先打印，完整 slot 和 AP 阶段继续补充新结果。每段消息后面使用同样的分隔符，并标出本段解码数量。
@@ -161,6 +162,12 @@ target/release/ft8rs soundcard --device "VB-Cable A" --slots 2
 cargo test --release test_stream_decode_short_audio -- --nocapture
 ```
 
+FFTW 对齐路径测试：
+
+```bash
+cargo test --release --features fftw test_stream_decode_short_audio -- --nocapture
+```
+
 当前要求：
 
 - 文件：`tests/ft8/210703_133430.wav`
@@ -172,6 +179,12 @@ cargo test --release test_stream_decode_short_audio -- --nocapture
 
 ```bash
 cargo test --release test_stream_decode_long_audio -- --nocapture
+```
+
+FFTW 对齐路径长测：
+
+```bash
+cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture
 ```
 
 当前要求：
