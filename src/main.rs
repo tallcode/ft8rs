@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 
 use ft8rs::input::{
     decode_soundcard_streaming_decodes, decode_wav_file_streaming_decodes,
@@ -9,21 +9,9 @@ use ft8rs::input::{
 use ft8rs::stream::{StreamDecodeConfig, StreamDecodedMessage};
 use ft8rs::SlotTimestamp;
 
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum FftEngine {
-    #[default]
-    Fftw,
-    Rustfft,
-}
-
 #[derive(Parser)]
 #[command(name = "ft8rs", about = "FT8 streaming decoder")]
 struct Cli {
-    /// FFT engine to use
-    #[arg(long, global = true, value_enum, default_value_t = FftEngine::Fftw,
-        help = "FFT engine: fftw (3840-pt, WSJT-X aligned) or rustfft (4096-pt)")]
-    fft_engine: FftEngine,
-
     #[command(subcommand)]
     command: Command,
 }
@@ -32,8 +20,8 @@ struct Cli {
 enum Command {
     /// Decode a WAV file as a timestamped FT8 stream
     File(FileArgs),
-    /// List or listen to live audio input devices
-    Soundcard(SoundcardArgs),
+    /// List or monitor live audio input devices
+    Monitor(MonitorArgs),
 }
 
 #[derive(Args)]
@@ -68,8 +56,8 @@ struct FileArgs {
 }
 
 #[derive(Args)]
-struct SoundcardArgs {
-    /// Input device selector: use the Index shown by `ft8rs soundcard`, or the full device name.
+struct MonitorArgs {
+    /// Input device selector: use the Index shown by `ft8rs monitor`, or the full device name.
     /// Omit this option to list input devices.
     #[arg(long)]
     device: Option<String>,
@@ -89,14 +77,9 @@ fn main() {
 fn run() -> Result<(), String> {
     let cli = Cli::parse();
 
-    match cli.fft_engine {
-        FftEngine::Rustfft => std::env::set_var("FTRS_FFT", "rustfft"),
-        FftEngine::Fftw => std::env::set_var("FTRS_FFT", "fftw"),
-    }
-
     match cli.command {
         Command::File(args) => run_file(args),
-        Command::Soundcard(args) => run_soundcard(args),
+        Command::Monitor(args) => run_monitor(args),
     }
 }
 
@@ -136,9 +119,9 @@ fn run_file(args: FileArgs) -> Result<(), String> {
     )
 }
 
-fn run_soundcard(args: SoundcardArgs) -> Result<(), String> {
+fn run_monitor(args: MonitorArgs) -> Result<(), String> {
     if args.device.is_none() {
-        return run_soundcard_ls();
+        return run_monitor_ls();
     }
 
     decode_soundcard_streaming_decodes(
@@ -176,7 +159,7 @@ fn flush_stdout() -> Result<(), String> {
         .map_err(|err| format!("failed to flush stdout: {err}"))
 }
 
-fn run_soundcard_ls() -> Result<(), String> {
+fn run_monitor_ls() -> Result<(), String> {
     let devices = list_soundcards()?;
     if devices.is_empty() {
         println!("No audio input devices found.");

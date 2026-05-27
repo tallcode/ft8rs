@@ -1,4 +1,12 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=FFTW_DIR");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FFTW");
+    println!("cargo:rerun-if-changed=build.rs");
+
+    if std::env::var_os("CARGO_FEATURE_FFTW").is_none() {
+        return;
+    }
+
     if let Ok(fftw_dir) = std::env::var("FFTW_DIR") {
         println!("cargo:rustc-link-search=native={fftw_dir}/lib");
     }
@@ -15,7 +23,5 @@ fn main() {
     // Link against system libfftw3.
     println!("cargo:rustc-link-lib=fftw3");
 
-    println!("cargo:rerun-if-env-changed=FFTW_DIR");
-    println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/util/fft_fftw.rs");
 }
