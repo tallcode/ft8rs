@@ -89,12 +89,16 @@ ft8rs file tests/ft8/230208_140300.wav
 ft8rs file some.wav --start-time 230208_140300
 ft8rs monitor
 ft8rs monitor --device "VB-Cable A" --slots 2
+ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --udp-port 2238
 ```
 
 CLI 输出要求：
 
 - 解码结果按 slot 流式输出，先解出的强信号先打印。
 - 每个 slot 结束后打印 compact separator，并包含该段 decode count。
+- `monitor --udp` 对每条 decode 发送 WSJT-X UDP Decode packet 兼容格式。
+  默认 destination 是 `127.0.0.1:2238`，可通过 `--udp-host` 和
+  `--udp-port` 修改。未传 `--udp` 时不发送 UDP。
 - CLI 普通输出不依赖 `FT8RS_TRACE_TIMERS=1`。
 
 ## 4. Audio and Slot Model
