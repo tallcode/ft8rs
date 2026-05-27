@@ -1,45 +1,17 @@
+#[cfg(feature = "fftw")]
 pub(crate) mod fft_fftw;
+#[cfg(not(feature = "fftw"))]
 pub(crate) mod fft_rustfft;
 
-/// Dual-engine FFT dispatcher.
+/// Compile-time FFT dispatcher.
 ///
-/// Default: FFTW @ 3840 (matches WSJT-X four2a)
-/// Override: set `FTRS_FFT=rustfft` env var → rustfft @ 4096
-/// CLI: `ft8rs --fft-engine=rustfft file.wav`
-///
-/// Both engines expose the same public API via this dispatcher.
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicU8, Ordering};
+/// Default: rustfft @ 3840, no external FFTW runtime dependency.
+/// Feature `fftw`: FFTW @ 3840, used for WSJT-X-aligned tests.
 
-/// 0=uninit, 1=FFTW, 2=rustfft
-static ENGINE_ID: AtomicU8 = AtomicU8::new(0);
-
-#[inline]
-fn engine_id() -> u8 {
-    let id = ENGINE_ID.load(Ordering::Relaxed);
-    if id != 0 {
-        return id;
-    }
-    let env = std::env::var("FTRS_FFT").unwrap_or_default();
-    let id = if env == "rustfft" { 2 } else { 1 };
-    ENGINE_ID.store(id, Ordering::SeqCst);
-    id
-}
-
-/// Returns true when using rustfft engine.
-#[inline]
-pub fn is_rustfft() -> bool {
-    engine_id() == 2
-}
-
-/// sync8 FFT size: FFTW→3840, rustfft→4096
+/// sync8 FFT size: both compile-time engines use the WSJT-X-aligned 3840 bins.
 #[inline]
 pub fn sync8_fft_size() -> usize {
-    if is_rustfft() {
-        4096
-    } else {
-        3840
-    }
+    3840
 }
 
 /// sync8 frequency resolution
@@ -51,36 +23,40 @@ pub fn sync8_df() -> f64 {
 /// Engine name string for logging
 #[inline]
 pub fn engine_name() -> &'static str {
-    if is_rustfft() {
-        "rustfft"
-    } else {
+    #[cfg(feature = "fftw")]
+    {
         "FFTW"
+    }
+    #[cfg(not(feature = "fftw"))]
+    {
+        "rustfft"
     }
 }
 
 // ── FFT dispatch ──
 
-thread_local! {
-    static FFT_BUF: RefCell<(Vec<f64>, Vec<f64>)> = RefCell::new((Vec::new(), Vec::new()));
-}
-
 /// Complex-to-complex FFT. Forward: no normalization, Inverse: 1/N.
 #[inline]
 pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
-    let _n = re.len();
-    if is_rustfft() {
-        fft_rustfft::fft_complex(re, im, inverse);
-    } else {
+    #[cfg(feature = "fftw")]
+    {
         fft_fftw::fft_complex(re, im, inverse);
+    }
+    #[cfg(not(feature = "fftw"))]
+    {
+        fft_rustfft::fft_complex(re, im, inverse);
     }
 }
 
 /// Real-to-complex forward FFT.
 #[inline]
 pub fn fft_r2c(re: &mut [f64], im: &mut [f64]) {
-    if is_rustfft() {
-        fft_rustfft::fft_r2c(re, im);
-    } else {
+    #[cfg(feature = "fftw")]
+    {
         fft_fftw::fft_r2c(re, im);
+    }
+    #[cfg(not(feature = "fftw"))]
+    {
+        fft_rustfft::fft_r2c(re, im);
     }
 }

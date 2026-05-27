@@ -5,8 +5,9 @@
 
 ## 当前基线
 
-- FFT 对齐路径：`FFTW@3840`。
-- RustFFT@4096：保留为便携编译和对照路径，不作为 WSJT-X 对齐验收依据。
+- 默认编译路径：`rustfft@3840`。
+- WSJT-X 对齐验证路径：`FFTW@3840`，通过 `--features fftw` 启用。
+- `rustfft@4096` 已移除；运行时 FFT 引擎切换也已移除。
 - 短测：`tests/ft8/210703_133430.wav`
   - 当前 `21` unique messages。
   - release 约 `3.3s`。
@@ -16,7 +17,7 @@
   - timing residual：`baseline_drift - decoded_dt` median 约 `+0.785s`。
 - 测试要求：
   - 性能/灵敏度测试只使用 release。
-  - 正式验收使用 FFTW。
+  - WSJT-X parity 验证使用 `--features fftw`。
   - 不通过降低 `ncand/ndepth`、关闭 AP、放宽门限或扩大非 WSJT-X 搜索来追分。
 
 ## 里程碑摘要
@@ -133,12 +134,12 @@ WSJT-X 文件窗口、padding、连续缓冲和跨时隙 AP memory。
 ### CLI
 
 - 文件：
-  - `ft8rs --fft-engine fftw file <wav>`
-  - `ft8rs --fft-engine fftw file <wav> --start-time YYMMDD_HHMMSS`
+  - `ft8rs file <wav>`
+  - `ft8rs file <wav> --start-time YYMMDD_HHMMSS`
   - 文件名可推断时间戳时可省略 `--start-time`。
-- 声卡：
-  - `ft8rs soundcard` 列出输入设备。
-  - `ft8rs soundcard --device <index-or-full-name> [--slots N]` 监听输入。
+- 实时监听：
+  - `ft8rs monitor` 列出输入设备。
+  - `ft8rs monitor --device <index-or-full-name> [--slots N]` 监听输入。
 - CLI stdout 只输出解码信息和 slot 完成分隔符；默认不输出 trace。
 
 ### 声卡 streaming
@@ -176,6 +177,10 @@ WSJT-X 文件窗口、padding、连续缓冲和跨时隙 AP memory。
 - trace 显示主要瓶颈在 `ft8b -> try_decode_passes -> decode174_91` 的 LDPC/OSD。
 - FFT、sync8、downsample 目前不是主耗时。
 - WSJT-X classic FT8 主路径没有明显可直接照搬的 candidate 并行优化。
+- `FFTW@3840` 与 `rustfft@3840` 的临时对比：
+  - 短测均为 `21`。
+  - 长测均为 `422/449`。
+  - rustfft 在该轮长测更快，因此默认发布路径改为 `rustfft@3840`。
 - 后续若继续优化，优先考虑 Rust 内部 LDPC/OSD workspace 复用；这属于内存模型优化，不是 WSJT-X 行为差异。
 
 ### 撤回或低收益
@@ -209,5 +214,8 @@ WSJT-X 文件窗口、padding、连续缓冲和跨时隙 AP memory。
 - `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
   - `422/449`
   - 每段均小于 `15s`
-- `target/release/ft8rs soundcard --device "VB-Cable A" --slots 2` ✅
+- `cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture` ✅
+  - `422/449`
+  - 每段均小于 `15s`
+- `target/release/ft8rs monitor --device "VB-Cable A" --slots 2` ✅
   - 声卡 live path 可正常按 slot 输出。

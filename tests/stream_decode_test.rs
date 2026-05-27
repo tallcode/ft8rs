@@ -197,11 +197,6 @@ fn assert_release_mode() {
         !cfg!(debug_assertions),
         "stream decode acceptance tests must be run with --release"
     );
-    assert_eq!(
-        fft_engine_name(),
-        "FFTW",
-        "stream decode acceptance tests must use FFTW@3840"
-    );
 }
 
 #[test]
