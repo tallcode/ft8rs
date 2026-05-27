@@ -240,6 +240,24 @@ FFT bin 0/DC is omitted and vector index 0 is unused.
 
 Important WSJT-X details:
 
+- `pack77`/`unpack77` must cover active WSJT-X `i3/n3` message families.
+  Receive decode must not discard a valid LDPC codeword just because its
+  77-bit family is uncommon. The current Rust receive side covers:
+  - `i3=0,n3=0`: free text.
+  - `i3=0,n3=1`: DXpedition special messages such as
+    `CALL RR73; CALL <HASH> +00`.
+  - `i3=0,n3=3/4`: ARRL Field Day exchange.
+  - `i3=0,n3=5`: telemetry.
+  - `i3=0,n3=6`: WSPR-style 77-bit payloads.
+  - `i3=1/2`: standard messages and `/R`/`/P` forms.
+  - `i3=3`: ARRL RTTY contest exchange.
+  - `i3=4`: one nonstandard/hash call plus one standard/nonstandard call.
+  - `i3=5`: EU VHF contest exchange with hashed calls.
+- The current Rust transmit/packing side covers the same families except that
+  `i3=0,n3=6` currently packs WSPR Type 1/2, while receive unpacking covers
+  WSPR Type 1/2/3. WSJT-X uses an explicit `i3/n3` hint for WSPR Type 3
+  packing, so that path needs a future hinted pack API rather than silent
+  guessing in plain `pack77(msg)`.
 - `split77` / `pack77_1` use `chkcall`, which is stricter than AP-style
   `stdcall` checks。
 - `chkcall` tests call-area position 2 and then 3 with assignment order that
