@@ -210,22 +210,37 @@ WSJT-X 文件窗口、padding、连续缓冲和跨时隙 AP memory。
 
 - 发现截图中的 `RA3Y RR73; JR1FTJ <R5AF/O> +00` 属于 WSJT-X
   `packjt77.f90` 的 Type 0.1 DXpedition special message (`i3=0,n3=1`)。
+- 范围收窄：本项目只专注 FT8 解码对齐。JT77 中的 WSPR-style Type 0.6
+  不作为 `ft8rs` 的功能目标，不参与灵敏度/性能基线，也不作为后续排查
+  重点。相关 pack/unpack 代码已移除，主解码路径直接拒绝 `i3=0,n3=6`。
 - Rust `unpack77` 原先只覆盖 free text、standard `i3=1/2` 和 Type 4；
   其他有效 message family 会在 LDPC 成功后被 unpack 阶段丢弃。
 - 本轮补齐接收侧 active branches：
   - Type 0.1 DXpedition `RR73;`
   - Type 0.3/0.4 ARRL Field Day
   - Type 0.5 telemetry
-  - Type 0.6 WSPR-style payload
   - Type 3 ARRL RTTY
   - Type 5 EU VHF hashed-call exchange
 - 同步补齐 pack 侧主要分支：
   - Type 0.1 / 0.3 / 0.4 / 0.5 / 3 / 5。
-  - Type 0.6 当前 pack WSPR Type 1/2；unpack 已覆盖 WSPR Type 1/2/3。
-  - WSPR Type 3 在 WSJT-X 里依赖 `i3/n3` hint，后续如需要发送侧完整对齐，
-    应增加显式 hinted pack API。
 - 新增手工 bit fixture 和 pack/unpack round-trip fixture，既保护接收侧
   不丢有效 LDPC payload，也保护发送侧基础 bit layout。
+
+### 后续 FT8 format gate 对齐
+
+- 移除 WSPR-style Type 0.6 pack/unpack 代码，主解码路径拒绝 `i3=0,n3=6`。
+- 补齐 WSJT-X 接收侧 hard gate：
+  - `unpack28` 对 standard callsign 增加 `callok()` 风格校验。
+  - `unpack77` 末尾语义补上全局 `CQ <...>` reject。
+  - 非 contest (`ncontest=0`) 下，`i3=1..3` 且消息包含 `/R` 或以 `TU;`
+    开头时拒绝，贴近 `ft8b.f90` 的 contest-format 过滤。
+- 新增 `CQ <...>` 和 invalid standard callsign 单元测试。
+- 补齐 receive unpack 的 `mycall/hiscall` hash 替换上下文：
+  - Type 0.1 使用 `hiscall` 解析 10-bit hash。
+  - Type 1 使用 `mycall` 解析 first-call 22-bit hash。
+  - Type 4/Type 5 使用 `mycall` 解析 12-bit hash。
+- `pack_jt77::split77` 的 directed CQ 判定改用 WSJT-X `chkcall` 镜像，
+  覆盖 compound call/basecall 提取。
 
 ## 最近验证
 
