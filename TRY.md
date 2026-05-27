@@ -206,6 +206,27 @@ WSJT-X 文件窗口、padding、连续缓冲和跨时隙 AP memory。
   - 剩余 1-based/0-based：`maxloc/minloc`、`nint`、implicit integer assignment、Fortran array lower bound。
   - compound/hash/display 形态只用于 diff 诊断，不应被当成真实 miss。
 
+## 当前轮：77-bit message family 对齐
+
+- 发现截图中的 `RA3Y RR73; JR1FTJ <R5AF/O> +00` 属于 WSJT-X
+  `packjt77.f90` 的 Type 0.1 DXpedition special message (`i3=0,n3=1`)。
+- Rust `unpack77` 原先只覆盖 free text、standard `i3=1/2` 和 Type 4；
+  其他有效 message family 会在 LDPC 成功后被 unpack 阶段丢弃。
+- 本轮补齐接收侧 active branches：
+  - Type 0.1 DXpedition `RR73;`
+  - Type 0.3/0.4 ARRL Field Day
+  - Type 0.5 telemetry
+  - Type 0.6 WSPR-style payload
+  - Type 3 ARRL RTTY
+  - Type 5 EU VHF hashed-call exchange
+- 同步补齐 pack 侧主要分支：
+  - Type 0.1 / 0.3 / 0.4 / 0.5 / 3 / 5。
+  - Type 0.6 当前 pack WSPR Type 1/2；unpack 已覆盖 WSPR Type 1/2/3。
+  - WSPR Type 3 在 WSJT-X 里依赖 `i3/n3` hint，后续如需要发送侧完整对齐，
+    应增加显式 hinted pack API。
+- 新增手工 bit fixture 和 pack/unpack round-trip fixture，既保护接收侧
+  不丢有效 LDPC payload，也保护发送侧基础 bit layout。
+
 ## 最近验证
 
 - `cargo check --tests` ✅
