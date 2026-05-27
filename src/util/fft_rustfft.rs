@@ -113,8 +113,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_fft_roundtrip_4096() {
-        let n = 4096;
+    fn test_fft_roundtrip_3840() {
+        let n = 3840;
         let mut re = vec![0.0; n];
         let im = vec![0.0; n];
         re[100] = 1.0;
