@@ -4,7 +4,7 @@ use crate::ft8::decode174_91::{decode174_91, DecodeResult};
 use crate::ft8::hashcall::HashCallBook;
 use crate::ft8::pack_jt77::{is_stdcall, pack77};
 use crate::ft8::protocol::{C38, N_LDPC, SAMPLE_RATE};
-use crate::ft8::unpack_jt77::unpack77;
+use crate::ft8::unpack_jt77::{unpack77, unpack77_with_context, UnpackContext};
 use crate::util::{fft_complex, fft_r2c, sync8_fft_size};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -120,6 +120,8 @@ struct Ft8bApOptions {
     napwid: f64,
     nzhsym: usize,
     ap_set: Ft8ApSet,
+    mycall: Option<String>,
+    hiscall: Option<String>,
 }
 
 #[derive(Clone)]
@@ -361,6 +363,8 @@ fn decode_from_f64(
         napwid: options.napwid.unwrap_or(50.0),
         nzhsym,
         ap_set: ft8_ap_set(mycall.as_deref(), hiscall.as_deref(), ncontest),
+        mycall,
+        hiscall,
     };
     let mut residual = dd.clone();
 
@@ -1221,6 +1225,7 @@ fn ft8b(
     }
 
     let message77 = &result.message91[..77];
+    let (_n3v, i3v) = message_type(message77);
     if !is_valid_message_type(message77) {
         if let Some(stats) = stats.as_deref_mut() {
             stats.decode_failures += 1;
@@ -1229,7 +1234,12 @@ fn ft8b(
         return None;
     }
 
-    let msg = unpack77(message77, _book.as_ref());
+    let unpack_context = UnpackContext::with_calls(
+        _book.as_ref(),
+        ap_options.mycall.as_deref(),
+        ap_options.hiscall.as_deref(),
+    );
+    let msg = unpack77_with_context(message77, unpack_context);
     let Some(msg) = msg else {
         if let Some(stats) = stats.as_deref_mut() {
             stats.decode_failures += 1;
@@ -1237,6 +1247,16 @@ fn ft8b(
         }
         return None;
     };
+    if ap_options.ncontest == 0
+        && (1..=3).contains(&i3v)
+        && (msg.contains("/R") || msg.starts_with("TU; "))
+    {
+        if let Some(stats) = stats.as_deref_mut() {
+            stats.decode_failures += 1;
+            add_elapsed(&mut stats.post, t_post);
+        }
+        return None;
+    }
     if msg.trim().is_empty() {
         if let Some(stats) = stats.as_deref_mut() {
             stats.decode_failures += 1;
@@ -1655,19 +1675,24 @@ fn sync8d_isize(
 }
 
 fn is_valid_message_type(message77: &[u8]) -> bool {
-    let n3v = ((message77[71] as usize) << 2)
-        | ((message77[72] as usize) << 1)
-        | (message77[73] as usize);
-    let i3v = ((message77[74] as usize) << 2)
-        | ((message77[75] as usize) << 1)
-        | (message77[76] as usize);
-    if i3v > 5 || (i3v == 0 && n3v > 6) {
+    let (n3v, i3v) = message_type(message77);
+    if i3v > 5 || (i3v == 0 && n3v > 5) {
         return false;
     }
     if i3v == 0 && n3v == 2 {
         return false;
     }
     true
+}
+
+fn message_type(message77: &[u8]) -> (usize, usize) {
+    let n3v = ((message77[71] as usize) << 2)
+        | ((message77[72] as usize) << 1)
+        | (message77[73] as usize);
+    let i3v = ((message77[74] as usize) << 2)
+        | ((message77[75] as usize) << 1)
+        | (message77[76] as usize);
+    (n3v, i3v)
 }
 
 /// Compute both SNR estimates matching WSJT-X ft8b.f90.

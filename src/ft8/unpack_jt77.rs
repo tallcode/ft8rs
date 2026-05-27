@@ -28,6 +28,62 @@ const CMULT: [&str; 171] = [
     "X97", "X98", "X99",
 ];
 
+#[derive(Clone, Copy, Default)]
+pub struct UnpackContext<'a> {
+    pub book: Option<&'a HashCallBook>,
+    pub mycall: Option<&'a str>,
+    pub hiscall: Option<&'a str>,
+}
+
+impl<'a> UnpackContext<'a> {
+    pub fn new(book: Option<&'a HashCallBook>) -> Self {
+        Self {
+            book,
+            mycall: None,
+            hiscall: None,
+        }
+    }
+
+    pub fn with_calls(
+        book: Option<&'a HashCallBook>,
+        mycall: Option<&'a str>,
+        hiscall: Option<&'a str>,
+    ) -> Self {
+        Self {
+            book,
+            mycall: mycall.filter(|call| call.trim().len() >= 3),
+            hiscall: hiscall.filter(|call| call.trim().len() >= 3),
+        }
+    }
+
+    fn mycall_clean(self) -> Option<String> {
+        self.mycall.map(clean_context_call)
+    }
+
+    fn hiscall_clean(self) -> Option<String> {
+        self.hiscall.map(clean_context_call)
+    }
+}
+
+fn clean_context_call(call: &str) -> String {
+    call.trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .to_ascii_uppercase()
+}
+
+fn ihashcall(c0: &str, width: usize) -> usize {
+    let s = format!("{:<11}", c0).to_uppercase();
+    let mut n8: u64 = 0;
+    for c in s.chars().take(11) {
+        let j = C38.iter().position(|&x| x == c as u8).unwrap_or(0) as u64;
+        n8 = 38 * n8 + j;
+    }
+    const MAGIC: u64 = 47_055_833_459;
+    let prod = MAGIC.wrapping_mul(n8);
+    ((prod >> (64 - width as u32)) & ((1u64 << width as u32) - 1)) as usize
+}
+
 fn bits_to_uint(bits: &[u8], start: usize, len: usize) -> usize {
     let mut val: usize = 0;
     for i in 0..len {
@@ -36,7 +92,38 @@ fn bits_to_uint(bits: &[u8], start: usize, len: usize) -> usize {
     val
 }
 
-fn unpack28(n28: usize, book: Option<&HashCallBook>) -> Option<String> {
+fn callok(call: &str) -> bool {
+    let w = call.trim();
+    let bytes = w.as_bytes();
+    let n = bytes.len();
+    if n < 3 || bytes.first() == Some(&b'Q') {
+        return false;
+    }
+
+    let Some(i0) = bytes.iter().rposition(|b| b.is_ascii_digit()) else {
+        return false;
+    };
+    if i0 != 1 && i0 != 2 {
+        return false;
+    }
+
+    let pfx = &bytes[..i0];
+    if !pfx.iter().any(|b| b.is_ascii_alphabetic()) {
+        return false;
+    }
+
+    bytes[i0 + 1..].iter().all(|b| b.is_ascii_alphabetic())
+}
+
+fn finish_message(msg: String) -> Option<String> {
+    if msg.starts_with("CQ <") {
+        None
+    } else {
+        Some(msg)
+    }
+}
+
+fn unpack28(n28: usize, context: UnpackContext<'_>) -> Option<String> {
     if n28 >= MAX28 {
         return None;
     }
@@ -77,7 +164,7 @@ fn unpack28(n28: usize, book: Option<&HashCallBook>) -> Option<String> {
 
     if (N_TOKENS..N_TOKENS + MAX22).contains(&n28) {
         let n22 = n28 - N_TOKENS;
-        if let Some(book) = book {
+        if let Some(book) = context.book {
             if let Some(resolved) = book.lookup22(n22) {
                 return Some(format!("<{}>", resolved));
             }
@@ -120,7 +207,7 @@ fn unpack28(n28: usize, book: Option<&HashCallBook>) -> Option<String> {
     );
     let call = call.trim().to_string();
 
-    if call.is_empty() {
+    if call.is_empty() || !callok(&call) || call.contains(' ') {
         None
     } else {
         Some(call)
@@ -179,51 +266,31 @@ fn to_grid6_24(mut n: usize) -> Option<String> {
     ))
 }
 
-fn to_grid_25(mut n: usize) -> Option<String> {
-    if n > 18 * 18 * 10 * 10 * 25 * 25 - 1 {
-        return None;
+fn lookup_hash10(context: UnpackContext<'_>, n10: usize) -> String {
+    if let Some(hiscall) = context.hiscall_clean() {
+        if ihashcall(&hiscall, 10) == n10 {
+            return format!("<{hiscall}>");
+        }
     }
-    let j1 = n / (18 * 10 * 10 * 25 * 25);
-    n -= j1 * 18 * 10 * 10 * 25 * 25;
-    let j2 = n / (10 * 10 * 25 * 25);
-    n -= j2 * 10 * 10 * 25 * 25;
-    let j3 = n / (10 * 25 * 25);
-    n -= j3 * 10 * 25 * 25;
-    let j4 = n / (25 * 25);
-    n -= j4 * 25 * 25;
-    let j5 = n / 25;
-    let j6 = n - j5 * 25;
-    if j1 > 17 || j2 > 17 || j3 > 9 || j4 > 9 || j5 > 24 || j6 > 24 {
-        return None;
-    }
-    let mut grid = format!(
-        "{}{}{}{}",
-        (b'A' + j1 as u8) as char,
-        (b'A' + j2 as u8) as char,
-        j3,
-        j4
-    );
-    if j5 != 24 || j6 != 24 {
-        grid.push((b'A' + j5 as u8) as char);
-        grid.push((b'A' + j6 as u8) as char);
-    }
-    Some(grid)
-}
-
-fn lookup_hash10(book: Option<&HashCallBook>, n10: usize) -> String {
-    book.and_then(|book| book.lookup10(n10))
+    context
+        .book
+        .and_then(|book| book.lookup10(n10))
         .map(|call| format!("<{}>", call))
         .unwrap_or_else(|| "<...>".to_string())
 }
 
-fn lookup_hash12(book: Option<&HashCallBook>, n12: usize) -> String {
-    book.and_then(|book| book.lookup12(n12))
+fn lookup_hash12(context: UnpackContext<'_>, n12: usize) -> String {
+    context
+        .book
+        .and_then(|book| book.lookup12(n12))
         .map(|call| format!("<{}>", call))
         .unwrap_or_else(|| "<...>".to_string())
 }
 
-fn lookup_hash22(book: Option<&HashCallBook>, n22: usize) -> String {
-    book.and_then(|book| book.lookup22(n22))
+fn lookup_hash22(context: UnpackContext<'_>, n22: usize) -> String {
+    context
+        .book
+        .and_then(|book| book.lookup22(n22))
         .map(|call| format!("<{}>", call))
         .unwrap_or_else(|| "<...>".to_string())
 }
@@ -274,6 +341,10 @@ fn unpack_text77(bits71: &[u8]) -> String {
 
 /// Unpack a 77-bit FT8 message.
 pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
+    unpack77_with_context(bits77, UnpackContext::new(book))
+}
+
+pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Option<String> {
     let n3 = bits_to_uint(bits77, 71, 3);
     let i3 = bits_to_uint(bits77, 74, 3);
 
@@ -282,7 +353,7 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         if msg.trim().is_empty() {
             return None;
         }
-        return Some(msg.trim().into());
+        return finish_message(msg.trim().into());
     }
 
     if i3 == 0 && n3 == 1 {
@@ -293,11 +364,11 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         if n28a <= 2 || n28b <= 2 {
             return None;
         }
-        let call1 = unpack28(n28a, book)?;
-        let call2 = unpack28(n28b, book)?;
-        let call3 = lookup_hash10(book, n10);
+        let call1 = unpack28(n28a, context)?;
+        let call2 = unpack28(n28b, context)?;
+        let call3 = lookup_hash10(context, n10);
         let report = format_signed_2(2 * n5 as i32 - 30);
-        return Some(format!("{call1} RR73; {call2} {call3} {report}"));
+        return finish_message(format!("{call1} RR73; {call2} {call3} {report}"));
     }
 
     if i3 == 0 && n3 == 2 {
@@ -314,8 +385,8 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         if n28a <= 2 || n28b <= 2 || isec < 1 || isec > CSEC.len() {
             return None;
         }
-        let call1 = unpack28(n28a, book)?;
-        let call2 = unpack28(n28b, book)?;
+        let call1 = unpack28(n28a, context)?;
+        let call2 = unpack28(n28b, context)?;
         let ntx = intx + 1 + if n3 == 4 { 16 } else { 0 };
         let class = (b'A' + nclass as u8) as char;
         let sec = CSEC[isec - 1];
@@ -327,7 +398,7 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         } else {
             format!("{call1} {call2} R {exchange} {sec}")
         };
-        return Some(msg);
+        return finish_message(msg);
     }
 
     if i3 == 0 && n3 == 5 {
@@ -335,90 +406,11 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         let n2 = bits_to_uint(bits77, 23, 24);
         let n3tel = bits_to_uint(bits77, 47, 24);
         let msg = format!("{n1:06X}{n2:06X}{n3tel:06X}");
-        return Some(msg.trim_start_matches('0').to_string());
+        return finish_message(msg.trim_start_matches('0').to_string());
     }
 
     if i3 == 0 && n3 == 6 {
-        let j48 = bits77[47] as usize;
-        let j49 = bits77[48] as usize;
-        let j50 = bits77[49] as usize;
-        let itype = if j50 == 1 {
-            2
-        } else if j49 == 0 {
-            1
-        } else if j48 == 0 {
-            3
-        } else {
-            return None;
-        };
-
-        return match itype {
-            1 => {
-                let n28 = bits_to_uint(bits77, 0, 28);
-                let igrid4 = bits_to_uint(bits77, 28, 15);
-                let idbm = ((bits_to_uint(bits77, 43, 5) as f64) * 10.0 / 3.0).round() as i32;
-                if !(0..=60).contains(&idbm) {
-                    return None;
-                }
-                let call1 = unpack28(n28, book)?;
-                let grid4 = to_grid4(igrid4)?;
-                if let Some(book) = book {
-                    book.save(&call1);
-                }
-                Some(format!("{call1} {grid4} {idbm}"))
-            }
-            2 => {
-                let n28 = bits_to_uint(bits77, 0, 28);
-                let mut npfx = bits_to_uint(bits77, 28, 16);
-                let idbm = ((bits_to_uint(bits77, 44, 5) as f64) * 10.0 / 3.0).round() as i32;
-                if !(0..=60).contains(&idbm) {
-                    return None;
-                }
-                let call1 = unpack28(n28, book)?;
-                let nzzz = 46_656usize;
-                let msg = if npfx < nzzz {
-                    let mut chars = Vec::new();
-                    for _ in 0..3 {
-                        let j = npfx % 36;
-                        chars.push(A2[j] as char);
-                        npfx /= 36;
-                        if npfx == 0 {
-                            break;
-                        }
-                    }
-                    chars.reverse();
-                    let prefix: String = chars.into_iter().collect();
-                    format!("{prefix}/{call1} {idbm}")
-                } else {
-                    npfx -= nzzz;
-                    let suffix = if npfx <= 35 {
-                        (A2[npfx] as char).to_string()
-                    } else if npfx <= 1295 {
-                        format!("{}{}", A2[npfx / 36] as char, A2[npfx % 36] as char)
-                    } else if npfx <= 12959 {
-                        format!(
-                            "{}{}{}",
-                            A2[npfx / 360] as char,
-                            A2[(npfx / 10) % 36] as char,
-                            A2[npfx % 10] as char
-                        )
-                    } else {
-                        return None;
-                    };
-                    format!("{call1}/{suffix} {idbm}")
-                };
-                Some(msg.trim_end().to_string())
-            }
-            3 => {
-                let n22 = bits_to_uint(bits77, 0, 22);
-                let igrid6 = bits_to_uint(bits77, 22, 25);
-                let n28 = n22 + N_TOKENS;
-                let call1 = unpack28(n28, book)?;
-                let grid6 = to_grid_25(igrid6)?;
-                Some(format!("{call1} {grid6}"))
-            }
-            _ => None,
-        };
+        return None;
     }
 
     if i3 == 0 && n3 > 6 {
@@ -433,8 +425,13 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         let ir = bits77[58] as usize;
         let igrid4 = bits_to_uint(bits77, 59, 15);
 
-        let call1 = unpack28(n28a, book)?;
-        let call2_raw = unpack28(n28b, book)?;
+        let mut call1 = unpack28(n28a, context)?;
+        if let Some(mycall) = context.mycall_clean() {
+            if n28a >= N_TOKENS && ihashcall(&mycall, 22) == n28a - N_TOKENS {
+                call1 = format!("<{mycall}>");
+            }
+        }
+        let call2_raw = unpack28(n28b, context)?;
 
         let mut c1 = call1;
         let mut c2 = call2_raw;
@@ -458,7 +455,7 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
             if ipb == 1 && i3 == 2 && c2.len() >= 3 {
                 c2.push_str("/P");
             }
-            if let Some(book) = book {
+            if let Some(book) = context.book {
                 if c2.len() >= 3 {
                     book.save(&c2);
                 }
@@ -468,12 +465,12 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         if igrid4 <= MAXGRID4 {
             let grid = to_grid4(igrid4)?;
             if ir == 0 {
-                Some(format!("{} {} {}", c1, c2, grid))
+                finish_message(format!("{} {} {}", c1, c2, grid))
             } else {
                 if is_cq_head(&c1) {
                     None
                 } else {
-                    Some(format!("{} {} R {}", c1, c2, grid))
+                    finish_message(format!("{} {} R {}", c1, c2, grid))
                 }
             }
         } else {
@@ -482,10 +479,10 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
                 return None;
             }
             match irpt {
-                1 => Some(format!("{} {}", c1, c2)),
-                2 => Some(format!("{} {} RRR", c1, c2)),
-                3 => Some(format!("{} {} RR73", c1, c2)),
-                4 => Some(format!("{} {} 73", c1, c2)),
+                1 => finish_message(format!("{} {}", c1, c2)),
+                2 => finish_message(format!("{} {} RRR", c1, c2)),
+                3 => finish_message(format!("{} {} RR73", c1, c2)),
+                4 => finish_message(format!("{} {} 73", c1, c2)),
                 _ if irpt >= 5 => {
                     let mut isnr = irpt as i32 - 35;
                     if isnr > 50 {
@@ -494,9 +491,9 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
                     let sign = if isnr >= 0 { '+' } else { '-' };
                     let abs_str = format!("{:02}", isnr.abs());
                     if ir == 0 {
-                        Some(format!("{} {} {}{}", c1, c2, sign, abs_str))
+                        finish_message(format!("{} {} {}{}", c1, c2, sign, abs_str))
                     } else {
-                        Some(format!("{} {} R{}{}", c1, c2, sign, abs_str))
+                        finish_message(format!("{} {} R{}{}", c1, c2, sign, abs_str))
                     }
                 }
                 _ => None,
@@ -510,8 +507,8 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         let irpt = bits_to_uint(bits77, 58, 3);
         let nexch = bits_to_uint(bits77, 61, 13);
 
-        let call1 = unpack28(n28a, book)?;
-        let call2 = unpack28(n28b, book)?;
+        let call1 = unpack28(n28a, context)?;
+        let call2 = unpack28(n28b, context)?;
         let report = format!("5{}9", irpt + 2);
 
         let mut imult = 0usize;
@@ -532,7 +529,7 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
 
         let prefix = if itu == 1 { "TU; " } else { "" };
         let r = if ir == 1 { " R" } else { "" };
-        Some(format!("{prefix}{call1} {call2}{r} {report} {exchange}"))
+        finish_message(format!("{prefix}{call1} {call2}{r} {report} {exchange}"))
     } else if i3 == 4 {
         let n12 = bits_to_uint(bits77, 0, 12);
         let mut n58: u64 = 0;
@@ -553,7 +550,7 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         c11_chars.reverse();
         let c11: String = c11_chars.into_iter().collect::<String>().trim().to_string();
 
-        let call3 = if let Some(book) = book {
+        let mut call3 = if let Some(book) = context.book {
             if let Some(resolved) = book.lookup12(n12) {
                 format!("<{}>", resolved)
             } else {
@@ -564,8 +561,18 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         };
 
         let (call1, call2) = if iflip == 0 {
-            if let Some(book) = book {
+            if let Some(book) = context.book {
                 book.save(&c11);
+            }
+            if let Some(mycall) = context.mycall_clean() {
+                if let Some(hiscall) = context.hiscall_clean() {
+                    if c11 == hiscall && ihashcall(&mycall, 12) == n12 {
+                        call3 = format!("<{mycall}>");
+                    }
+                }
+                if call3 == "<...>" && ihashcall(&mycall, 12) == n12 {
+                    call3 = format!("<{mycall}>");
+                }
             }
             (call3, c11)
         } else {
@@ -582,7 +589,7 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
                 _ => format!("{} {} 73", call1, call2),
             }
         };
-        Some(msg)
+        finish_message(msg)
     } else if i3 == 5 {
         let n12 = bits_to_uint(bits77, 0, 12);
         let n22 = bits_to_uint(bits77, 12, 22);
@@ -593,14 +600,19 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
         if igrid6 > 18_662_399 {
             return None;
         }
-        let call1 = lookup_hash12(book, n12);
-        let call2 = lookup_hash22(book, n22);
+        let mut call1 = lookup_hash12(context, n12);
+        if let Some(mycall) = context.mycall_clean() {
+            if ihashcall(&mycall, 12) == n12 {
+                call1 = format!("<{mycall}>");
+            }
+        }
+        let call2 = lookup_hash22(context, n22);
         let exchange = format!("{}{:04}", 52 + irpt, iserial);
         let grid6 = to_grid6_24(igrid6)?;
         if ir == 0 {
-            Some(format!("{call1} {call2} {exchange} {grid6}"))
+            finish_message(format!("{call1} {call2} {exchange} {grid6}"))
         } else {
-            Some(format!("{call1} {call2} R {exchange} {grid6}"))
+            finish_message(format!("{call1} {call2} R {exchange} {grid6}"))
         }
     } else {
         None
@@ -662,6 +674,17 @@ mod tests {
     }
 
     #[test]
+    fn cq_unresolved_hash_is_rejected_like_wsjtx() {
+        let bits = pack77("CQ <NOHASH>");
+        assert!(unpack77(&bits, None).is_none());
+    }
+
+    #[test]
+    fn unpack28_rejects_invalid_standard_call_like_wsjtx_callok() {
+        assert!(super::unpack28(2_063_592 + 4_194_304, super::UnpackContext::default()).is_none());
+    }
+
+    #[test]
     fn unpacks_type_01_dxpedition_rr73_semicolon_message() {
         let book = HashCallBook::new();
         book.save("R5AF/O");
@@ -675,6 +698,39 @@ mod tests {
         assert_eq!(
             unpack77(&bits, Some(&book)).unwrap(),
             "RA3Y RR73; JR1FTJ <R5AF/O> +00"
+        );
+    }
+
+    #[test]
+    fn type01_uses_hiscall_hash10_like_wsjtx_receive_unpack() {
+        let mut bits = Vec::new();
+        append_bits(&mut bits, pack28("RA3Y"), 28);
+        append_bits(&mut bits, pack28("JR1FTJ"), 28);
+        append_bits(&mut bits, ihashcall("R5AF/O", 10), 10);
+        append_bits(&mut bits, 15, 5);
+        append_bits(&mut bits, 1, 3);
+        append_bits(&mut bits, 0, 3);
+        let context = super::UnpackContext::with_calls(None, None, Some("R5AF/O"));
+        assert_eq!(
+            super::unpack77_with_context(&bits, context).unwrap(),
+            "RA3Y RR73; JR1FTJ <R5AF/O> +00"
+        );
+    }
+
+    #[test]
+    fn type1_uses_mycall_hash22_like_wsjtx_receive_unpack() {
+        let mut bits = Vec::new();
+        append_bits(&mut bits, super::N_TOKENS + ihashcall("K1ABC", 22), 28);
+        append_bits(&mut bits, 0, 1);
+        append_bits(&mut bits, pack28("W9XYZ"), 28);
+        append_bits(&mut bits, 0, 1);
+        append_bits(&mut bits, 0, 1);
+        append_bits(&mut bits, super::MAXGRID4 + 1, 15);
+        append_bits(&mut bits, 1, 3);
+        let context = super::UnpackContext::with_calls(None, Some("K1ABC"), None);
+        assert_eq!(
+            super::unpack77_with_context(&bits, context).unwrap(),
+            "<K1ABC> W9XYZ"
         );
     }
 
@@ -701,20 +757,6 @@ mod tests {
         append_bits(&mut bits, 5, 3);
         append_bits(&mut bits, 0, 3);
         assert_eq!(unpack77(&bits, None).unwrap(), "123456789ABCDEF01");
-    }
-
-    #[test]
-    fn unpacks_type_06_wspr_type1_message() {
-        let mut bits = Vec::new();
-        append_bits(&mut bits, pack28("K1ABC"), 28);
-        append_bits(&mut bits, 5 * 18 * 10 * 10 + 13 * 10 * 10 + 4 * 10 + 2, 15); // FN42
-        append_bits(&mut bits, 9, 5); // round(9 * 10 / 3) = 30 dBm
-        append_bits(&mut bits, 0, 1);
-        append_bits(&mut bits, 0, 1);
-        append_bits(&mut bits, 0, 21);
-        append_bits(&mut bits, 6, 3);
-        append_bits(&mut bits, 0, 3);
-        assert_eq!(unpack77(&bits, None).unwrap(), "K1ABC FN42 30");
     }
 
     #[test]
@@ -746,6 +788,23 @@ mod tests {
         assert_eq!(
             unpack77(&bits, Some(&book)).unwrap(),
             "<K1ABC> <G4ABC/P> R 590003 IO91NP"
+        );
+    }
+
+    #[test]
+    fn type5_uses_mycall_hash12_like_wsjtx_receive_unpack() {
+        let mut bits = Vec::new();
+        append_bits(&mut bits, ihashcall("K1ABC", 12), 12);
+        append_bits(&mut bits, ihashcall("G4ABC/P", 22), 22);
+        append_bits(&mut bits, 1, 1);
+        append_bits(&mut bits, 7, 3);
+        append_bits(&mut bits, 3, 11);
+        append_bits(&mut bits, grid6_24("IO91NP"), 25);
+        append_bits(&mut bits, 5, 3);
+        let context = super::UnpackContext::with_calls(None, Some("K1ABC"), None);
+        assert_eq!(
+            super::unpack77_with_context(&bits, context).unwrap(),
+            "<K1ABC> <...> R 590003 IO91NP"
         );
     }
 }

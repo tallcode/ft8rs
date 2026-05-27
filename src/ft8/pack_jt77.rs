@@ -6,7 +6,6 @@ use crate::ft8::protocol::*;
 ///  0.1  DXpedition special message
 ///  0.3/0.4 ARRL Field Day
 ///  0.5  Telemetry
-///  0.6  WSPR-style Type 1/2 message
 ///  1    Standard (two callsigns + grid/report/RR73/73)
 ///  3    ARRL RTTY contest exchange
 ///  4    One nonstandard (<hash>) call + one standard call
@@ -57,10 +56,6 @@ pub fn pack77(msg: &str) -> Vec<u8> {
         return bits;
     }
 
-    if let Some(bits) = try_pack_type06_wspr(&parts) {
-        return bits;
-    }
-
     // Try Type 1/2: standard message
     if let Some(bits) = try_pack_type1(&parts) {
         return bits;
@@ -92,14 +87,80 @@ fn split77(msg: &str) -> Vec<String> {
         .collect();
 
     if parts.len() >= 3 && parts[0] == "CQ" {
-        let w3 = parts[2].replace("/R", "").replace("/P", "");
-        if parse_callsign(&w3).is_standard {
+        if chkcall(&parts[2]).is_some() {
             let mut merged = vec![format!("CQ_{}", parts[1])];
             merged.extend_from_slice(&parts[2..]);
             return merged;
         }
     }
     parts
+}
+
+fn chkcall(token: &str) -> Option<String> {
+    let w = token.trim().to_ascii_uppercase();
+    if w.is_empty()
+        || w.len() > 11
+        || w.contains('.')
+        || w.contains('+')
+        || w.contains('-')
+        || w.contains('?')
+    {
+        return None;
+    }
+    if w.len() > 6 && !w.contains('/') {
+        return None;
+    }
+
+    let base = if let Some(i0) = w.find('/') {
+        let left = &w[..i0];
+        let right = &w[i0 + 1..];
+        if left.len().max(right.len()) > 6 || left.is_empty() || right.is_empty() {
+            return None;
+        }
+        if left.len() <= right.len() {
+            right
+        } else {
+            left
+        }
+    } else {
+        w.as_str()
+    };
+
+    let bytes = base.as_bytes();
+    let nbc = bytes.len();
+    if nbc > 6 || nbc < 3 {
+        return None;
+    }
+    if !bytes[0].is_ascii_uppercase() && !bytes[1].is_ascii_uppercase() {
+        return None;
+    }
+    if bytes[0] == b'Q' && !base.starts_with("QU1RK") {
+        return None;
+    }
+
+    let mut digit_pos = None;
+    if bytes[1].is_ascii_digit() {
+        digit_pos = Some(1usize);
+    }
+    if bytes[2].is_ascii_digit() {
+        digit_pos = Some(2usize);
+    }
+    let digit_pos = digit_pos?;
+    if digit_pos + 1 == nbc {
+        return None;
+    }
+    if !bytes[digit_pos + 1..]
+        .iter()
+        .all(|b| b.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let suffix_len = nbc - digit_pos - 1;
+    if !(1..=3).contains(&suffix_len) {
+        return None;
+    }
+
+    Some(base.to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -355,32 +416,6 @@ fn parse_report_i32(token: &str) -> Option<i32> {
     token.parse::<i32>().ok()
 }
 
-fn base_call_from_compound(call: &str) -> Option<String> {
-    let trimmed = call.trim();
-    if trimmed.len() > 11 || trimmed.contains(['.', '+', '-', '?']) {
-        return None;
-    }
-    let slash = trimmed.find('/')?;
-    if slash == 0 || slash == trimmed.len() - 1 {
-        return None;
-    }
-    let prefix = &trimmed[..slash];
-    let suffix = &trimmed[slash + 1..];
-    if prefix.len().max(suffix.len()) > 6 {
-        return None;
-    }
-    let base = if prefix.len() <= suffix.len() {
-        suffix
-    } else {
-        prefix
-    };
-    if parse_callsign(base).is_standard {
-        Some(base.to_string())
-    } else {
-        None
-    }
-}
-
 fn grid6_24(grid: &str) -> Option<usize> {
     let bytes = grid.as_bytes();
     if bytes.len() != 6
@@ -492,89 +527,6 @@ fn try_pack_type05_telemetry(parts: &[String]) -> Option<Vec<u8>> {
     append_bits(&mut bits, n2, 24);
     append_bits(&mut bits, n3tel, 24);
     append_bits(&mut bits, 5, 3);
-    append_bits(&mut bits, 0, 3);
-    Some(bits)
-}
-
-fn try_pack_type06_wspr(parts: &[String]) -> Option<Vec<u8>> {
-    if parts.len() == 3 {
-        let call = parse_callsign(&parts[0]);
-        if !call.is_standard || !is_grid4(&parts[1]) {
-            return None;
-        }
-        let power = parts[2].parse::<i32>().ok()?.clamp(0, 60);
-        let idbm = (0.3 * power as f64).round() as usize;
-        let mut bits = Vec::with_capacity(77);
-        append_bits(&mut bits, pack28(&parts[0]), 28);
-        append_bits(&mut bits, pack_grid4(&parts[1]), 15);
-        append_bits(&mut bits, idbm, 5);
-        append_bits(&mut bits, 0, 1);
-        append_bits(&mut bits, 0, 1);
-        append_bits(&mut bits, 0, 21);
-        append_bits(&mut bits, 6, 3);
-        append_bits(&mut bits, 0, 3);
-        return Some(bits);
-    }
-
-    if parts.len() != 2 {
-        return None;
-    }
-    let compound = &parts[0];
-    let power_text = &parts[1];
-    if !(5..=10).contains(&compound.len())
-        || power_text.len() > 2
-        || !power_text.bytes().all(|b| b.is_ascii_digit())
-    {
-        return None;
-    }
-    let slash = compound.find('/')?;
-    if slash == 0 || slash == compound.len() - 1 {
-        return None;
-    }
-    if slash == compound.len().saturating_sub(4)
-        && !compound.as_bytes()[compound.len() - 1].is_ascii_digit()
-    {
-        return None;
-    }
-    let basecall = base_call_from_compound(compound)?;
-    let prefix = &compound[..slash];
-    let suffix = &compound[slash + 1..];
-    let nzzz = 46_656usize;
-    let npfx = if slash <= 3 {
-        let mut value = 0usize;
-        for c in prefix.bytes() {
-            let idx = A2.iter().position(|&x| x == c)?;
-            value = 36 * value + idx;
-        }
-        value
-    } else {
-        let value = match suffix.len() {
-            1 => A2.iter().position(|&x| x == suffix.as_bytes()[0])?,
-            2 => {
-                36 * A2.iter().position(|&x| x == suffix.as_bytes()[0])?
-                    + A2.iter().position(|&x| x == suffix.as_bytes()[1])?
-            }
-            3 => {
-                if !suffix.as_bytes()[2].is_ascii_digit() {
-                    return None;
-                }
-                36 * 10 * A2.iter().position(|&x| x == suffix.as_bytes()[0])?
-                    + 10 * A2.iter().position(|&x| x == suffix.as_bytes()[1])?
-                    + A2.iter().position(|&x| x == suffix.as_bytes()[2])?
-            }
-            _ => return None,
-        };
-        value + nzzz
-    };
-    let power = power_text.parse::<i32>().ok()?.clamp(0, 60);
-    let idbm = (0.3 * power as f64).round() as usize;
-    let mut bits = Vec::with_capacity(77);
-    append_bits(&mut bits, pack28(&basecall), 28);
-    append_bits(&mut bits, npfx, 16);
-    append_bits(&mut bits, idbm, 5);
-    append_bits(&mut bits, 1, 1);
-    append_bits(&mut bits, 0, 21);
-    append_bits(&mut bits, 6, 3);
     append_bits(&mut bits, 0, 3);
     Some(bits)
 }
@@ -976,6 +928,14 @@ mod tests {
     }
 
     #[test]
+    fn split77_directed_cq_uses_wsjtx_chkcall_for_compound_call() {
+        assert_eq!(
+            super::split77("CQ DX PJ4/KA1ABC FN42"),
+            vec!["CQ_DX", "PJ4/KA1ABC", "FN42"]
+        );
+    }
+
+    #[test]
     fn type01_dxpedition_round_trips_with_hash10_book() {
         let book = HashCallBook::new();
         book.save("R5AF/O");
@@ -996,27 +956,6 @@ mod tests {
         let bits = super::pack77("0123456789ABCDEF01");
         let msg = crate::ft8::unpack_jt77::unpack77(&bits, None).unwrap();
         assert_eq!(msg, "123456789ABCDEF01");
-    }
-
-    #[test]
-    fn type06_wspr_type1_round_trips() {
-        let bits = super::pack77("K1ABC FN42 30");
-        let msg = crate::ft8::unpack_jt77::unpack77(&bits, None).unwrap();
-        assert_eq!(msg, "K1ABC FN42 30");
-    }
-
-    #[test]
-    fn type06_wspr_type2_prefix_round_trips() {
-        let bits = super::pack77("PJ4/K1ABC 30");
-        let msg = crate::ft8::unpack_jt77::unpack77(&bits, None).unwrap();
-        assert_eq!(msg, "PJ4/K1ABC 30");
-    }
-
-    #[test]
-    fn type06_wspr_type2_suffix_round_trips() {
-        let bits = super::pack77("K1ABC/P 30");
-        let msg = crate::ft8::unpack_jt77::unpack77(&bits, None).unwrap();
-        assert_eq!(msg, "K1ABC/P 30");
     }
 
     #[test]

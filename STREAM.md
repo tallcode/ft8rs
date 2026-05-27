@@ -240,6 +240,9 @@ FFT bin 0/DC is omitted and vector index 0 is unused.
 
 Important WSJT-X details:
 
+- Project scope is FT8 receive/decode alignment. JT77 contains WSPR-style
+  payload forms, but WSPR itself is not an `ft8rs` target. WSPR-specific
+  pack/unpack code is intentionally excluded.
 - `pack77`/`unpack77` must cover active WSJT-X `i3/n3` message families.
   Receive decode must not discard a valid LDPC codeword just because its
   77-bit family is uncommon. The current Rust receive side covers:
@@ -248,22 +251,21 @@ Important WSJT-X details:
     `CALL RR73; CALL <HASH> +00`.
   - `i3=0,n3=3/4`: ARRL Field Day exchange.
   - `i3=0,n3=5`: telemetry.
-  - `i3=0,n3=6`: WSPR-style 77-bit payloads.
   - `i3=1/2`: standard messages and `/R`/`/P` forms.
   - `i3=3`: ARRL RTTY contest exchange.
   - `i3=4`: one nonstandard/hash call plus one standard/nonstandard call.
   - `i3=5`: EU VHF contest exchange with hashed calls.
-- The current Rust transmit/packing side covers the same families except that
-  `i3=0,n3=6` currently packs WSPR Type 1/2, while receive unpacking covers
-  WSPR Type 1/2/3. WSJT-X uses an explicit `i3/n3` hint for WSPR Type 3
-  packing, so that path needs a future hinted pack API rather than silent
-  guessing in plain `pack77(msg)`.
+- `i3=0,n3=6` is treated as out of scope for this project and rejected before
+  message unpacking.
 - `split77` / `pack77_1` use `chkcall`, which is stricter than AP-style
   `stdcall` checks。
 - `chkcall` tests call-area position 2 and then 3 with assignment order that
   matters; Rust must not collapse this into an `else if`。
 - `is_stdcall()` is intentionally looser and remains separate from the
   `pack77` internal callsign parser。
+- Receive `unpack77` needs the same `mycall/hiscall` hash context that
+  WSJT-X initializes in `ft8b` before calling `unpack77(c77,1,...)`。 This
+  affects display and duplicate/AP memory for 10/12/22-bit hashed calls.
 - Type 1 `R GRID` checks the third word (`parts[2]` in Rust)。
 - Two-word Type 1 messages reject a second word containing `/`。
 - `unpack77` rejects invalid CQ report/grid combinations; `RR73` is a special
