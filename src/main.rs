@@ -1,13 +1,19 @@
+use std::cell::RefCell;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
+
+mod output;
 
 use ft8rs::input::{
     decode_soundcard_streaming_decodes, decode_wav_file_streaming_decodes,
     infer_start_time_from_path, list_soundcards, FileDecodeOptions, SoundcardFormatInfo,
 };
-use ft8rs::stream::{StreamDecodeConfig, StreamDecodedMessage};
+use ft8rs::stream::StreamDecodeConfig;
 use ft8rs::SlotTimestamp;
+
+use output::udp::UdpConfig;
+use output::Outputs;
 
 #[derive(Parser)]
 #[command(name = "ft8rs", about = "FT8 streaming decoder")]
@@ -65,6 +71,18 @@ struct MonitorArgs {
     /// Stop after this many 15-second slots. Omit to keep listening.
     #[arg(long)]
     slots: Option<usize>,
+
+    /// Send UDP decode reports in the WSJT-X-compatible packet format.
+    #[arg(long)]
+    udp: bool,
+
+    /// UDP report destination host.
+    #[arg(long, default_value = "127.0.0.1")]
+    udp_host: String,
+
+    /// UDP report destination port.
+    #[arg(long, default_value_t = 2238)]
+    udp_port: u16,
 }
 
 fn main() {
@@ -111,11 +129,12 @@ fn run_file(args: FileArgs) -> Result<(), String> {
         config.lft8apon = false;
     }
 
+    let outputs = RefCell::new(Outputs::new(None)?);
     decode_wav_file_streaming_decodes(
         &args.input,
         FileDecodeOptions { start_time, config },
-        print_decode_row,
-        print_slot_complete,
+        |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
+        |timestamp, count| outputs.borrow_mut().on_slot_complete(timestamp, count),
     )
 }
 
@@ -124,39 +143,20 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
         return run_monitor_ls();
     }
 
+    let udp = args.udp.then_some(UdpConfig {
+        host: args.udp_host,
+        port: args.udp_port,
+    });
+    let outputs = RefCell::new(Outputs::new(udp)?);
     decode_soundcard_streaming_decodes(
         ft8rs::input::SoundcardDecodeOptions {
             device: args.device,
             config: StreamDecodeConfig::default(),
             max_slots: args.slots,
         },
-        print_decode_row,
-        print_slot_complete,
+        |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
+        |timestamp, count| outputs.borrow_mut().on_slot_complete(timestamp, count),
     )
-}
-
-fn print_decode_row(timestamp: SlotTimestamp, row: &StreamDecodedMessage) -> Result<(), String> {
-    println!(
-        "{} {:>3} {:+.1} {:>5.0} {}",
-        timestamp,
-        row.snr.round() as i32,
-        row.dt,
-        row.freq.round(),
-        row.msg
-    );
-    flush_stdout()
-}
-
-fn print_slot_complete(_timestamp: SlotTimestamp, count: usize) -> Result<(), String> {
-    println!("---------- slot done: {count:>2} decodes ----------");
-    flush_stdout()
-}
-
-fn flush_stdout() -> Result<(), String> {
-    use std::io::Write;
-    std::io::stdout()
-        .flush()
-        .map_err(|err| format!("failed to flush stdout: {err}"))
 }
 
 fn run_monitor_ls() -> Result<(), String> {

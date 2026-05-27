@@ -80,21 +80,21 @@ target/release/ft8rs file tests/ft8/210703_133430.wav
 输出格式：
 
 ```text
-YYMMDD_HHMMSS SNR DT FREQ MESSAGE
+HHMMSS SNR DT FREQ MESSAGE
 ```
 
 示例输出：
 
 ```text
-210703_133430  -5 +0.3  2571 W1FC F5BZB -08
-210703_133430  -7 -0.1  2157 WM3PEN EA6VQ -09
-210703_133430 -25 -0.8  1197 CQ F5RXL IN94
+133430  -5 +0.3  2571 W1FC F5BZB -08
+133430  -7 -0.1  2157 WM3PEN EA6VQ -09
+133430 -25 -0.8  1197 CQ F5RXL IN94
 ```
 
-CLI 的 stdout 只输出解码信息和段结束分隔符。文件会按 15 秒 slot 流式解码，并在解码阶段内逐条输出：`nzhsym=41` 早期结果会先打印，随后补充完整 slot 和 AP 阶段新结果。每段消息后面紧跟较长分隔符，并标出本段解码数量：
+CLI 的 stdout 只输出解码信息和段结束分隔符。文件会按 15 秒 slot 流式解码，并在解码阶段内逐条输出：`nzhsym=41` 早期结果会先打印，随后补充完整 slot 和 AP 阶段新结果。每段消息后面紧跟分隔符，并标出本段解码数量：
 
 ```text
----------- slot done: 14 decodes ----------
+------ slot done: 14 decodes ------
 ```
 
 ### 显式指定起始时间
@@ -148,6 +148,15 @@ target/release/ft8rs monitor --device "MacBook Pro Microphone"
 
 ```bash
 target/release/ft8rs monitor --device "VB-Cable A" --slots 2
+```
+
+默认只输出 CLI。加上 `--udp` 后，`monitor` 会把每条解码结果按
+WSJT-X UDP Decode packet 兼容格式发给 UDP report destination。默认目的
+地址是 `127.0.0.1:2238`，可以修改：
+
+```bash
+target/release/ft8rs monitor --device "VB-Cable A" --udp
+target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --udp-port 2238
 ```
 
 声卡输入按系统 UTC 时间对齐到下一个 15 秒 slot 后开始采集，每段采集完成后进入同一套渐进解码输出路径：早期结果先打印，完整 slot 和 AP 阶段继续补充新结果。每段消息后面使用同样的分隔符，并标出本段解码数量。
