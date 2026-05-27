@@ -31,14 +31,22 @@ impl SlotTimestamp {
     }
 
     pub fn format(&self) -> String {
-        let h = self.seconds_of_day / 3600;
-        let m = (self.seconds_of_day / 60) % 60;
-        let s = self.seconds_of_day % 60;
-        let time = format!("{h:02}{m:02}{s:02}");
+        let time = self.format_time();
         match &self.prefix {
             Some(prefix) => format!("{prefix}_{time}"),
             None => time,
         }
+    }
+
+    pub fn format_time(&self) -> String {
+        let h = self.seconds_of_day / 3600;
+        let m = (self.seconds_of_day / 60) % 60;
+        let s = self.seconds_of_day % 60;
+        format!("{h:02}{m:02}{s:02}")
+    }
+
+    pub fn milliseconds_since_midnight(&self) -> u32 {
+        self.seconds_of_day * 1000
     }
 
     pub fn from_unix_seconds_utc(seconds: i64) -> Self {
@@ -104,6 +112,7 @@ mod tests {
     fn parses_wsjtx_timestamp() {
         let ts = SlotTimestamp::parse("230208_140300").unwrap();
         assert_eq!(ts.format(), "230208_140300");
+        assert_eq!(ts.format_time(), "140300");
         assert_eq!(ts.add_seconds(15).format(), "230208_140315");
     }
 

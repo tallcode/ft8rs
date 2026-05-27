@@ -140,6 +140,8 @@ WSJT-X 文件窗口、padding、连续缓冲和跨时隙 AP memory。
 - 实时监听：
   - `ft8rs monitor` 列出输入设备。
   - `ft8rs monitor --device <index-or-full-name> [--slots N]` 监听输入。
+  - `ft8rs monitor --device <device> --udp --udp-host 127.0.0.1 --udp-port 2238`
+    发送 WSJT-X UDP Decode 兼容 report。
 - CLI stdout 只输出解码信息和 slot 完成分隔符；默认不输出 trace。
 
 ### 声卡 streaming
