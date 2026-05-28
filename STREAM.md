@@ -39,7 +39,7 @@ JTDX 源码可以作为参考，但 JTDX 比 WSJT-X 更激进。任何来自 JTD
 | Fixture | Requirement | Current |
 |---|---:|---:|
 | `210703_133430.wav` | at least `19/20`, slot under `15s` | `21` unique messages |
-| `230208_140300.wav` | current floor `422/449`, each slot under `15s` | `422/449` |
+| `230208_140300.wav` | current floor `422/449`, each slot under `15s`, slot offset `+0.785s` | `422/449` |
 
 当前观察到的性能：
 
@@ -138,8 +138,9 @@ slot 约有 `14.47s` 音频。
 - WSJT-X `sync8` 使用 `NFFT1=3840`。
 - `12000/3840 = 3.125 Hz/bin`。
 - FT8 tone spacing 是 `6.25 Hz`，正好是 2 个 bin。
-- 本地 A/B 测试中，`RustFFT@3840` 和 `FFTW@3840` 在保护 fixture 上都
-  保持 `21` 和 `422/449`。
+- 本地 A/B 测试中，`RustFFT@3840` 和 `FFTW@3840` 在旧 no-offset 保护
+  fixture 上都保持 `21` 和 `422/449`。切换 `+0.785s` 对齐窗口并修正
+  WSJT-X `gen_ft8wave` 包络后，RustFFT 当前保护线为 `422/449`，FFTW 尚待重跑。
 
 发布策略：
 
@@ -148,6 +149,19 @@ slot 约有 `14.47s` 音频。
 - CI 仍跑 `--features fftw` 的 release stream tests，用来保护
   `FFTW@3840` 的 WSJT-X 对齐路径。
 - 做 WSJT-X 数值级比较时，优先使用 `--features fftw`。
+
+FT8 解码核心的 FFT 调用命名和缩放策略按 WSJT-X `four2a` 对齐：
+
+- `four2a_r2c(re, im)` 对应 `call four2a(x,n,1,-1,0)`。
+- `four2a_c2c(re, im, -1)` 对应 complex forward
+  `call four2a(c,n,1,-1,1)`。
+- `four2a_c2c(re, im, 1)` 对应 complex inverse
+  `call four2a(c,n,1,1,1)`。
+- `four2a_c2c` 两个方向都不做 normalization；调用点像 Fortran 一样显式
+  乘各自的 `fac`。
+
+这样做的目的不是改变数学结果，而是让 rounding path、函数名、调用方向和
+WSJT-X 源码一一对应，减少后续排查时的“等价但不同形”噪音。
 
 ## 6. WSJT-X Streaming Control Flow
 
@@ -332,6 +346,26 @@ let sample = dd0[(j - 1) as usize];
 Using `j=nstart-1+rust_i` shifts coherent subtraction by one sample. This
 affects envelope estimation, refined DT, and residual writeback.
 
+`subtractft8` 的 LPF 也按源码结构对齐：
+
+- `NFFT=NMAX=180000` circular FFT filter。
+- `cw(1:NFILT+1)=window/sumw` 后执行 `cshift(cw,NFILT/2+1)`。
+- forward `four2a` 后显式 `cw=cw*fac`，其中 `fac=1/NFFT`。
+- 对 `cfilt` 做 forward FFT、乘 `cw`、inverse FFT，再应用首尾
+  `endcorrection`。
+
+`gen_ft8wave` complex envelope shaping now matches WSJT-X:
+
+- first ramp: `(1-cos(angle))/2`。
+- last ramp: `(1+cos(angle))/2`。
+
+Earlier no-offset experiments made this look unsafe in isolation, but under
+the current `+0.785s` aligned fixture window it improves the protected RustFFT
+long score to `422/449` and is retained as a source-aligned correction. The
+remaining grouped subtract gap is refined-DT `sqf()` energy: WSJT-X evaluates
+the post-subtraction FFT energy inside the FT8 signal band, while ft8rs still
+uses the protected time-domain residual-energy path.
+
 ## 11. Recording Start Offset Diagnostic
 
 The long-file harness keeps a diagnostic based on matched messages:
@@ -340,22 +374,26 @@ The long-file harness keeps a diagnostic based on matched messages:
 baseline_drift - decoded_dt
 ```
 
-For `230208_140300.wav`, the estimate is stable:
+For `230208_140300.wav`, the no-offset estimate was stable:
 
 - median around `+0.785s`
 - p10/p90 around `+0.745..+0.825s`
 
 This suggests the WAV sample 0 may be closer to `230208_140300.785` than
-exactly `230208_140300.000`。However, applying a simple global offset is not a
-valid scoring shortcut:
+exactly `230208_140300.000`。The long-test harness now uses `+0.785s` as the
+default slot-start offset so future miss analysis compares against a
+time-aligned window:
 
-- `0.785s` centers timing residual but lowers matched count。
+- `0.785s` centers timing residual near zero and currently scores `422/449`。
+- no-offset previously scored `422/449` but carried a median residual around
+  `+0.785s`。
 - `0.500s` produced the best temporary sweep score observed so far (`426/449`)。
 - Larger offsets increase late large-drift misses。
 
 Interpretation: this is more likely a WSJT-X file windowing, padding,
 continuous-buffer, or AP-memory alignment issue than a simple timestamp
-correction.
+correction. Treat `+0.785s` as the current aligned fixture window, not as a
+general decoder parameter.
 
 Keep the diagnostic and saved offset comparison files for future investigation.
 
@@ -405,6 +443,113 @@ Current release workflow:
    and representative hash display forms。
 5. Only after control-flow parity is accounted for, use source and miss analysis
    to audit remaining parameter differences。
+
+Current source-level finding:
+
+- WSJT-X carries early decodes into the final `nzhsym=50` decode via
+  `ndecodes=ndec_early` and the saved `allmessages` table. ft8rs now mirrors
+  that with `DecodeOptions.initial_messages`: early messages seed duplicate and
+  pass-control state, but are not returned again by the full-stage decoder.
+- This alignment kept the previous no-offset long-file score unchanged at
+  `422/449`; after switching the default long-test window to `+0.785s` and
+  aligning `gen_ft8wave` envelope shaping, the protected RustFFT baseline is
+  `422/449`.
+- Current numeric-homology cleanup:
+  - FT8 core call sites now use `four2a_r2c` / `four2a_c2c` instead of generic
+    normalized FFT wrappers.
+  - `ft8_downsample` and AP downsample use the WSJT-X inverse FFT path plus
+    `fac=1/sqrt(NFFT1*NFFT2)` directly.
+  - `sync8` uses source-shaped `nfos=NFFT1/NSPS`。
+  - `ft8b` `bmete` and `ft8_a7d` time-refine use first-max behavior matching
+    Fortran `maxloc`。
+  - LDPC `platanh` now uses WSJT-X's piecewise approximation and `±7.0`
+    saturation instead of exact `atanh`; this keeps BP/OSD iteration numerics
+    on the same path as `platanh.f90`。
+  - OSD reliability ordering now uses a local port of WSJT-X `indexx` before
+    reversing to MRB order, instead of Rust's generic unstable sort。
+  - `sync8` percentile normalization, candidate ordering, and final sync sort
+    now use the same `indexx` ordering shape as `sync8.f90`; FT8 baseline
+    percentile selection uses the same helper as well。
+  - FT8 spectrum-baseline `nuttal_window` constants and signs now match
+    WSJT-X `lib/nuttal_window.f90` exactly:
+    `0.3635819, -0.4891775, 0.1365995, -0.0106411`。
+  - `subtractft8` reference waveform envelope now matches
+    `gen_ft8wave.f90` with `(1-cos(angle))/2` and `(1+cos(angle))/2` ramps。
+  - Previous no-offset release validation remained `21` short and `422/449`
+    long; current `+0.785s` RustFFT validation is `422/449` long.
+- `ft8_a8d` remains a known architecture gap. It is only active when AP is on,
+  contest is not Fox/Hound, `nzhsym=50`, `hiscall` and `hisgrid` are populated,
+  and the a7 path has not already decoded the target. It does not explain the
+  default long-file baseline without QSO context, but should be kept on the
+  WSJT-X parity list.
+- Focused diagnosis of the strongest remaining miss,
+  `230208_140430 F4JAR UX7UU -19`, shows the candidate reaches `ft8b` with
+  strong hard sync (`nsync=18`). At the selected refined time, LDPC/OSD can
+  sometimes recover the correct CRC/message, but reports about `40` hard
+  errors, so both WSJT-X and ft8rs reject it via the `nharderrors<=36` gate.
+  A temporary time sweep of the same downsampled signal found nearby `ibest`
+  values, about `+7` 200 Hz samples later, where the same message decodes with
+  `33..34` hard errors. The miss is therefore localized to `ft8b` time
+  refinement / soft-symbol extraction parity, not candidate admission, message
+  formatting, LDPC reachability, or FFT backend.
+- A focused pass-level diagnostic on `seg=6/f≈1413` gave the same shape with
+  RustFFT and FFTW: selected `ibest=-46`, `nsync=18`, and the target message
+  appears in regular LDPC passes with hard errors around `40..43`. The current
+  rejection is therefore a strict threshold outcome at the selected soft-symbol
+  alignment, not an unpack/type/AP/FFT-backend failure.
+- The inner LDPC pass control now mirrors WSJT-X more closely: if a CRC-good
+  codeword fails all-zero, message-type, unpack, or contest-specific checks,
+  ft8rs continues later passes just like WSJT-X `cycle` inside `ft8b.f90`.
+  The message-type guard was also corrected to allow `i3=0,n3=6`, matching
+  `if(i3.gt.5 .or. (i3.eq.0.and.n3.gt.6)) cycle`.
+- `ft8_downsample` now mirrors the WSJT-X scaling order: the `NFFT2` inverse
+  FFT is left unnormalized and the caller applies
+  `fac=1/sqrt(NFFT1*NFFT2)` exactly once. This replaces the previous
+  mathematically equivalent normalized-inverse path
+  `(1/NFFT2)*sqrt(NFFT2/NFFT1)`, eliminating a possible rounding-path
+  difference for future weak-signal audits. AP downsample uses the same helper.
+  The `cshift(c1,i0-ib)` step also uses signed modular indexing to match the
+  Fortran shift semantics without unsigned underflow at low-frequency edges.
+- A temporary single-precision `fftwf` probe that mirrors WSJT-X
+  `ft8_downsample.f90` and `sync8d.f90` selected the same peak for this target
+  (`ibest=-46` without file offset, equivalently `ibest=111` with a `+0.785s`
+  window offset). The global file offset diagnostic improves displayed timing
+  residuals but does not recover this decode. This points away from FFT
+  precision or simple file-start offset as single causes, and toward outer
+  multi-pass residual/AP state or neighboring-signal interactions.
+- A no-subtract diagnostic for this target left the same `ibest`/hard-error
+  pattern unchanged, so the single miss is not explained by previous accepted
+  signals being subtracted from the residual. A separate duplicate/subtract
+  ordering experiment reduced the long baseline to `411/449` and remains
+  rejected; WSJT-X's effective regular path subtracts inside `ft8b` before the
+  outer duplicate filter sees the message.
+- `nagain` full-stage behavior now follows `ft8_decode.f90`: when `nzhsym=50`
+  and `nagain=true`, the decoder uses the original full slot rather than the
+  early-cleaned residual, while the inner decoder searches only `nfqso±20Hz`.
+  Default streaming tests keep `nagain=false`, so this is an architecture
+  alignment change rather than a sensitivity-tuning change.
+- `subtractft8` LPF now follows the WSJT-X structure more closely: 180000-point
+  circular FFT filtering with a cshifted cos² window and endpoint correction,
+  instead of the previous 262144-point halo/linear-convolution approximation.
+  This kept both RustFFT and FFTW no-offset long baselines at `422/449`, while
+  changing a few edge diff rows, confirming residual subtraction is active in
+  the remaining boundary behavior.
+- `subtractft8` refined-DT still has a known grouped alignment issue. WSJT-X
+  `sqf()` compares post-subtraction FFT energy only in the FT8 signal band,
+  whereas the current protected ft8rs path still compares time-domain residual
+  energy. A direct one-line-style replacement was tested and reduced the long
+  baseline under the previous window, so this must be aligned together with
+  `sqf()` side effects and any remaining reference-waveform parity rather than
+  changed in isolation.
+- `subtractft8` `nstart` now follows Fortran implicit-integer truncation:
+  `nstart=dt*12000+1+idt`. This was source-aligned under the previous
+  no-offset `422/449` baseline.
+- `gen_ft8wave` envelope shaping now uses the WSJT-X formulas
+  `(1-cos(angle))/2` and `(1+cos(angle))/2`; with the `+0.785s` fixture window
+  this is both source-aligned and baseline-safe.
+- `ft8b` AP pass selection no longer has an extra `ndepth>=2` gate. WSJT-X
+  controls these passes with `lapon/ncontest/nzhsym` and then forces regular
+  passes only when `nzhsym<50`.
 
 ## 15. Documentation Policy
 

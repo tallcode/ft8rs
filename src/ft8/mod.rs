@@ -3,6 +3,7 @@ pub mod constants;
 pub mod decode;
 pub(crate) mod decode174_91;
 pub mod hashcall;
+pub(crate) mod indexx;
 mod ldpc_tables;
 pub(crate) mod pack_jt77;
 pub(crate) mod protocol;

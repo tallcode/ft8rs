@@ -226,15 +226,17 @@ impl StreamDecodeSession {
         let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         let mut full_dd = state.dd0.clone();
-        let clean_prefix = (47 * NZHSYM_STRIDE).min(NMAX);
-        full_dd[..clean_prefix].copy_from_slice(&state.dd1[..clean_prefix]);
         let mut late_subtracted = 0usize;
-        for (idx, d) in state.early_results.iter().enumerate() {
-            if !state.early_subtracted.get(idx).copied().unwrap_or(false) {
-                let mut itone = [0i32; 79];
-                itone.copy_from_slice(&d.itone[..79]);
-                subtract_ft8_refined(&mut full_dd, &itone, d.freq, d.dt + 0.5, true);
-                late_subtracted += 1;
+        if !self.params.nagain {
+            let clean_prefix = (47 * NZHSYM_STRIDE).min(NMAX);
+            full_dd[..clean_prefix].copy_from_slice(&state.dd1[..clean_prefix]);
+            for (idx, d) in state.early_results.iter().enumerate() {
+                if !state.early_subtracted.get(idx).copied().unwrap_or(false) {
+                    let mut itone = [0i32; 79];
+                    itone.copy_from_slice(&d.itone[..79]);
+                    subtract_ft8_refined(&mut full_dd, &itone, d.freq, d.dt + 0.5, true);
+                    late_subtracted += 1;
+                }
             }
         }
         trace_timer(
@@ -244,8 +246,10 @@ impl StreamDecodeSession {
         );
 
         let t_full = Instant::now();
+        let mut full_options = self.ft8_decode_options(50);
+        full_options.initial_messages = state.early_results.iter().map(|d| d.msg.clone()).collect();
         let (full_results, sbase, full_residual) =
-            decode_f64_with_sbase_and_residual(&full_dd, self.ft8_decode_options(50));
+            decode_f64_with_sbase_and_residual(&full_dd, full_options);
         trace_timer(
             "stream.nzhsym50.decode",
             t_full,

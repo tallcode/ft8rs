@@ -33,30 +33,35 @@ pub fn engine_name() -> &'static str {
     }
 }
 
-// ── FFT dispatch ──
+// ── WSJT-X four2a dispatch ──
 
-/// Complex-to-complex FFT. Forward: no normalization, Inverse: 1/N.
+/// WSJT-X/FFTPACK-style complex FFT.
+///
+/// Mirrors `call four2a(c, n, 1, isign, 1)`: `isign=-1` is forward,
+/// `isign=1` is inverse, and neither direction applies normalization.
 #[inline]
-pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
+pub fn four2a_c2c(re: &mut [f64], im: &mut [f64], isign: i32) {
     #[cfg(feature = "fftw")]
     {
-        fft_fftw::fft_complex(re, im, inverse);
+        fft_fftw::four2a_c2c(re, im, isign);
     }
     #[cfg(not(feature = "fftw"))]
     {
-        fft_rustfft::fft_complex(re, im, inverse);
+        fft_rustfft::four2a_c2c(re, im, isign);
     }
 }
 
-/// Real-to-complex forward FFT.
+/// WSJT-X/FFTPACK-style real-to-complex forward FFT.
+///
+/// Mirrors `call four2a(x, n, 1, -1, 0)`.
 #[inline]
-pub fn fft_r2c(re: &mut [f64], im: &mut [f64]) {
+pub fn four2a_r2c(re: &mut [f64], im: &mut [f64]) {
     #[cfg(feature = "fftw")]
     {
-        fft_fftw::fft_r2c(re, im);
+        fft_fftw::four2a_r2c(re, im);
     }
     #[cfg(not(feature = "fftw"))]
     {
-        fft_rustfft::fft_r2c(re, im);
+        fft_rustfft::four2a_r2c(re, im);
     }
 }

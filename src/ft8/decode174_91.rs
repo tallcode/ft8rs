@@ -1,4 +1,5 @@
 /// LDPC (174,91) Belief Propagation decoder for FT8.
+use crate::ft8::indexx::indexx_ascending;
 use crate::ft8::ldpc_tables::*;
 use crate::ft8::protocol::N_LDPC;
 use std::sync::OnceLock;
@@ -14,13 +15,19 @@ pub struct DecodeResult {
 }
 
 fn platanh(x: f64) -> f64 {
-    if x > 0.9999999 {
-        return 18.71;
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let z = x.abs();
+    if z <= 0.664 {
+        x / 0.83
+    } else if z <= 0.9217 {
+        sign * (z - 0.4064) / 0.322
+    } else if z <= 0.9951 {
+        sign * (z - 0.8378) / 0.0524
+    } else if z <= 0.9998 {
+        sign * (z - 0.9914) / 0.0012
+    } else {
+        sign * 7.0
     }
-    if x < -0.9999999 {
-        return -18.71;
-    }
-    0.5 * ((1.0 + x) / (1.0 - x)).ln()
 }
 
 fn check_crc14(bits91: &[u8]) -> bool {
@@ -253,7 +260,7 @@ pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeR
     None
 }
 
-/// Simplified OSD decoder.
+/// Ordered-statistics decoder aligned to WSJT-X `osd174_91.f90`.
 fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeResult> {
     let n = N_LDPC;
     let k = KK;
@@ -261,9 +268,10 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
     let gen = get_generator();
     let absllr: Vec<f64> = llr.iter().map(|&x| x.abs()).collect();
 
-    // Sort by reliability (descending)
-    let mut indices: Vec<usize> = (0..n).collect();
-    indices.sort_unstable_by(|&a, &b| absllr[b].partial_cmp(&absllr[a]).unwrap());
+    // WSJT-X osd174_91.f90 uses indexx(absrx,N,indx), then consumes the
+    // ascending index vector in reverse to get decreasing reliability.
+    let indx = indexx_ascending(&absllr);
+    let mut indices: Vec<usize> = indx.into_iter().rev().collect();
 
     // Reorder generator matrix columns
     let mut genmrb = vec![0u8; k * n];

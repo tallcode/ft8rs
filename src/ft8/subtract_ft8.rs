@@ -1,4 +1,4 @@
-//! subtractft8 — precise port of WSJTX lib/ft8/subtractft8.f90
+//! subtractft8 — WSJT-X-aligned port of lib/ft8/subtractft8.f90
 //!
 //! Algorithm (from Fortran comments):
 //!   Measured signal  : dd(t) = a(t)·cos(2πf₀t + θ(t))
@@ -6,18 +6,16 @@
 //!   Complex amp      : cfilt(t) = LPF[ dd(t)·CONJG(cref(t)) ]
 //!   Subtract         : dd(t) ← dd(t) - 2·REAL(cref(t)·cfilt(t))
 //!
-//! LPF implementation: FFT-based linear convolution of circularly-extended camp.
-//! Camp is pre-extended with HALF_FILT samples on each side (circular halo), then
-//! zero-padded to NFFT_CONV. This produces identical results to time-domain circular
-//! convolution but uses O(N·logN) FFT instead of O(N·M) direct computation.
+//! LPF implementation: WSJT-X-style NMAX-point circular FFT filtering using a
+//! cshifted cos² window and the same edge correction factors.
 //!
 //! Key parameters:
 //!   NFRAME = 151680 (79 symbols × 1920 samples/symbol)
 //!   NFILT  = 4000 (cos² LPF window, ±2000 taps)
-//!   NFFT_CONV = 262144 (next pow2 of NFRAME + 2*NFILT for zero-padded linear conv)
+//!   NFFT   = NMAX = 180000
 //!   NSPS   = 1920 (waveform generation resolution, NOT detection rate of 48)
 
-use crate::util::fft_complex;
+use crate::util::four2a_c2c;
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
@@ -26,39 +24,65 @@ const NFILT: usize = 4000;
 const HALF_FILT: usize = NFILT / 2; // 2000
 const SAMPLE_RATE: f64 = 12000.0;
 const NSPS_WAVE: usize = 1920;
-
-// NFFT for FFT-based linear convolution with circular halo:
-// ext_len = NFRAME + NFILT = 155680, next pow2 = 262144
-const NFFT_CONV: usize = 262144;
+const NFFT: usize = 15 * 12_000;
 
 fn wsjtx_subtract_sample_index(nstart_1based: isize, rust_i: usize) -> isize {
     nstart_1based + rust_i as isize
 }
 
-/// Precomputed FFT of the LPF window. Computed once and reused across all subtract calls.
-fn lpf_window_fft() -> &'static (Vec<f64>, Vec<f64>) {
-    static WINDOW_FFT: OnceLock<(Vec<f64>, Vec<f64>)> = OnceLock::new();
-    WINDOW_FFT.get_or_init(|| {
-        let nfft = NFFT_CONV;
+fn wsjtx_subtract_nstart(dt: f64, idt: isize) -> isize {
+    (dt * SAMPLE_RATE) as isize + 1 + idt
+}
 
-        // Build cos² window: w(j) = cos²(π·j/NFILT) for j = -2000..2000
+struct LpfData {
+    fft_re: Vec<f64>,
+    fft_im: Vec<f64>,
+    endcorrection: Vec<f64>,
+}
+
+/// Precomputed WSJT-X subtractft8 LPF data.
+fn lpf_data() -> &'static LpfData {
+    static LPF: OnceLock<LpfData> = OnceLock::new();
+    LPF.get_or_init(|| {
         let mut sumw: f64 = 0.0;
-        let mut win = vec![0.0f64; nfft];
+        let mut window = vec![0.0f64; NFILT + 1];
         for j in 0..=NFILT {
             let j_signed = j as isize - HALF_FILT as isize;
-            win[j] = (PI * j_signed as f64 / NFILT as f64).cos().powi(2);
-            sumw += win[j];
+            window[j] = (PI * j_signed as f64 / NFILT as f64).cos().powi(2);
+            sumw += window[j];
         }
-        // Normalize window by sumw (matching Fortran window/sumw)
+
+        let mut cw_re = vec![0.0f64; NFFT];
         for j in 0..=NFILT {
-            win[j] /= sumw;
+            cw_re[j] = window[j] / sumw;
         }
 
-        // FFT of window (window at indices 0..4000, zero-padded to 262144)
-        let mut w_im = vec![0.0f64; nfft];
-        fft_complex(&mut win, &mut w_im, false);
+        // Fortran: cw=cshift(cw,NFILT/2+1) before the forward FFT.
+        let shift = HALF_FILT + 1;
+        let mut shifted_re = vec![0.0f64; NFFT];
+        for i in 0..NFFT {
+            shifted_re[i] = cw_re[(i + shift) % NFFT];
+        }
+        let mut shifted_im = vec![0.0f64; NFFT];
+        four2a_c2c(&mut shifted_re, &mut shifted_im, -1);
+        let fac = 1.0 / NFFT as f64;
+        for i in 0..NFFT {
+            shifted_re[i] *= fac;
+            shifted_im[i] *= fac;
+        }
 
-        (win, w_im)
+        let mut endcorrection = vec![0.0f64; HALF_FILT + 1];
+        let mut tail_sum = 0.0;
+        for j_signed in (0..=HALF_FILT).rev() {
+            tail_sum += window[j_signed + HALF_FILT];
+            endcorrection[j_signed] = 1.0 / (1.0 - tail_sum / sumw);
+        }
+
+        LpfData {
+            fft_re: shifted_re,
+            fft_im: shifted_im,
+            endcorrection,
+        }
     })
 }
 
@@ -166,13 +190,13 @@ fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
 
     let nramp = (nsps as f64 / 8.0).round() as usize;
     for i in 0..nramp {
-        let env = (1.0 - (twopi * i as f64) / (2.0 * nramp as f64)).cos() / 2.0;
+        let env = (1.0 - ((twopi * i as f64) / (2.0 * nramp as f64)).cos()) / 2.0;
         cwave_re[i] *= env;
         cwave_im[i] *= env;
     }
     let k1 = nsym * nsps - nramp;
     for i in 0..nramp {
-        let env = (1.0 + (twopi * i as f64) / (2.0 * nramp as f64)).cos() / 2.0;
+        let env = (1.0 + ((twopi * i as f64) / (2.0 * nramp as f64)).cos()) / 2.0;
         cwave_re[k1 + i] *= env;
         cwave_im[k1 + i] *= env;
     }
@@ -180,55 +204,40 @@ fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
     (cwave_re, cwave_im)
 }
 
-/// FFT-based linear convolution with circular halo extension.
-/// Produces IDENTICAL results to time-domain circular convolution within NFRAME.
+/// WSJT-X subtractft8 LPF: NMAX-point FFT, multiply by shifted window FFT,
+/// inverse FFT, then apply the endpoint correction.
 fn lpf_convolve(camp_re: &[f64], camp_im: &[f64]) -> (Vec<f64>, Vec<f64>) {
-    let (win_fft_re, win_fft_im) = lpf_window_fft();
+    let lpf = lpf_data();
     let n = camp_re.len();
     debug_assert_eq!(n, NFRAME);
 
-    // Build extended array with NFILT-sample circular halo:
-    // ext[j] = camp[(j - HALF_FILT) mod NFRAME] for j = 0..NFRAME+NFILT
-    // This gives the correct circular indexing for the FFT linear convolution.
-    let nfft = NFFT_CONV;
-    let mut ext_re = vec![0.0f64; nfft];
-    let mut ext_im = vec![0.0f64; nfft];
+    let mut cfilt_re = vec![0.0f64; NFFT];
+    let mut cfilt_im = vec![0.0f64; NFFT];
+    cfilt_re[..NFRAME].copy_from_slice(camp_re);
+    cfilt_im[..NFRAME].copy_from_slice(camp_im);
 
-    let ext_len = NFRAME + NFILT; // 155680
-    for j in 0..ext_len {
-        let camp_idx = if j < HALF_FILT {
-            NFRAME - HALF_FILT + j // circular prepend: camp end
-        } else if j < HALF_FILT + NFRAME {
-            j - HALF_FILT // main data
-        } else {
-            j - HALF_FILT - NFRAME // circular append: camp beginning
-        };
-        ext_re[j] = camp_re[camp_idx];
-        ext_im[j] = camp_im[camp_idx];
+    four2a_c2c(&mut cfilt_re, &mut cfilt_im, -1);
+
+    for i in 0..NFFT {
+        let cr = cfilt_re[i];
+        let ci = cfilt_im[i];
+        cfilt_re[i] = cr * lpf.fft_re[i] - ci * lpf.fft_im[i];
+        cfilt_im[i] = cr * lpf.fft_im[i] + ci * lpf.fft_re[i];
     }
 
-    // FFT → multiply → IFFT (linear convolution, not circular)
-    fft_complex(&mut ext_re, &mut ext_im, false);
+    four2a_c2c(&mut cfilt_re, &mut cfilt_im, 1);
 
-    for i in 0..nfft {
-        let cr = ext_re[i];
-        let ci = ext_im[i];
-        ext_re[i] = cr * win_fft_re[i] - ci * win_fft_im[i];
-        ext_im[i] = cr * win_fft_im[i] + ci * win_fft_re[i];
+    for j in 0..=HALF_FILT {
+        let correction = lpf.endcorrection[j];
+        cfilt_re[j] *= correction;
+        cfilt_im[j] *= correction;
+        let end_idx = NFRAME - 1 - j;
+        cfilt_re[end_idx] *= correction;
+        cfilt_im[end_idx] *= correction;
     }
 
-    fft_complex(&mut ext_re, &mut ext_im, true);
-
-    // Extract cfilt: cfilt[i] = linear_conv[i + NFILT]
-    // The convolution with NFILT-sample halo gives the correct circular result
-    // at offset NFILT in the linear convolution output.
-    let mut cfilt_re = vec![0.0f64; n];
-    let mut cfilt_im = vec![0.0f64; n];
-    for i in 0..n {
-        cfilt_re[i] = ext_re[NFILT + i];
-        cfilt_im[i] = ext_im[NFILT + i];
-    }
-
+    cfilt_re.truncate(NFRAME);
+    cfilt_im.truncate(NFRAME);
     (cfilt_re, cfilt_im)
 }
 
@@ -261,7 +270,7 @@ pub fn subtract_ft8_refined(
         dt
     };
 
-    let nstart = (refined_dt * SAMPLE_RATE).round() as isize + 1;
+    let nstart = wsjtx_subtract_nstart(refined_dt, 0);
 
     // IQ mix: camp(i) = dd0[j] × conjg(cref(i))
     let mut camp_re = vec![0.0f64; NFRAME];
@@ -321,7 +330,7 @@ fn compute_residual_energy(
     offset: isize,
 ) -> f64 {
     let nmax = 15 * 12000;
-    let nstart = (dt * SAMPLE_RATE).round() as isize + 1 + offset;
+    let nstart = wsjtx_subtract_nstart(dt, offset);
 
     // IQ mix
     let mut camp_re = vec![0.0f64; NFRAME];
@@ -359,5 +368,12 @@ mod tests {
         let nstart = 6001;
         assert_eq!(super::wsjtx_subtract_sample_index(nstart, 0), nstart);
         assert_eq!(super::wsjtx_subtract_sample_index(nstart, 1), nstart + 1);
+    }
+
+    #[test]
+    fn subtract_nstart_matches_fortran_implicit_integer_assignment() {
+        assert_eq!(super::wsjtx_subtract_nstart(0.5009, 0), 6011);
+        assert_eq!(super::wsjtx_subtract_nstart(0.5009, -90), 5921);
+        assert_eq!(super::wsjtx_subtract_nstart(-0.0009, 0), -9);
     }
 }

@@ -13,8 +13,9 @@
   - release 约 `3.3s`。
 - 长测：`tests/ft8/230208_140300.wav`
   - 当前保护线 `422/449`。
-  - 每段小于 `15s`，最慢观测约 `4.13s`。
-  - timing residual：`baseline_drift - decoded_dt` median 约 `+0.785s`。
+  - 默认 slot 起点偏移 `+0.785s`。
+  - timing residual median 约 `+0.000s`。
+  - 每段小于 `15s`，最近最慢段约 `3.84s`。
 - 测试要求：
   - 性能/灵敏度测试只使用 release。
   - WSJT-X parity 验证使用 `--features fftw`。
@@ -24,236 +25,264 @@
 
 ### Milestone 1: 361 -> 381
 
-目标是先达到第一里程碑 `381/449`，并把 stream decoder 从一次性 full decode
-改成 WSJT-X 风格的 `nzhsym=41/47/50` 渐进流。
-
-关键突破：
-
-- `sync8d` 时间索引不能环绕。
-- WSJT-X `sync8d(cd0,i0,...)` 用 signed `i0`，越界 Costas block 贡献 0。
-- Rust 旧实现用 `rem_euclid(NP2)`，把越界访问环绕到 `cd0` 尾部。
-- 去掉环绕后长测提升到 `381/449`。
-
-保留结论：
-
-- FFT 表示切换不能替代 WSJT-X 对齐。
-- residual/sbase/AP 输入结构修正即使单点不涨分，也应保留，因为它们减少架构偏差。
+- 把 stream decoder 从一次性 full decode 改成 WSJT-X 风格的
+  `nzhsym=41/47/50` 渐进流。
+- 关键突破是 `sync8d` 时间索引不能环绕。WSJT-X 使用 signed `i0`，越界
+  Costas block 贡献 0；Rust 旧实现用 `rem_euclid(NP2)`，把越界访问环绕到
+  `cd0` 尾部。去掉环绕后长测达到 `381/449`。
 
 ### Milestone 2: 381 -> 401
 
-目标是达到第二里程碑 `400/449`。
-
-有效对齐：
-
-- `ft8_decode` pass 内 FFT 生命周期对齐：同一 pass 内 subtract 后不立刻重算 long FFT，下一 pass 再刷新。
+- `ft8_decode` pass 内 FFT 生命周期对齐：同一 pass 内 subtract 后不立刻重算
+  long FFT，下一 pass 再刷新。
 - outer `syncmin`：depth 1/2 使用 `2.1`，depth 3 使用 `1.3`。
 - `sync8` time-bin 按 Fortran 1-based 时间维访问，Rust 访问前转换为 `m-1`。
-- AP `sync8d` 频率微调用 `ctwk * Costas`，second time refine 回到普通 Costas sync。
-- CQ/AP 保存路径按 WSJT-X `split77/chkcall` 语义处理 `CQ_DX`、`CQ CALL GRID` 等形态。
+- AP `sync8d` 频率微调用 `ctwk * Costas`，second time refine 回到普通
+  Costas sync。
 - `pack_jt77::is_stdcall()` 修正 Fortran `iarea` 到 Rust 0-based 的转换。
-
-关键突破：
-
-- 弱 CQ miss 的主因之一是 `stdcall` 1-based/0-based 移植错误。
-- 旧 Rust 把 `D1DX`、`F1PPH`、`R6KEE`、`IW1PUR` 误判为非标准呼号。
-- `ft8_a7d` CQ `imsg=5` 因此生成 `CQ CALL`，没有生成 WSJT-X 的 `CQ CALL GRID`。
-- 修正后长测达到 `401/449`。
-
-撤回尝试：
-
-- 临时把 candidate dt 改成 `(jpeak-1.5)*tstep` 虽能影响分数，但不是 WSJT-X 公式，已撤回。
-- 不能通过放宽 `dmin/dmin2`、hard sync gate、syncmin 或候选搜索范围追分。
+  旧实现把 `D1DX`、`F1PPH`、`R6KEE`、`IW1PUR` 等误判为非标准呼号，导致
+  弱 CQ AP 模板错误。修正后长测达到 `401/449`。
 
 ### Milestone 3: 401 -> 422
 
-这一阶段主要清理 1-based/0-based、文件尾段和 diff 工具，最终保护线提升到 `422/449`。
+- 修正多个 1-based/0-based 与格式 gate：
+  - `subtractft8` sample index：Rust `i=0` 对应 Fortran `i=1`，
+    因此 `j=nstart+rust_i`，访问 `dd0[j-1]`。
+  - `pack77_1` 的 `R GRID` 判定修正为检查第三个词。
+  - `split77/chkcall` 标准呼号判定收紧，避免把 `RR73`、`73` 当成呼号。
+  - `unpack77` 补齐 CQ invalid guard。
+  - stream AP memory 的 `chkcall` 镜像按 Fortran 赋值顺序处理第 2/3 位数字。
+- 长文件测试从 `floor(duration/15s)` 改为 `ceil(duration/15s)`，EOF 非空尾段也
+  解码，解决 `230208_140730` 片段大量假 miss。
+- diff CSV 修正为稳定 6 列；匹配时把 `<CALL>` 归一为 `CALL`，但 `<...>`
+  保持原样。
+- 录音起点诊断显示稳定偏移：`baseline_drift - decoded_dt` median 约
+  `+0.785s`。
 
-有效修复：
-
-- `pack77_1` 的 `R GRID` 判定修正为检查第三个词。
-- `split77/chkcall` 标准呼号判定收紧，避免把 `RR73`、`73` 这类报告词当成标准呼号。
-- `unpack77` 补齐 CQ invalid guard。
-- stream AP memory 的 `chkcall` 镜像按 Fortran 赋值顺序处理第 2/3 位数字。
-- `pack77_1` 拒绝 WSJT-X 不接受的两词 `CALL1 CALL2/R` 形态。
-- `subtractft8` sample index 修正：
-  - WSJT-X `nstart` 和 `j` 是 1-based sample index。
-  - Rust `i=0` 应对应 Fortran `i=1`，因此 `j=nstart+rust_i`，访问 `dd0[j-1]`。
-  - 旧实现第一轮实际访问 `dd0[nstart-2]`，比 WSJT-X 早 1 个 sample。
-- 长文件测试从 `floor(duration/15s)` 改为 `ceil(duration/15s)`，EOF 非空尾段也解码。
-  - 解决 `230208_140730` 片段大量假 miss。
-- diff CSV 修正为稳定 6 列，并可通过 `FT8RS_WRITE_DIFF=1` 生成。
-- diff 匹配把 `<CALL>` 归一为 `CALL`，但 `<...>` 保持原样。
-
-重要线索：
-
-- `230208_140300.wav` 的匹配消息显示稳定偏移：
-  - `baseline_drift - decoded_dt` median 约 `+0.785s`。
-- offset sweep 结果：
+Offset sweep 仍作为诊断资料保留：
 
 | offset | matched | residual median | 结论 |
 |---:|---:|---:|---|
-| `0.000` | `422/449` | `+0.785s` | 当前正式基线 |
+| `0.000` | `422/449` | `+0.785s` | 旧窗口，timing residual 未对齐 |
 | `0.250` | `424/449` | `+0.535s` | 诊断更好但非正式 |
 | `0.500` | `426/449` | `+0.285s` | 匹配最高，但不应作为追分开关 |
-| `0.785` | `418/449` | `+0.000s` | 证实偏移存在，但直接重切窗变差 |
+| `0.785` | `422/449` | `+0.000s` | 当前正式对齐窗口 |
 | `1.000` | `412/449` | `-0.215s` | late large-drift miss 变多 |
 
-结论：`0.785s` 偏移是真实诊断信号，但不能简单作为正式 slot offset。后续应继续对齐
-WSJT-X 文件窗口、padding、连续缓冲和跨时隙 AP memory。
+结论：`0.785s` 偏移是真实诊断信号，当前先作为长测试对齐窗口。后续应继续
+对齐 WSJT-X 文件窗口、padding、连续缓冲和跨时隙 AP memory。
 
 ### Milestone 4: 稳定 422，准备目标 430
 
-有效小对齐：
-
-- baseline polynomial 阶数修正：
-  - WSJT-X `nterms=5` 是 5 个系数，即 4 次多项式。
-  - Rust 旧 `polyfit(..., 5)` 是 5 次多项式，已改为 degree 4。
-- stream depth/AP 控制流：
-  - `ndepth=1` 时，WSJT-X 在 `nzhsym<50` 直接返回；Rust stream 已跳过 41 阶段。
-  - 外部 `ft8_a7d` 受 `lft8apon` 和 contest 6/7 约束。
-- duplicate-gated subtract 假设已撤回：
-  - 只看 `ft8_decode.f90` 外层容易误判 subtract 应在 duplicate check 之后。
-  - 实际 WSJT-X regular subtract 在 `ft8b.f90` 内部 valid decode 后执行，然后才返回外层 duplicate check。
-  - Rust “成功返回后立刻 subtract，再做 seen filter”符合有效执行顺序。
+- baseline polynomial 阶数修正：WSJT-X `nterms=5` 是 5 个系数，即 4 次多项式；
+  Rust 旧 `polyfit(..., 5)` 是 5 次多项式。
+- stream depth/AP 控制流：`ndepth=1` 时 WSJT-X 在 `nzhsym<50` 直接返回；
+  Rust stream 已跳过 41 阶段。外部 `ft8_a7d` 受 `lft8apon` 和 contest 6/7
+  约束。
+- duplicate-gated subtract 假设已撤回：regular subtract 实际在 `ft8b.f90`
+  内部 valid decode 后执行，然后才返回外层 duplicate check。Rust
+  “成功返回后立刻 subtract，再做 seen filter”符合有效执行顺序。
 
 ## 工程整理
-
-### 模块边界
 
 - 解码核心保持独立：
   - `src/ft8`: FT8/JT77/LDPC/AP/subtract/protocol/hashcallbook。
   - `src/stream`: slot 时间、slot 驱动、跨 slot session 状态。
   - `src/input`: WAV 文件、声卡采集、重采样入口。
   - `src/main.rs`: CLI 参数和输出，不承载解码逻辑。
-- `util` 收口为 crate-internal，只保留真正跨层基础设施，目前主要是 FFT dispatch/engine。
+- `util` 收口为 crate-internal，只保留真正跨层使用的基础设施，目前主要是
+  FFT dispatch/engine。
 - 单一 owner 的 util 已合并回 owner：
   - CRC -> `ft8::decode174_91`
   - AP LDPC helper -> `ft8::ap_decode`
   - pack/unpack/hash/subtract/protocol -> `ft8`
-
-### CLI
-
-- 文件：
+- CLI：
   - `ft8rs file <wav>`
   - `ft8rs file <wav> --start-time YYMMDD_HHMMSS`
-  - 文件名可推断时间戳时可省略 `--start-time`。
-- 实时监听：
-  - `ft8rs monitor` 列出输入设备。
-  - `ft8rs monitor --device <index-or-full-name> [--slots N]` 监听输入。
+  - `ft8rs monitor`
+  - `ft8rs monitor --device <index-or-full-name> [--slots N]`
   - `ft8rs monitor --device <device> --udp --udp-host 127.0.0.1 --udp-port 2238`
-    发送 WSJT-X UDP Decode 兼容 report。
 - CLI stdout 只输出解码信息和 slot 完成分隔符；默认不输出 trace。
-
-### 声卡 streaming
-
-- 声卡主线程按系统 15 秒 slot 边界采集音频。
-- `NativeSampleCollector` 保留 carry buffer，避免 audio chunk 跨 slot 时丢样本。
-- decode worker 独占一个 `StreamDecodeSession`：
-  - 保持 hashcallbook、AP memory、residual subtract 顺序和 `41/47/50` 状态顺序更新。
-  - 主线程在采样等待期间轮询 decode event，使强信号 early decode 可以更早输出。
-- 不并行 classic candidate/subtract loop，避免改变 WSJT-X residual 顺序语义。
 
 ## 性能尝试
 
-### 有效
+有效且保留：
 
-- AP downsample cache：
-  - WSJT-X `ft8_downsample.f90` 用 `save x,cx` 保存长 FFT。
-  - Rust 新增 `ApDownsampleCache`，AP 候选共享同一个 slot residual 的长 FFT。
-- `gen_ft8wave` phase table cache：
-  - 对齐 WSJT-X `ctab(0:NTAB-1)` 风格。
+- AP downsample cache：同一 slot residual 的 AP 候选共享长 FFT。
+- `gen_ft8wave` phase table cache：对齐 WSJT-X `ctab(0:NTAB-1)`。
 - 删除 `decode_from_f64` pass loop 前未使用 FFT。
 - candidate workspace 从每个 candidate 新建改为每个 pass 复用。
 - hard sync 统计避免重复计算。
 - `compute_snr()` 和 `itone` 输出共用同一份 tone 序列。
 - LDPC/OSD：
   - generator matrix 用 `OnceLock` 缓存。
-  - OSD 内层 `mi/me/ce/e2/e2sub` 工作区复用。
+  - OSD 内层工作区复用。
   - `mrb_encode_into` 避免每次 encode 分配新 `Vec`。
   - `nextpat91` 去掉临时 `ms` 分配。
-  - OSD reliability sort 改为 `sort_unstable_by`。
-- 成功 decode 后 `message77` 使用 slice，不再 `to_vec()`。
+
+撤回或低收益：
+
+- pass 内 coarse downsample cache：大块 `NFFT2` 复数数组 clone 导致长测变慢。
+- `sync8` 小数组 thread-local buffer：短测变慢。
+- 候选并行：可能改变 duplicate/subtract/residual 顺序，暂不做。
+- FFTW wisdom / FFTW threads：当前 trace 中 FFT 占比很小，优先级低。
 
 当前性能结论：
 
-- trace 显示主要瓶颈在 `ft8b -> try_decode_passes -> decode174_91` 的 LDPC/OSD。
+- 主要瓶颈在 `ft8b -> try_decode_passes -> decode174_91` 的 LDPC/OSD。
 - FFT、sync8、downsample 目前不是主耗时。
 - WSJT-X classic FT8 主路径没有明显可直接照搬的 candidate 并行优化。
-- `FFTW@3840` 与 `rustfft@3840` 的临时对比：
-  - 短测均为 `21`。
-  - 长测均为 `422/449`。
-  - rustfft 在该轮长测更快，因此默认发布路径改为 `rustfft@3840`。
-- 后续若继续优化，优先考虑 Rust 内部 LDPC/OSD workspace 复用；这属于内存模型优化，不是 WSJT-X 行为差异。
 
-### 撤回或低收益
+## 最近 WSJT-X 对齐
 
-- pass 内 coarse downsample cache：
-  - 因大块 `NFFT2` 复数数组 clone，长测变慢，已撤回。
-- `sync8` 小数组 thread-local buffer：
-  - 短测变慢，已撤回。
-- 候选并行：
-  - 可能改变 duplicate/subtract/residual 顺序，暂不做。
-- FFTW wisdom / FFTW threads：
-  - WSJT-X 构建支持相关能力，但当前 trace 中 FFT 占比很小，优先级低。
+### Progressive Decode State
 
-## 当前仍有价值的排查线索
+- WSJT-X 在 `nzhsym=50` 时继承 `ndecodes=ndec_early` 和 `allmessages`。
+- ft8rs 新增 `DecodeOptions.initial_messages`，stream 在 full-stage 传入
+  early messages，仅参与 duplicate/pass 控制，不作为本次返回结果。
+- 这是架构对齐，但不是当前剩余 miss 的主因。
 
-- 剩余目标：第四里程碑 `430/449`。
-- 继续优先源码架构差异，其次 miss 驱动；参数差异后置。
-- 重点方向：
-  - WSJT-X 文件窗口、padding、连续缓冲与 `0.785s` 起点偏移的关系。
-  - `ft8_decode` 外层控制流、`ft8b` AP pass、`ft8_a7` same-parity memory。
-  - 剩余 1-based/0-based：`maxloc/minloc`、`nint`、implicit integer assignment、Fortran array lower bound。
-  - compound/hash/display 形态只用于 diff 诊断，不应被当成真实 miss。
+### LDPC / OSD 数值同构
 
-## 当前轮：77-bit message family 对齐
+- `platanh` 改为 WSJT-X `platanh.f90` 的分段线性近似和 `±7.0` 饱和，而不是
+  精确 `atanh`。
+- OSD reliability ordering 改为本地 `indexx_ascending`，按 WSJT-X
+  `indexx.f90` 生成升序索引，再反转用于 MRB。
+- `try_decode_passes` 改为 WSJT-X `cycle` 语义：CRC-good codeword 若因 all-zero、
+  message type、unpack 或 contest quirk 不合法，不让整个候选立即失败，而是
+  继续后续 pass。
+- `is_valid_message_type` 修正为 WSJT-X 条件：
+  `i3>5 .or. (i3==0 .and. n3>6)`。
 
-- 发现截图中的 `RA3Y RR73; JR1FTJ <R5AF/O> +00` 属于 WSJT-X
-  `packjt77.f90` 的 Type 0.1 DXpedition special message (`i3=0,n3=1`)。
-- 范围收窄：本项目只专注 FT8 解码对齐。JT77 中的 WSPR-style Type 0.6
-  不作为 `ft8rs` 的功能目标，不参与灵敏度/性能基线，也不作为后续排查
-  重点。相关 pack/unpack 代码已移除，主解码路径直接拒绝 `i3=0,n3=6`。
-- Rust `unpack77` 原先只覆盖 free text、standard `i3=1/2` 和 Type 4；
-  其他有效 message family 会在 LDPC 成功后被 unpack 阶段丢弃。
-- 本轮补齐接收侧 active branches：
+### `sync8` / Baseline 排序同构
+
+- WSJT-X `sync8.f90` 在 `red`/`red2` 40% percentile、candidate0 生成和 final
+  candidate sync 排序中都使用 `indexx`。
+- ft8rs 已将这些位置改为本地 `indexx_ascending`。FT8 spectrum baseline 的
+  percentile selection 也改为同一 index-based 选择。
+- near-dupe 边界保留 `tdiff < 0.04 - 1e-12`，用于模拟 WSJT-X 单精度边界，
+  避免把刚好相差一个 `NSTEP` 的候选误合并。
+
+### FFT / Downsample 数值路径
+
+- FT8 core 调用改为 WSJT-X 同名同向 wrapper：
+  - `four2a_r2c` 对应 `call four2a(x,n,1,-1,0)`。
+  - `four2a_c2c(...,-1)` 对应 complex forward。
+  - `four2a_c2c(...,1)` 对应 complex inverse。
+- `ft8_downsample` 和 AP downsample 使用 unnormalized inverse FFT，再显式乘
+  `fac=1/sqrt(NFFT1*NFFT2)`，不再用 normalized inverse 的数学等价写法。
+- `cshift(c1,i0-ib)` 改为 signed shift + `rem_euclid`，避免极低频边界时
+  `usize` 下溢。
+
+### `nuttal_window`
+
+- 对照 WSJT-X `lib/nuttal_window.f90` 和 `lib/ft8/get_spectrum_baseline.f90`，
+  FT8 spectrum baseline 使用的窗口常量为：
+  - `a0=0.3635819`
+  - `a1=-0.4891775`
+  - `a2=0.1365995`
+  - `a3=-0.0106411`
+- ft8rs 之前使用的是另一组 Nuttall 常量。已改为 WSJT-X 常量和同号展开：
+  `a0+a1*cos(x)+a2*cos(2x)+a3*cos(3x)`。
+- 影响范围是 `savg/sbase/xbase`、SNR 和 false-positive gate。
+
+### `subtractft8` / `gen_ft8wave`
+
+- `subtractft8` sample index 对齐：`nstart` 和 `j` 按 Fortran 1-based sample
+  index 映射。
+- `subtractft8` `nstart=dt*12000+1+idt` 按 Fortran implicit integer assignment
+  截断，而不是 round。
+- LPF 改为 WSJT-X 结构：
+  - `NFFT=NMAX=180000` circular FFT filter。
+  - `cw(1:NFILT+1)=window/sumw`。
+  - `cshift(cw,NFILT/2+1)`。
+  - forward FFT 后 `cw=cw*fac`。
+  - `cfilt` forward、乘 `cw`、inverse，再应用首尾 `endcorrection`。
+- `gen_ft8wave` complex envelope 已对齐：
+  - first ramp: `(1-cos(angle))/2`
+  - last ramp: `(1+cos(angle))/2`
+- 在当前 `+0.785s` 窗口下，包络修正后长测为 `422/449`，可保留。
+
+仍未保留：
+
+- `subtractft8.f90:sqf()` refined-DT 频带能量。WSJT-X 比较减除后 FFT 中
+  `f0-1.5*baud` 到 `f0+8.5*baud` 的信号频带能量；ft8rs 当前保护路径仍比较
+  时域残差平方和。之前单点替换会掉保护线，后续应和 `sqf()` 副作用模型、
+  局部 `dd` 生命周期、参考波形相位一起成组核对。
+
+### 77-bit Message Family
+
+- 本项目只专注 FT8。JT77 中的 WSPR-style Type 0.6 不作为功能目标。
+- 补齐 FT8 相关 receive/pack 分支：
   - Type 0.1 DXpedition `RR73;`
   - Type 0.3/0.4 ARRL Field Day
   - Type 0.5 telemetry
   - Type 3 ARRL RTTY
   - Type 5 EU VHF hashed-call exchange
-- 同步补齐 pack 侧主要分支：
-  - Type 0.1 / 0.3 / 0.4 / 0.5 / 3 / 5。
-- 新增手工 bit fixture 和 pack/unpack round-trip fixture，既保护接收侧
-  不丢有效 LDPC payload，也保护发送侧基础 bit layout。
-
-### 后续 FT8 format gate 对齐
-
-- 移除 WSPR-style Type 0.6 pack/unpack 代码，主解码路径拒绝 `i3=0,n3=6`。
 - 补齐 WSJT-X 接收侧 hard gate：
-  - `unpack28` 对 standard callsign 增加 `callok()` 风格校验。
-  - `unpack77` 末尾语义补上全局 `CQ <...>` reject。
-  - 非 contest (`ncontest=0`) 下，`i3=1..3` 且消息包含 `/R` 或以 `TU;`
-    开头时拒绝，贴近 `ft8b.f90` 的 contest-format 过滤。
-- 新增 `CQ <...>` 和 invalid standard callsign 单元测试。
-- 补齐 receive unpack 的 `mycall/hiscall` hash 替换上下文：
-  - Type 0.1 使用 `hiscall` 解析 10-bit hash。
-  - Type 1 使用 `mycall` 解析 first-call 22-bit hash。
-  - Type 4/Type 5 使用 `mycall` 解析 12-bit hash。
-- `pack_jt77::split77` 的 directed CQ 判定改用 WSJT-X `chkcall` 镜像，
-  覆盖 compound call/basecall 提取。
+  - standard callsign `callok()` 风格校验。
+  - 全局 `CQ <...>` reject。
+  - 非 contest 下拒绝 `i3=1..3` 且消息包含 `/R` 或以 `TU;` 开头。
+- 补齐 receive unpack 的 `mycall/hiscall` hash 替换上下文。
+
+## 重点 Miss 诊断
+
+### `230208_140430 F4JAR UX7UU -19`
+
+- baseline SNR `-9`、drift `0.1`、freq `1413`，曾是最强标准消息 miss。
+- 目标并非被 `sync8` 漏掉；候选进入 `ft8b`，hard Costas `nsync≈18`。
+- 失败点在 bit metrics / LDPC / OSD：当前细化时间附近可恢复正确 message，
+  但 hard errors 约 `40..43`，超过 WSJT-X `nharderrors<=36` 接受线。
+- 临时时间扫描显示，`ibest` 往后约 `+6/+7` 个 200 Hz 样点时 hard errors 可降
+  到 `33..34`，理论上足够通过。
+- RustFFT 与 FFTW 结果一致；临时 `fftwf` 探针也选到同一同步峰。该 miss
+  不像 FFT 后端、pack/unpack 或 AP pass 未执行。
+- 用户后来确认这条是 JTDX decode，当前 WSJT-X 对齐阶段不再优先追它。
+
+### `230208_140415 FO0L F4GYE JN07`
+
+- 是窗口敏感 lost decode：
+  - 单 slot/full decode 在 offset `0.000/0.250/1.000` 可解。
+  - 在 offset `0.500/0.785` 即使窄频、`ncand=5000`、`syncmin=0.5` 也未解。
+- 更像时间窗口/邻近信号相位关系导致，不是 AP memory 或 progressive subtract
+  独立造成。
+
+### `230208_140445 VE7ON S56KFG JN76`
+
+- 在 `+0.785s` 窗口是 near-dupe 边界问题。
+- 默认 pass2 中不可解强候选 `1446.875Hz / dt=+1.140 / sync≈2.20` 会压掉可解
+  候选 `1443.750Hz / dt=+1.180 / sync≈1.94`。
+- 两者时间差正好 `0.04s`。WSJT-X 单精度 `tdiff < 0.04` 不应合并该边界；
+  Rust f64 原先会因 roundoff 当成略小于 `0.04`。
+- 修复边界后该类问题缓解。
+
+## 下一步
+
+优先级不变：
+
+1. 通过 WSJT-X 源码查架构差异。
+2. 通过 miss 查架构差异。
+3. 通过 WSJT-X 源码查参数差异。
+4. 通过 miss 查参数差异。
+
+下一轮重点：
+
+- 继续核对 `subtractft8` refined-DT 的 `sqf()` 行为，但必须成组处理，不能单点
+  替换导致保护线回退。
+- 查 `ft8_decode` 外层 `dd0/dd1/newdat/subtract` 生命周期，尤其 progressive
+  residual 和 duplicate/subtract 的交互。
+- 查 `ft8_a7` same-parity memory、`ft8_a7_save` 调用时机、`hashcallbook`
+  共享和 AP 表裁剪。
+- 对 remaining diff 做 cluster：按 slot、freq、message family、drift 和 tag
+  分类，不把 display-only 差异当成真实 miss。
 
 ## 最近验证
 
-- `cargo check --tests` ✅
-- `git diff --check` ✅
 - `cargo test --release test_stream_decode_short_audio -- --nocapture` ✅
   - `21` unique messages
   - 约 `3.3s`
-- `cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
+- `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
   - `422/449`
-  - 每段均小于 `15s`
-- `cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture` ✅
-  - `422/449`
-  - 每段均小于 `15s`
-- `target/release/ft8rs monitor --device "VB-Cable A" --slots 2` ✅
-  - 声卡 live path 可正常按 slot 输出。
+  - timing residual median `+0.000s`
+  - 每段均小于 `15s`，最慢约 `3.84s`
+- `git diff --check` ✅
