@@ -1739,18 +1739,20 @@ fn message_type(message77: &[u8]) -> (usize, usize) {
 /// WSJT-X uses xsnr2 when nagain=false (initial decode), xsnr when nagain=true
 /// (after subtract+retry). xbase is the noise power at f1 from the sync8 baseline.
 fn compute_snr(s8: &[f64], itone: &[u8], xbase: f64) -> (f64, f64) {
-    let mut xsig = 0.0;
-    let mut xnoi = 0.0;
+    let mut xsig = 0.0f32;
+    let mut xnoi = 0.0f32;
 
     for i in 0..79 {
         let tone = itone[i] as usize;
-        xsig += s8[tone * NN + i].powi(2);
+        let sig = s8[tone * NN + i] as f32;
+        xsig += sig * sig;
         let ios = (tone + 4) % 7;
-        xnoi += s8[ios * NN + i].powi(2);
+        let noi = s8[ios * NN + i] as f32;
+        xnoi += noi * noi;
     }
 
     // xsnr: adjacent-tone noise estimate
-    let mut xsnr = 0.001;
+    let mut xsnr = 0.001f32;
     let arg = xsig / xnoi.max(1e-30) - 1.0;
     if arg > 0.1 {
         xsnr = arg;
@@ -1761,14 +1763,14 @@ fn compute_snr(s8: &[f64], itone: &[u8], xbase: f64) -> (f64, f64) {
     // WSJT-X: xsnr2_arg = xsig / (xbase * 3e6) - 1
     // This regular path stores s8 from csymb/1000, so xsig is 1e6x smaller.
     // Compensate with 3 instead of 3e6. AP ft8_a7d keeps s8 unscaled.
-    let mut xsnr2 = 0.001;
-    let arg2 = xsig / xbase / 3.0 - 1.0;
+    let mut xsnr2 = 0.001f32;
+    let arg2 = xsig / xbase as f32 / 3.0 - 1.0;
     if arg2 > 0.1 {
         xsnr2 = arg2;
     }
     xsnr2 = 10.0 * xsnr2.log10() - 27.0;
 
-    (xsnr, xsnr2)
+    (xsnr as f64, xsnr2 as f64)
 }
 
 fn trace_timers_enabled() -> bool {
@@ -1928,7 +1930,7 @@ fn try_decode_passes(
     book: &Option<HashCallBook>,
 ) -> Option<DecodeResult> {
     let maxosd_base = if depth >= 2 { 2 } else { -1 };
-    let scalefac = 2.83;
+    let scalefac = 2.83f32;
     // Passes 1-5: regular WSJT-X BP+OSD decoding with 5 bit metrics.
     workspace.apmask.fill(0);
 
@@ -1967,12 +1969,17 @@ fn try_decode_passes(
                 _ if (ipass - 5) % 2 == 1 => workspace.bmeta[i],
                 _ => workspace.bmetc[i],
             };
-            workspace.llr[i] = scalefac * metric;
+            workspace.llr[i] = (scalefac * metric as f32) as f64;
         }
 
         workspace.apmask.fill(0);
         if ipass > 5 {
-            let apmag = workspace.llr.iter().map(|x| x.abs()).fold(0.0f64, f64::max) * 1.1;
+            let apmag = (workspace
+                .llr
+                .iter()
+                .map(|x| x.abs() as f32)
+                .fold(0.0f32, f32::max)
+                * 1.1f32) as f64;
             let iaptype = if ap_options.cq_only {
                 1
             } else {

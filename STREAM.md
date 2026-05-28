@@ -482,6 +482,9 @@ Current source-level finding:
   - `ft8_a7d` AP bit metrics now use the same `abs(cs(...))` source path for
     `nsym=1` instead of the unscaled `s8` shortcut, and its `cs/s2/bm/den`
     arithmetic follows the same default `real` narrowing.
+  - `scalefac*metric`, `apmag=maxval(abs(llrz))*1.1`, and regular-path
+    `xsig/xnoi/xsnr/xsnr2` accumulation now also narrow intermediate
+    arithmetic to WSJT-X default `real` precision.
   - `ft8b` `bmete` and `ft8_a7d` time-refine use first-max behavior matching
     Fortran `maxloc`。
   - LDPC `platanh` now uses WSJT-X's piecewise approximation and `±7.0`
