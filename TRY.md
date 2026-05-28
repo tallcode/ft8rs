@@ -183,6 +183,10 @@ Offset sweep 仍作为诊断资料保留：
 - `ft8_a7d` AP metric 同步做同构整理：`nsym=1` 改回 WSJT-X 的
   `abs(cs(graymap(...),ks))` 路径，而不是未缩放 `s8`；`cs/s2/bm/den`
   也收窄到默认 `real` 形状。RustFFT/FFTW 长测仍保持 `424/449`。
+- 重新审视“旧 offset 下暂缓”的细节后，继续收窄 `scalefac*metric`、
+  `apmag=maxval(abs(llrz))*1.1` 和 regular SNR `xsig/xnoi/xsnr/xsnr2` 的
+  中间算术到 WSJT-X default `real`。在 `+0.785s` 窗口和当前细节叠加后，
+  RustFFT/FFTW 长测仍保持 `424/449`。
 
 ### `nuttal_window`
 

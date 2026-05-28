@@ -280,11 +280,11 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     normalize_bmet(&mut bmetc);
     normalize_bmet(&mut bmetd);
 
-    let scalefac = 2.83;
-    let llra: [f64; 174] = core::array::from_fn(|i| scalefac * bmeta[i]);
-    let llrb: [f64; 174] = core::array::from_fn(|i| scalefac * bmetb[i]);
-    let llrc: [f64; 174] = core::array::from_fn(|i| scalefac * bmetc[i]);
-    let llrd: [f64; 174] = core::array::from_fn(|i| scalefac * bmetd[i]);
+    let scalefac = 2.83f32;
+    let llra: [f64; 174] = core::array::from_fn(|i| (scalefac * bmeta[i] as f32) as f64);
+    let llrb: [f64; 174] = core::array::from_fn(|i| (scalefac * bmetb[i] as f32) as f64);
+    let llrc: [f64; 174] = core::array::from_fn(|i| (scalefac * bmetc[i] as f32) as f64);
+    let llrd: [f64; 174] = core::array::from_fn(|i| (scalefac * bmetd[i] as f32) as f64);
 
     // ── Brute-force 206 message variants ──
     let mut dmin = 1e30f64;
