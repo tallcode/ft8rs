@@ -263,16 +263,17 @@ Important WSJT-X details:
   pack/unpack code is intentionally excluded.
 - `pack77`/`unpack77` must cover active WSJT-X `i3/n3` message families.
   Receive decode must not discard a valid LDPC codeword just because its
-  77-bit family is uncommon. Contest-only families can be unpacked for protocol
-  parity, but the default non-contest decoder must not emit them as normal FT8
-  activity. The current Rust receive side covers:
+  77-bit family is uncommon. The current Rust receive side covers:
   - `i3=0,n3=0`: free text.
   - `i3=0,n3=1`: DXpedition special messages such as
     `CALL RR73; CALL <HASH> +00`.
   - `i3=0,n3=3/4`: ARRL Field Day exchange.
   - `i3=0,n3=5`: telemetry.
   - `i3=1/2`: standard messages and `/R`/`/P` forms.
-  - `i3=3`: ARRL RTTY contest exchange, accepted only when `ncontest=4`.
+  - `i3=3`: ARRL RTTY contest exchange. The two 28-bit callsign slots are
+    validated as exchange callsign tokens; `CQ`/`QRZ`/`DE` special tokens are
+    rejected there because WSJT-X `pack77_3` reaches Type 3 through `chkcall`
+    and cannot transmit those tokens in the callsign fields.
   - `i3=4`: one nonstandard/hash call plus one standard/nonstandard call.
   - `i3=5`: EU VHF contest exchange with hashed calls.
 - `i3=0,n3=6` is treated as out of scope for this project and rejected before
