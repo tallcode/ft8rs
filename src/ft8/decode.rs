@@ -36,6 +36,7 @@ pub(crate) const COSTAS_BLOCKS: usize = 7;
 pub(crate) const COSTAS_SYMBOL_LEN: usize = 32;
 pub(crate) const TAPER_SIZE: usize = 101;
 pub(crate) const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
+const TWO_PI_F32: f32 = std::f32::consts::PI * 2.0;
 
 pub(crate) const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
 pub(crate) const DT2: f64 = 1.0 / FS2;
@@ -223,12 +224,12 @@ pub(crate) fn build_costas_sync_templates() -> &'static SyncTemplate {
         let mut re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
         let mut im = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
         for i in 0..COSTAS_BLOCKS {
-            let mut phi: f64 = 0.0;
-            let dphi = (TWO_PI * COSTAS[i] as f64) / COSTAS_SYMBOL_LEN as f64;
+            let mut phi = 0.0f32;
+            let dphi = TWO_PI_F32 * COSTAS[i] as f32 / COSTAS_SYMBOL_LEN as f32;
             for j in 0..COSTAS_SYMBOL_LEN {
-                re[i * COSTAS_SYMBOL_LEN + j] = phi.cos();
-                im[i * COSTAS_SYMBOL_LEN + j] = phi.sin();
-                phi = (phi + dphi) % TWO_PI;
+                re[i * COSTAS_SYMBOL_LEN + j] = phi.cos() as f64;
+                im[i * COSTAS_SYMBOL_LEN + j] = phi.sin() as f64;
+                phi = (phi + dphi) % TWO_PI_F32;
             }
         }
         SyncTemplate { re, im }
@@ -242,14 +243,14 @@ fn build_frequency_shift_sync_templates() -> &'static Vec<FrequencyShiftSyncTemp
         let mut templates = Vec::new();
         for ifr in -5..=5 {
             let delf = ifr as f64 * 0.5;
-            let dphi = TWO_PI * delf * DT2;
+            let dphi = TWO_PI_F32 * delf as f32 * DT2 as f32;
             let mut twk_re = vec![0.0; COSTAS_SYMBOL_LEN];
             let mut twk_im = vec![0.0; COSTAS_SYMBOL_LEN];
-            let mut phi: f64 = 0.0;
+            let mut phi = 0.0f32;
             for j in 0..COSTAS_SYMBOL_LEN {
-                twk_re[j] = phi.cos();
-                twk_im[j] = phi.sin();
-                phi = (phi + dphi) % TWO_PI;
+                twk_re[j] = phi.cos() as f64;
+                twk_im[j] = phi.sin() as f64;
+                phi = (phi + dphi) % TWO_PI_F32;
             }
             let mut re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
             let mut im = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
@@ -1436,7 +1437,9 @@ fn extract_soft_symbols(ibest: isize, workspace: &mut DecodeWorkspace) {
             let idx = tone * NN + k;
             workspace.cs_re[idx] = re;
             workspace.cs_im[idx] = im;
-            workspace.s8[idx] = (re * re + im * im).sqrt();
+            let s8_re = workspace.symb_re[tone] as f32;
+            let s8_im = workspace.symb_im[tone] as f32;
+            workspace.s8[idx] = wsjtx_cabs(s8_re, s8_im) as f64;
         }
     }
 }
@@ -1681,7 +1684,7 @@ fn sync8d_isize(
     sync_re: &[f64],
     sync_im: &[f64],
 ) -> f64 {
-    let mut sync = 0.0;
+    let mut sync = 0.0f32;
     let stride = 36 * COSTAS_SYMBOL_LEN;
 
     for i in 0..COSTAS_BLOCKS {
@@ -1691,13 +1694,13 @@ fn sync8d_isize(
         for _block in 0..3 {
             if i_start >= 0 && i_start + COSTAS_SYMBOL_LEN as isize <= NP2 as isize {
                 let i_start = i_start as usize;
-                let mut z_re = 0.0;
-                let mut z_im = 0.0;
+                let mut z_re = 0.0f32;
+                let mut z_im = 0.0f32;
                 for j in 0..COSTAS_SYMBOL_LEN {
-                    let s_re = sync_re[base + j];
-                    let s_im = sync_im[base + j];
-                    let d_re = cd0_re[i_start + j];
-                    let d_im = cd0_im[i_start + j];
+                    let s_re = sync_re[base + j] as f32;
+                    let s_im = sync_im[base + j] as f32;
+                    let d_re = cd0_re[i_start + j] as f32;
+                    let d_im = cd0_im[i_start + j] as f32;
                     z_re += d_re * s_re + d_im * s_im;
                     z_im += d_im * s_re - d_re * s_im;
                 }
@@ -1707,7 +1710,7 @@ fn sync8d_isize(
         }
     }
 
-    sync
+    sync as f64
 }
 
 fn is_valid_message_type(message77: &[u8]) -> bool {
@@ -1760,11 +1763,8 @@ fn compute_snr(s8: &[f64], itone: &[u8], xbase: f64) -> (f64, f64) {
     xsnr = 10.0 * xsnr.log10() - 27.0;
 
     // xsnr2: spectrum baseline estimate (WSJT-X ft8b.f90, regular decode path)
-    // WSJT-X: xsnr2_arg = xsig / (xbase * 3e6) - 1
-    // This regular path stores s8 from csymb/1000, so xsig is 1e6x smaller.
-    // Compensate with 3 instead of 3e6. AP ft8_a7d keeps s8 unscaled.
     let mut xsnr2 = 0.001f32;
-    let arg2 = xsig / xbase as f32 / 3.0 - 1.0;
+    let arg2 = xsig / xbase as f32 / 3.0e6 - 1.0;
     if arg2 > 0.1 {
         xsnr2 = arg2;
     }

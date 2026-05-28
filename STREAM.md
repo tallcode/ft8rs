@@ -479,6 +479,13 @@ Current source-level finding:
     precision shape as WSJT-X: `csymb/1000`, `s2`, `imetric=2` squaring,
     `bm/den`, and `normalizebmet` all narrow intermediate arithmetic to f32
     before returning to the Rust storage type.
+  - `ft8b` time/frequency refinement now also follows the source precision
+    shape more closely: Costas and tweak templates are generated with default
+    `real` `phi/dphi/cos/sin`, `sync8d` accumulates the complex correlations
+    as f32, and regular-path `s8` stores the unscaled
+    `abs(csymb(1:8))` while `cs` keeps `csymb/1e3`. Consequently `xsnr2` uses
+    the source expression `xsig/xbase/3.0e6-1.0` rather than the previous
+    mathematically equivalent scaled-`s8` compensation.
   - `ft8_a7d` AP bit metrics now use the same `abs(cs(...))` source path for
     `nsym=1` instead of the unscaled `s8` shortcut, and its `cs/s2/bm/den`
     arithmetic follows the same default `real` narrowing.
