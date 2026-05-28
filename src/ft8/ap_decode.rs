@@ -633,11 +633,11 @@ fn ap_downsample(
 ) -> (Vec<f64>, Vec<f64>) {
     let df = DOWNSAMPLE_DF;
     let baud = DOWNSAMPLE_BAUD;
-    let i0 = (f0 / df).round() as usize;
+    let i0 = nint_wsjtx_f32(f0 / df).max(0) as usize;
     let ft = f0 + 8.5 * baud;
-    let it_end = ((ft / df).round() as usize).min(NFFT1_LONG / 2);
+    let it_end = (nint_wsjtx_f32(ft / df).max(0) as usize).min(NFFT1_LONG / 2);
     let fb = f0 - 1.5 * baud;
-    let ib = 1.max((fb / df).round() as usize);
+    let ib = 1.max(nint_wsjtx_f32(fb / df).max(0) as usize);
 
     let mut cd0_re = vec![0.0f64; NFFT2];
     let mut cd0_im = vec![0.0f64; NFFT2];
@@ -688,6 +688,10 @@ fn ap_downsample(
         cd0_im[i] *= DOWNSAMPLE_FAC;
     }
     (cd0_re, cd0_im)
+}
+
+fn nint_wsjtx_f32(x: f64) -> isize {
+    (x as f32).round() as isize
 }
 
 fn ap_sync8d(cd0_re: &[f64], cd0_im: &[f64], i0: isize, sync_re: &[f64], sync_im: &[f64]) -> f64 {

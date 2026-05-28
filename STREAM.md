@@ -471,6 +471,9 @@ Current source-level finding:
     normalized FFT wrappers.
   - `ft8_downsample` and AP downsample use the WSJT-X inverse FFT path plus
     `fac=1/sqrt(NFFT1*NFFT2)` directly.
+  - `ft8_downsample` and AP downsample perform `i0/ib/it` `nint` after
+    narrowing the expression to Fortran default `real` precision, matching the
+    source-level rounding path for downsample bin boundaries.
   - `sync8` uses source-shaped `nfos=NFFT1/NSPS`。
   - `ft8b` `bmete` and `ft8_a7d` time-refine use first-max behavior matching
     Fortran `maxloc`。
@@ -525,6 +528,9 @@ Current source-level finding:
   mathematically equivalent normalized-inverse path
   `(1/NFFT2)*sqrt(NFFT2/NFFT1)`, eliminating a possible rounding-path
   difference for future weak-signal audits. AP downsample uses the same helper.
+  Bin-boundary `nint` values (`i0/ib/it`) are also computed after narrowing to
+  Fortran default `real`, matching `ft8_downsample.f90` rather than using the
+  surrounding Rust `f64` expression directly.
   The `cshift(c1,i0-ib)` step also uses signed modular indexing to match the
   Fortran shift semantics without unsigned underflow at low-frequency edges.
 - A temporary single-precision `fftwf` probe that mirrors WSJT-X

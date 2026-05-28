@@ -15,7 +15,7 @@
   - 当前保护线 `424/449`。
   - 默认 slot 起点偏移 `+0.785s`。
   - timing residual median 约 `+0.000s`。
-  - 每段小于 `15s`，最近最慢段约 `3.87s`。
+  - 每段小于 `15s`，最近最慢段约 `4.14s`。
 - 测试要求：
   - 性能/灵敏度测试只使用 release。
   - WSJT-X parity 验证使用 `--features fftw`。
@@ -171,6 +171,9 @@ Offset sweep 仍作为诊断资料保留：
   - `four2a_c2c(...,1)` 对应 complex inverse。
 - `ft8_downsample` 和 AP downsample 使用 unnormalized inverse FFT，再显式乘
   `fac=1/sqrt(NFFT1*NFFT2)`，不再用 normalized inverse 的数学等价写法。
+- `ft8_downsample` 和 AP downsample 的 `i0/ib/it` bin 取整改为先收窄到
+  Fortran default `real` 语义，再执行 `nint`。这不是追分参数，而是对齐
+  `ft8_downsample.f90` 中 `df/baud/f0` 默认实数表达式的 rounding path。
 - `cshift(c1,i0-ib)` 改为 signed shift + `rem_euclid`，避免极低频边界时
   `usize` 下溢。
 
