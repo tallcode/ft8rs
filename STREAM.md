@@ -478,9 +478,11 @@ Current source-level finding:
     normalized FFT wrappers.
   - `ft8_downsample` and AP downsample use the WSJT-X inverse FFT path plus
     `fac=1/sqrt(NFFT1*NFFT2)` directly.
-  - `ft8_downsample` and AP downsample perform `i0/ib/it` `nint` after
-    narrowing the expression to Fortran default `real` precision, matching the
-    source-level rounding path for downsample bin boundaries.
+  - `ft8_downsample` and AP downsample now keep the downsample setup expression
+    in Fortran default `real` shape: `df`, `baud`, `f0`, `ft`, `fb`, and the
+    final `i0/ib/it` `nint` all follow the source-level rounding path for bin
+    boundaries. The cosine taper and `fac` constant are also generated through
+    default-`real` precision before being stored in Rust buffers.
   - `sync8` uses source-shaped `nfos=NFFT1/NSPS`。
   - `ft8b` soft-symbol metrics now keep the same default `real/complex`
     precision shape as WSJT-X: `csymb/1000`, `s2`, `imetric=2` squaring,
@@ -496,6 +498,11 @@ Current source-level finding:
   - `ft8_a7d` AP bit metrics now use the same `abs(cs(...))` source path for
     `nsym=1` instead of the unscaled `s8` shortcut, and its `cs/s2/bm/den`
     arithmetic follows the same default `real` narrowing.
+  - `ft8_a7d` AP time/frequency synchronization now uses the same default
+    `real/complex` shape as `sync8d.f90`: Costas/tweak templates are narrowed
+    before use, and the complex dot products plus sync-power accumulation run
+    in f32 rather than Rust f64. This keeps AP alignment consistent with the
+    regular `ft8b` path.
   - `scalefac*metric`, `apmag=maxval(abs(llrz))*1.1`, and regular-path
     `xsig/xnoi/xsnr/xsnr2` accumulation now also narrow intermediate
     arithmetic to WSJT-X default `real` precision.
@@ -583,6 +590,18 @@ Current source-level finding:
   f32 reduced the official `+0.785s` long score to `423/449` and was rejected.
   This suggests `sync8` parity needs a finer-grained comparison of FFT output
   scale and array storage rather than a blanket precision cast.
+- After adopting the `+0.785s` fixture window, the old postponed `sync8`
+  precision changes were retried. Narrowing only final candidate
+  `freq/dt/sync` output to default `real` still reduced the protected long
+  score to `423/449`, so that change remains rejected. In contrast, the more
+  local downsample/AP-sync expression cleanup is baseline-safe: RustFFT and
+  FFTW both remain `21` on the short fixture and `424/449` on the long fixture.
+- A temporary diagnostic for the repeated `CQ F1PPH JN07` miss showed that the
+  candidate does reach `ft8b`; the selected refined time is typically one
+  200 Hz sample later than a nearby CRC-good point. Forcing `ibest-1` in that
+  local probe recovered `CQ F1PPH JN07` with `nharderrors=34`. This is not a
+  committed heuristic; it localizes the remaining gap to second time-refine /
+  soft-symbol boundary parity.
 - A no-subtract diagnostic for this target left the same `ibest`/hard-error
   pattern unchanged, so the single miss is not explained by previous accepted
   signals being subtracted from the residual. A separate duplicate/subtract

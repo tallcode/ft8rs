@@ -207,6 +207,13 @@ Offset sweep 仍作为诊断资料保留：
   `nint((xdt+0.5)*fs2)` 改为先收窄到 WSJT-X default `real` 再取整。该项没有
   单独改变短测或长测结果，但消除了一个可能产生 1 个 200Hz sample 差异的
   rounding path。
+- 在 `+0.785s` 正式窗口下重新复核旧的“数学等价但表达式不一致”项：
+  - regular/AP downsample 的 `df/baud/f0/ft/fb` 表达式、taper 生成和
+    `fac=1/sqrt(float(NFFT1)*NFFT2)` 都按 WSJT-X default `real` 路径落地。
+  - AP `ft8_a7d` 的 `sync8d`/frequency tweak 也从 f64 累加改为
+    `sync8d.f90` 同样的 default `complex/real` f32 形状。
+  - RustFFT/FFTW 短测均保持 `21`，长测均保持 `424/449`；这是对齐降噪，
+    不是灵敏度调参。
 - `sync8`、FT8 spectrum baseline、regular `ft8b` `xbase` 和 stream AP memory
   `xbase` 的 bin selection 改用 WSJT-X default `real` 的 `nint` 路径；`xbase`
   的 `10**` 表达式也按 default `real` 收窄。RustFFT/FFTW 正式窗口长测仍保持
@@ -214,6 +221,10 @@ Offset sweep 仍作为诊断资料保留：
 - 重新试过把 `sync8` 内部 `s/sync2d/red/candidate0` 全链路收窄到 f32，结果
   正式窗口长测降到 `423/449`，已撤回。结论：`sync8` 不能简单整体 f32 化，
   后续若继续对齐需更细地对照 FFT 输出缩放和 Fortran `real` 数组边界。
+- 重新试过只把 `sync8` candidate 输出的 `freq/dt/sync` 收窄到 default
+  `real`，正式窗口长测同样降到 `423/449`，已撤回。结论：这些旧 offset 下
+  暂缓的 sync8 精度项在当前 offset 下仍不能直接保留，需要先找出
+  `sync8` 前段 FFT/数组存储差异。
 
 ### `nuttal_window`
 
