@@ -174,7 +174,7 @@ WSJT-X disk-file FT8 decode 会跑渐进式 partial passes：
 |---:|---:|---|
 | `41` | `41*3456 = 141696` samples | early decode, rest zero-padded |
 | `47` | `47*3456 = 162432` samples | subtract selected early decodes, save cleaned early buffer |
-| `50` | full 15s slot | combine cleaned early part with original tail, then full decode and AP |
+| `50` | `50*3456 = 172800` samples | combine cleaned early part with original tail up to symbol 50, zero-pad the rest, then full decode and AP |
 
 重要点：
 
@@ -183,6 +183,9 @@ WSJT-X disk-file FT8 decode 会跑渐进式 partial passes：
 - `nzhsym<50` 会禁用 `ft8b` 内部 AP passes。
 - stream session 必须跨 partial stages 保留同一个 slot 状态，不能把
   `41/47/50` 当作互不相关的三个普通 decode。
+- WSJT-X disk early path 在最终 `nzhsym=50` 也执行
+  `id2a(50*3456+1:)=0`。因此 stream final stage 不能直接使用完整 15s
+  buffer 的尾部 `7200` samples；这些样本必须补零，以匹配源码窗口边界。
 
 ### 6.2 Outer `ft8_decode`
 
@@ -462,6 +465,10 @@ Current source-level finding:
   `ndecodes=ndec_early` and the saved `allmessages` table. ft8rs now mirrors
   that with `DecodeOptions.initial_messages`: early messages seed duplicate and
   pass-control state, but are not returned again by the full-stage decoder.
+- WSJT-X disk early path also zero-pads after `50*3456` samples before the final
+  `nzhsym=50` decode. ft8rs now mirrors this by clearing the last `7200` samples
+  of the nominal 15s slot in the final stream stage, while still preserving the
+  cleaned `47*3456` prefix and the original `47..50` symbol tail.
 - This alignment kept the previous no-offset long-file score unchanged at
   `422/449`; after switching the default long-test window to `+0.785s` and
   aligning `gen_ft8wave` envelope shaping plus `subtractft8` refined-DT

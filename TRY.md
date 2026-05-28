@@ -15,7 +15,7 @@
   - 当前保护线 `424/449`。
   - 默认 slot 起点偏移 `+0.785s`。
   - timing residual median 约 `+0.000s`。
-  - 每段小于 `15s`，最近最慢段约 `4.14s`。
+  - 每段小于 `15s`。
 - 测试要求：
   - 性能/灵敏度测试只使用 release。
   - WSJT-X parity 验证使用 `--features fftw`。
@@ -141,6 +141,10 @@ Offset sweep 仍作为诊断资料保留：
 - ft8rs 新增 `DecodeOptions.initial_messages`，stream 在 full-stage 传入
   early messages，仅参与 duplicate/pass 控制，不作为本次返回结果。
 - 这是架构对齐，但不是当前剩余 miss 的主因。
+- WSJT-X disk early path 在最终 `nzhsym=50` 仍然执行
+  `id2a(50*3456+1:)=0`。stream final stage 已同步补零最后 `7200` samples，
+  避免把完整 15s buffer 当作最终输入。这是 offset 对齐后重新复核出的
+  window/padding 类差异；RustFFT/FFTW 长测仍保持 `424/449`，但源码边界更干净。
 
 ### LDPC / OSD 数值同构
 
