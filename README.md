@@ -199,7 +199,8 @@ cargo test --release --features fftw test_stream_decode_long_audio -- --nocaptur
 当前要求：
 
 - 文件：`tests/ft8/230208_140300.wav`
-- 当前保护线：`422/449`
+- 当前保护线：`421/449`
+- 长测默认 slot 起点偏移：`+0.785s`
 - 第四里程碑目标：`430/449`
 - 每个 15 秒片段耗时必须小于 `15s`
 - 测试 harness 带有灵敏度保护，严重低于基线会提前失败
@@ -208,8 +209,8 @@ cargo test --release --features fftw test_stream_decode_long_audio -- --nocaptur
 
 ```text
 [STREAM LONG DECODE SUMMARY]
-  Total matched: 422/449 (94.0%)
-  Timing offset estimate: start_offset=baseline_drift-decoded_dt mean=+0.760s median=+0.785s p10=+0.745s p90=+0.825s n=422
+  Total matched: 421/449 (93.8%)
+  Timing offset estimate: start_offset=baseline_drift-decoded_dt mean=-0.017s median=+0.000s p10=-0.045s p90=+0.040s n=421
 ```
 
 排查 miss/extra 时可以写出 diff 文件：

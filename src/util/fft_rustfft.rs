@@ -71,12 +71,21 @@ thread_local! {
         std::cell::RefCell::new(ScratchBuffers::new());
 }
 
-/// Complex-to-complex FFT (forward or inverse).
-/// Input/output: split re/im arrays.
-/// Forward: no normalization (matches FFTPACK four2a with isign=-1)
-/// Inverse: 1/N normalization
+/// WSJT-X/FFTPACK-style complex FFT without normalization in either direction.
+///
+/// Used by WSJT-X-aligned call sites that apply the Fortran `fac` explicitly.
 #[inline]
-pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
+pub fn four2a_c2c(re: &mut [f64], im: &mut [f64], isign: i32) {
+    let inverse = match isign {
+        -1 => false,
+        1 => true,
+        _ => panic!("four2a_c2c only supports isign=-1 or isign=1"),
+    };
+    four2a_c2c_impl(re, im, inverse);
+}
+
+#[inline]
+fn four2a_c2c_impl(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let n = re.len();
     debug_assert_eq!(im.len(), n);
 
@@ -100,10 +109,9 @@ pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
         let buf = &mut scratch.complex_buf[..n];
         plan.process(buf);
 
-        let scale = if inverse { 1.0 / n as f64 } else { 1.0 };
         for i in 0..n {
-            re[i] = buf[i].re * scale;
-            im[i] = buf[i].im * scale;
+            re[i] = buf[i].re;
+            im[i] = buf[i].im;
         }
     });
 }
@@ -121,9 +129,13 @@ mod tests {
 
         let mut re_fwd = re.clone();
         let mut im_fwd = im.clone();
-        fft_complex(&mut re_fwd, &mut im_fwd, false);
+        four2a_c2c(&mut re_fwd, &mut im_fwd, -1);
 
-        fft_complex(&mut re_fwd, &mut im_fwd, true);
+        four2a_c2c(&mut re_fwd, &mut im_fwd, 1);
+        for i in 0..n {
+            re_fwd[i] /= n as f64;
+            im_fwd[i] /= n as f64;
+        }
 
         for i in 0..n {
             let expected = if i == 100 { 1.0 } else { 0.0 };
@@ -148,13 +160,36 @@ mod tests {
 
         let mut re_fwd = re.clone();
         let mut im_fwd = im.clone();
-        fft_complex(&mut re_fwd, &mut im_fwd, false);
+        four2a_c2c(&mut re_fwd, &mut im_fwd, -1);
 
-        fft_complex(&mut re_fwd, &mut im_fwd, true);
+        four2a_c2c(&mut re_fwd, &mut im_fwd, 1);
+        for i in 0..n {
+            re_fwd[i] /= n as f64;
+            im_fwd[i] /= n as f64;
+        }
 
         for i in 0..n {
             assert!((re_fwd[i] - re[i]).abs() < 1e-10);
             assert!((im_fwd[i] - im[i]).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_four2a_inverse_matches_normalized_inverse_times_n() {
+        let n = 3200;
+        let mut re: Vec<f64> = (0..n).map(|i| (i as f64 * 0.013).sin()).collect();
+        let mut im: Vec<f64> = (0..n).map(|i| (i as f64 * 0.017).cos()).collect();
+        let mut re_norm = re.clone();
+        let mut im_norm = im.clone();
+
+        four2a_c2c(&mut re, &mut im, 1);
+        four2a_c2c(&mut re_norm, &mut im_norm, 1);
+
+        for i in 0..n {
+            re[i] /= n as f64;
+            im[i] /= n as f64;
+            assert!((re_norm[i] - re[i] * n as f64).abs() < 1e-8);
+            assert!((im_norm[i] - im[i] * n as f64).abs() < 1e-8);
         }
     }
 
@@ -167,9 +202,13 @@ mod tests {
 
         let mut re_fwd = re.clone();
         let mut im_fwd = im.clone();
-        fft_complex(&mut re_fwd, &mut im_fwd, false);
+        four2a_c2c(&mut re_fwd, &mut im_fwd, -1);
 
-        fft_complex(&mut re_fwd, &mut im_fwd, true);
+        four2a_c2c(&mut re_fwd, &mut im_fwd, 1);
+        for i in 0..n {
+            re_fwd[i] /= n as f64;
+            im_fwd[i] /= n as f64;
+        }
 
         assert!((re_fwd[1000] - 1.0).abs() < 1e-8);
         for i in (0..n).step_by(1000) {
@@ -180,13 +219,13 @@ mod tests {
     }
 }
 
-/// Real-to-complex forward FFT via fft_complex with zero imaginary input.
+/// WSJT-X/FFTPACK-style real-to-complex forward FFT.
 #[inline]
-pub fn fft_r2c(re: &mut [f64], im: &mut [f64]) {
+pub fn four2a_r2c(re: &mut [f64], im: &mut [f64]) {
     let n = re.len();
     debug_assert_eq!(im.len(), n);
     let nh = n / 2 + 1;
-    fft_complex(re, im, false);
+    four2a_c2c(re, im, -1);
     for i in nh..n {
         re[i] = 0.0;
         im[i] = 0.0;

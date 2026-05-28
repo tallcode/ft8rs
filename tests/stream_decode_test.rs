@@ -3,6 +3,9 @@ use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
 use ft8rs::stream::{StreamDecodeConfig, StreamDecodeSession};
 use std::collections::HashSet;
 
+const LONG_SLOT_START_OFFSET_SEC: f64 = 0.785;
+const LONG_ACCEPTED_FLOOR: usize = 422;
+
 #[derive(Clone, Debug)]
 struct BaselineRow {
     seg: usize,
@@ -256,7 +259,7 @@ fn test_stream_decode_long_audio() {
     let start_offset_sec = std::env::var("FT8RS_SLOT_START_OFFSET_SEC")
         .ok()
         .and_then(|value| value.parse::<f64>().ok())
-        .unwrap_or(0.0);
+        .unwrap_or(LONG_SLOT_START_OFFSET_SEC);
     let start_offset_samples = (start_offset_sec * 12000.0).round() as isize;
 
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
@@ -274,8 +277,8 @@ fn test_stream_decode_long_audio() {
     let mut decoder = StreamDecodeSession::new(config);
 
     let mut total_matched = 0;
-    let accepted_floor = 422usize;
-    let acceptance_enabled = start_offset_samples == 0;
+    let accepted_floor = LONG_ACCEPTED_FLOOR;
+    let acceptance_enabled = (start_offset_sec - LONG_SLOT_START_OFFSET_SEC).abs() < f64::EPSILON;
     let severe_floor = if acceptance_enabled {
         accepted_floor.saturating_sub(10)
     } else {

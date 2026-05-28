@@ -139,10 +139,21 @@ thread_local! {
 
 // ──────────────────────────────── Public API ────────────────────────────────
 
-/// Complex-to-complex FFT (forward or inverse).
-/// Forward: no normalization. Inverse: scales by 1/N (matches rustfft / FFTPACK four2a).
+/// WSJT-X/FFTPACK-style complex FFT without normalization in either direction.
+///
+/// Used by WSJT-X-aligned call sites that apply the Fortran `fac` explicitly.
 #[inline]
-pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
+pub fn four2a_c2c(re: &mut [f64], im: &mut [f64], isign: i32) {
+    let inverse = match isign {
+        -1 => false,
+        1 => true,
+        _ => panic!("four2a_c2c only supports isign=-1 or isign=1"),
+    };
+    four2a_c2c_impl(re, im, inverse);
+}
+
+#[inline]
+fn four2a_c2c_impl(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let n = re.len();
     debug_assert_eq!(im.len(), n);
 
@@ -160,10 +171,9 @@ pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
             }
             fftw_execute_dft(plan, in_ptr, out_ptr);
             // Unpack
-            let scale = if inverse { 1.0 / n as f64 } else { 1.0 };
             for i in 0..n {
-                re[i] = *out_ptr.add(2 * i) * scale;
-                im[i] = *out_ptr.add(2 * i + 1) * scale;
+                re[i] = *out_ptr.add(2 * i);
+                im[i] = *out_ptr.add(2 * i + 1);
             }
         }
     });
@@ -172,7 +182,7 @@ pub fn fft_complex(re: &mut [f64], im: &mut [f64], inverse: bool) {
 /// Real-to-complex forward FFT (r2c).
 /// Input: `re[..n]` real data; output: `re[..nh]`/`im[..nh]` complex bins (nh=n/2+1).
 #[inline]
-pub fn fft_r2c(re: &mut [f64], im: &mut [f64]) {
+pub fn four2a_r2c(re: &mut [f64], im: &mut [f64]) {
     let n = re.len();
     debug_assert_eq!(im.len(), n);
     let nh = n / 2 + 1;
@@ -206,10 +216,32 @@ mod tests {
         let mut re = vec![0.0; n];
         let mut im = vec![0.0; n];
         re[100] = 1.0;
-        fft_complex(&mut re, &mut im, false);
-        fft_complex(&mut re, &mut im, true);
-        // Inverse now auto-scales by 1/N
+        four2a_c2c(&mut re, &mut im, -1);
+        four2a_c2c(&mut re, &mut im, 1);
+        for i in 0..n {
+            re[i] /= n as f64;
+            im[i] /= n as f64;
+        }
         assert!((re[100] - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn four2a_inverse_matches_normalized_inverse_times_n() {
+        let n = 3200;
+        let mut re: Vec<f64> = (0..n).map(|i| (i as f64 * 0.013).sin()).collect();
+        let mut im: Vec<f64> = (0..n).map(|i| (i as f64 * 0.017).cos()).collect();
+        let mut re_norm = re.clone();
+        let mut im_norm = im.clone();
+
+        four2a_c2c(&mut re, &mut im, 1);
+        four2a_c2c(&mut re_norm, &mut im_norm, 1);
+
+        for i in 0..n {
+            re[i] /= n as f64;
+            im[i] /= n as f64;
+            assert!((re_norm[i] - re[i] * n as f64).abs() < 1e-8);
+            assert!((im_norm[i] - im[i] * n as f64).abs() < 1e-8);
+        }
     }
 
     #[test]
@@ -217,7 +249,7 @@ mod tests {
         let n = 3840;
         let mut re = vec![1.0; n];
         let mut im = vec![0.0; n];
-        fft_r2c(&mut re, &mut im);
+        four2a_r2c(&mut re, &mut im);
         assert!((re[0] - 3840.0).abs() < 1e-6, "re[0]={}", re[0]);
         for i in 1..n / 2 + 1 {
             assert!(re[i].abs() < 1e-6 && im[i].abs() < 1e-6, "bin {i}");
@@ -231,9 +263,9 @@ mod tests {
         let mut im1 = vec![0.0; n];
         let re2 = re1.clone();
         let mut im2 = vec![0.0; n];
-        fft_complex(&mut re1, &mut im1, false);
+        four2a_c2c(&mut re1, &mut im1, -1);
         let mut re2 = re2;
-        fft_r2c(&mut re2, &mut im2);
+        four2a_r2c(&mut re2, &mut im2);
         let nh = n / 2 + 1;
         for i in 0..nh {
             assert!((re1[i] - re2[i]).abs() < 1e-9, "re@{i}");
@@ -247,9 +279,12 @@ mod tests {
         let mut re = vec![0.0; n];
         let mut im = vec![0.0; n];
         re[1000] = 1.0;
-        fft_complex(&mut re, &mut im, false);
-        fft_complex(&mut re, &mut im, true);
-        // Inverse now auto-scales by 1/N
+        four2a_c2c(&mut re, &mut im, -1);
+        four2a_c2c(&mut re, &mut im, 1);
+        for i in 0..n {
+            re[i] /= n as f64;
+            im[i] /= n as f64;
+        }
         assert!((re[1000] - 1.0).abs() < 1e-7);
     }
 }
@@ -262,7 +297,7 @@ fn fftw_3840_sanity() {
         .map(|i| (i as f64 * 2.0 * std::f64::consts::PI * 50.0 / n as f64).cos())
         .collect();
     let mut im = vec![0.0; n];
-    fft_r2c(&mut re, &mut im);
+    four2a_r2c(&mut re, &mut im);
     // Check peak is at bin 50 (50 Hz signal)
     let max_bin: usize = (0..n / 2 + 1)
         .max_by(|&a, &b| {

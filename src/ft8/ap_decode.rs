@@ -16,7 +16,7 @@
 
 use super::decode::{
     build_costas_sync_templates, normalize_bmet, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DOWNSAMPLE_BAUD,
-    DOWNSAMPLE_DF, DOWNSAMPLE_SCALE, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TAPER_SIZE, TWO_PI,
+    DOWNSAMPLE_DF, DOWNSAMPLE_FAC, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TAPER_SIZE, TWO_PI,
 };
 use crate::ft8::pack_jt77::{is_stdcall, pack77};
 use crate::ft8::protocol::G_HEX;
@@ -48,7 +48,7 @@ impl ApDownsampleCache {
         let mut cx_re = dd0.to_vec();
         cx_re.resize(NFFT1_LONG, 0.0);
         let mut cx_im = vec![0.0f64; NFFT1_LONG];
-        crate::util::fft_complex(&mut cx_re, &mut cx_im, false);
+        crate::util::four2a_r2c(&mut cx_re, &mut cx_im);
         Self { cx_re, cx_im }
     }
 }
@@ -137,12 +137,14 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
         let sync = ap_sync8d(&cd0_re, &cd0_im, ibest + idt, &costas.re, &costas.im);
         ss[(idt + 4) as usize] = sync;
     }
-    let idx = ss
-        .iter()
-        .enumerate()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-        .map(|(i, _)| i)
-        .unwrap_or(4);
+    let mut idx = 0usize;
+    let mut smax = ss[0];
+    for (i, sync) in ss.iter().enumerate().skip(1) {
+        if *sync > smax {
+            smax = *sync;
+            idx = i;
+        }
+    }
     ibest = idx as isize - 4 + ibest;
     let xdt_refined = (ibest as f64 - 1.0) * DT2 - 0.5;
 
@@ -680,10 +682,10 @@ fn ap_downsample(
         cd0_im = tmp_im;
     }
 
-    crate::util::fft_complex(&mut cd0_re, &mut cd0_im, true);
+    crate::util::four2a_c2c(&mut cd0_re, &mut cd0_im, 1);
     for i in 0..NFFT2 {
-        cd0_re[i] *= DOWNSAMPLE_SCALE;
-        cd0_im[i] *= DOWNSAMPLE_SCALE;
+        cd0_re[i] *= DOWNSAMPLE_FAC;
+        cd0_im[i] *= DOWNSAMPLE_FAC;
     }
     (cd0_re, cd0_im)
 }
