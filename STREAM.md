@@ -499,6 +499,10 @@ Current source-level finding:
   - `scalefac*metric`, `apmag=maxval(abs(llrz))*1.1`, and regular-path
     `xsig/xnoi/xsnr/xsnr2` accumulation now also narrow intermediate
     arithmetic to WSJT-X default `real` precision.
+  - `ft8b` and `ft8_a7d` initial time-refine indices now compute
+    `nint((xdt+0.5)*fs2)` through WSJT-X default-`real` precision before
+    rounding, matching the source expression and avoiding a hidden f64
+    rounding path at 200 Hz sample boundaries.
   - `sync8`, FT8 spectrum baseline, regular `ft8b` `xbase`, and stream AP
     memory `xbase` now use WSJT-X default-`real` `nint` for frequency-bin
     selection; `xbase=10**(0.1*(sbase(...)-40))` also narrows the exponentiation

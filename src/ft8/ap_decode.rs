@@ -97,7 +97,7 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     let (cd0_re, cd0_im) = ap_downsample(downsample_cache, f1, &taper_data);
 
     // ── Time alignment ±10 ──
-    let i0 = ((xdt + 0.5) * FS2).round() as isize;
+    let i0 = nint_wsjtx_f32((xdt + 0.5) * FS2);
     let mut smax = 0.0f64;
     for idt in (i0 - 10)..=(i0 + 10) {
         let sync = ap_sync8d(&cd0_re, &cd0_im, idt, &costas.re, &costas.im);

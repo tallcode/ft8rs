@@ -203,6 +203,10 @@ Offset sweep 仍作为诊断资料保留：
   `apmag=maxval(abs(llrz))*1.1` 和 regular SNR `xsig/xnoi/xsnr/xsnr2` 的
   中间算术到 WSJT-X default `real`。在 `+0.785s` 窗口和当前细节叠加后，
   RustFFT/FFTW 长测仍保持 `424/449`。
+- `ft8b` 和 `ft8_a7d` 初始 time-refine 入口的
+  `nint((xdt+0.5)*fs2)` 改为先收窄到 WSJT-X default `real` 再取整。该项没有
+  单独改变短测或长测结果，但消除了一个可能产生 1 个 200Hz sample 差异的
+  rounding path。
 - `sync8`、FT8 spectrum baseline、regular `ft8b` `xbase` 和 stream AP memory
   `xbase` 的 bin selection 改用 WSJT-X default `real` 的 `nint` 路径；`xbase`
   的 `10**` 表达式也按 default `real` 收窄。RustFFT/FFTW 正式窗口长测仍保持
