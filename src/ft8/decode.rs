@@ -678,8 +678,8 @@ pub(crate) fn sync8(
 
         let sbase = get_spectrum_baseline(dd, nfa, nfb);
 
-        let ia = (1.0_f64.max((nfa / df).round())) as usize;
-        let ib = ((half_size - 14) as f64).min((nfb / df).round()) as usize;
+        let ia = nint_wsjtx_f32(nfa / df).max(1) as usize;
+        let ib = (nint_wsjtx_f32(nfb / df).max(0) as usize).min(half_size - 14);
 
         // Zero sync2d region we'll use
         let sync2d_len = (ib - ia + 1) * width;
@@ -799,7 +799,7 @@ pub(crate) fn sync8(
 
         // WSJT-X style: normalize red by 40th percentile, then normalize red2 similarly.
         // sync8.f90 uses indexx for both percentile selection and candidate ordering.
-        let npctile = ((0.40 * iz as f64).round() as usize).max(1);
+        let npctile = nint_wsjtx_f32(0.40 * iz as f64).max(1) as usize;
         {
             let indx = indexx_ascending(&red);
             let base = red[indx[npctile - 1]].max(1e-30);
@@ -905,8 +905,8 @@ pub(crate) fn compute_baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: u
     // WSJT-X stores sbase(1:NH1), with FFT bin 0/DC omitted. Keep index 0
     // unused so callers can use nint(f/df) directly, matching Fortran.
     let mut sbase = vec![0.0; nh1 + 1];
-    let ia = (1.0_f64.max((nfa / df).round())) as usize;
-    let ib = (nh1 as f64).min((nfb / df).round()) as usize;
+    let ia = nint_wsjtx_f32(nfa / df).max(1) as usize;
+    let ib = (nint_wsjtx_f32(nfb / df).max(0) as usize).min(nh1);
 
     let db_range = (ib - ia + 1).max(1);
     let mut sdb = vec![0.0; nh1 + 1];
@@ -1207,9 +1207,9 @@ fn ft8b(
     // This represents the absolute noise power at f1 in the original spectrum.
     let xbase = {
         let df_sync = SAMPLE_RATE as f64 / NFFT1 as f64; // 3.125 Hz/bin
-        let freq_bin = (f1 / df_sync).round() as usize;
+        let freq_bin = nint_wsjtx_f32(f1 / df_sync).max(0) as usize;
         if freq_bin < _sbase.len() && _sbase[freq_bin] > 0.0 {
-            10.0_f64.powf(0.1 * (_sbase[freq_bin] - 40.0))
+            (10.0f32.powf(0.1 * (_sbase[freq_bin] as f32 - 40.0))) as f64
         } else {
             1e-6 // safe fallback: very low noise floor
         }

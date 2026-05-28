@@ -485,6 +485,10 @@ Current source-level finding:
   - `scalefac*metric`, `apmag=maxval(abs(llrz))*1.1`, and regular-path
     `xsig/xnoi/xsnr/xsnr2` accumulation now also narrow intermediate
     arithmetic to WSJT-X default `real` precision.
+  - `sync8`, FT8 spectrum baseline, regular `ft8b` `xbase`, and stream AP
+    memory `xbase` now use WSJT-X default-`real` `nint` for frequency-bin
+    selection; `xbase=10**(0.1*(sbase(...)-40))` also narrows the exponentiation
+    path to default `real`.
   - `ft8b` `bmete` and `ft8_a7d` time-refine use first-max behavior matching
     Fortran `maxloc`。
   - LDPC `platanh` now uses WSJT-X's piecewise approximation and `±7.0`
@@ -550,6 +554,10 @@ Current source-level finding:
   residuals but does not recover this decode. This points away from FFT
   precision or simple file-start offset as single causes, and toward outer
   multi-pass residual/AP state or neighboring-signal interactions.
+- A later attempt to narrow the whole `sync8` `s/sync2d/red/candidate0` path to
+  f32 reduced the official `+0.785s` long score to `423/449` and was rejected.
+  This suggests `sync8` parity needs a finer-grained comparison of FFT output
+  scale and array storage rather than a blanket precision cast.
 - A no-subtract diagnostic for this target left the same `ibest`/hard-error
   pattern unchanged, so the single miss is not explained by previous accepted
   signals being subtracted from the residual. A separate duplicate/subtract
