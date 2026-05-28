@@ -479,6 +479,9 @@ Current source-level finding:
     precision shape as WSJT-X: `csymb/1000`, `s2`, `imetric=2` squaring,
     `bm/den`, and `normalizebmet` all narrow intermediate arithmetic to f32
     before returning to the Rust storage type.
+  - `ft8_a7d` AP bit metrics now use the same `abs(cs(...))` source path for
+    `nsym=1` instead of the unscaled `s8` shortcut, and its `cs/s2/bm/den`
+    arithmetic follows the same default `real` narrowing.
   - `ft8b` `bmete` and `ft8_a7d` time-refine use first-max behavior matching
     Fortran `maxloc`。
   - LDPC `platanh` now uses WSJT-X's piecewise approximation and `±7.0`

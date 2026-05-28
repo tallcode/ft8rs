@@ -171,9 +171,11 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
         // 32-point FFT
         fft32(&mut symb_re, &mut symb_im);
         for tone in 0..8 {
-            cs_re[tone][k] = symb_re[tone] / 1e3;
-            cs_im[tone][k] = symb_im[tone] / 1e3;
-            s8[tone][k] = (symb_re[tone] * symb_re[tone] + symb_im[tone] * symb_im[tone]).sqrt();
+            let sym_re = symb_re[tone] as f32;
+            let sym_im = symb_im[tone] as f32;
+            cs_re[tone][k] = (sym_re / 1000.0) as f64;
+            cs_im[tone][k] = (sym_im / 1000.0) as f64;
+            s8[tone][k] = ap_wsjtx_cabs(sym_re, sym_im) as f64;
         }
     }
 
@@ -200,20 +202,24 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
                     let i3_val = i & 7;
                     s2[i] = if nsym == 1 {
                         let t = crate::ft8::constants::GRAY_MAP[i3_val] as usize;
-                        s8[t][ks]
+                        ap_wsjtx_cabs(cs_re[t][ks] as f32, cs_im[t][ks] as f32) as f64
                     } else if nsym == 2 {
                         let t2 = crate::ft8::constants::GRAY_MAP[i2_val] as usize;
                         let t3 = crate::ft8::constants::GRAY_MAP[i3_val] as usize;
-                        let re = cs_re[t2][ks] + cs_re[t3][ks + 1];
-                        let im = cs_im[t2][ks] + cs_im[t3][ks + 1];
-                        (re * re + im * im).sqrt()
+                        let re = cs_re[t2][ks] as f32 + cs_re[t3][ks + 1] as f32;
+                        let im = cs_im[t2][ks] as f32 + cs_im[t3][ks + 1] as f32;
+                        ap_wsjtx_cabs(re, im) as f64
                     } else {
                         let t1 = crate::ft8::constants::GRAY_MAP[i1_val] as usize;
                         let t2 = crate::ft8::constants::GRAY_MAP[i2_val] as usize;
                         let t3 = crate::ft8::constants::GRAY_MAP[i3_val] as usize;
-                        let re = cs_re[t1][ks] + cs_re[t2][ks + 1] + cs_re[t3][ks + 2];
-                        let im = cs_im[t1][ks] + cs_im[t2][ks + 1] + cs_im[t3][ks + 2];
-                        (re * re + im * im).sqrt()
+                        let re = cs_re[t1][ks] as f32
+                            + cs_re[t2][ks + 1] as f32
+                            + cs_re[t3][ks + 2] as f32;
+                        let im = cs_im[t1][ks] as f32
+                            + cs_im[t2][ks + 1] as f32
+                            + cs_im[t3][ks + 2] as f32;
+                        ap_wsjtx_cabs(re, im) as f64
                     };
                 }
 
@@ -246,12 +252,16 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
                             }
                         }
                     }
-                    let bm = max_ones - max_zeros;
+                    let bm = ((max_ones as f32) - (max_zeros as f32)) as f64;
 
                     if nsym == 1 {
                         bmeta[idx - 1] = bm;
-                        let den = max_ones.max(max_zeros);
-                        bmetd[idx - 1] = if den > 0.0 { bm / den } else { 0.0 };
+                        let den = (max_ones as f32).max(max_zeros as f32);
+                        bmetd[idx - 1] = if den > 0.0 {
+                            ((bm as f32) / den) as f64
+                        } else {
+                            0.0
+                        };
                     } else if nsym == 2 {
                         bmetb[idx - 1] = bm;
                     } else {
@@ -379,6 +389,10 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
         snr: xsnr,
         nharderrors,
     })
+}
+
+fn ap_wsjtx_cabs(re: f32, im: f32) -> f32 {
+    (re * re + im * im).sqrt()
 }
 
 /// Build imsg-th message variant. Matches the ft8_a7.f90 imsg loop.
