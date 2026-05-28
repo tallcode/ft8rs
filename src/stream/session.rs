@@ -226,6 +226,7 @@ impl StreamDecodeSession {
         let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         let mut full_dd = state.dd0.clone();
+        full_dd[50 * NZHSYM_STRIDE..].fill(0.0);
         let mut late_subtracted = 0usize;
         if !self.params.nagain {
             let clean_prefix = (47 * NZHSYM_STRIDE).min(NMAX);
