@@ -494,6 +494,13 @@ Current source-level finding:
   - LDPC `platanh` now uses WSJT-X's piecewise approximation and `±7.0`
     saturation instead of exact `atanh`; this keeps BP/OSD iteration numerics
     on the same path as `platanh.f90`。
+  - `decode174_91` now narrows its internal BP/OSD working arrays, posterior
+    saves, `tanh/platanh` path, and OSD distance arithmetic to default
+    `real`/`real*4` precision after accepting the upper-layer LLR input. This
+    keeps the Rust LDPC/OSD chain numerically closer to
+    `decode174_91.f90`/`osd174_91.f90` without changing thresholds or search
+    scope; RustFFT and FFTW both remain at `424/449` on the official
+    `+0.785s` long fixture.
   - OSD reliability ordering now uses a local port of WSJT-X `indexx` before
     reversing to MRB order, instead of Rust's generic unstable sort。
   - `sync8` percentile normalization, candidate ordering, and final sync sort

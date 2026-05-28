@@ -148,6 +148,10 @@ Offset sweep 仍作为诊断资料保留：
   精确 `atanh`。
 - OSD reliability ordering 改为本地 `indexx_ascending`，按 WSJT-X
   `indexx.f90` 生成升序索引，再反转用于 MRB。
+- `decode174_91` 内部 BP/OSD 工作数组、`tanh/platanh`、posterior `zsave`
+  和 OSD distance 累加改为 WSJT-X default `real` 形状。入口仍接收上层
+  `f64` LLR，但进入 LDPC 后立即收窄到 `f32`，避免后续弱信号诊断被
+  Rust 内部 f64 长链路干扰。
 - `try_decode_passes` 改为 WSJT-X `cycle` 语义：CRC-good codeword 若因 all-zero、
   message type、unpack 或 contest quirk 不合法，不让整个候选立即失败，而是
   继续后续 pass。
@@ -308,9 +312,9 @@ Offset sweep 仍作为诊断资料保留：
 - `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
   - `424/449`
   - timing residual median `+0.000s`
-  - 每段均小于 `15s`，最慢约 `3.87s`
+  - 每段均小于 `15s`，最慢约 `3.75s`
 - `FT8RS_WRITE_DIFF=1 cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture` ✅
   - `424/449`
   - timing residual median `+0.000s`
-  - 每段均小于 `15s`，总耗时约 `55.5s`
+  - 每段均小于 `15s`，总耗时约 `52.1s`
 - `git diff --check` ✅
