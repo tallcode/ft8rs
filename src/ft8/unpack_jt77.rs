@@ -509,6 +509,9 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
 
         let call1 = unpack28(n28a, context)?;
         let call2 = unpack28(n28b, context)?;
+        if !is_rtty_call_token(&call1) || !is_rtty_call_token(&call2) {
+            return None;
+        }
         let report = format!("5{}9", irpt + 2);
 
         let mut imult = 0usize;
@@ -622,6 +625,11 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
 fn is_cq_head(call: &str) -> bool {
     let c = call.trim_end();
     c == "CQ" || c.starts_with("CQ ")
+}
+
+fn is_rtty_call_token(call: &str) -> bool {
+    let c = call.trim();
+    !(c == "DE" || c == "QRZ" || is_cq_head(c))
 }
 
 #[cfg(test)]
@@ -770,6 +778,21 @@ mod tests {
         append_bits(&mut bits, 8000 + 21, 13); // MA, WSJT-X 1-based mult index
         append_bits(&mut bits, 3, 3);
         assert_eq!(unpack77(&bits, None).unwrap(), "TU; W9XYZ K1ABC R 579 MA");
+    }
+
+    #[test]
+    fn rejects_type_3_rtty_cq_token_in_callsign_slot() {
+        let mut bits = Vec::new();
+        append_bits(&mut bits, 0, 1);
+        append_bits(&mut bits, pack28("CQ_001"), 28);
+        append_bits(&mut bits, pack28("IZ7MMG"), 28);
+        append_bits(&mut bits, 0, 1);
+        append_bits(&mut bits, 3, 3);
+        append_bits(&mut bits, 2025, 13);
+        append_bits(&mut bits, 3, 3);
+
+        assert_eq!(bits.len(), 77);
+        assert!(unpack77(&bits, None).is_none());
     }
 
     #[test]

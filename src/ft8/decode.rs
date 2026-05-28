@@ -2042,11 +2042,8 @@ fn is_wsjtx_acceptable_codeword(
 }
 
 fn is_acceptable_unpacked_message(msg: &str, i3v: usize, ncontest: usize) -> bool {
-    // RTTY contest exchanges are FT8/JT77 messages, but they are contest-only
-    // payloads. Keep them out of the default non-contest FT8 decoder path.
-    if i3v == 3 && ncontest != 4 {
-        return false;
-    }
+    // WSJT-X ft8b.f90 only rejects these contest/portable quirks in the
+    // default non-contest mode after unpack77 succeeds.
     if ncontest == 0 && (1..=3).contains(&i3v) && (msg.contains("/R") || msg.starts_with("TU; ")) {
         return false;
     }
@@ -2314,16 +2311,17 @@ mod tests {
     }
 
     #[test]
-    fn rtty_contest_exchange_is_contest_only() {
-        assert!(!is_acceptable_unpacked_message(
+    fn non_contest_quirk_gate_matches_wsjtx() {
+        assert!(is_acceptable_unpacked_message(
             "CQ 001 IZ7MMG 549 2025",
             3,
             0
         ));
-        assert!(is_acceptable_unpacked_message(
-            "CQ 001 IZ7MMG 549 2025",
+        assert!(!is_acceptable_unpacked_message(
+            "TU; K1ABC W9XYZ 549 CA",
             3,
-            4
+            0
         ));
+        assert!(!is_acceptable_unpacked_message("K1ABC/R W9XYZ 73", 1, 0));
     }
 }
