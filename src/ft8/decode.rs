@@ -259,10 +259,12 @@ fn build_frequency_shift_sync_templates() -> &'static Vec<FrequencyShiftSyncTemp
             for i in 0..COSTAS_BLOCKS {
                 for j in 0..COSTAS_SYMBOL_LEN {
                     let idx = i * COSTAS_SYMBOL_LEN + j;
-                    let cs_re = cs.re[idx];
-                    let cs_im = cs.im[idx];
-                    re[idx] = twk_re[j] * cs_re - twk_im[j] * cs_im;
-                    im[idx] = twk_re[j] * cs_im + twk_im[j] * cs_re;
+                    let twk_re = twk_re[j] as f32;
+                    let twk_im = twk_im[j] as f32;
+                    let cs_re = cs.re[idx] as f32;
+                    let cs_im = cs.im[idx] as f32;
+                    re[idx] = (twk_re * cs_re - twk_im * cs_im) as f64;
+                    im[idx] = (twk_re * cs_im + twk_im * cs_re) as f64;
                 }
             }
             templates.push(FrequencyShiftSyncTemplate { delf, re, im });

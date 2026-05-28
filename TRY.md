@@ -190,7 +190,8 @@ Offset sweep 仍作为诊断资料保留：
   `424/449`，属于后续 miss 诊断降噪，不是追分调参。
 - `ft8b` 内部同步细化链路继续对齐：
   - Costas sync template 和 `delf` tweak template 用 default `real`
-    `phi/dphi/cos/sin` 形状生成。
+    `phi/dphi/cos/sin` 形状生成；tweak template 与 Costas template 的复数
+    预乘也收窄到 default `complex/real` 形状。
   - `sync8d` 的复数点积和功率累加收窄到 f32，匹配
     `sync8d.f90` default `complex/real`。
   - regular `s8` 改回 WSJT-X 的未缩放 `abs(csymb(1:8))`，`cs` 保持

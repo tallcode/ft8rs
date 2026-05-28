@@ -490,8 +490,9 @@ Current source-level finding:
     before returning to the Rust storage type.
   - `ft8b` time/frequency refinement now also follows the source precision
     shape more closely: Costas and tweak templates are generated with default
-    `real` `phi/dphi/cos/sin`, `sync8d` accumulates the complex correlations
-    as f32, and regular-path `s8` stores the unscaled
+    `real` `phi/dphi/cos/sin`, the tweak template multiplication is narrowed to
+    default `complex/real`, `sync8d` accumulates the complex correlations as
+    f32, and regular-path `s8` stores the unscaled
     `abs(csymb(1:8))` while `cs` keeps `csymb/1e3`. Consequently `xsnr2` uses
     the source expression `xsig/xbase/3.0e6-1.0` rather than the previous
     mathematically equivalent scaled-`s8` compensation.
