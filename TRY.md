@@ -273,12 +273,15 @@ Offset sweep 仍作为诊断资料保留：
   - Type 0.1 DXpedition `RR73;`
   - Type 0.3/0.4 ARRL Field Day
   - Type 0.5 telemetry
-  - Type 3 ARRL RTTY
+  - Type 3 ARRL RTTY unpack/pack；默认非 contest 解码不输出，只有
+    `ncontest=4` 时接受。
   - Type 5 EU VHF hashed-call exchange
 - 补齐 WSJT-X 接收侧 hard gate：
   - standard callsign `callok()` 风格校验。
   - 全局 `CQ <...>` reject。
   - 非 contest 下拒绝 `i3=1..3` 且消息包含 `/R` 或以 `TU;` 开头。
+- 对 `230208_140345 CQ 001 IZ7MMG 549 2025` 的假阳性补充过滤：该消息是
+  `i3=3` RTTY contest exchange，不属于默认普通 FT8 解码范围。
 - 补齐 receive unpack 的 `mycall/hiscall` hash 替换上下文。
 
 ## 重点 Miss 诊断
