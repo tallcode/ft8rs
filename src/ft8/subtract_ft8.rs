@@ -266,7 +266,7 @@ pub fn subtract_ft8_refined(
         if dx.abs() > 1.0 {
             return;
         }
-        (90.0 * dx).round() as isize
+        (90.0f32 * dx).round() as isize
     } else {
         0
     };
@@ -275,15 +275,15 @@ pub fn subtract_ft8_refined(
     *dd0 = subtracted.dd;
 }
 
-fn peakup(ym: f64, y0: f64, yp: f64) -> f64 {
+fn peakup(ym: f32, y0: f32, yp: f32) -> f32 {
     let b = yp - ym;
-    let c = yp + ym - 2.0 * y0;
-    -b / (2.0 * c)
+    let c = yp + ym - 2.0f32 * y0;
+    -b / (2.0f32 * c)
 }
 
 struct SqfResult {
     dd: Vec<f64>,
-    band_energy: f64,
+    band_energy: f32,
 }
 
 fn subtract_sqf_band_energy(
@@ -293,7 +293,7 @@ fn subtract_sqf_band_energy(
     f0: f64,
     dt: f64,
     offset: isize,
-) -> f64 {
+) -> f32 {
     subtract_sqf(dd0, cref_re, cref_im, f0, dt, offset, true).band_energy
 }
 
@@ -344,13 +344,13 @@ fn subtract_sqf(
         let df = SAMPLE_RATE / NFFT as f64;
         let ia = ((f0 - 1.5 * 6.25) / df).max(0.0) as usize;
         let ib = ((f0 + 8.5 * 6.25) / df).min((NFFT / 2) as f64) as usize;
-        let mut sqq = 0.0;
+        let mut sqq = 0.0f32;
         for i in ia..=ib {
-            sqq += x_re[i] * x_re[i] + x_im[i] * x_im[i];
+            sqq += (x_re[i] * x_re[i] + x_im[i] * x_im[i]) as f32;
         }
         sqq
     } else {
-        0.0
+        0.0f32
     };
 
     dd.truncate(dd0.len());

@@ -141,7 +141,7 @@ slot 约有 `14.47s` 音频。
 - 本地 A/B 测试中，`RustFFT@3840` 和 `FFTW@3840` 在旧 no-offset 保护
   fixture 上都保持 `21` 和 `422/449`。切换 `+0.785s` 对齐窗口并修正
   WSJT-X `gen_ft8wave` 包络和 `subtractft8` refined-DT `sqf()` 后，
-  RustFFT 当前保护线为 `424/449`，FFTW 尚待重跑。
+  RustFFT 与 FFTW 当前都保持 `424/449`。
 
 发布策略：
 
@@ -370,8 +370,10 @@ long score and is retained as a source-aligned correction.
   subtract without mutating the caller buffer。
 - while `ldt=true`, `sqf()` computes the post-subtraction FFT energy only in
   the FT8 signal band `f0-1.5*baud .. f0+8.5*baud`。
-- `peakup(sqa,sq0,sqb,dx)` selects `i2=nint(90*dx)`; a final `sqf(i2)` with
-  `ldt=false` performs the only writeback。
+- `sqf` band energy and `peakup(sqa,sq0,sqb,dx)` use single-precision `real`
+  semantics, matching the Fortran declarations。
+- `peakup` selects `i2=nint(90*dx)`; a final `sqf(i2)` with `ldt=false`
+  performs the only writeback。
 
 With the current aligned fixture window this raises the protected RustFFT long
 score to `424/449` while keeping every slot below `15s`。
@@ -487,7 +489,9 @@ Current source-level finding:
     `gen_ft8wave.f90` with `(1-cos(angle))/2` and `(1+cos(angle))/2` ramps。
   - `subtractft8` refined-DT now uses WSJT-X's `sqf()` shape: local `dd`
     rebuild per trial, signal-band FFT energy under `ldt=true`, and final
-    one-time writeback using `i2=nint(90*dx)`。
+    one-time writeback using `i2=nint(90*dx)`。The energy accumulator and
+    `peakup` arithmetic are narrowed to f32 to match Fortran `real`/`real*4`
+    behavior.
   - Previous no-offset release validation remained `21` short and `422/449`
     long; current `+0.785s` RustFFT validation is `424/449` long.
 - `ft8_a8d` remains a known architecture gap. It is only active when AP is on,
