@@ -180,6 +180,9 @@ Offset sweep 仍作为诊断资料保留：
   `csymb/1000`、`s2`、`imetric=2` square、`bm/den` 和
   `normalizebmet` 中间算术都走 f32 形状。此项保持 RustFFT/FFTW 长测
   `424/449`，属于后续 miss 诊断降噪，不是追分调参。
+- `ft8_a7d` AP metric 同步做同构整理：`nsym=1` 改回 WSJT-X 的
+  `abs(cs(graymap(...),ks))` 路径，而不是未缩放 `s8`；`cs/s2/bm/den`
+  也收窄到默认 `real` 形状。RustFFT/FFTW 长测仍保持 `424/449`。
 
 ### `nuttal_window`
 
