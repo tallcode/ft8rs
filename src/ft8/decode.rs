@@ -37,14 +37,15 @@ pub(crate) const COSTAS_SYMBOL_LEN: usize = 32;
 pub(crate) const TAPER_SIZE: usize = 101;
 pub(crate) const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
 const TWO_PI_F32: f32 = std::f32::consts::PI * 2.0;
+const PI_F32: f32 = std::f32::consts::PI;
 
 pub(crate) const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
 pub(crate) const DT2: f64 = 1.0 / FS2;
-pub(crate) const DOWNSAMPLE_DF: f64 = SAMPLE_RATE as f64 / NFFT1_LONG as f64;
-pub(crate) const DOWNSAMPLE_BAUD: f64 = SAMPLE_RATE as f64 / NSPS as f64;
+pub(crate) const DOWNSAMPLE_DF: f32 = SAMPLE_RATE as f32 / NFFT1_LONG as f32;
+pub(crate) const DOWNSAMPLE_BAUD: f32 = SAMPLE_RATE as f32 / NSPS as f32;
 /// WSJT-X ft8_downsample.f90:
 /// `fac=1.0/sqrt(float(NFFT1)*NFFT2)` after the unnormalized inverse FFT.
-pub(crate) const DOWNSAMPLE_FAC: f64 = 0.000040343576522993926;
+pub(crate) const DOWNSAMPLE_FAC: f64 = 0.000040343576984014362f64;
 
 #[derive(Clone)]
 pub struct DecodedMessage {
@@ -212,7 +213,8 @@ fn build_taper() -> &'static Vec<f64> {
         let mut t = vec![0.0; TAPER_SIZE];
         let last = TAPER_SIZE - 1;
         for i in 0..TAPER_SIZE {
-            t[i] = 0.5 * (1.0 + ((i as f64 * std::f64::consts::PI) / last as f64).cos());
+            let x = (i as f32 * PI_F32) / last as f32;
+            t[i] = (0.5f32 * (1.0f32 + x.cos())) as f64;
         }
         t
     })
@@ -1616,11 +1618,12 @@ pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
 fn ft8_downsample(cx_re: &[f64], cx_im: &[f64], f0: f64, workspace: &mut DecodeWorkspace) {
     let df = DOWNSAMPLE_DF;
     let baud = DOWNSAMPLE_BAUD;
-    let i0 = nint_wsjtx_f32(f0 / df).max(0) as usize;
-    let ft = f0 + 8.5 * baud;
-    let it = (nint_wsjtx_f32(ft / df).max(0) as usize).min(NFFT1_LONG / 2);
-    let fb = f0 - 1.5 * baud;
-    let ib = 1.max(nint_wsjtx_f32(fb / df).max(0) as usize);
+    let f0 = f0 as f32;
+    let i0 = nint_wsjtx_real(f0 / df).max(0) as usize;
+    let ft = f0 + 8.5f32 * baud;
+    let it = (nint_wsjtx_real(ft / df).max(0) as usize).min(NFFT1_LONG / 2);
+    let fb = f0 - 1.5f32 * baud;
+    let ib = 1.max(nint_wsjtx_real(fb / df).max(0) as usize);
 
     workspace.cd0_re.fill(0.0);
     workspace.cd0_im.fill(0.0);
@@ -1675,6 +1678,10 @@ fn ft8_downsample(cx_re: &[f64], cx_im: &[f64], f0: f64, workspace: &mut DecodeW
 
 fn nint_wsjtx_f32(x: f64) -> isize {
     (x as f32).round() as isize
+}
+
+fn nint_wsjtx_real(x: f32) -> isize {
+    x.round() as isize
 }
 
 fn sync8d_isize(
