@@ -187,6 +187,13 @@ Offset sweep 仍作为诊断资料保留：
   `apmag=maxval(abs(llrz))*1.1` 和 regular SNR `xsig/xnoi/xsnr/xsnr2` 的
   中间算术到 WSJT-X default `real`。在 `+0.785s` 窗口和当前细节叠加后，
   RustFFT/FFTW 长测仍保持 `424/449`。
+- `sync8`、FT8 spectrum baseline、regular `ft8b` `xbase` 和 stream AP memory
+  `xbase` 的 bin selection 改用 WSJT-X default `real` 的 `nint` 路径；`xbase`
+  的 `10**` 表达式也按 default `real` 收窄。RustFFT/FFTW 正式窗口长测仍保持
+  `424/449`。
+- 重新试过把 `sync8` 内部 `s/sync2d/red/candidate0` 全链路收窄到 f32，结果
+  正式窗口长测降到 `423/449`，已撤回。结论：`sync8` 不能简单整体 f32 化，
+  后续若继续对齐需更细地对照 FFT 输出缩放和 Fortran `real` 数组边界。
 
 ### `nuttal_window`
 

@@ -486,9 +486,9 @@ fn ft8_a7_save_entry_from_parts(
     // Compute xbase from sbase (matching WSJT-X: 10^(0.1*(sbase(nint(f1/3.125))-40.0)))
     let xbase = {
         let df = crate::ft8::sync8_df();
-        let freq_bin = (freq / df).round() as usize;
-        if freq_bin < sbase.len() && freq_bin > 0 {
-            10.0_f64.powf(0.1 * (sbase[freq_bin] - 40.0))
+        let freq_bin = nint_wsjtx_f32(freq / df).max(1) as usize;
+        if freq_bin < sbase.len() {
+            (10.0f32.powf(0.1 * (sbase[freq_bin] as f32 - 40.0))) as f64
         } else {
             1.0 // fallback
         }
@@ -518,6 +518,10 @@ fn split77_words(msg: &str) -> Vec<String> {
         }
     }
     words
+}
+
+fn nint_wsjtx_f32(x: f64) -> isize {
+    (x as f32).round() as isize
 }
 
 fn suppress_previous_a7_entries(
