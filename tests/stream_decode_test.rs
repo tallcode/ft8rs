@@ -4,7 +4,7 @@ use ft8rs::stream::{StreamDecodeConfig, StreamDecodeSession};
 use std::collections::HashSet;
 
 const LONG_SLOT_START_OFFSET_SEC: f64 = 0.785;
-const LONG_ACCEPTED_FLOOR: usize = 422;
+const LONG_ACCEPTED_FLOOR: usize = 424;
 
 #[derive(Clone, Debug)]
 struct BaselineRow {

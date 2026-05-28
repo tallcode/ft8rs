@@ -15,7 +15,7 @@
 //!   NFFT   = NMAX = 180000
 //!   NSPS   = 1920 (waveform generation resolution, NOT detection rate of 48)
 
-use crate::util::four2a_c2c;
+use crate::util::{four2a_c2c, four2a_r2c};
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
@@ -257,108 +257,104 @@ pub fn subtract_ft8_refined(
     refined: bool,
 ) {
     let (cref_re, cref_im) = gen_ft8wave(itone, f0);
-    let nmax = 15 * 12000;
 
-    // dt refinement (WSJT-X lrefinedt)
-    let refined_dt = if refined {
-        let offset = refine_dt(dd0, &cref_re, &cref_im, f0, dt);
-        if offset.abs() > 90 {
-            return; // No acceptable minimum: do not subtract
+    let final_offset = if refined {
+        let sqa = subtract_sqf_band_energy(dd0, &cref_re, &cref_im, f0, dt, -90);
+        let sqb = subtract_sqf_band_energy(dd0, &cref_re, &cref_im, f0, dt, 90);
+        let sq0 = subtract_sqf_band_energy(dd0, &cref_re, &cref_im, f0, dt, 0);
+        let dx = peakup(sqa, sq0, sqb);
+        if dx.abs() > 1.0 {
+            return;
         }
-        dt + (offset as f64 / SAMPLE_RATE)
+        (90.0 * dx).round() as isize
     } else {
-        dt
+        0
     };
 
-    let nstart = wsjtx_subtract_nstart(refined_dt, 0);
-
-    // IQ mix: camp(i) = dd0[j] × conjg(cref(i))
-    let mut camp_re = vec![0.0f64; NFRAME];
-    let mut camp_im = vec![0.0f64; NFRAME];
-    for i in 0..NFRAME {
-        // WSJT-X keeps nstart/j as 1-based sample indices:
-        // Fortran i=1 gives j=nstart, so Rust i=0 must also map to j=nstart.
-        let j = wsjtx_subtract_sample_index(nstart, i);
-        if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
-            let d = dd0[(j - 1) as usize];
-            camp_re[i] = d * cref_re[i];
-            camp_im[i] = -d * cref_im[i];
-        }
-    }
-
-    // FFT-based LPF convolution
-    let (cfilt_re, cfilt_im) = lpf_convolve(&camp_re, &camp_im);
-
-    // Subtract: dd0[j] -= 2 × REAL(cfilt[i] × cref(i))
-    for i in 0..NFRAME {
-        let j = wsjtx_subtract_sample_index(nstart, i);
-        if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
-            let z_re = cfilt_re[i] * cref_re[i] - cfilt_im[i] * cref_im[i];
-            dd0[(j - 1) as usize] -= 2.0 * z_re;
-        }
-    }
+    let subtracted = subtract_sqf(dd0, &cref_re, &cref_im, f0, dt, final_offset, false);
+    *dd0 = subtracted.dd;
 }
 
-/// Refine dt by minimizing residual energy in signal band (WSJT-X lrefinedt).
-/// Tests offsets -90, 0, +90 samples and uses quadratic interpolation.
-fn refine_dt(dd0: &[f64], cref_re: &[f64], cref_im: &[f64], f0: f64, dt: f64) -> isize {
-    let _nmax = 15 * 12000;
-
-    // Compute residual energy at three offsets
-    let sqa = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, -90);
-    let sq0 = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, 0);
-    let sqb = compute_residual_energy(dd0, cref_re, cref_im, f0, dt, 90);
-
-    // Quadratic interpolation to find minimum
-    // Peakup: fits parabola through (-90, sqa), (0, sq0), (90, sqb)
-    // Minimum at dx = 90 * (sqa - sqb) / (2 * (sqa - 2*sq0 + sqb))
-    let denom = 2.0 * (sqa - 2.0 * sq0 + sqb);
-    if denom.abs() < 1e-30 {
-        return 0;
-    }
-    let dx = 90.0 * (sqa - sqb) / denom;
-    dx.round() as isize
+fn peakup(ym: f64, y0: f64, yp: f64) -> f64 {
+    let b = yp - ym;
+    let c = yp + ym - 2.0 * y0;
+    -b / (2.0 * c)
 }
 
-/// Compute residual energy in signal band after subtraction at given offset.
-fn compute_residual_energy(
+struct SqfResult {
+    dd: Vec<f64>,
+    band_energy: f64,
+}
+
+fn subtract_sqf_band_energy(
     dd0: &[f64],
     cref_re: &[f64],
     cref_im: &[f64],
-    _f0: f64,
+    f0: f64,
     dt: f64,
     offset: isize,
 ) -> f64 {
+    subtract_sqf(dd0, cref_re, cref_im, f0, dt, offset, true).band_energy
+}
+
+fn subtract_sqf(
+    dd0: &[f64],
+    cref_re: &[f64],
+    cref_im: &[f64],
+    f0: f64,
+    dt: f64,
+    offset: isize,
+    compute_band_energy: bool,
+) -> SqfResult {
     let nmax = 15 * 12000;
     let nstart = wsjtx_subtract_nstart(dt, offset);
+    let mut dd = vec![0.0f64; NFFT];
+    let copy_len = dd0.len().min(NFFT);
+    dd[..copy_len].copy_from_slice(&dd0[..copy_len]);
 
-    // IQ mix
     let mut camp_re = vec![0.0f64; NFRAME];
     let mut camp_im = vec![0.0f64; NFRAME];
     for i in 0..NFRAME {
-        // Keep the same 1-based nstart/j mapping as subtract_ft8_refined().
         let j = wsjtx_subtract_sample_index(nstart, i);
         if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
-            let d = dd0[(j - 1) as usize];
+            let d = dd[(j - 1) as usize];
             camp_re[i] = d * cref_re[i];
             camp_im[i] = -d * cref_im[i];
         }
     }
 
-    // LPF convolution
     let (cfilt_re, cfilt_im) = lpf_convolve(&camp_re, &camp_im);
 
-    // Compute residual and its energy in signal band
-    let mut energy = 0.0;
+    let mut x_re = compute_band_energy.then(|| vec![0.0f64; NFFT]);
     for i in 0..NFRAME {
         let j = wsjtx_subtract_sample_index(nstart, i);
         if j >= 1 && j <= nmax as isize && j as usize <= dd0.len() {
             let z_re = cfilt_re[i] * cref_re[i] - cfilt_im[i] * cref_im[i];
-            let residual = dd0[(j - 1) as usize] - 2.0 * z_re;
-            energy += residual * residual;
+            let residual = dd[(j - 1) as usize] - 2.0 * z_re;
+            dd[(j - 1) as usize] = residual;
+            if let Some(x_re) = x_re.as_mut() {
+                x_re[i] = residual;
+            }
         }
     }
-    energy
+
+    let band_energy = if let Some(mut x_re) = x_re {
+        let mut x_im = vec![0.0f64; NFFT];
+        four2a_r2c(&mut x_re, &mut x_im);
+        let df = SAMPLE_RATE / NFFT as f64;
+        let ia = ((f0 - 1.5 * 6.25) / df).max(0.0) as usize;
+        let ib = ((f0 + 8.5 * 6.25) / df).min((NFFT / 2) as f64) as usize;
+        let mut sqq = 0.0;
+        for i in ia..=ib {
+            sqq += x_re[i] * x_re[i] + x_im[i] * x_im[i];
+        }
+        sqq
+    } else {
+        0.0
+    };
+
+    dd.truncate(dd0.len());
+    SqfResult { dd, band_energy }
 }
 
 #[cfg(test)]
