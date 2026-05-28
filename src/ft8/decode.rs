@@ -1603,11 +1603,11 @@ pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
 fn ft8_downsample(cx_re: &[f64], cx_im: &[f64], f0: f64, workspace: &mut DecodeWorkspace) {
     let df = DOWNSAMPLE_DF;
     let baud = DOWNSAMPLE_BAUD;
-    let i0 = (f0 / df).round() as usize;
+    let i0 = nint_wsjtx_f32(f0 / df).max(0) as usize;
     let ft = f0 + 8.5 * baud;
-    let it = ((ft / df).round() as usize).min(NFFT1_LONG / 2);
+    let it = (nint_wsjtx_f32(ft / df).max(0) as usize).min(NFFT1_LONG / 2);
     let fb = f0 - 1.5 * baud;
-    let ib = 1.max((fb / df).round() as usize);
+    let ib = 1.max(nint_wsjtx_f32(fb / df).max(0) as usize);
 
     workspace.cd0_re.fill(0.0);
     workspace.cd0_im.fill(0.0);
@@ -1658,6 +1658,10 @@ fn ft8_downsample(cx_re: &[f64], cx_im: &[f64], f0: f64, workspace: &mut DecodeW
         workspace.cd0_re[i] *= DOWNSAMPLE_FAC;
         workspace.cd0_im[i] *= DOWNSAMPLE_FAC;
     }
+}
+
+fn nint_wsjtx_f32(x: f64) -> isize {
+    (x as f32).round() as isize
 }
 
 fn sync8d_isize(
