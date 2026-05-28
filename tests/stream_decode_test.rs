@@ -3,7 +3,6 @@ use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
 use ft8rs::stream::{StreamDecodeConfig, StreamDecodeSession};
 use std::collections::HashSet;
 
-const LONG_SLOT_START_OFFSET_SEC: f64 = 0.785;
 const LONG_ACCEPTED_FLOOR: usize = 424;
 
 #[derive(Clone, Debug)]
@@ -126,14 +125,11 @@ fn timestamp_for_segment(seg: usize) -> String {
     )
 }
 
-fn slot_with_start_offset(samples: &[f32], start: isize, len: usize) -> Vec<f32> {
+fn slot_samples(samples: &[f32], start: usize, len: usize) -> Vec<f32> {
     let mut out = vec![0.0; len];
     for (dst, sample) in out.iter_mut().enumerate() {
-        let src = start + dst as isize;
-        if src >= 0 {
-            if let Some(value) = samples.get(src as usize) {
-                *sample = *value;
-            }
+        if let Some(value) = samples.get(start + dst) {
+            *sample = *value;
         }
     }
     out
@@ -256,19 +252,13 @@ fn test_stream_decode_long_audio() {
     let sps = 15 * 12000;
     let dur_12k = s12k.len() as f64 / 12000.0;
     let nseg = (dur_12k / 15.0).ceil() as usize;
-    let start_offset_sec = std::env::var("FT8RS_SLOT_START_OFFSET_SEC")
-        .ok()
-        .and_then(|value| value.parse::<f64>().ok())
-        .unwrap_or(LONG_SLOT_START_OFFSET_SEC);
-    let start_offset_samples = (start_offset_sec * 12000.0).round() as isize;
 
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
     println!(
-        "\n[ENGINE={}] [STREAM LONG DECODE] {} segments, {} baseline messages, slot_start_offset={:+.3}s",
+        "\n[ENGINE={}] [STREAM LONG DECODE] {} segments, {} baseline messages, slot_start_offset=+0.000s",
         fft_engine_name(),
         nseg,
-        baseline.len(),
-        start_offset_sec
+        baseline.len()
     );
 
     let config = StreamDecodeConfig {
@@ -278,18 +268,13 @@ fn test_stream_decode_long_audio() {
 
     let mut total_matched = 0;
     let accepted_floor = LONG_ACCEPTED_FLOOR;
-    let acceptance_enabled = (start_offset_sec - LONG_SLOT_START_OFFSET_SEC).abs() < f64::EPSILON;
-    let severe_floor = if acceptance_enabled {
-        accepted_floor.saturating_sub(10)
-    } else {
-        0
-    };
+    let severe_floor = accepted_floor.saturating_sub(10);
     let mut diff_rows = Vec::new();
     let mut timing_stats = TimingStats::default();
 
     for seg in 0..nseg {
-        let seg_start = seg as isize * sps as isize - start_offset_samples;
-        let data = slot_with_start_offset(&s12k, seg_start, sps);
+        let seg_start = seg * sps;
+        let data = slot_samples(&s12k, seg_start, sps);
 
         let slot_t0 = std::time::Instant::now();
         let results = decoder.decode_slot(&data);
@@ -353,17 +338,15 @@ fn test_stream_decode_long_audio() {
             }
         }
 
-        if acceptance_enabled {
-            let remaining_baseline = baseline.iter().filter(|row| row.seg > seg).count();
-            assert!(
-                total_matched + remaining_baseline >= severe_floor,
-                "STREAM LONG sensitivity abort at seg {}: matched {} + remaining {} < {}",
-                seg,
-                total_matched,
-                remaining_baseline,
-                severe_floor,
-            );
-        }
+        let remaining_baseline = baseline.iter().filter(|row| row.seg > seg).count();
+        assert!(
+            total_matched + remaining_baseline >= severe_floor,
+            "STREAM LONG sensitivity abort at seg {}: matched {} + remaining {} < {}",
+            seg,
+            total_matched,
+            remaining_baseline,
+            severe_floor,
+        );
     }
 
     let rate = total_matched as f64 / baseline.len() as f64 * 100.0;
@@ -376,20 +359,18 @@ fn test_stream_decode_long_audio() {
     );
     if let Some(timing) = timing_stats.summary() {
         println!(
-            "  Timing offset estimate: start_offset=baseline_drift-decoded_dt mean={:+.3}s median={:+.3}s p10={:+.3}s p90={:+.3}s n={}",
+            "  Timing residual: baseline_drift-decoded_dt mean={:+.3}s median={:+.3}s p10={:+.3}s p90={:+.3}s n={}",
             timing.mean, timing.median, timing.p10, timing.p90, timing.count
         );
     }
     if std::env::var("FT8RS_WRITE_DIFF").ok().as_deref() == Some("1") {
         write_diff_csv("tests/ft8/230208_140300_diff.csv", &diff_rows);
     }
-    if acceptance_enabled {
-        assert!(
-            total_matched >= accepted_floor,
-            "STREAM LONG: {}/{} < {}",
-            total_matched,
-            baseline.len(),
-            accepted_floor
-        );
-    }
+    assert!(
+        total_matched >= accepted_floor,
+        "STREAM LONG: {}/{} < {}",
+        total_matched,
+        baseline.len(),
+        accepted_floor
+    );
 }
