@@ -184,6 +184,14 @@ Offset sweep 仍作为诊断资料保留：
   `csymb/1000`、`s2`、`imetric=2` square、`bm/den` 和
   `normalizebmet` 中间算术都走 f32 形状。此项保持 RustFFT/FFTW 长测
   `424/449`，属于后续 miss 诊断降噪，不是追分调参。
+- `ft8b` 内部同步细化链路继续对齐：
+  - Costas sync template 和 `delf` tweak template 用 default `real`
+    `phi/dphi/cos/sin` 形状生成。
+  - `sync8d` 的复数点积和功率累加收窄到 f32，匹配
+    `sync8d.f90` default `complex/real`。
+  - regular `s8` 改回 WSJT-X 的未缩放 `abs(csymb(1:8))`，`cs` 保持
+    `csymb/1e3`；`xsnr2` 公式恢复源码的 `/3.0e6`，不再用等价补偿 `/3`。
+  RustFFT/FFTW 正式窗口长测仍保持 `424/449`。
 - `ft8_a7d` AP metric 同步做同构整理：`nsym=1` 改回 WSJT-X 的
   `abs(cs(graymap(...),ks))` 路径，而不是未缩放 `s8`；`cs/s2/bm/den`
   也收窄到默认 `real` 形状。RustFFT/FFTW 长测仍保持 `424/449`。
@@ -312,9 +320,9 @@ Offset sweep 仍作为诊断资料保留：
 - `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
   - `424/449`
   - timing residual median `+0.000s`
-  - 每段均小于 `15s`，最慢约 `3.75s`
+  - 每段均小于 `15s`，最慢约 `3.68s`
 - `FT8RS_WRITE_DIFF=1 cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture` ✅
   - `424/449`
   - timing residual median `+0.000s`
-  - 每段均小于 `15s`，总耗时约 `52.1s`
+  - 每段均小于 `15s`，总耗时约 `54.7s`
 - `git diff --check` ✅
