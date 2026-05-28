@@ -206,10 +206,12 @@ Offset sweep 仍作为诊断资料保留：
     不污染输入 buffer。
   - `ldt=true` 时，对减除后的 `x` 做 `NFFT=180000` real FFT，只累加
     `f0-1.5*baud` 到 `f0+8.5*baud` 的信号频带能量。
+  - `sqf` 返回值、band-energy 累加和 `peakup` 算术按 WSJT-X 默认
+    `real`/`real*4` 路径收窄到 f32。
   - `peakup(sqa,sq0,sqb,dx)` 后使用 `i2=nint(90*dx)`；最终 `ldt=false`
     的 `sqf(i2)` 才写回 `dd0`。
-- 在当前 `+0.785s` 窗口下，包络和 refined-DT `sqf()` 都对齐后，长测提升到
-  `424/449`，可保留。
+- 在当前 `+0.785s` 窗口下，包络和 refined-DT `sqf()` 都对齐后，RustFFT 与
+  FFTW 长测都保持 `424/449`，可保留。
 
 ### 77-bit Message Family
 
@@ -286,4 +288,8 @@ Offset sweep 仍作为诊断资料保留：
   - `424/449`
   - timing residual median `+0.000s`
   - 每段均小于 `15s`，最慢约 `3.87s`
+- `FT8RS_WRITE_DIFF=1 cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture` ✅
+  - `424/449`
+  - timing residual median `+0.000s`
+  - 每段均小于 `15s`，总耗时约 `55.5s`
 - `git diff --check` ✅
