@@ -1354,7 +1354,7 @@ fn load_coarse_downsample(
 }
 
 fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> TimeSearchResult {
-    let i0_raw = ((xdt + 0.5) * FS2).round() as isize;
+    let i0_raw = nint_wsjtx_f32((xdt + 0.5) * FS2);
     let mut smax = 0.0;
     let mut ibest = i0_raw;
     let cs = build_costas_sync_templates();
