@@ -1264,10 +1264,7 @@ fn ft8b(
         }
         return None;
     };
-    if ap_options.ncontest == 0
-        && (1..=3).contains(&i3v)
-        && (msg.contains("/R") || msg.starts_with("TU; "))
-    {
+    if !is_acceptable_unpacked_message(&msg, i3v, ap_options.ncontest) {
         if let Some(stats) = stats.as_deref_mut() {
             stats.decode_failures += 1;
             add_elapsed(&mut stats.post, t_post);
@@ -2037,13 +2034,22 @@ fn is_wsjtx_acceptable_codeword(
     let Some(msg) = unpack77_with_context(message77, unpack_context) else {
         return false;
     };
-    if ap_options.ncontest == 0
-        && (1..=3).contains(&i3v)
-        && (msg.contains("/R") || msg.starts_with("TU; "))
-    {
+    if !is_acceptable_unpacked_message(&msg, i3v, ap_options.ncontest) {
         return false;
     }
 
+    !msg.trim().is_empty()
+}
+
+fn is_acceptable_unpacked_message(msg: &str, i3v: usize, ncontest: usize) -> bool {
+    // RTTY contest exchanges are FT8/JT77 messages, but they are contest-only
+    // payloads. Keep them out of the default non-contest FT8 decoder path.
+    if i3v == 3 && ncontest != 4 {
+        return false;
+    }
+    if ncontest == 0 && (1..=3).contains(&i3v) && (msg.contains("/R") || msg.starts_with("TU; ")) {
+        return false;
+    }
     !msg.trim().is_empty()
 }
 
@@ -2257,7 +2263,10 @@ fn set_i3_001(workspace: &mut DecodeWorkspace, apmag: f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_outer_sync_min, finalize_sync8_candidates, Candidate};
+    use super::{
+        default_outer_sync_min, finalize_sync8_candidates, is_acceptable_unpacked_message,
+        Candidate,
+    };
 
     #[test]
     fn default_outer_sync_min_matches_wsjtx_depth_gate() {
@@ -2302,5 +2311,19 @@ mod tests {
         assert_eq!(ordered[0].freq, 210.0);
         assert_eq!(ordered[1].freq, 300.0);
         assert_eq!(ordered[2].freq, 102.5);
+    }
+
+    #[test]
+    fn rtty_contest_exchange_is_contest_only() {
+        assert!(!is_acceptable_unpacked_message(
+            "CQ 001 IZ7MMG 549 2025",
+            3,
+            0
+        ));
+        assert!(is_acceptable_unpacked_message(
+            "CQ 001 IZ7MMG 549 2025",
+            3,
+            4
+        ));
     }
 }
