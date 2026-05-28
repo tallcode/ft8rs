@@ -176,6 +176,10 @@ Offset sweep 仍作为诊断资料保留：
   `ft8_downsample.f90` 中 `df/baud/f0` 默认实数表达式的 rounding path。
 - `cshift(c1,i0-ib)` 改为 signed shift + `rem_euclid`，避免极低频边界时
   `usize` 下溢。
+- `ft8b` soft-symbol metric 链路按 WSJT-X 默认 `real/complex` 收窄：
+  `csymb/1000`、`s2`、`imetric=2` square、`bm/den` 和
+  `normalizebmet` 中间算术都走 f32 形状。此项保持 RustFFT/FFTW 长测
+  `424/449`，属于后续 miss 诊断降噪，不是追分调参。
 
 ### `nuttal_window`
 

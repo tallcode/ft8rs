@@ -475,6 +475,10 @@ Current source-level finding:
     narrowing the expression to Fortran default `real` precision, matching the
     source-level rounding path for downsample bin boundaries.
   - `sync8` uses source-shaped `nfos=NFFT1/NSPS`。
+  - `ft8b` soft-symbol metrics now keep the same default `real/complex`
+    precision shape as WSJT-X: `csymb/1000`, `s2`, `imetric=2` squaring,
+    `bm/den`, and `normalizebmet` all narrow intermediate arithmetic to f32
+    before returning to the Rust storage type.
   - `ft8b` `bmete` and `ft8_a7d` time-refine use first-max behavior matching
     Fortran `maxloc`。
   - LDPC `platanh` now uses WSJT-X's piecewise approximation and `±7.0`

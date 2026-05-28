@@ -1431,8 +1431,8 @@ fn extract_soft_symbols(ibest: isize, workspace: &mut DecodeWorkspace) {
 
         four2a_c2c(&mut workspace.symb_re, &mut workspace.symb_im, -1);
         for tone in 0..8 {
-            let re = workspace.symb_re[tone] / 1000.0;
-            let im = workspace.symb_im[tone] / 1000.0;
+            let re = (workspace.symb_re[tone] as f32 / 1000.0) as f64;
+            let im = (workspace.symb_im[tone] as f32 / 1000.0) as f64;
             let idx = tone * NN + k;
             workspace.cs_re[idx] = re;
             workspace.cs_im[idx] = im;
@@ -1493,26 +1493,27 @@ fn build_bit_metrics(workspace: &mut DecodeWorkspace, imetric: usize) {
                     if nsym == 1 {
                         let re = workspace.cs_re[GRAY_MAP[i3] as usize * NN + ks - 1];
                         let im = workspace.cs_im[GRAY_MAP[i3] as usize * NN + ks - 1];
-                        workspace.s2[i] = (re * re + im * im).sqrt();
+                        workspace.s2[i] = wsjtx_cabs(re as f32, im as f32) as f64;
                     } else if nsym == 2 {
-                        let s_re = workspace.cs_re[GRAY_MAP[i2] as usize * NN + ks - 1]
-                            + workspace.cs_re[GRAY_MAP[i3] as usize * NN + ks];
-                        let s_im = workspace.cs_im[GRAY_MAP[i2] as usize * NN + ks - 1]
-                            + workspace.cs_im[GRAY_MAP[i3] as usize * NN + ks];
-                        workspace.s2[i] = (s_re * s_re + s_im * s_im).sqrt();
+                        let s_re = workspace.cs_re[GRAY_MAP[i2] as usize * NN + ks - 1] as f32
+                            + workspace.cs_re[GRAY_MAP[i3] as usize * NN + ks] as f32;
+                        let s_im = workspace.cs_im[GRAY_MAP[i2] as usize * NN + ks - 1] as f32
+                            + workspace.cs_im[GRAY_MAP[i3] as usize * NN + ks] as f32;
+                        workspace.s2[i] = wsjtx_cabs(s_re, s_im) as f64;
                     } else {
-                        let s_re = workspace.cs_re[GRAY_MAP[i1] as usize * NN + ks - 1]
-                            + workspace.cs_re[GRAY_MAP[i2] as usize * NN + ks]
-                            + workspace.cs_re[GRAY_MAP[i3] as usize * NN + ks + 1];
-                        let s_im = workspace.cs_im[GRAY_MAP[i1] as usize * NN + ks - 1]
-                            + workspace.cs_im[GRAY_MAP[i2] as usize * NN + ks]
-                            + workspace.cs_im[GRAY_MAP[i3] as usize * NN + ks + 1];
-                        workspace.s2[i] = (s_re * s_re + s_im * s_im).sqrt();
+                        let s_re = workspace.cs_re[GRAY_MAP[i1] as usize * NN + ks - 1] as f32
+                            + workspace.cs_re[GRAY_MAP[i2] as usize * NN + ks] as f32
+                            + workspace.cs_re[GRAY_MAP[i3] as usize * NN + ks + 1] as f32;
+                        let s_im = workspace.cs_im[GRAY_MAP[i1] as usize * NN + ks - 1] as f32
+                            + workspace.cs_im[GRAY_MAP[i2] as usize * NN + ks] as f32
+                            + workspace.cs_im[GRAY_MAP[i3] as usize * NN + ks + 1] as f32;
+                        workspace.s2[i] = wsjtx_cabs(s_re, s_im) as f64;
                     }
                 }
                 if imetric == 2 {
                     for i in 0..nt {
-                        workspace.s2[i] *= workspace.s2[i];
+                        let v = workspace.s2[i] as f32;
+                        workspace.s2[i] = (v * v) as f64;
                     }
                 }
 
@@ -1538,11 +1539,15 @@ fn build_bit_metrics(workspace: &mut DecodeWorkspace, imetric: usize) {
                         continue;
                     }
 
-                    let bm = max1 - max0;
+                    let bm = ((max1 as f32) - (max0 as f32)) as f64;
                     if nsym == 1 {
                         workspace.bmeta[idx] = bm;
-                        let den = max1.max(max0);
-                        workspace.bmetd[idx] = if den > 0.0 { bm / den } else { 0.0 };
+                        let den = (max1 as f32).max(max0 as f32);
+                        workspace.bmetd[idx] = if den > 0.0 {
+                            ((bm as f32) / den) as f64
+                        } else {
+                            0.0
+                        };
                     } else if nsym == 2 {
                         workspace.bmetb[idx] = bm;
                     } else {
@@ -1564,6 +1569,10 @@ fn build_bit_metrics(workspace: &mut DecodeWorkspace, imetric: usize) {
     normalize_bmet(&mut workspace.bmete);
 }
 
+fn wsjtx_cabs(re: f32, im: f32) -> f32 {
+    (re * re + im * im).sqrt()
+}
+
 fn maxloc_abs_first(temp: &[f64]) -> f64 {
     let mut ip = 0usize;
     let mut vmax = temp[0].abs();
@@ -1579,14 +1588,15 @@ fn maxloc_abs_first(temp: &[f64]) -> f64 {
 
 pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
     let n = bmet.len();
-    let mut sum = 0.0;
-    let mut sum2 = 0.0;
+    let mut sum = 0.0f32;
+    let mut sum2 = 0.0f32;
     for i in 0..n {
-        sum += bmet[i];
-        sum2 += bmet[i] * bmet[i];
+        let v = bmet[i] as f32;
+        sum += v;
+        sum2 += v * v;
     }
-    let avg = sum / n as f64;
-    let avg2 = sum2 / n as f64;
+    let avg = sum / n as f32;
+    let avg2 = sum2 / n as f32;
     let variance = avg2 - avg * avg;
     let sigma = if variance > 0.0 {
         variance.sqrt()
@@ -1595,7 +1605,7 @@ pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
     };
     if sigma > 0.0 {
         for i in 0..n {
-            bmet[i] /= sigma;
+            bmet[i] = ((bmet[i] as f32) / sigma) as f64;
         }
     }
 }
