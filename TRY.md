@@ -12,10 +12,10 @@
   - 当前 `21` unique messages。
   - release 约 `3.3s`。
 - 长测：`tests/ft8/230208_140300.wav`
-  - 当前保护线 `422/449`。
+  - 当前保护线 `424/449`。
   - 默认 slot 起点偏移 `+0.785s`。
   - timing residual median 约 `+0.000s`。
-  - 每段小于 `15s`，最近最慢段约 `3.84s`。
+  - 每段小于 `15s`，最近最慢段约 `3.87s`。
 - 测试要求：
   - 性能/灵敏度测试只使用 release。
   - WSJT-X parity 验证使用 `--features fftw`。
@@ -66,7 +66,7 @@ Offset sweep 仍作为诊断资料保留：
 | `0.000` | `422/449` | `+0.785s` | 旧窗口，timing residual 未对齐 |
 | `0.250` | `424/449` | `+0.535s` | 诊断更好但非正式 |
 | `0.500` | `426/449` | `+0.285s` | 匹配最高，但不应作为追分开关 |
-| `0.785` | `422/449` | `+0.000s` | 当前正式对齐窗口 |
+| `0.785` | `424/449` | `+0.000s` | 当前正式对齐窗口 |
 | `1.000` | `412/449` | `-0.215s` | late large-drift miss 变多 |
 
 结论：`0.785s` 偏移是真实诊断信号，当前先作为长测试对齐窗口。后续应继续
@@ -201,14 +201,15 @@ Offset sweep 仍作为诊断资料保留：
 - `gen_ft8wave` complex envelope 已对齐：
   - first ramp: `(1-cos(angle))/2`
   - last ramp: `(1+cos(angle))/2`
-- 在当前 `+0.785s` 窗口下，包络修正后长测为 `422/449`，可保留。
-
-仍未保留：
-
-- `subtractft8.f90:sqf()` refined-DT 频带能量。WSJT-X 比较减除后 FFT 中
-  `f0-1.5*baud` 到 `f0+8.5*baud` 的信号频带能量；ft8rs 当前保护路径仍比较
-  时域残差平方和。之前单点替换会掉保护线，后续应和 `sqf()` 副作用模型、
-  局部 `dd` 生命周期、参考波形相位一起成组核对。
+- `subtractft8.f90:sqf()` refined-DT 结构已对齐：
+  - `-90/+90/0` trial offset 每次都从 `dd0` 重建局部 `dd`，完成一次 subtract，
+    不污染输入 buffer。
+  - `ldt=true` 时，对减除后的 `x` 做 `NFFT=180000` real FFT，只累加
+    `f0-1.5*baud` 到 `f0+8.5*baud` 的信号频带能量。
+  - `peakup(sqa,sq0,sqb,dx)` 后使用 `i2=nint(90*dx)`；最终 `ldt=false`
+    的 `sqf(i2)` 才写回 `dd0`。
+- 在当前 `+0.785s` 窗口下，包络和 refined-DT `sqf()` 都对齐后，长测提升到
+  `424/449`，可保留。
 
 ### 77-bit Message Family
 
@@ -267,8 +268,8 @@ Offset sweep 仍作为诊断资料保留：
 
 下一轮重点：
 
-- 继续核对 `subtractft8` refined-DT 的 `sqf()` 行为，但必须成组处理，不能单点
-  替换导致保护线回退。
+- 继续核对 `subtractft8` 剩余边界：`peakup` 极小分母、Fortran `nint` 半值、
+  `x(NFFT+2)`/real-to-complex storage 边界，以及 FFTW 单精度路径对比。
 - 查 `ft8_decode` 外层 `dd0/dd1/newdat/subtract` 生命周期，尤其 progressive
   residual 和 duplicate/subtract 的交互。
 - 查 `ft8_a7` same-parity memory、`ft8_a7_save` 调用时机、`hashcallbook`
@@ -282,7 +283,7 @@ Offset sweep 仍作为诊断资料保留：
   - `21` unique messages
   - 约 `3.3s`
 - `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture` ✅
-  - `422/449`
+  - `424/449`
   - timing residual median `+0.000s`
-  - 每段均小于 `15s`，最慢约 `3.84s`
+  - 每段均小于 `15s`，最慢约 `3.87s`
 - `git diff --check` ✅

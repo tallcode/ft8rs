@@ -39,7 +39,7 @@ JTDX 源码可以作为参考，但 JTDX 比 WSJT-X 更激进。任何来自 JTD
 | Fixture | Requirement | Current |
 |---|---:|---:|
 | `210703_133430.wav` | at least `19/20`, slot under `15s` | `21` unique messages |
-| `230208_140300.wav` | current floor `422/449`, each slot under `15s`, slot offset `+0.785s` | `422/449` |
+| `230208_140300.wav` | current floor `424/449`, each slot under `15s`, slot offset `+0.785s` | `424/449` |
 
 当前观察到的性能：
 
@@ -51,7 +51,7 @@ JTDX 源码可以作为参考，但 JTDX 比 WSJT-X 更激进。任何来自 JTD
 
 - 解码测试一律使用 `--release`。
 - 长测必须保留每段 `15s` 超时约束。
-- 长测必须保留灵敏度 early-abort，当前严重失败阈值为 `422-10`。
+- 长测必须保留灵敏度 early-abort，当前严重失败阈值为 `424-10`。
 - 不允许降低基线或放宽性能门槛来通过测试。
 
 常用命令：
@@ -140,7 +140,8 @@ slot 约有 `14.47s` 音频。
 - FT8 tone spacing 是 `6.25 Hz`，正好是 2 个 bin。
 - 本地 A/B 测试中，`RustFFT@3840` 和 `FFTW@3840` 在旧 no-offset 保护
   fixture 上都保持 `21` 和 `422/449`。切换 `+0.785s` 对齐窗口并修正
-  WSJT-X `gen_ft8wave` 包络后，RustFFT 当前保护线为 `422/449`，FFTW 尚待重跑。
+  WSJT-X `gen_ft8wave` 包络和 `subtractft8` refined-DT `sqf()` 后，
+  RustFFT 当前保护线为 `424/449`，FFTW 尚待重跑。
 
 发布策略：
 
@@ -361,10 +362,19 @@ affects envelope estimation, refined DT, and residual writeback.
 
 Earlier no-offset experiments made this look unsafe in isolation, but under
 the current `+0.785s` aligned fixture window it improves the protected RustFFT
-long score to `422/449` and is retained as a source-aligned correction. The
-remaining grouped subtract gap is refined-DT `sqf()` energy: WSJT-X evaluates
-the post-subtraction FFT energy inside the FT8 signal band, while ft8rs still
-uses the protected time-domain residual-energy path.
+long score and is retained as a source-aligned correction.
+
+`subtractft8` refined-DT now mirrors the WSJT-X internal `sqf()` structure:
+
+- trial offsets `-90/+90/0` each rebuild a local `dd` from `dd0` and run a full
+  subtract without mutating the caller buffer。
+- while `ldt=true`, `sqf()` computes the post-subtraction FFT energy only in
+  the FT8 signal band `f0-1.5*baud .. f0+8.5*baud`。
+- `peakup(sqa,sq0,sqb,dx)` selects `i2=nint(90*dx)`; a final `sqf(i2)` with
+  `ldt=false` performs the only writeback。
+
+With the current aligned fixture window this raises the protected RustFFT long
+score to `424/449` while keeping every slot below `15s`。
 
 ## 11. Recording Start Offset Diagnostic
 
@@ -384,7 +394,7 @@ exactly `230208_140300.000`。The long-test harness now uses `+0.785s` as the
 default slot-start offset so future miss analysis compares against a
 time-aligned window:
 
-- `0.785s` centers timing residual near zero and currently scores `422/449`。
+- `0.785s` centers timing residual near zero and currently scores `424/449`。
 - no-offset previously scored `422/449` but carried a median residual around
   `+0.785s`。
 - `0.500s` produced the best temporary sweep score observed so far (`426/449`)。
@@ -452,8 +462,8 @@ Current source-level finding:
   pass-control state, but are not returned again by the full-stage decoder.
 - This alignment kept the previous no-offset long-file score unchanged at
   `422/449`; after switching the default long-test window to `+0.785s` and
-  aligning `gen_ft8wave` envelope shaping, the protected RustFFT baseline is
-  `422/449`.
+  aligning `gen_ft8wave` envelope shaping plus `subtractft8` refined-DT
+  `sqf()`, the protected RustFFT baseline is `424/449`.
 - Current numeric-homology cleanup:
   - FT8 core call sites now use `four2a_r2c` / `four2a_c2c` instead of generic
     normalized FFT wrappers.
@@ -475,8 +485,11 @@ Current source-level finding:
     `0.3635819, -0.4891775, 0.1365995, -0.0106411`。
   - `subtractft8` reference waveform envelope now matches
     `gen_ft8wave.f90` with `(1-cos(angle))/2` and `(1+cos(angle))/2` ramps。
+  - `subtractft8` refined-DT now uses WSJT-X's `sqf()` shape: local `dd`
+    rebuild per trial, signal-band FFT energy under `ldt=true`, and final
+    one-time writeback using `i2=nint(90*dx)`。
   - Previous no-offset release validation remained `21` short and `422/449`
-    long; current `+0.785s` RustFFT validation is `422/449` long.
+    long; current `+0.785s` RustFFT validation is `424/449` long.
 - `ft8_a8d` remains a known architecture gap. It is only active when AP is on,
   contest is not Fox/Hound, `nzhsym=50`, `hiscall` and `hisgrid` are populated,
   and the a7 path has not already decoded the target. It does not explain the
@@ -534,13 +547,10 @@ Current source-level finding:
   This kept both RustFFT and FFTW no-offset long baselines at `422/449`, while
   changing a few edge diff rows, confirming residual subtraction is active in
   the remaining boundary behavior.
-- `subtractft8` refined-DT still has a known grouped alignment issue. WSJT-X
-  `sqf()` compares post-subtraction FFT energy only in the FT8 signal band,
-  whereas the current protected ft8rs path still compares time-domain residual
-  energy. A direct one-line-style replacement was tested and reduced the long
-  baseline under the previous window, so this must be aligned together with
-  `sqf()` side effects and any remaining reference-waveform parity rather than
-  changed in isolation.
+- `subtractft8` refined-DT now follows the WSJT-X `sqf()` energy and side-effect
+  structure. This was not safe as an isolated old-window edit, but became
+  baseline-positive after the `+0.785s` window and `gen_ft8wave` envelope were
+  aligned.
 - `subtractft8` `nstart` now follows Fortran implicit-integer truncation:
   `nstart=dt*12000+1+idt`. This was source-aligned under the previous
   no-offset `422/449` baseline.
