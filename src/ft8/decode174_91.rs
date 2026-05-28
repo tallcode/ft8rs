@@ -14,7 +14,7 @@ pub struct DecodeResult {
     pub nharderrors: usize,
 }
 
-fn platanh(x: f64) -> f64 {
+fn platanh(x: f32) -> f32 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let z = x.abs();
     if z <= 0.664 {
@@ -61,7 +61,7 @@ fn bits_to_int(bits: &[u8]) -> u16 {
 /// BP decoding result with accumulated posteriors for OSD.
 pub struct BPResult {
     pub decoded: Option<DecodeResult>,
-    pub zsave: Vec<Vec<f64>>,
+    pub zsave: Vec<Vec<f32>>,
 }
 
 pub fn bp_decode174_91_with_posteriors(
@@ -75,15 +75,16 @@ pub fn bp_decode174_91_with_posteriors(
     let n = N_LDPC;
     let m = M_LDPC;
 
-    let mut tov = vec![0.0; NCW * n];
-    let mut toc = vec![0.0; 7 * m];
-    let mut tanhtoc = vec![0.0; 7 * m];
-    let mut zn = vec![0.0; n];
+    let llr: Vec<f32> = llr.iter().map(|&x| x as f32).collect();
+    let mut tov = vec![0.0f32; NCW * n];
+    let mut toc = vec![0.0f32; 7 * m];
+    let mut tanhtoc = vec![0.0f32; 7 * m];
+    let mut zn = vec![0.0f32; n];
     let mut cw = vec![0i8; n];
-    let mut zsum = vec![0.0; n];
-    let mut zsave: Vec<Vec<f64>> = vec![vec![0.0; n]; nosd];
+    let mut zsum = vec![0.0f32; n];
+    let mut zsave: Vec<Vec<f32>> = vec![vec![0.0; n]; nosd];
     if channel_llr_osd && nosd >= 1 {
-        zsave[0].copy_from_slice(llr);
+        zsave[0].copy_from_slice(&llr);
     }
 
     // Initialize messages to checks
@@ -144,7 +145,7 @@ pub fn bp_decode174_91_with_posteriors(
             if check_crc14(&bits91) {
                 let mut nharderrors = 0;
                 for i in 0..n {
-                    if ((2 * cw[i] as i32 - 1) as f64) * llr[i] < 0.0 {
+                    if ((2 * cw[i] as i32 - 1) as f32) * llr[i] < 0.0 {
                         nharderrors += 1;
                     }
                 }
@@ -204,7 +205,7 @@ pub fn bp_decode174_91_with_posteriors(
                 let ichk = mn(j)[i];
                 let w = nrw(ichk);
                 let nm = nm(ichk);
-                let mut tmn = 1.0;
+                let mut tmn = 1.0f32;
                 for k in 0..w {
                     if nm[k] != j {
                         tmn *= tanhtoc[k * m + ichk];
@@ -261,16 +262,17 @@ pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeR
 }
 
 /// Ordered-statistics decoder aligned to WSJT-X `osd174_91.f90`.
-fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeResult> {
+fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Option<DecodeResult> {
     let n = N_LDPC;
     let k = KK;
 
     let gen = get_generator();
-    let absllr: Vec<f64> = llr.iter().map(|&x| x.abs()).collect();
+    let absllr: Vec<f32> = llr.iter().map(|&x| x.abs()).collect();
 
     // WSJT-X osd174_91.f90 uses indexx(absrx,N,indx), then consumes the
     // ascending index vector in reverse to get decreasing reliability.
-    let indx = indexx_ascending(&absllr);
+    let absllr_for_index: Vec<f64> = absllr.iter().map(|&x| x as f64).collect();
+    let indx = indexx_ascending(&absllr_for_index);
     let mut indices: Vec<usize> = indx.into_iter().rev().collect();
 
     // Reorder generator matrix columns
@@ -321,16 +323,16 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
     for i in 0..n {
         hdec[i] = if llr[indices[i]] >= 0.0 { 1 } else { 0 };
     }
-    let absrx: Vec<f64> = (0..n).map(|i| absllr[indices[i]]).collect();
+    let absrx: Vec<f32> = (0..n).map(|i| absllr[indices[i]]).collect();
     let apmaskr: Vec<i8> = (0..n).map(|i| apmask[indices[i]]).collect();
 
     // Encode hard decision on MRB
     let m0: Vec<u8> = hdec[..k].iter().map(|&b| b as u8).collect();
     let c0 = mrb_encode(&m0, &genmrb, n);
 
-    let mut dmin = 0.0;
+    let mut dmin = 0.0f32;
     for i in 0..n {
-        let x = (c0[i] ^ hdec[i] as u8) as f64;
+        let x = (c0[i] ^ hdec[i] as u8) as f32;
         dmin += x * absrx[i];
     }
 
@@ -363,7 +365,7 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
             let mut iflag = Some(k - iorder);
             while let Some(flag) = iflag {
                 let iend = if iorder == nord && !npre1 { flag } else { 0 };
-                let mut d1 = 0.0;
+                let mut d1 = 0.0f32;
                 e2sub.fill(0);
                 for n1 in (iend..=flag).rev() {
                     mi.copy_from_slice(&misub);
@@ -390,7 +392,7 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
                             .zip(hdec.iter())
                             .zip(absrx.iter())
                             .take(k)
-                            .map(|((&m, &h), &a)| (m ^ h as u8) as f64 * a)
+                            .map(|((&m, &h), &a)| (m ^ h as u8) as f32 * a)
                             .sum();
                         e2.copy_from_slice(&e2sub);
                         e2sub.iter().take(nt).filter(|&&b| b == 1).count() + 1
@@ -410,14 +412,14 @@ fn osd_decode174_91(llr: &[f64], apmask: &[i8], norder: usize) -> Option<DecodeR
                             d1 + e2sub
                                 .iter()
                                 .zip(absrx.iter().skip(k))
-                                .map(|(&e, &a)| e as f64 * a)
-                                .sum::<f64>()
+                                .map(|(&e, &a)| e as f32 * a)
+                                .sum::<f32>()
                         } else {
-                            d1 + (ce[n1] ^ hdec[n1] as u8) as f64 * absrx[n1]
+                            d1 + (ce[n1] ^ hdec[n1] as u8) as f32 * absrx[n1]
                                 + e2.iter()
                                     .zip(absrx.iter().skip(k))
-                                    .map(|(&e, &a)| e as f64 * a)
-                                    .sum::<f64>()
+                                    .map(|(&e, &a)| e as f32 * a)
+                                    .sum::<f32>()
                         };
                         if dd < dmin {
                             dmin = dd;
