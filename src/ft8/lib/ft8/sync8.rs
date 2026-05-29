@@ -2,7 +2,6 @@
 //!
 //! Source mapping:
 //! - `wsjtx/lib/ft8/sync8.f90`
-//! - uses `wsjtx/lib/ft8/get_spectrum_baseline.f90`
 
 use super::SAMPLE_RATE;
 use super::{

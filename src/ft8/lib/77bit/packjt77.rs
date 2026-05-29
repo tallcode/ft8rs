@@ -1,9 +1,7 @@
 //! FT8/JT77 message packing.
 //!
-//! WSJT-X source mapping:
+//! Source mapping:
 //! - `wsjtx/lib/77bit/packjt77.f90`
-//! - `wsjtx/lib/77bit/pack77.f90` entry behavior as embedded in `packjt77`
-//! - `wsjtx/lib/qra/q65/q65_set_list.f90:stdcall`
 ///
 /// Supported message types:
 ///  0.0  Free text (≤13 chars from the 42-char FT8 alphabet)
@@ -985,8 +983,7 @@ fn pack_text77(chars: &[char]) -> Vec<u8> {
     bits
 }
 
-/// Check if a callsign is "standard" per WSJT-X stdcall.
-/// Port of wsjtx/lib/qra/q65/q65_set_list.f90:stdcall
+/// Check if a callsign is standard per WSJT-X `stdcall` logic.
 pub fn is_stdcall(callsign: &str) -> bool {
     let c = callsign.trim().to_uppercase();
     let bytes = c.as_bytes();
@@ -1114,7 +1111,7 @@ mod tests {
     }
 }
 
-// ---- unpack77 side of wsjtx/lib/77bit/packjt77.f90 ----
+// ---- receive unpack side of packjt77 ----
 #[derive(Clone, Copy, Default)]
 pub struct UnpackContext<'a> {
     pub book: Option<&'a HashCallBook>,

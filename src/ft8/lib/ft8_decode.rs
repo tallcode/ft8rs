@@ -1,9 +1,7 @@
 //! WSJT-X-style FT8 regular decoder facade and outer pass control.
 //!
 //! Source mapping:
-//! - `wsjtx/lib/ft8_decode.f90` outer pass/subtract flow
-//! - `wsjtx/lib/ft8/sync8.f90` candidate search
-//! - `wsjtx/lib/ft8/ft8b.f90` candidate decode
+//! - `wsjtx/lib/ft8_decode.f90`
 
 use crate::ft8::decode174_91::N_LDPC;
 use crate::util::four2a_r2c;

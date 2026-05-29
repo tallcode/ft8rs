@@ -1,6 +1,7 @@
-//! ft8_a7d — WSJT-X AP decode: brute-force over 206 message variants
+//! FT8 AP decode brute-force over message variants.
 //!
-//! Complete port of wsjtx/lib/ft8/ft8_a7.f90:ft8_a7d
+//! Source mapping:
+//! - `wsjtx/lib/ft8/ft8_a7.f90`
 //!
 //! Algorithm:
 //!   1. Downsample dd0 to baseband at f1
