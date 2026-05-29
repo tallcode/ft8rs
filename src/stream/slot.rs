@@ -35,7 +35,7 @@ where
         let start = slot * samples_per_slot;
         let end = (start + samples_per_slot).min(samples_12k.len());
         let timestamp = start_time.add_seconds((slot * SLOT_SECONDS) as i64);
-        let results = decoder.decode_slot(&samples_12k[start..end]);
+        let results = decoder.decode_slot_at(&timestamp, &samples_12k[start..end]);
         on_slot(timestamp, results)?;
     }
 
@@ -61,9 +61,10 @@ where
         let start = slot * samples_per_slot;
         let end = (start + samples_per_slot).min(samples_12k.len());
         let timestamp = start_time.add_seconds((slot * SLOT_SECONDS) as i64);
-        let results = decoder.decode_slot_streaming(&samples_12k[start..end], |decode| {
-            on_decode(timestamp.clone(), decode)
-        })?;
+        let results =
+            decoder.decode_slot_streaming_at(&timestamp, &samples_12k[start..end], |decode| {
+                on_decode(timestamp.clone(), decode)
+            })?;
         on_slot_complete(timestamp, results.len())?;
     }
 

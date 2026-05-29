@@ -51,7 +51,7 @@ where
     F: FnMut(SlotTimestamp, Vec<StreamDecodedMessage>) -> Result<(), String>,
 {
     decode_soundcard_slots(options, |decoder, timestamp, samples_12k| {
-        let results = decoder.decode_slot(samples_12k);
+        let results = decoder.decode_slot_at(&timestamp, samples_12k);
         on_slot(timestamp, results)
     })
 }
@@ -236,15 +236,19 @@ fn start_decode_worker(
                 } => {
                     let mut state = decoder.start_slot_decode();
                     let event_tx = event_tx.clone();
-                    let stage_result =
-                        decoder.decode_slot_nzhsym41(&mut state, &samples_12k, |decode| {
+                    let stage_result = decoder.decode_slot_nzhsym41_at(
+                        Some(&timestamp),
+                        &mut state,
+                        &samples_12k,
+                        |decode| {
                             event_tx
                                 .send(DecodeWorkerEvent::Decode {
                                     timestamp: timestamp.clone(),
                                     decode: decode.clone(),
                                 })
                                 .map_err(|err| err.to_string())
-                        });
+                        },
+                    );
                     if stage_result.is_ok() {
                         slot_state = Some(state);
                     }

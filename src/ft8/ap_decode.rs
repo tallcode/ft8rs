@@ -168,8 +168,7 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
             symb_re.fill(0.0);
             symb_im.fill(0.0);
         }
-        // 32-point FFT
-        fft32(&mut symb_re, &mut symb_im);
+        crate::util::four2a_c2c(&mut symb_re, &mut symb_im, -1);
         for tone in 0..8 {
             let sym_re = symb_re[tone] as f32;
             let sym_im = symb_im[tone] as f32;
@@ -700,8 +699,8 @@ fn ap_downsample(
 
     crate::util::four2a_c2c(&mut cd0_re, &mut cd0_im, 1);
     for i in 0..NFFT2 {
-        cd0_re[i] *= DOWNSAMPLE_FAC;
-        cd0_im[i] *= DOWNSAMPLE_FAC;
+        cd0_re[i] = ((cd0_re[i] * DOWNSAMPLE_FAC) as f32) as f64;
+        cd0_im[i] = ((cd0_im[i] * DOWNSAMPLE_FAC) as f32) as f64;
     }
     (cd0_re, cd0_im)
 }
@@ -823,48 +822,4 @@ fn twkfreq1(
         cb_im.push(w_re * ca_im[i - 1] + w_im * ca_re[i - 1]);
     }
     (cb_re, cb_im)
-}
-
-fn fft32(re: &mut [f64; 32], im: &mut [f64; 32]) {
-    let n = 32;
-    let mut j = 0;
-    for i in 0..n - 1 {
-        if i < j {
-            re.swap(i, j);
-            im.swap(i, j);
-        }
-        let mut m = n >> 1;
-        while j >= m && m > 0 {
-            j -= m;
-            m >>= 1;
-        }
-        j += m;
-    }
-    let mut len = 2;
-    while len <= n {
-        let half = len / 2;
-        let angle = -TWO_PI / len as f64;
-        let wb_re = angle.cos();
-        let wb_im = angle.sin();
-        let mut i = 0;
-        while i < n {
-            let mut tw_re = 1.0f64;
-            let mut tw_im = 0.0f64;
-            for j in 0..half {
-                let ar = re[i + j];
-                let ai = im[i + j];
-                let br = re[i + j + half];
-                let bi = im[i + j + half];
-                re[i + j] = ar + tw_re * br - tw_im * bi;
-                im[i + j] = ai + tw_re * bi + tw_im * br;
-                re[i + j + half] = ar - tw_re * br + tw_im * bi;
-                im[i + j + half] = ai - tw_re * bi - tw_im * br;
-                let nt = tw_re * wb_re - tw_im * wb_im;
-                tw_im = tw_re * wb_im + tw_im * wb_re;
-                tw_re = nt;
-            }
-            i += len;
-        }
-        len <<= 1;
-    }
 }
