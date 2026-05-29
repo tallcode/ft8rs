@@ -1,5 +1,9 @@
-use crate::ft8::protocol::*;
-/// FT8 message packing – Rust port of packjt77.f90
+//! FT8/JT77 message packing.
+//!
+//! WSJT-X source mapping:
+//! - `wsjtx/lib/77bit/packjt77.f90`
+//! - `wsjtx/lib/77bit/pack77.f90` entry behavior as embedded in `packjt77`
+//! - `wsjtx/lib/qra/q65/q65_set_list.f90:stdcall`
 ///
 /// Supported message types:
 ///  0.0  Free text (≤13 chars from the 42-char FT8 alphabet)
@@ -10,6 +14,7 @@ use crate::ft8::protocol::*;
 ///  3    ARRL RTTY contest exchange
 ///  4    One nonstandard (<hash>) call + one standard call
 ///  5    EU VHF contest hashed-call exchange
+use crate::ft8::protocol::*;
 use num_bigint::BigInt;
 
 const CSEC: [&str; 86] = [

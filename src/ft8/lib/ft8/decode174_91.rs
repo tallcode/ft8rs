@@ -1,7 +1,15 @@
-/// LDPC (174,91) Belief Propagation decoder for FT8.
+//! LDPC (174,91) BP/OSD decoder for FT8.
+//!
+//! WSJT-X source mapping:
+//! - `wsjtx/lib/ft8/decode174_91.f90`
+//! - `wsjtx/lib/ft8/bpdecode174_91.f90`
+//! - `wsjtx/lib/ft8/osd174_91.f90`
+//! - `wsjtx/lib/ft8/ldpc_174_91_c_generator.f90`
+
 use crate::ft8::indexx::indexx_ascending;
 use crate::ft8::ldpc_tables::*;
 use crate::ft8::protocol::N_LDPC;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 const KK: usize = 91;
@@ -339,7 +347,7 @@ fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Option<DecodeR
 
     // Encode hard decision on MRB
     let m0: Vec<u8> = hdec[..k].iter().map(|&b| b as u8).collect();
-    let c0 = mrb_encode(&m0, &genmrb, n);
+    let c0 = mrbencode91(&m0, &genmrb, n);
 
     let mut dmin = 0.0f32;
     for i in 0..n {
@@ -354,25 +362,27 @@ fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Option<DecodeR
         if ndeep == 0 {
             ndeep = 1;
         }
-        let (nord, npre1, _npre2, nt, ntheta) = match ndeep {
-            1 => (1usize, false, false, 40usize, 12usize),
-            2 => (1usize, true, false, 40usize, 10usize),
-            3 => (1usize, true, true, 40usize, 12usize),
-            4 => (2usize, true, true, 40usize, 12usize),
-            5 => (3usize, true, true, 40usize, 12usize),
-            _ => (4usize, true, true, 95usize, 12usize),
+        let (nord, npre1, npre2, nt, ntheta, ntau) = match ndeep {
+            1 => (1usize, false, false, 40usize, 12usize, 0usize),
+            2 => (1usize, true, false, 40usize, 10usize, 0usize),
+            3 => (1usize, true, true, 40usize, 12usize, 14usize),
+            4 => (2usize, true, true, 40usize, 12usize, 17usize),
+            5 => (3usize, true, true, 40usize, 12usize, 15usize),
+            _ => (4usize, true, true, 95usize, 12usize, 15usize),
         };
 
+        let mut misub = vec![0u8; k];
+        let mut mi = vec![0u8; k];
+        let mut me = vec![0u8; k];
+        let mut ce = vec![0u8; n];
+        let mut e2 = vec![0u8; n - k];
+        let mut e2sub = vec![0u8; n - k];
+
         for iorder in 1..=nord {
-            let mut misub = vec![0u8; k];
+            misub.fill(0);
             for slot in misub.iter_mut().take(k).skip(k - iorder) {
                 *slot = 1;
             }
-            let mut mi = vec![0u8; k];
-            let mut me = vec![0u8; k];
-            let mut ce = vec![0u8; n];
-            let mut e2 = vec![0u8; n - k];
-            let mut e2sub = vec![0u8; n - k];
             let mut iflag = Some(k - iorder);
             while let Some(flag) = iflag {
                 let iend = if iorder == nord && !npre1 { flag } else { 0 };
@@ -394,7 +404,7 @@ fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Option<DecodeR
                         me[j] = m0[j] ^ mi[j];
                     }
                     let nd1kpt = if n1 == flag {
-                        mrb_encode_into(&me, &genmrb, n, &mut ce);
+                        mrbencode91_into(&me, &genmrb, n, &mut ce);
                         for j in k..n {
                             e2sub[j - k] = ce[j] ^ hdec[j] as u8;
                         }
@@ -417,7 +427,7 @@ fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Option<DecodeR
 
                     if nd1kpt <= ntheta {
                         if n1 != flag {
-                            mrb_encode_into(&me, &genmrb, n, &mut ce);
+                            mrbencode91_into(&me, &genmrb, n, &mut ce);
                         }
                         let dd = if n1 == flag {
                             d1 + e2sub
@@ -439,6 +449,76 @@ fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Option<DecodeR
                     }
                 }
                 iflag = nextpat91(&mut misub, iorder);
+            }
+        }
+
+        if npre2 {
+            let mut boxes: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+            for i1 in (0..k).rev() {
+                for i2 in (0..i1).rev() {
+                    let ipat = boxit91_pattern(&genmrb, n, k, ntau, i1, i2);
+                    boxes.entry(ipat).or_default().push((i1, i2));
+                }
+            }
+
+            misub.fill(0);
+            for slot in misub.iter_mut().take(k).skip(k - nord) {
+                *slot = 1;
+            }
+            let mut iflag = Some(k - nord);
+            while iflag.is_some() {
+                for j in 0..k {
+                    me[j] = m0[j] ^ misub[j];
+                }
+                mrbencode91_into(&me, &genmrb, n, &mut ce);
+                for j in k..n {
+                    e2sub[j - k] = ce[j] ^ hdec[j] as u8;
+                }
+
+                for i2 in 0..=ntau {
+                    let mut ipat = fetchit91_pattern(&e2sub[..ntau]);
+                    if i2 > 0 {
+                        let bit = 1usize << (ntau - i2);
+                        ipat ^= bit;
+                    }
+                    let Some(pairs) = boxes.get(&ipat) else {
+                        continue;
+                    };
+                    for &(in1, in2) in pairs {
+                        mi.copy_from_slice(&misub);
+                        mi[in1] = 1;
+                        mi[in2] = 1;
+                        if mi.iter().map(|&bit| bit as usize).sum::<usize>()
+                            < nord + npre1 as usize + npre2 as usize
+                        {
+                            continue;
+                        }
+                        if mi
+                            .iter()
+                            .zip(apmaskr.iter())
+                            .take(k)
+                            .any(|(&m, &a)| m == 1 && a == 1)
+                        {
+                            continue;
+                        }
+
+                        for j in 0..k {
+                            me[j] = m0[j] ^ mi[j];
+                        }
+                        mrbencode91_into(&me, &genmrb, n, &mut ce);
+                        let dd: f32 = ce
+                            .iter()
+                            .zip(hdec.iter())
+                            .zip(absrx.iter())
+                            .map(|((&c, &h), &a)| (c ^ h as u8) as f32 * a)
+                            .sum();
+                        if dd < dmin {
+                            dmin = dd;
+                            best_cw.copy_from_slice(&ce);
+                        }
+                    }
+                }
+                iflag = nextpat91(&mut misub, nord);
             }
         }
     }
@@ -468,13 +548,13 @@ fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Option<DecodeR
     })
 }
 
-fn mrb_encode(message: &[u8], genmrb: &[u8], n: usize) -> Vec<u8> {
+fn mrbencode91(message: &[u8], genmrb: &[u8], n: usize) -> Vec<u8> {
     let mut codeword = vec![0u8; n];
-    mrb_encode_into(message, genmrb, n, &mut codeword);
+    mrbencode91_into(message, genmrb, n, &mut codeword);
     codeword
 }
 
-fn mrb_encode_into(message: &[u8], genmrb: &[u8], n: usize, codeword: &mut [u8]) {
+fn mrbencode91_into(message: &[u8], genmrb: &[u8], n: usize, codeword: &mut [u8]) {
     debug_assert_eq!(codeword.len(), n);
     codeword.fill(0);
     for (i, &bit) in message.iter().enumerate() {
@@ -508,6 +588,28 @@ fn nextpat91(mi: &mut [u8], iorder: usize) -> Option<usize> {
         }
     }
     mi.iter().position(|&b| b == 1)
+}
+
+fn boxit91_pattern(genmrb: &[u8], n: usize, k: usize, ntau: usize, i1: usize, i2: usize) -> usize {
+    let mut ipat = 0usize;
+    for j in 0..ntau {
+        let bit = genmrb[i1 * n + k + j] ^ genmrb[i2 * n + k + j];
+        if bit == 1 {
+            ipat += 1usize << (ntau - 1 - j);
+        }
+    }
+    ipat
+}
+
+fn fetchit91_pattern(bits: &[u8]) -> usize {
+    let ntau = bits.len();
+    let mut ipat = 0usize;
+    for (i, &bit) in bits.iter().enumerate() {
+        if bit == 1 {
+            ipat += 1usize << (ntau - 1 - i);
+        }
+    }
+    ipat
 }
 
 fn get_generator() -> &'static [u8] {
@@ -545,4 +647,32 @@ fn get_generator() -> &'static [u8] {
             gen
         })
         .as_slice()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fetchit91_pattern, osd_decode174_91};
+    use crate::ft8::protocol::N_LDPC;
+
+    #[test]
+    fn fetchit91_pattern_matches_wsjtx_left_shift_order() {
+        assert_eq!(fetchit91_pattern(&[1, 0, 1, 1]), 0b1011);
+        assert_eq!(fetchit91_pattern(&[0, 0, 0, 1]), 0b0001);
+    }
+
+    #[test]
+    fn osd_ndeep3_path_accepts_valid_zero_codeword() {
+        let mut llr = vec![-5.0f32; N_LDPC];
+        let apmask = vec![0i8; N_LDPC];
+        let decoded = osd_decode174_91(&llr, &apmask, 3).expect("valid all-zero codeword");
+        assert!(decoded.message91.iter().all(|&bit| bit == 0));
+        assert!(decoded.cw.iter().all(|&bit| bit == 0));
+        assert_eq!(decoded.nharderrors, 0);
+
+        // Keep a second call to guard the saved generator and npre2 boxes path
+        // against accidental dependence on one-shot initialization.
+        llr[120] = -4.0;
+        let decoded = osd_decode174_91(&llr, &apmask, 3).expect("repeat valid all-zero codeword");
+        assert!(decoded.cw.iter().all(|&bit| bit == 0));
+    }
 }

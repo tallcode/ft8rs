@@ -1,3 +1,10 @@
+//! Candidate decode for one FT8 sync candidate.
+//!
+//! WSJT-X source mapping:
+//! - `wsjtx/lib/ft8/ft8b.f90`
+//! - AP setup mirrors `wsjtx/lib/ft8/ft8apset.f90`
+//! - LDPC call path enters `wsjtx/lib/ft8/decode174_91.f90`
+
 use super::ft8_downsample::ft8_downsample;
 use super::{
     build_costas_sync_templates, build_frequency_shift_sync_templates, extract_symbol_spectrum,

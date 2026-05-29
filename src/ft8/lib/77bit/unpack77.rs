@@ -1,6 +1,11 @@
+//! FT8/JT77 message unpacking.
+//!
+//! WSJT-X source mapping:
+//! - `wsjtx/lib/77bit/packjt77.f90` (`unpack77`, `unpack28`, hash lookups)
+//! - receive-context hash behavior used by `wsjtx/lib/ft8/ft8b.f90`
+
 use crate::ft8::hashcall::HashCallBook;
 use crate::ft8::protocol::*;
-/// FT8 message unpacking – Rust port of unpack77
 use num_bigint::BigInt;
 
 const CSEC: [&str; 86] = [

@@ -1,3 +1,10 @@
+//! Spectrum baseline helpers for FT8 sync and SNR.
+//!
+//! WSJT-X source mapping:
+//! - `wsjtx/lib/ft8/baseline.f90`
+//! - `wsjtx/lib/ft8/get_spectrum_baseline.f90`
+//! - `wsjtx/lib/ft8/sync8.f90` baseline usage
+
 use super::{nint_wsjtx_f32, NFFT1, NMAX, NSPS};
 use crate::ft8::indexx::indexx_ascending;
 use crate::ft8::protocol::SAMPLE_RATE;

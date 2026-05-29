@@ -91,31 +91,49 @@ Rust 代码不完全使用 Fortran 大小写，但语义尽量贴近：
 
 ### File-layout Alignment
 
-FT8 regular decode 的主要阶段已经按 WSJT-X 源文件做第一层物理拆分：
+FT8 regular decode 的主要阶段按 `wsjtx/lib/ft8/*.f90` 镜像到
+`src/ft8/lib/ft8/*.rs`。Rust 对外仍通过 `crate::ft8::decode` 暴露稳定 API，
+但物理文件名尽量和 WSJT-X 保持同名，方便熟悉 WSJT-X 的开发者直接定位：
 
-- `src/ft8/decode/mod.rs`: 对外 decode facade、outer `ft8_decode` 控制流、
-  public decode API 和 sample preparation。
-- `src/ft8/decode/ft8_params.rs`: WSJT-X `ft8_params.f90` style constants。
-- `src/ft8/decode/workspace.rs`: Rust work buffers plus candidate/result/AP
-  option structs that do not have a standalone WSJT-X source file。
-- `src/ft8/decode/baseline.rs`: WSJT-X `baseline.f90` / `get_spectrum_baseline`
-  shaped spectrum baseline helpers。
-- `src/ft8/decode/sync_templates.rs`: Costas/taper/frequency-tweak template builders。
-- `src/ft8/decode/costas_sync.rs`: WSJT-X `sync8d.f90` Costas sync power helper。
-- `src/ft8/decode/symbols.rs`: shared 32-sample symbol FFT extraction helper。
-- `src/ft8/decode/sync8.rs`: `sync8` candidate search、baseline-normalized sync
-  metrics、candidate pruning/order。
-- `src/ft8/decode/ft8b.rs`: `ft8b` candidate decode、soft-symbol extraction、
+- `src/ft8/lib/ft8/ft8_decode.rs`: 对外 decode facade、outer `ft8_decode`
+  控制流、public decode API 和 sample preparation。对应
+  `wsjtx/lib/ft8_decode.f90`，但放在 `lib/ft8` 下以保持 FT8 解码器聚合。
+- `src/ft8/lib/ft8/ft8_params.rs`: WSJT-X `ft8_params.f90` style constants。
+- `src/ft8/lib/ft8/workspace.rs`: Rust work buffers plus candidate/result/AP
+  option structs；这些是 Fortran 局部数组/记录的 Rust 聚合，没有单独 f90。
+- `src/ft8/lib/ft8/baseline.rs`: WSJT-X `baseline.f90` /
+  `get_spectrum_baseline.f90` shaped spectrum baseline helpers。
+- `src/ft8/lib/ft8/sync_templates.rs`: Costas/taper/frequency-tweak template
+  builders；对应 `sync8.f90`、`sync8d.f90`、`ft8_downsample.f90` 中的模板数据。
+- `src/ft8/lib/ft8/sync8d.rs`: WSJT-X `sync8d.f90` Costas sync power helper。
+- `src/ft8/lib/ft8/symbols.rs`: shared 32-sample symbol FFT extraction helper；
+  对应 `ft8b.f90` 和 `ft8_a7.f90` 中相同的 `csymb` 提取形状。
+- `src/ft8/lib/ft8/sync8.rs`: `sync8` candidate search、
+  baseline-normalized sync metrics、candidate pruning/order。
+- `src/ft8/lib/ft8/ft8b.rs`: `ft8b` candidate decode、soft-symbol extraction、
   bit metrics、LDPC/AP pass scheduling、SNR/post gates。
-- `src/ft8/decode/ft8_downsample.rs`: 192k -> 3200 -> 200 Hz downsample path。
+- `src/ft8/lib/ft8/ft8_downsample.rs`: 192k -> 3200 -> 200 Hz downsample path。
+- `src/ft8/lib/ft8/ft8_a7.rs`: WSJT-X `ft8_a7.f90:ft8_a7d` AP brute-force
+  decoder。
+- `src/ft8/lib/ft8/decode174_91.rs`: WSJT-X `decode174_91.f90` /
+  `bpdecode174_91.f90` / `osd174_91.f90` LDPC decoder。
+- `src/ft8/lib/ft8/ldpc_174_91_c_parity.rs`: WSJT-X
+  `ldpc_174_91_c_parity.f90` parity-check table。
+- `src/ft8/lib/ft8/subtractft8.rs`: WSJT-X `subtractft8.f90` residual
+  subtraction。
+- `src/ft8/lib/77bit/packjt77.rs`: WSJT-X `77bit/packjt77.f90` pack side。
+- `src/ft8/lib/77bit/unpack77.rs`: WSJT-X `77bit/packjt77.f90` receive
+  unpack side split into its own Rust file to keep pack/unpack readable。
+- `src/ft8/lib/77bit/hashcall.rs`: receive hash-call table around
+  `packjt77.f90:ihashcall` and WSJT-X runtime callbook behavior。
+- `src/ft8/lib/77bit/protocol.rs`: Rust grouping for shared 77-bit alphabets,
+  LDPC generator hex strings and protocol constants pulled from `packjt77.f90`,
+  `ft8_params.f90` and `ldpc_174_91_c_generator.f90`。
+- `src/ft8/lib/indexx.rs`: WSJT-X `indexx.f90` helper used by sync and OSD。
 
-这些文件当前通过 `decode` 下的真实 Rust submodules 挂载。父模块只通过
-显式导出的内部函数调用 `sync8`、`ft8b` 和 `ft8_downsample`，而不是用
-文本 `include!` 合并作用域。
-
-`decode.rs` 保留 public API (`DecodeOptions`/`DecodedMessage`/`SyncMode`)、
-sample preparation 和 outer control flow；内部 workspace/types、baseline、
-templates 已经移入独立内部模块。核心阶段的文件边界已经不再是 `include!`。
+这些镜像文件通过 `src/ft8/mod.rs` 的 `#[path = "lib/ft8/..."]` 挂载到
+既有 Rust module 名称，所以上层 stream/input/output 不需要知道内部物理
+路径。核心阶段不使用文本 `include!` 合并作用域。
 
 ## Audio and Slot Model
 
@@ -211,10 +229,10 @@ WSJT-X regular outer loop：
 - AP magnitude follows current WSJT-X FT8, not FT4:
   `apmag=maxval(abs(llrz))*1.1` after selecting the current pass metric.
 
-Known gaps：
+Known fixture gaps：
 
-- deeper `ndeep>=3` LDPC/OSD behavior is not fully ported。
-- AP masks need more direct bit-level fixtures against WSJT-X-generated patterns。
+- LDPC/OSD needs more independent WSJT-X-generated golden vectors beyond the
+  current source-shape and release audio tests。
 
 ## `sync8` and Baseline
 
@@ -405,18 +423,25 @@ FT8RS_TRACE_TIMERS=1 cargo test --release test_stream_decode_short_audio -- --no
   current WSJT-X FT8 baseline。
 - `ft8bvar` / JTDX more aggressive paths are references only; do not import those
   behaviors unless the goal changes away from WSJT-X parity。
-- The current WSJT-X-shaped file split is a canonical Rust directory module
-  under `src/ft8/decode/`; `ft8_params.rs` mirrors WSJT-X parameter naming,
+- AP golden fixtures are intentionally not tracked as remaining work for now.
+  Existing AP tests still cover active bit positions, gates, message edge cases
+  and source-shaped control flow, but the project will not block completion on a
+  full independent AP byte-for-byte fixture matrix。
+- The current WSJT-X-shaped file split mirrors `wsjtx/lib/**/*.f90` under
+  `src/ft8/lib/**/*.rs`; `ft8_params.rs` mirrors WSJT-X parameter naming,
   `workspace.rs` holds Rust-only buffers/types, and no core stage relies on
   textual `include!` glue。
 - `tests/wsjtx_source_audit_test.rs` can compare selected Rust source shapes
   against a local `../wsjtx/lib/ft8` checkout. These tests currently cover
-  `ft8_params.f90`, `ft8_downsample.f90` and `sync8d.f90`, and skip cleanly when
-  the WSJT-X source tree is not present.
+  `ft8_params.f90`, `ft8_downsample.f90`, `sync8d.f90` and the deep
+  `osd174_91.f90` path, and skip cleanly when the WSJT-X source tree is not
+  present.
 - Direct fixtures are still needed for broader AP generated patterns, baseline
   numerical parity, EOF tail slot, and hash display forms。
-- Deeper `ndeep>=3` LDPC/OSD parity remains the largest algorithmic gap recorded
-  in code comments/docs。
+- Deeper `ndeep>=3` LDPC/OSD source shape is now represented, including the
+  WSJT-X `npre2` pair-pattern path. Current FT8 `ft8b` still calls `norder=2`,
+  so this is mostly completeness and future-audit coverage rather than an active
+  sensitivity-path change。
 
 ## Remaining Alignment Backlog
 
@@ -424,12 +449,11 @@ These are the known regrets to fix one by one. Keep each item guarded by release
 baseline tests, and prefer WSJT-X-generated golden fixtures over hand-derived
 expectations wherever possible.
 
-1. **AP byte-for-byte fixtures**: generate WSJT-X-side AP mask/pattern fixtures
-   for every active `ncontest/iaptype/nQSOProgress` combination. Current Rust
-   tests cover bit positions, shape and gates, but not independent golden output.
-2. **Deep LDPC/OSD parity**: deeper `ndeep>=3` LDPC/OSD behavior is still not a
-   complete WSJT-X port. This is the main algorithmic backlog after AP fixtures.
-3. **Fixture breadth**: current audio fixtures are strong but limited. Add more
+1. **LDPC/OSD golden vectors**: add independent WSJT-X-generated decode vectors
+   for BP-only, BP+OSD channel-LLR, saved-BP OSD and deep `ndeep>=3` OSD cases.
+   The Rust source shape now includes the `npre2` path, but fixture proof is still
+   thinner than desired.
+2. **Fixture breadth**: current audio fixtures are strong but limited. Add more
    WSJT-X-verified recordings for contest messages, hash calls, AP progression,
    band-edge signals, collisions and high drift.
 
@@ -496,7 +520,10 @@ Current release workflow:
 - AP `ft8_a7d` and regular `ft8b` now share the exact same downsample helper,
   eliminating the duplicate taper/downsample implementation in AP。
 - `sync8d.f90` behavior and the 32-point symbol FFT extraction are shared by AP
-  and regular decode through `costas_sync.rs` and `symbols.rs`。
+  and regular decode through `sync8d.rs` and `symbols.rs`。
+- `osd174_91` now includes the WSJT-X `ndeep>=3` `npre2` pair-pattern path
+  (`boxit91/fetchit91` equivalent) even though current FT8 `ft8b` still uses
+  `norder=2`。
 
 ## Recent Validation
 
@@ -509,5 +536,7 @@ Current release workflow:
   - every slot under `15s`。
   - diff file contains only the header。
 - `cargo test --release wsjtx_ -- --nocapture`
-  - source-audit tests passed for `ft8_params`, `ft8_downsample` and `sync8d`
-    when the local WSJT-X source tree was present。
+  - source-audit tests passed for `ft8_params`, `ft8_downsample`, `sync8d` and
+    deep `osd174_91` shape when the local WSJT-X source tree was present。
+- `cargo test --release decode174 -- --nocapture`
+  - OSD deep-path smoke tests passed。
