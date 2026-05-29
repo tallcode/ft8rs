@@ -6,7 +6,7 @@
 
 - 提供一个独立的纯解码模块，不和 UI 耦合。
 - 支持从 WAV 文件按 FT8 slot 流式解码，输出带时间戳的解码行。
-- 后续支持指定声卡，按系统时间切分音频流并实时输出解码结果。
+- 支持指定声卡，按系统时间切分音频流并实时输出解码结果。
 - 默认使用 `rustfft @ 3840`，无需外部 FFTW 运行库。
 - 可在编译时启用 `FFTW @ 3840`，作为 WSJT-X 对齐验证路径。
 
@@ -15,7 +15,7 @@
 - 文件流式 CLI 已可用。
 - 声卡输入 CLI 可列出输入设备，并可按系统时间对齐 FT8 slot 后实时采集解码。
 - 主要验收基线仍以 release 模式测试为准。
-- README 只记录如何编译、运行和验证；详细对齐记录见 `STREAM.md`，迭代尝试见 `TRY.md`。
+- README 只记录如何编译、运行和验证；详细 WSJT-X 对齐记录见 `WSJTX.md`。
 
 ## 环境要求
 
@@ -231,7 +231,7 @@ FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocap
 - `src/ft8`: FT8 单 slot 解码核心，继续按 WSJT-X `ft8_decode`、`ft8b`、`ft8_a7` 对齐。
   FT8/JT77 协议内部模块也归属这里，例如 pack/unpack、LDPC、hashcall、subtract 和协议常量。
 - `src/stream`: 流式 slot 适配层，负责 12 kHz / 15 秒 slot 驱动、跨 slot `HashCallBook`、同奇偶 AP memory。
-- `src/input`: 输入入口层，当前包含文件入口和声卡 stub。
+- `src/input`: 输入入口层，当前包含文件入口和声卡入口。
 - `src/main.rs`: CLI 参数解析和逐 slot 解码行输出。
 
 辅助模块：
