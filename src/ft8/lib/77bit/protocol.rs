@@ -1,4 +1,9 @@
-/// Shared WSJT-X FT8/JT77 protocol constants used by the decoder.
+//! Shared WSJT-X FT8/JT77 protocol constants used by the decoder.
+//!
+//! Source mapping:
+//! - `wsjtx/lib/ft8/ft8_params.f90`
+//! - `wsjtx/lib/77bit/packjt77.f90`
+//! - `wsjtx/lib/ft8/ldpc_174_91_c_generator.f90`
 
 pub const SAMPLE_RATE: usize = 12_000;
 

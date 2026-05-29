@@ -1,3 +1,9 @@
+//! FT8 Costas sync candidate search.
+//!
+//! Source mapping:
+//! - `wsjtx/lib/ft8/sync8.f90`
+//! - uses `wsjtx/lib/ft8/get_spectrum_baseline.f90`
+
 use super::{
     get_spectrum_baseline, nint_wsjtx_f32, Candidate, SyncMode, COSTAS_BLOCKS, NHSYM, NSPS, NSTEP,
 };

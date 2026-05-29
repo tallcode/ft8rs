@@ -1,3 +1,9 @@
+//! Shared FT8 32-sample symbol FFT extraction.
+//!
+//! Source mapping:
+//! - `wsjtx/lib/ft8/ft8b.f90`
+//! - `wsjtx/lib/ft8/ft8_a7.f90`
+
 use super::{COSTAS_SYMBOL_LEN, NP2};
 use crate::util::four2a_c2c;
 

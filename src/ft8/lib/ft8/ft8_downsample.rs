@@ -1,3 +1,10 @@
+//! WSJT-X FT8 coarse downsample path.
+//!
+//! Source mapping:
+//! - `wsjtx/lib/ft8/ft8_downsample.f90`
+//! - called by `wsjtx/lib/ft8/ft8b.f90`
+//! - called by `wsjtx/lib/ft8/ft8_a7.f90`
+
 use super::{
     build_taper, nint_wsjtx_real, DecodeWorkspace, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DOWNSAMPLE_FAC,
     NFFT1_LONG, NFFT2, TAPER_SIZE,

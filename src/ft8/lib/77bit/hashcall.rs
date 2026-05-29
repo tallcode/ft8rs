@@ -1,5 +1,10 @@
+//! Hash callsign table used by FT8 unpack/AP context.
+//!
+//! WSJT-X source mapping:
+//! - `wsjtx/lib/77bit/packjt77.f90` (`ihashcall`)
+//! - WSJT-X runtime `hashcall`/recent-callbook behavior used by receive unpack.
+
 use crate::ft8::protocol::C38;
-/// Hash call table for resolving hashed FT8 callsigns.
 use std::cell::RefCell;
 
 const MAGIC: u64 = 47055833459;

@@ -1,3 +1,11 @@
+//! Rust-owned FT8 decode workspace and result structs.
+//!
+//! This file has no single WSJT-X source equivalent. It groups the arrays and
+//! small records that Fortran keeps as local variables in:
+//! - `wsjtx/lib/ft8_decode.f90`
+//! - `wsjtx/lib/ft8/sync8.f90`
+//! - `wsjtx/lib/ft8/ft8b.f90`
+
 use super::{COSTAS_SYMBOL_LEN, NFFT2, NN};
 use crate::ft8::protocol::N_LDPC;
 use std::time::Duration;

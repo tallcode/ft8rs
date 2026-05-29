@@ -1,3 +1,10 @@
+//! Shared FT8 taper and Costas template builders.
+//!
+//! Source mapping:
+//! - `wsjtx/lib/ft8/sync8.f90`
+//! - `wsjtx/lib/ft8/sync8d.f90`
+//! - `wsjtx/lib/ft8/ft8_downsample.f90`
+
 use super::{
     FrequencyShiftSyncTemplate, SyncTemplate, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DT2, PI_F32,
     TAPER_SIZE, TWO_PI_F32,
