@@ -2,8 +2,6 @@
 //!
 //! Source mapping:
 //! - `wsjtx/lib/indexx.f90`
-//! - used by `wsjtx/lib/ft8/sync8.f90`
-//! - used by `wsjtx/lib/ft8/osd174_91.f90`
 
 pub(crate) fn indexx_ascending(arr: &[f64]) -> Vec<usize> {
     const M: usize = 7;

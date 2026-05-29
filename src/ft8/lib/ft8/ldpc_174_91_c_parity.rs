@@ -1,4 +1,7 @@
-/// LDPC (174,91) parity check matrix data from ldpc_174_91_c_parity.f90
+//! LDPC (174,91) parity check matrix data.
+//!
+//! Source mapping:
+//! - `wsjtx/lib/ft8/ldpc_174_91_c_parity.f90`
 ///
 /// Mn[j] = list of 3 check-node indices (0-based) for bit j  (j=0..173)
 /// Nm[i] = list of variable-node indices (0-based) for check i (i=0..82)

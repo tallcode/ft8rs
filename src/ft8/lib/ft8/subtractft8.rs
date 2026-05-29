@@ -1,4 +1,7 @@
-//! subtractft8 — WSJT-X-aligned port of lib/ft8/subtractft8.f90
+//! FT8 residual subtraction.
+//!
+//! Source mapping:
+//! - `wsjtx/lib/ft8/subtractft8.f90`
 //!
 //! Algorithm (from Fortran comments):
 //!   Measured signal  : dd(t) = a(t)·cos(2πf₀t + θ(t))
