@@ -93,21 +93,26 @@ Rust 代码不完全使用 Fortran 大小写，但语义尽量贴近：
 
 FT8 regular decode 的主要阶段已经按 WSJT-X 源文件做第一层物理拆分：
 
-- `src/ft8/decode.rs`: 对外 decode facade、outer `ft8_decode` 控制流、
-  shared workspace/type definitions 和 spectrum baseline。
-- `src/ft8/sync8.rs`: `sync8` candidate search、baseline-normalized sync
+- `src/ft8/decode/mod.rs`: 对外 decode facade、outer `ft8_decode` 控制流、
+  public decode API 和 sample preparation。
+- `src/ft8/decode/decode_types.rs`: FT8 regular decode shared constants、workspace、
+  candidate/result/AP option types。
+- `src/ft8/decode/baseline.rs`: WSJT-X `baseline.f90` / `get_spectrum_baseline`
+  shaped spectrum baseline helpers。
+- `src/ft8/decode/sync_templates.rs`: Costas/taper/frequency-tweak template builders。
+- `src/ft8/decode/sync8.rs`: `sync8` candidate search、baseline-normalized sync
   metrics、candidate pruning/order。
-- `src/ft8/ft8b.rs`: `ft8b` candidate decode、soft-symbol extraction、
+- `src/ft8/decode/ft8b.rs`: `ft8b` candidate decode、soft-symbol extraction、
   bit metrics、LDPC/AP pass scheduling、SNR/post gates。
-- `src/ft8/ft8_downsample.rs`: 192k -> 3200 -> 200 Hz downsample path。
+- `src/ft8/decode/ft8_downsample.rs`: 192k -> 3200 -> 200 Hz downsample path。
 
 这些文件当前通过 `decode` 下的真实 Rust submodules 挂载。父模块只通过
 显式导出的内部函数调用 `sync8`、`ft8b` 和 `ft8_downsample`，而不是用
 文本 `include!` 合并作用域。
 
-剩余工程差距：`decode.rs` 仍保留 shared workspace/type definitions。
-以后 WSJT-X 升级做大规模源码 diff 时，可以再把 shared definitions 抽成
-更明确的内部模块，但核心阶段的文件边界已经不再是 `include!`。
+`decode.rs` 保留 public API (`DecodeOptions`/`DecodedMessage`/`SyncMode`)、
+sample preparation 和 outer control flow；内部 workspace/types、baseline、
+templates 已经移入独立内部模块。核心阶段的文件边界已经不再是 `include!`。
 
 ## Audio and Slot Model
 
@@ -152,6 +157,9 @@ FT8 核心 FFT 调用命名和缩放策略按 WSJT-X `four2a` 对齐：
 - `four2a_c2c(re, im, -1)` 对应 complex forward。
 - `four2a_c2c(re, im, 1)` 对应 complex inverse。
 - 两个方向都不做 normalization；调用点像 Fortran 一样显式乘各自的 `fac`。
+- `ft8_downsample` 的 `fac=1/sqrt(float(NFFT1)*NFFT2)` 按 WSJT-X 默认
+  `real` 路径保留为 `f32`，再写回 Rust 的 f64 work buffers；regular 和 AP
+  downsample 共用同一个缩放语义。
 
 ## WSJT-X Streaming Control Flow
 
@@ -389,9 +397,9 @@ FT8RS_TRACE_TIMERS=1 cargo test --release test_stream_decode_short_audio -- --no
   current WSJT-X FT8 baseline。
 - `ft8bvar` / JTDX more aggressive paths are references only; do not import those
   behaviors unless the goal changes away from WSJT-X parity。
-- The current WSJT-X-shaped file split is a real Rust submodule split under
-  `decode`; a future shared-definition extraction should be done only with
-  release baseline checks in place。
+- The current WSJT-X-shaped file split is a canonical Rust directory module
+  under `src/ft8/decode/`; shared regular-decode definitions live in
+  `decode_types.rs` and no core stage relies on textual `include!` glue。
 - Direct fixtures are still needed for broader AP generated patterns, baseline
   numerical parity, EOF tail slot, and hash display forms。
 - Deeper `ndeep>=3` LDPC/OSD parity remains the largest algorithmic gap recorded
@@ -410,10 +418,11 @@ expectations wherever possible.
    uppercase/blank-padded storage, while `A7SaveEntry` still keeps parsed
    helper fields. Remaining work is deciding whether more fields should be
    represented as fixed-width Fortran text and adding byte-level golden fixtures.
-3. **Shared decode definitions**: `decode.rs` still owns shared workspace,
-   result and AP option types. A future `workspace.rs`/`types.rs` split may make
-   WSJT-X upgrades easier, but should not be done without long/short release
-   checks.
+3. **Shared decode definitions**: first-stage split is done:
+   `decode_types.rs` owns regular-decode constants, workspace, candidate/result
+   and AP option types; `baseline.rs` and `sync_templates.rs` own the remaining
+   helper families. Remaining work is optional finer naming if future WSJT-X
+   source audits need it.
 4. **Regular/AP duplicate numeric paths**: regular `ft8b` and AP `ft8_a7d`
    still have separate downsample, taper, 32-point symbol FFT and Costas helper
    code. Keep them separate unless a shared implementation can prove identical

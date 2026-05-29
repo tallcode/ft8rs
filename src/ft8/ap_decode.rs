@@ -699,8 +699,8 @@ fn ap_downsample(
 
     crate::util::four2a_c2c(&mut cd0_re, &mut cd0_im, 1);
     for i in 0..NFFT2 {
-        cd0_re[i] = ((cd0_re[i] * DOWNSAMPLE_FAC) as f32) as f64;
-        cd0_im[i] = ((cd0_im[i] * DOWNSAMPLE_FAC) as f32) as f64;
+        cd0_re[i] = ((cd0_re[i] as f32) * DOWNSAMPLE_FAC) as f64;
+        cd0_im[i] = ((cd0_im[i] as f32) * DOWNSAMPLE_FAC) as f64;
     }
     (cd0_re, cd0_im)
 }
