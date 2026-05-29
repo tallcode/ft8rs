@@ -10,7 +10,9 @@
 - `rustfft@4096` and runtime FFT switching have been removed。
 - Short fixture `tests/ft8/210703_133430.wav`: currently `21` unique messages。
 - Long fixture `tests/ft8/230208_140300.wav`: normalized `12 kHz` no-offset
-  fixture, protected floor `424/449`。
+  fixture, protected WSJT-X target floor `425`。Its CSV `Extra` column uses blank and `W`
+  as the WSJT-X target baseline; `J`/`E` rows are tracked but ignored for
+  WSJT-X miss/diff work。
 - Tests must use release mode for sensitivity/performance work。
 - Do not chase score by lowering `ncand/ndepth`, disabling AP, relaxing gates,
   or expanding non-WSJT-X search space。
@@ -59,6 +61,13 @@
 - Type 3 false positive `CQ 001 IZ7MMG 549 2025` was fixed by validating the
   two RTTY callsign slots against WSJT-X `pack77_3/chkcall` structure, not by
   disabling `i3=3` or contest messages。
+- Follow-up alignment: stream AP parity now derives `jseq` from slot `nutc`
+  using WSJT-X `mod(nutc/5,2)`, and AP symbol extraction now uses the shared
+  `four2a_c2c(...,-1)` wrapper instead of a local 32-point FFT。
+- CSV baseline semantics were corrected: blank and `W` rows are the WSJT-X
+  target set, while `J`/`E` rows stay in the fixture but are ignored for WSJT-X
+  miss/diff. Current release long test reaches `425/425` target rows; the
+  earlier `UT7UJ IV3KEI JN65` weak miss is now recovered in both target slots。
 
 ## Effective Changes Kept
 
@@ -126,6 +135,10 @@
 - Candidate parallelism: deferred because it can change duplicate/subtract and
   residual ordering。
 - Pass-level coarse downsample cache: slowed long test due to large buffer clone。
+- Candidate-level `cd0` cache: removed from the active path. WSJT-X shares the
+  long 192k FFT per pass, but each `ft8b` candidate still down-samples at its
+  own `f1`; keeping a candidate cache made later audits easier to misread and
+  did not improve sensitivity。
 - Broad `sync8` f32 rewrite: reduced protected long score and was rejected。
 - Restricting all `i3=3` RTTY messages to `ncontest=4`: rejected as stricter
   than WSJT-X `ft8b.f90` post-decode gate。
@@ -170,9 +183,17 @@
 - `cargo test --release test_stream_decode_short_audio -- --nocapture`
   - `21` unique messages。
 - `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture`
-  - `424/449`。
+  - total `434/458`。
+  - WSJT-X target `425/425`。
   - timing residual median near `+0.000s`。
   - every slot under `15s`。
+- Focused FT8WW single-slot diagnosis:
+  - target `230208_140500 FT8WW IC8SQS -05` reaches `ft8b` with hard sync
+    (`nsync=17`)。
+  - regular pass 4 is closest, but the known codeword remains outside WSJT-X
+    OSD2 reach in current Rust LLRs (`MRB` still around `3-5`)。
+  - historical note: this was later classified as `J`, so it is not part of
+    the WSJT-X target baseline。
 - `cargo test --release rejects_type_3_rtty_cq_token_in_callsign_slot -- --nocapture`
   - Type 3 `CQ_001` false-positive structure rejected。
 - `cargo test --release non_contest_quirk_gate_matches_wsjtx -- --nocapture`

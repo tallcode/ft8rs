@@ -49,6 +49,13 @@ impl SlotTimestamp {
         self.seconds_of_day * 1000
     }
 
+    pub fn nutc(&self) -> u32 {
+        let h = self.seconds_of_day / 3600;
+        let m = (self.seconds_of_day / 60) % 60;
+        let s = self.seconds_of_day % 60;
+        h * 10000 + m * 100 + s
+    }
+
     pub fn from_unix_seconds_utc(seconds: i64) -> Self {
         let days = seconds.div_euclid(86_400);
         let seconds_of_day = seconds.rem_euclid(86_400) as u32;
@@ -113,6 +120,7 @@ mod tests {
         let ts = SlotTimestamp::parse("230208_140300").unwrap();
         assert_eq!(ts.format(), "230208_140300");
         assert_eq!(ts.format_time(), "140300");
+        assert_eq!(ts.nutc(), 140300);
         assert_eq!(ts.add_seconds(15).format(), "230208_140315");
     }
 

@@ -9,6 +9,7 @@ use crate::ft8::decode::{
 };
 use crate::ft8::hashcall::HashCallBook;
 use crate::ft8::subtract_ft8::subtract_ft8_refined;
+use crate::stream::time::SlotTimestamp;
 
 const SAMPLE_RATE: u32 = 12000;
 const NMAX: usize = 15 * 12_000;
@@ -27,9 +28,8 @@ struct A7SaveEntry {
     xbase: f64, // noise baseline at this frequency (from sbase)
 }
 
-/// WSJT-X uses jseq = mod(utc/5, 2) to alternate even/odd sequences.
+/// WSJT-X uses jseq = mod(nutc/5, 2) to alternate even/odd sequences.
 /// AP decode only uses entries from the same parity (even→even, odd→odd).
-/// We simulate this by toggling jseq on each decode_slot call.
 #[allow(non_snake_case)]
 #[derive(Clone, Debug)]
 pub struct WsjtxDecodeConfig {
@@ -100,7 +100,7 @@ pub struct StreamDecodeSession {
     /// Matches WSJT-X ndec(jseq,0).
     prev_even: Vec<A7SaveEntry>,
     prev_odd: Vec<A7SaveEntry>,
-    /// Current sequence parity: 0=even, 1=odd (simulates jseq = mod(utc/5, 2))
+    /// Current sequence parity: 0=even, 1=odd. Matches WSJT-X `jseq=mod(nutc/5,2)`.
     jseq: usize,
 }
 
@@ -122,6 +122,17 @@ impl StreamDecodeSession {
         results
     }
 
+    pub fn decode_slot_at(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+    ) -> Vec<StreamDecodedMessage> {
+        let results = self
+            .decode_slot_streaming_at(timestamp, samples, |_| Ok(()))
+            .expect("in-memory decode callback cannot fail");
+        results
+    }
+
     pub fn decode_slot_streaming<F>(
         &mut self,
         samples: &[f32],
@@ -131,6 +142,19 @@ impl StreamDecodeSession {
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
         let results = self.ft8_decode_slot(samples, on_decode)?;
+        Ok(results)
+    }
+
+    pub fn decode_slot_streaming_at<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        let results = self.ft8_decode_slot_at(Some(timestamp), samples, on_decode)?;
         Ok(results)
     }
 
@@ -146,7 +170,20 @@ impl StreamDecodeSession {
     }
 
     pub fn decode_slot_nzhsym41<F>(
-        &self,
+        &mut self,
+        state: &mut StreamSlotDecodeState,
+        samples: &[f32],
+        on_decode: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        self.decode_slot_nzhsym41_at(None, state, samples, on_decode)
+    }
+
+    pub fn decode_slot_nzhsym41_at<F>(
+        &mut self,
+        timestamp: Option<&SlotTimestamp>,
         state: &mut StreamSlotDecodeState,
         samples: &[f32],
         mut on_decode: F,
@@ -154,6 +191,10 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
+        if let Some(timestamp) = timestamp {
+            self.jseq = jseq_from_nutc(timestamp.nutc());
+        }
+
         let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         let early_dd = dd0_partial_nzhsym(&state.dd0, 41);
@@ -292,15 +333,7 @@ impl StreamDecodeSession {
             let downsample_cache = ApDownsampleCache::new(&full_residual);
             let mut ap_msgs: Vec<ApDecodeResult> = Vec::new();
             for entry in &ap_candidates {
-                let result = ft8_a7d_with_downsample_cache(
-                    &downsample_cache,
-                    &entry.call_1,
-                    &entry.call_2,
-                    &entry.grid4,
-                    entry.dt0,
-                    entry.f0,
-                    entry.xbase,
-                );
+                let result = decode_a7_with_frequency_retries(&downsample_cache, entry);
                 if let Some(r) = result {
                     let norm_r = normal(&r.msg);
                     if !ap_msgs.iter().any(|a| normal(&a.msg) == norm_r) {
@@ -381,13 +414,25 @@ impl StreamDecodeSession {
     fn ft8_decode_slot<F>(
         &mut self,
         samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        self.ft8_decode_slot_at(None, samples, on_decode)
+    }
+
+    fn ft8_decode_slot_at<F>(
+        &mut self,
+        timestamp: Option<&SlotTimestamp>,
+        samples: &[f32],
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
         let mut state = self.start_slot_decode();
-        self.decode_slot_nzhsym41(&mut state, samples, &mut on_decode)?;
+        self.decode_slot_nzhsym41_at(timestamp, &mut state, samples, &mut on_decode)?;
         self.subtract_slot_nzhsym47(&mut state, samples);
         self.decode_slot_nzhsym50_and_finish(state, samples, on_decode)
     }
@@ -416,6 +461,33 @@ impl StreamDecodeSession {
             ..Default::default()
         }
     }
+}
+
+fn jseq_from_nutc(nutc: u32) -> usize {
+    ((nutc / 5) % 2) as usize
+}
+
+fn decode_a7_with_frequency_retries(
+    downsample_cache: &ApDownsampleCache,
+    entry: &A7SaveEntry,
+) -> Option<ApDecodeResult> {
+    // Try the saved WSJT-X f0 first. A very weak a7 decode can sit on a
+    // half-Hz boundary, so if the exact saved f0 fails, retry the adjacent
+    // 0.5 Hz bins used by ft8_a7d's own frequency search.
+    for offset in [0.0, 0.5, -0.5] {
+        if let Some(result) = ft8_a7d_with_downsample_cache(
+            downsample_cache,
+            &entry.call_1,
+            &entry.call_2,
+            &entry.grid4,
+            entry.dt0,
+            entry.f0 + offset,
+            entry.xbase,
+        ) {
+            return Some(result);
+        }
+    }
+    None
 }
 
 fn dd0_from_samples(samples: &[f32]) -> Vec<f64> {
@@ -704,7 +776,15 @@ fn trace_timer(label: &str, start: Instant, detail: Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_wsjtx_chkcall, split77_words};
+    use super::{is_wsjtx_chkcall, jseq_from_nutc, split77_words};
+
+    #[test]
+    fn jseq_matches_wsjtx_nutc_parity() {
+        assert_eq!(jseq_from_nutc(140300), 0);
+        assert_eq!(jseq_from_nutc(140315), 1);
+        assert_eq!(jseq_from_nutc(140330), 0);
+        assert_eq!(jseq_from_nutc(140345), 1);
+    }
 
     #[test]
     fn split77_words_does_not_treat_grid_as_cq_call() {

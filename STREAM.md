@@ -33,14 +33,17 @@
 | Fixture | Requirement | Current |
 |---|---:|---:|
 | `210703_133430.wav` | at least `19/20`, slot under `15s` | `21` unique messages |
-| `230208_140300.wav` | current floor `424/449`, each slot under `15s`, no fixture offset | `424/449` |
+| `230208_140300.wav` | WSJT-X target floor `425`, each slot under `15s`, no fixture offset | `425/425` target rows |
 
 测试规则：
 
 - 解码测试一律使用 `--release`。
 - 长测必须保留每段 `15s` 超时约束。
-- 长测保留灵敏度 early-abort，当前严重失败阈值为 `424-10`。
+- 长测保留灵敏度 early-abort，当前严重失败阈值为 `425-10`。
 - 不允许通过降低 `ncand/ndepth`、关闭 AP、放宽门限或扩大非 WSJT-X 搜索来追分。
+- `230208_140300.csv` 的 `Extra` 列用于标记来源：空值表示多重验证基线，
+  `W` 表示 WSJT-X 额外解码，这两类都属于当前 WSJT-X 对齐目标；`J` 表示
+  JTDX 额外解码，`E` 表示其他/问题解码，这两类暂不进入 miss/diff 关注范围。
 
 常用命令：
 
@@ -229,10 +232,15 @@ WSJT-X `ft8_a7` behavior:
 Current `ft8rs` status:
 
 - Same-parity previous/current AP memory is represented in stream session。
+- File and monitor paths pass the slot timestamp into the stream session, so
+  AP parity uses WSJT-X `jseq = mod(nutc/5,2)` instead of a timestamp-free
+  toggle。
 - Current regular decodes suppress near previous AP candidates。
 - AP results preserve refined `freq` and `dt`。
 - `ft8_a7d` sync refinement uses `ctwk * Costas` for frequency tweak and plain
   Costas sync for second time refinement。
+- AP symbol extraction uses the shared WSJT-X-shaped `four2a_c2c(...,-1)`
+  wrapper for the 32-point symbol FFT。
 - AP `s8` is kept at `abs(csymb)` scale, so `ft8_a7d` keeps WSJT-X
   `pbest/xbase/3e6` divisor。
 

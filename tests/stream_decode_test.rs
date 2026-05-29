@@ -1,9 +1,9 @@
 use ft8rs::fft_engine_name;
 use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
-use ft8rs::stream::{StreamDecodeConfig, StreamDecodeSession};
+use ft8rs::stream::{SlotTimestamp, StreamDecodeConfig, StreamDecodeSession};
 use std::collections::HashSet;
 
-const LONG_ACCEPTED_FLOOR: usize = 424;
+const LONG_TARGET_ACCEPTED_FLOOR: usize = 425;
 
 #[derive(Clone, Debug)]
 struct BaselineRow {
@@ -14,6 +14,7 @@ struct BaselineRow {
     freq: String,
     msg: String,
     norm_msg: String,
+    ignored: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -168,7 +169,7 @@ fn parse_baseline(path: &str) -> Vec<BaselineRow> {
     let content = std::fs::read_to_string(path).unwrap();
     let mut results = Vec::new();
     for line in content.lines().skip(1) {
-        let line = line.trim().trim_end_matches(',');
+        let line = line.trim();
         if line.is_empty() {
             continue;
         }
@@ -178,6 +179,8 @@ fn parse_baseline(path: &str) -> Vec<BaselineRow> {
         }
         let date_time = parts[0].trim().to_string();
         let msg = parts[4].trim().to_string();
+        let extra_marker = parts.get(5).map_or("", |value| value.trim()).to_string();
+        let ignored = is_ignored_baseline_marker(&extra_marker);
         results.push(BaselineRow {
             seg: segment_from_timestamp(&date_time),
             date_time,
@@ -186,9 +189,18 @@ fn parse_baseline(path: &str) -> Vec<BaselineRow> {
             freq: parts[3].trim().to_string(),
             norm_msg: norm(&msg),
             msg,
+            ignored,
         });
     }
     results
+}
+
+fn is_ignored_baseline_marker(value: &str) -> bool {
+    // Extra column semantics:
+    //   blank = multi-verified baseline
+    //   W     = WSJT-X-only decode, still part of the WSJT-X target baseline
+    //   J/E   = JTDX/other extra decodes, ignored while aligning to WSJT-X
+    matches!(value.trim().to_ascii_uppercase().as_str(), "J" | "E")
 }
 
 fn assert_release_mode() {
@@ -254,11 +266,13 @@ fn test_stream_decode_long_audio() {
     let nseg = (dur_12k / 15.0).ceil() as usize;
 
     let baseline = parse_baseline("tests/ft8/230208_140300.csv");
+    let ignored_count = baseline.iter().filter(|row| row.ignored).count();
     println!(
-        "\n[ENGINE={}] [STREAM LONG DECODE] {} segments, {} baseline messages, slot_start_offset=+0.000s",
+        "\n[ENGINE={}] [STREAM LONG DECODE] {} segments, {} baseline messages ({} J/E ignored in diff), slot_start_offset=+0.000s",
         fft_engine_name(),
         nseg,
-        baseline.len()
+        baseline.len(),
+        ignored_count
     );
 
     let config = StreamDecodeConfig {
@@ -267,7 +281,9 @@ fn test_stream_decode_long_audio() {
     let mut decoder = StreamDecodeSession::new(config);
 
     let mut total_matched = 0;
-    let accepted_floor = LONG_ACCEPTED_FLOOR;
+    let mut primary_matched = 0;
+    let primary_total = baseline.iter().filter(|row| !row.ignored).count();
+    let accepted_floor = LONG_TARGET_ACCEPTED_FLOOR;
     let severe_floor = accepted_floor.saturating_sub(10);
     let mut diff_rows = Vec::new();
     let mut timing_stats = TimingStats::default();
@@ -275,9 +291,12 @@ fn test_stream_decode_long_audio() {
     for seg in 0..nseg {
         let seg_start = seg * sps;
         let data = slot_samples(&s12k, seg_start, sps);
+        let timestamp = SlotTimestamp::parse("230208_140300")
+            .unwrap()
+            .add_seconds((seg * 15) as i64);
 
         let slot_t0 = std::time::Instant::now();
-        let results = decoder.decode_slot(&data);
+        let results = decoder.decode_slot_at(&timestamp, &data);
         let elapsed_ms = slot_t0.elapsed().as_millis() as u64;
         assert!(
             elapsed_ms <= 15_000,
@@ -289,7 +308,6 @@ fn test_stream_decode_long_audio() {
         let bl: Vec<_> = baseline.iter().filter(|row| row.seg == seg).collect();
         let mut used_results = vec![false; results.len()];
         let mut matched = 0;
-        let mut missed = Vec::new();
         for row in &bl {
             if let Some((idx, result)) = results
                 .iter()
@@ -298,17 +316,21 @@ fn test_stream_decode_long_audio() {
             {
                 used_results[idx] = true;
                 matched += 1;
+                if !row.ignored {
+                    primary_matched += 1;
+                }
                 timing_stats.push(&row.drift, result.dt);
             } else {
-                missed.push(row.norm_msg.clone());
-                diff_rows.push(DiffRow {
-                    date_time: row.date_time.clone(),
-                    snr: row.snr.clone(),
-                    drift: row.drift.clone(),
-                    freq: row.freq.clone(),
-                    msg: row.msg.clone(),
-                    tag: '-',
-                });
+                if !row.ignored {
+                    diff_rows.push(DiffRow {
+                        date_time: row.date_time.clone(),
+                        snr: row.snr.clone(),
+                        drift: row.drift.clone(),
+                        freq: row.freq.clone(),
+                        msg: row.msg.clone(),
+                        tag: '-',
+                    });
+                }
             }
         }
         for (idx, result) in results.iter().enumerate() {
@@ -332,18 +354,16 @@ fn test_stream_decode_long_audio() {
             bl.len(),
             elapsed_ms
         );
-        if std::env::var("FT8RS_PRINT_MISSES").ok().as_deref() == Some("1") && !missed.is_empty() {
-            for msg in missed {
-                println!("    MISS {}", msg);
-            }
-        }
 
-        let remaining_baseline = baseline.iter().filter(|row| row.seg > seg).count();
+        let remaining_baseline = baseline
+            .iter()
+            .filter(|row| !row.ignored && row.seg > seg)
+            .count();
         assert!(
-            total_matched + remaining_baseline >= severe_floor,
-            "STREAM LONG sensitivity abort at seg {}: matched {} + remaining {} < {}",
+            primary_matched + remaining_baseline >= severe_floor,
+            "STREAM LONG sensitivity abort at seg {}: target matched {} + target remaining {} < {}",
             seg,
-            total_matched,
+            primary_matched,
             remaining_baseline,
             severe_floor,
         );
@@ -357,6 +377,10 @@ fn test_stream_decode_long_audio() {
         baseline.len(),
         rate
     );
+    println!(
+        "  WSJT-X baseline matched: {}/{}",
+        primary_matched, primary_total
+    );
     if let Some(timing) = timing_stats.summary() {
         println!(
             "  Timing residual: baseline_drift-decoded_dt mean={:+.3}s median={:+.3}s p10={:+.3}s p90={:+.3}s n={}",
@@ -367,10 +391,10 @@ fn test_stream_decode_long_audio() {
         write_diff_csv("tests/ft8/230208_140300_diff.csv", &diff_rows);
     }
     assert!(
-        total_matched >= accepted_floor,
-        "STREAM LONG: {}/{} < {}",
-        total_matched,
-        baseline.len(),
+        primary_matched >= accepted_floor,
+        "STREAM LONG WSJT-X target: {}/{} < {}",
+        primary_matched,
+        primary_total,
         accepted_floor
     );
 }

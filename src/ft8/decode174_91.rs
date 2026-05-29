@@ -250,7 +250,8 @@ pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeR
     // Try OSD with accumulated BP posteriors (WSJT-X approach)
     if nosd >= 1 {
         for i in 0..nosd {
-            if let Some(result) = osd_decode174_91(&bp.zsave[i], apmask, 2) {
+            if let Some(mut result) = osd_decode174_91(&bp.zsave[i], apmask, 2) {
+                result.nharderrors = channel_hard_errors(llr, &result.cw);
                 if result.nharderrors > 0 {
                     return Some(result);
                 }
@@ -259,6 +260,16 @@ pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeR
     }
 
     None
+}
+
+fn channel_hard_errors(llr: &[f64], cw: &[u8]) -> usize {
+    llr.iter()
+        .zip(cw.iter())
+        .filter(|&(&soft, &bit)| {
+            let hard = if soft >= 0.0 { 1 } else { 0 };
+            hard != bit
+        })
+        .count()
 }
 
 /// Ordered-statistics decoder aligned to WSJT-X `osd174_91.f90`.

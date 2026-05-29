@@ -440,10 +440,6 @@ fn decode_from_f64(
         let pass_imetric = if pass_idx == 0 { 1 } else { 2 };
 
         let mut cand_ws = create_decode_workspace();
-        let mut no_coarse_frequency_uses: std::collections::HashMap<i32, usize> =
-            std::collections::HashMap::new();
-        let mut no_coarse_downsample_cache: std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)> =
-            std::collections::HashMap::new();
         let mut ft8b_stats = trace_timers_enabled().then(Ft8bStats::default);
         // Candidate decoding is sequential so each accepted signal updates the residual
         // before later candidates are evaluated.
@@ -466,8 +462,6 @@ fn decode_from_f64(
                 &book,
                 None,
                 &mut cand_ws,
-                &mut no_coarse_downsample_cache,
-                &mut no_coarse_frequency_uses,
                 ft8b_stats.as_mut(),
             ) {
                 let message_key = normalize_message_key(&r.msg);
@@ -1130,8 +1124,6 @@ fn ft8b(
     _book: &Option<HashCallBook>,
     _sbase_welch: Option<&[f64]>,
     workspace: &mut DecodeWorkspace,
-    coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
-    coarse_frequency_uses: &mut std::collections::HashMap<i32, usize>,
     mut stats: Option<&mut Ft8bStats>,
 ) -> Option<Ft8bResult> {
     if let Some(stats) = stats.as_deref_mut() {
@@ -1139,14 +1131,7 @@ fn ft8b(
     }
     let collect_stats = stats.is_some();
     let t_downsample = collect_stats.then(Instant::now);
-    load_coarse_downsample(
-        cx_re,
-        cx_im,
-        f1,
-        workspace,
-        coarse_downsample_cache,
-        coarse_frequency_uses,
-    );
+    ft8_downsample(cx_re, cx_im, f1, workspace);
     if let Some(stats) = stats.as_deref_mut() {
         add_elapsed(&mut stats.downsample, t_downsample);
     }
@@ -1316,42 +1301,6 @@ fn ft8b(
         snr,
         itone,
     })
-}
-
-fn load_coarse_downsample(
-    cx_re: &[f64],
-    cx_im: &[f64],
-    f0: f64,
-    workspace: &mut DecodeWorkspace,
-    coarse_downsample_cache: &mut std::collections::HashMap<i32, (Vec<f64>, Vec<f64>)>,
-    coarse_frequency_uses: &mut std::collections::HashMap<i32, usize>,
-) {
-    let freq_key = f0 as i32;
-    if let Some((re, im)) = coarse_downsample_cache.get(&freq_key) {
-        workspace.cd0_re.copy_from_slice(re);
-        workspace.cd0_im.copy_from_slice(im);
-    } else {
-        ft8_downsample(cx_re, cx_im, f0, workspace);
-        let uses = coarse_frequency_uses.get(&freq_key).copied().unwrap_or(0);
-        if uses > 1 {
-            coarse_downsample_cache.insert(
-                freq_key,
-                (workspace.cd0_re.clone(), workspace.cd0_im.clone()),
-            );
-        }
-    }
-
-    let remaining = coarse_frequency_uses
-        .get(&freq_key)
-        .copied()
-        .unwrap_or(1)
-        .saturating_sub(1);
-    if remaining == 0 {
-        coarse_frequency_uses.remove(&freq_key);
-        coarse_downsample_cache.remove(&freq_key);
-    } else {
-        coarse_frequency_uses.insert(freq_key, remaining);
-    }
 }
 
 fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> TimeSearchResult {
@@ -1670,8 +1619,8 @@ fn ft8_downsample(cx_re: &[f64], cx_im: &[f64], f0: f64, workspace: &mut DecodeW
     four2a_c2c(&mut workspace.cd0_re, &mut workspace.cd0_im, 1);
 
     for i in 0..NFFT2 {
-        workspace.cd0_re[i] *= DOWNSAMPLE_FAC;
-        workspace.cd0_im[i] *= DOWNSAMPLE_FAC;
+        workspace.cd0_re[i] = ((workspace.cd0_re[i] * DOWNSAMPLE_FAC) as f32) as f64;
+        workspace.cd0_im[i] = ((workspace.cd0_im[i] * DOWNSAMPLE_FAC) as f32) as f64;
     }
 }
 
