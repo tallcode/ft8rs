@@ -89,15 +89,25 @@ Rust 代码不完全使用 Fortran 大小写，但语义尽量贴近：
 - `ft8_a7d`、`ft8_downsample`、`sync8`、`subtract_ft8` 等核心函数名保留
   WSJT-X 源码名，方便逐段核对。
 
-### Remaining File-layout Gap
+### File-layout Alignment
 
-`src/ft8/decode.rs` 仍同时承载了 `ft8_decode` 外层、`sync8`、`ft8b`、
-`ft8_downsample` 和部分 metric/SNR helper。这个布局还没有完全按 WSJT-X
-文件拆成 `ft8_decode.rs`、`sync8.rs`、`ft8b.rs`、`ft8_downsample.rs`。
+FT8 regular decode 的主要阶段已经按 WSJT-X 源文件做第一层物理拆分：
 
-原因：当前灵敏度已经达到 WSJT-X target `425/425`，最后阶段优先保住成果，
-不再做纯文件移动型大改。以后 WSJT-X 升级需要大规模源码 diff 时，这会是
-最值得优先重构的工程遗憾。
+- `src/ft8/decode.rs`: 对外 decode facade、outer `ft8_decode` 控制流、
+  shared workspace/type definitions 和 spectrum baseline。
+- `src/ft8/sync8.rs`: `sync8` candidate search、baseline-normalized sync
+  metrics、candidate pruning/order。
+- `src/ft8/ft8b.rs`: `ft8b` candidate decode、soft-symbol extraction、
+  bit metrics、LDPC/AP pass scheduling、SNR/post gates。
+- `src/ft8/ft8_downsample.rs`: 192k -> 3200 -> 200 Hz downsample path。
+
+这些文件当前通过 `decode` 下的真实 Rust submodules 挂载。父模块只通过
+显式导出的内部函数调用 `sync8`、`ft8b` 和 `ft8_downsample`，而不是用
+文本 `include!` 合并作用域。
+
+剩余工程差距：`decode.rs` 仍保留 shared workspace/type definitions。
+以后 WSJT-X 升级做大规模源码 diff 时，可以再把 shared definitions 抽成
+更明确的内部模块，但核心阶段的文件边界已经不再是 `include!`。
 
 ## Audio and Slot Model
 
@@ -262,6 +272,9 @@ Current `ft8rs` status:
 - Same-parity previous/current AP memory is represented in stream session。
 - File and monitor paths pass the slot timestamp into the stream session, so
   AP parity uses WSJT-X `jseq = mod(nutc/5,2)` instead of a timestamp-free toggle。
+- AP storage now mirrors WSJT-X `ndec(jseq,k)` shape: `a7[jseq][0]` is previous
+  same-parity memory, `a7[jseq][1]` is current memory, and `nzhsym=41`/new slot
+  moves current to previous for that parity。
 - Current regular decodes suppress near previous AP candidates。
 - AP results preserve refined `freq` and `dt`。
 - `ft8_a7d` sync refinement uses `ctwk * Costas` for frequency tweak and plain
@@ -273,8 +286,16 @@ Current `ft8rs` status:
 
 Remaining AP risk:
 
-- Exact `ndec(jseq,k)` storage is still simplified compared with Fortran arrays。
-- AP bit masks need direct fixtures against WSJT-X-generated patterns。
+- AP bit masks now have direct bit-position fixtures for CQ, mycall,
+  mycall+dxcall, RRR, 73, RR73 and key contest/call gates。Remaining fixture
+  gap is WSJT-X-generated golden bit patterns for every `ncontest/iaptype`
+  combination。The current Rust fixture matrix covers accept/reject and mask
+  shape/count for `ncontest=0..8` and `iaptype=1..6`。
+- AP memory shape is aligned, and `msg0` now uses a fixed-width uppercase
+  `character*37`-style storage with blank padding。Rust still keeps parsed
+  `A7SaveEntry` fields beside that fixed text instead of byte-for-byte Fortran
+  arrays for every value。Current tests pin the main `ft8_a7_save` parsing
+  edges: `CQ` with grid, `CQ_` skip, report-as-blank grid, and `/`/`<` skip。
 
 ## Subtraction and Waveform
 
@@ -368,12 +389,43 @@ FT8RS_TRACE_TIMERS=1 cargo test --release test_stream_decode_short_audio -- --no
   current WSJT-X FT8 baseline。
 - `ft8bvar` / JTDX more aggressive paths are references only; do not import those
   behaviors unless the goal changes away from WSJT-X parity。
-- `decode.rs` should eventually be split by WSJT-X source file names when the next
-  large source audit begins。
-- Direct fixtures are still needed for AP mask bits, baseline numerical parity,
-  candidate ordering, EOF tail slot, and hash display forms。
+- The current WSJT-X-shaped file split is a real Rust submodule split under
+  `decode`; a future shared-definition extraction should be done only with
+  release baseline checks in place。
+- Direct fixtures are still needed for broader AP generated patterns, baseline
+  numerical parity, EOF tail slot, and hash display forms。
 - Deeper `ndeep>=3` LDPC/OSD parity remains the largest algorithmic gap recorded
   in code comments/docs。
+
+## Remaining Alignment Backlog
+
+These are the known regrets to fix one by one. Keep each item guarded by release
+baseline tests, and prefer WSJT-X-generated golden fixtures over hand-derived
+expectations wherever possible.
+
+1. **AP byte-for-byte fixtures**: generate WSJT-X-side AP mask/pattern fixtures
+   for every active `ncontest/iaptype/nQSOProgress` combination. Current Rust
+   tests cover bit positions, shape and gates, but not independent golden output.
+2. **AP fixed-width storage**: `msg0` now has `character*37`-style fixed-width
+   uppercase/blank-padded storage, while `A7SaveEntry` still keeps parsed
+   helper fields. Remaining work is deciding whether more fields should be
+   represented as fixed-width Fortran text and adding byte-level golden fixtures.
+3. **Shared decode definitions**: `decode.rs` still owns shared workspace,
+   result and AP option types. A future `workspace.rs`/`types.rs` split may make
+   WSJT-X upgrades easier, but should not be done without long/short release
+   checks.
+4. **Regular/AP duplicate numeric paths**: regular `ft8b` and AP `ft8_a7d`
+   still have separate downsample, taper, 32-point symbol FFT and Costas helper
+   code. Keep them separate unless a shared implementation can prove identical
+   numerical behavior.
+5. **Deep LDPC/OSD parity**: deeper `ndeep>=3` LDPC/OSD behavior is still not a
+   complete WSJT-X port. This is the main algorithmic backlog after AP fixtures.
+6. **Fixture breadth**: current audio fixtures are strong but limited. Add more
+   WSJT-X-verified recordings for contest messages, hash calls, AP progression,
+   band-edge signals, collisions and high drift.
+7. **Generated source-audit fixtures**: where feasible, add scripts that extract
+   constants or expected outputs from the local WSJT-X source/build instead of
+   relying on manual transcription.
 
 ## Release Workflow
 
@@ -443,4 +495,3 @@ Current release workflow:
   - timing residual median near `+0.000s`。
   - every slot under `15s`。
   - diff file contains only the header。
-

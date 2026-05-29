@@ -14,12 +14,50 @@ use crate::stream::time::SlotTimestamp;
 const SAMPLE_RATE: u32 = 12000;
 const NMAX: usize = 15 * 12_000;
 const NZHSYM_STRIDE: usize = 3456;
+const WSJTX_MSG37_LEN: usize = 37;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WsjtxMsg37 {
+    bytes: [u8; WSJTX_MSG37_LEN],
+}
+
+impl WsjtxMsg37 {
+    fn from_trimmed(value: &str) -> Self {
+        let mut bytes = [b' '; WSJTX_MSG37_LEN];
+        for (idx, byte) in value
+            .trim()
+            .as_bytes()
+            .iter()
+            .copied()
+            .take(WSJTX_MSG37_LEN)
+            .enumerate()
+        {
+            bytes[idx] = byte.to_ascii_uppercase();
+        }
+        Self { bytes }
+    }
+
+    #[cfg(test)]
+    fn trimmed(&self) -> String {
+        let end = self
+            .bytes
+            .iter()
+            .rposition(|&byte| byte != b' ')
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        String::from_utf8_lossy(&self.bytes[..end]).into_owned()
+    }
+
+    fn contains(&self, needle: &str) -> bool {
+        String::from_utf8_lossy(&self.bytes).contains(needle)
+    }
+}
 
 /// Info saved from a slot decode for AP decode in the next slot.
 /// Matches WSJT-X ft8_a7_save: dt0, f0, msg0("call_1 call_2")
 #[derive(Clone, Debug)]
 struct A7SaveEntry {
-    msg0: String,
+    msg0: WsjtxMsg37,
     call_1: String,
     call_2: String,
     grid4: String, // "    " or 4-char grid
@@ -96,10 +134,9 @@ pub struct StreamSlotDecodeState {
 pub struct StreamDecodeSession {
     params: WsjtxDecodeConfig,
     book: HashCallBook,
-    /// Entries from the previous slot of the SAME parity for AP decode.
-    /// Matches WSJT-X ndec(jseq,0).
-    prev_even: Vec<A7SaveEntry>,
-    prev_odd: Vec<A7SaveEntry>,
+    /// WSJT-X-style AP memory: a7[jseq][k], where jseq is even/odd UTC
+    /// sequence parity and k=0/1 is previous/current for that parity.
+    a7: [[Vec<A7SaveEntry>; 2]; 2],
     /// Current sequence parity: 0=even, 1=odd. Matches WSJT-X `jseq=mod(nutc/5,2)`.
     jseq: usize,
 }
@@ -109,8 +146,7 @@ impl StreamDecodeSession {
         Self {
             params,
             book: HashCallBook::new(),
-            prev_even: Vec::new(),
-            prev_odd: Vec::new(),
+            a7: [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]],
             jseq: 0,
         }
     }
@@ -191,9 +227,7 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        if let Some(timestamp) = timestamp {
-            self.jseq = jseq_from_nutc(timestamp.nutc());
-        }
+        self.ft8_a7_new_slot(timestamp);
 
         let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
@@ -319,11 +353,7 @@ impl StreamDecodeSession {
         );
 
         let t_ap = Instant::now();
-        let previous_entries = if self.jseq == 0 {
-            &self.prev_even
-        } else {
-            &self.prev_odd
-        };
+        let previous_entries = &self.a7[self.jseq][0];
         let ap_candidates = suppress_previous_a7_entries(previous_entries, &entries_to_save);
         let ap_allowed =
             self.params.lft8apon && self.params.ncontest != 6 && self.params.ncontest != 7;
@@ -389,12 +419,9 @@ impl StreamDecodeSession {
             Some(format!("merged={}", state.merged.len())),
         );
 
-        // Matches WSJT-X: ndec(jseq,1) → ndec(jseq,0) at next UTC change.
-        if self.jseq == 0 {
-            self.prev_even = entries_to_save;
-        } else {
-            self.prev_odd = entries_to_save;
-        }
+        // Matches WSJT-X: save current decodes as ndec(jseq,1). They move to
+        // ndec(jseq,0) at the next nzhsym=41/new-UTC transition for this parity.
+        self.a7[self.jseq][1] = entries_to_save;
         self.jseq = 1 - self.jseq;
 
         trace_timer(
@@ -403,6 +430,13 @@ impl StreamDecodeSession {
             Some(format!("merged={}", state.merged.len())),
         );
         Ok(state.merged)
+    }
+
+    fn ft8_a7_new_slot(&mut self, timestamp: Option<&SlotTimestamp>) {
+        if let Some(timestamp) = timestamp {
+            self.jseq = jseq_from_nutc(timestamp.nutc());
+        }
+        self.a7[self.jseq][0] = std::mem::take(&mut self.a7[self.jseq][1]);
     }
 
     /// Full progressive decode matching WSJT-X flow:
@@ -568,7 +602,7 @@ fn ft8_a7_save_entry_from_parts(
     };
 
     Some(A7SaveEntry {
-        msg0: fragment,
+        msg0: WsjtxMsg37::from_trimmed(&fragment),
         call_1,
         call_2,
         grid4,
@@ -776,7 +810,11 @@ fn trace_timer(label: &str, start: Instant, detail: Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_wsjtx_chkcall, jseq_from_nutc, split77_words};
+    use super::{
+        ft8_a7_save_entry_from_parts, is_wsjtx_chkcall, jseq_from_nutc, split77_words, A7SaveEntry,
+        StreamDecodeSession, WsjtxDecodeConfig, WsjtxMsg37,
+    };
+    use crate::stream::time::SlotTimestamp;
 
     #[test]
     fn jseq_matches_wsjtx_nutc_parity() {
@@ -809,7 +847,78 @@ mod tests {
     }
 
     #[test]
+    fn a7_save_entry_matches_wsjtx_cq_grid_and_skip_rules() {
+        let sbase = vec![40.0; 2000];
+
+        let cq = ft8_a7_save_entry_from_parts("CQ D1DX KN87", 1500.0, 0.2, &sbase).unwrap();
+        assert_eq!(cq.msg0.trimmed(), "CQ D1DX");
+        assert_eq!(cq.call_1, "CQ");
+        assert_eq!(cq.call_2, "D1DX");
+        assert_eq!(cq.grid4, "KN87");
+
+        let report = ft8_a7_save_entry_from_parts("K1ABC W9XYZ -07", 1500.0, 0.2, &sbase).unwrap();
+        assert_eq!(report.msg0.trimmed(), "K1ABC W9XYZ");
+        assert_eq!(report.call_1, "K1ABC");
+        assert_eq!(report.call_2, "W9XYZ");
+        assert_eq!(report.grid4, "    ");
+
+        assert!(ft8_a7_save_entry_from_parts("CQ DX DL8YHR JO41", 1500.0, 0.2, &sbase).is_none());
+        assert!(
+            ft8_a7_save_entry_from_parts("EA5/DH0YAH RK4FF RR73", 1500.0, 0.2, &sbase).is_none()
+        );
+        assert!(
+            ft8_a7_save_entry_from_parts("<RK4FF> EA5/DH0YAH 73", 1500.0, 0.2, &sbase).is_none()
+        );
+    }
+
+    #[test]
+    fn msg37_storage_is_fixed_width_uppercase_and_blank_padded() {
+        let msg37 = WsjtxMsg37::from_trimmed("k1abc w9xyz rr73");
+
+        assert_eq!(msg37.trimmed(), "K1ABC W9XYZ RR73");
+        assert_eq!(msg37.bytes.len(), 37);
+        assert!(msg37.bytes[msg37.trimmed().len()..]
+            .iter()
+            .all(|&byte| byte == b' '));
+    }
+
+    #[test]
     fn chkcall_uses_third_character_digit_when_both_second_and_third_are_digits() {
         assert!(is_wsjtx_chkcall("A12BC"));
+    }
+
+    #[test]
+    fn a7_memory_moves_current_to_previous_by_jseq_at_new_slot() {
+        let mut session = StreamDecodeSession::new(WsjtxDecodeConfig::default());
+        session.a7[0][1].push(test_a7_entry("K1ABC W9XYZ"));
+        session.a7[1][1].push(test_a7_entry("N0CALL W1AW"));
+
+        let even_timestamp = SlotTimestamp::parse("230208_140330").unwrap();
+        session.ft8_a7_new_slot(Some(&even_timestamp));
+        assert_eq!(session.jseq, 0);
+        assert_eq!(session.a7[0][0].len(), 1);
+        assert!(session.a7[0][1].is_empty());
+        assert_eq!(session.a7[1][0].len(), 0);
+        assert_eq!(session.a7[1][1].len(), 1);
+
+        let odd_timestamp = SlotTimestamp::parse("230208_140345").unwrap();
+        session.ft8_a7_new_slot(Some(&odd_timestamp));
+        assert_eq!(session.jseq, 1);
+        assert_eq!(session.a7[1][0].len(), 1);
+        assert!(session.a7[1][1].is_empty());
+        assert_eq!(session.a7[0][0].len(), 1);
+    }
+
+    fn test_a7_entry(msg0: &str) -> A7SaveEntry {
+        let words: Vec<&str> = msg0.split_whitespace().collect();
+        A7SaveEntry {
+            msg0: WsjtxMsg37::from_trimmed(msg0),
+            call_1: words.first().copied().unwrap_or("K1ABC").to_string(),
+            call_2: words.get(1).copied().unwrap_or("W9XYZ").to_string(),
+            grid4: "    ".to_string(),
+            dt0: 0.0,
+            f0: 1500.0,
+            xbase: 1.0,
+        }
     }
 }
