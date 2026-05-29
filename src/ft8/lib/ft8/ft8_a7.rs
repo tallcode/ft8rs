@@ -18,10 +18,11 @@ use super::decode::{
     build_costas_sync_templates, extract_symbol_spectrum, ft8_downsample_from_cx, normalize_bmet,
     sync8d, sync8d_twk, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TWO_PI,
 };
+use crate::ft8::ldpc_174_91_c_generator::G_HEX;
 use crate::ft8::pack_jt77::{is_stdcall, pack77};
-use crate::ft8::protocol::G_HEX;
 
 const ICOS7: [usize; 7] = [3, 1, 4, 0, 6, 5, 2];
+const GRAY_MAP: [u8; 8] = [0, 1, 3, 2, 5, 6, 4, 7];
 
 /// Result of AP decode
 #[derive(Clone, Debug)]
@@ -189,18 +190,18 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
                     let i2_val = (i & 63) / 8;
                     let i3_val = i & 7;
                     s2[i] = if nsym == 1 {
-                        let t = crate::ft8::constants::GRAY_MAP[i3_val] as usize;
+                        let t = GRAY_MAP[i3_val] as usize;
                         ap_wsjtx_cabs(cs_re[t][ks] as f32, cs_im[t][ks] as f32) as f64
                     } else if nsym == 2 {
-                        let t2 = crate::ft8::constants::GRAY_MAP[i2_val] as usize;
-                        let t3 = crate::ft8::constants::GRAY_MAP[i3_val] as usize;
+                        let t2 = GRAY_MAP[i2_val] as usize;
+                        let t3 = GRAY_MAP[i3_val] as usize;
                         let re = cs_re[t2][ks] as f32 + cs_re[t3][ks + 1] as f32;
                         let im = cs_im[t2][ks] as f32 + cs_im[t3][ks + 1] as f32;
                         ap_wsjtx_cabs(re, im) as f64
                     } else {
-                        let t1 = crate::ft8::constants::GRAY_MAP[i1_val] as usize;
-                        let t2 = crate::ft8::constants::GRAY_MAP[i2_val] as usize;
-                        let t3 = crate::ft8::constants::GRAY_MAP[i3_val] as usize;
+                        let t1 = GRAY_MAP[i1_val] as usize;
+                        let t2 = GRAY_MAP[i2_val] as usize;
+                        let t3 = GRAY_MAP[i3_val] as usize;
                         let re = cs_re[t1][ks] as f32
                             + cs_re[t2][ks + 1] as f32
                             + cs_re[t3][ks + 2] as f32;
@@ -598,7 +599,7 @@ fn tones_from_codeword(cw: &[u8]) -> [i32; 79] {
             k += 7;
         }
         let bits = (cw[idx] as usize) * 4 + (cw[idx + 1] as usize) * 2 + (cw[idx + 2] as usize);
-        itone[k] = crate::ft8::constants::GRAY_MAP[bits] as i32;
+        itone[k] = GRAY_MAP[bits] as i32;
         k += 1;
     }
     itone

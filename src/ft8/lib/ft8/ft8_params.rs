@@ -1,6 +1,5 @@
-use crate::ft8::protocol::SAMPLE_RATE;
-
 // WSJT-X lib/ft8/ft8_params.f90
+pub(crate) const SAMPLE_RATE: usize = 12_000;
 pub(crate) const NSPS: usize = 1920;
 pub(crate) const NFFT1: usize = 2 * NSPS; // 3840
 pub(crate) const NSTEP: usize = NSPS / 4; // 480

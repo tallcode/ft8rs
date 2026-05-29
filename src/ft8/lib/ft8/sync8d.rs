@@ -1,4 +1,76 @@
-use super::{COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, NP2};
+//! Costas sync correlation helper.
+//!
+//! Source mapping:
+//! - `wsjtx/lib/ft8/sync8d.f90`
+
+use super::{COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DT2, NP2, TWO_PI_F32};
+use std::sync::OnceLock;
+
+const COSTAS: [u8; 7] = [3, 1, 4, 0, 6, 5, 2];
+
+pub(crate) struct SyncTemplate {
+    pub(crate) re: Vec<f64>,
+    pub(crate) im: Vec<f64>,
+}
+
+pub(crate) struct FrequencyShiftSyncTemplate {
+    pub(crate) delf: f64,
+    pub(crate) re: Vec<f64>,
+    pub(crate) im: Vec<f64>,
+}
+
+pub(crate) fn build_costas_sync_templates() -> &'static SyncTemplate {
+    static T: OnceLock<SyncTemplate> = OnceLock::new();
+    T.get_or_init(|| {
+        let mut re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
+        let mut im = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
+        for i in 0..COSTAS_BLOCKS {
+            let mut phi = 0.0f32;
+            let dphi = TWO_PI_F32 * COSTAS[i] as f32 / COSTAS_SYMBOL_LEN as f32;
+            for j in 0..COSTAS_SYMBOL_LEN {
+                re[i * COSTAS_SYMBOL_LEN + j] = phi.cos() as f64;
+                im[i * COSTAS_SYMBOL_LEN + j] = phi.sin() as f64;
+                phi = (phi + dphi) % TWO_PI_F32;
+            }
+        }
+        SyncTemplate { re, im }
+    })
+}
+
+pub(crate) fn build_frequency_shift_sync_templates() -> &'static Vec<FrequencyShiftSyncTemplate> {
+    static T: OnceLock<Vec<FrequencyShiftSyncTemplate>> = OnceLock::new();
+    T.get_or_init(|| {
+        let cs = build_costas_sync_templates();
+        let mut templates = Vec::new();
+        for ifr in -5..=5 {
+            let delf = ifr as f64 * 0.5;
+            let dphi = TWO_PI_F32 * delf as f32 * DT2 as f32;
+            let mut twk_re = [0.0; COSTAS_SYMBOL_LEN];
+            let mut twk_im = [0.0; COSTAS_SYMBOL_LEN];
+            let mut phi = 0.0f32;
+            for j in 0..COSTAS_SYMBOL_LEN {
+                twk_re[j] = phi.cos() as f64;
+                twk_im[j] = phi.sin() as f64;
+                phi = (phi + dphi) % TWO_PI_F32;
+            }
+            let mut re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
+            let mut im = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
+            for i in 0..COSTAS_BLOCKS {
+                for j in 0..COSTAS_SYMBOL_LEN {
+                    let idx = i * COSTAS_SYMBOL_LEN + j;
+                    let twk_re = twk_re[j] as f32;
+                    let twk_im = twk_im[j] as f32;
+                    let cs_re = cs.re[idx] as f32;
+                    let cs_im = cs.im[idx] as f32;
+                    re[idx] = (twk_re * cs_re - twk_im * cs_im) as f64;
+                    im[idx] = (twk_re * cs_im + twk_im * cs_re) as f64;
+                }
+            }
+            templates.push(FrequencyShiftSyncTemplate { delf, re, im });
+        }
+        templates
+    })
+}
 
 /// WSJT-X lib/ft8/sync8d.f90 with `itwk=0`.
 pub(crate) fn sync8d(

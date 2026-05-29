@@ -7,19 +7,48 @@
 
 use super::ft8_downsample::ft8_downsample;
 use super::{
-    build_costas_sync_templates, build_frequency_shift_sync_templates, extract_symbol_spectrum,
-    nint_wsjtx_f32, sync8d, DecodeWorkspace, FrequencySearchResult, Ft8ApSet, Ft8bApOptions,
-    Ft8bResult, Ft8bStats, TimeRefineResult, TimeSearchResult, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN,
-    DT2, FS2, NFFT1, NN,
+    build_costas_sync_templates, build_frequency_shift_sync_templates, nint_wsjtx_f32, sync8d,
+    DecodeWorkspace, FrequencySearchResult, Ft8ApSet, Ft8bApOptions, Ft8bResult, Ft8bStats,
+    TimeRefineResult, TimeSearchResult, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DT2, FS2, NFFT1, NN, NP2,
+    SAMPLE_RATE,
 };
-use crate::ft8::constants::{COSTAS, GRAY_MAP};
-use crate::ft8::decode174_91::{decode174_91, DecodeResult};
-use crate::ft8::hashcall::HashCallBook;
-use crate::ft8::pack_jt77::{is_stdcall, pack77};
-use crate::ft8::protocol::{C38, N_LDPC, SAMPLE_RATE};
+use crate::ft8::decode174_91::{decode174_91, DecodeResult, N_LDPC};
+use crate::ft8::pack_jt77::{is_stdcall, pack77, C38};
 use crate::ft8::unpack_jt77::{unpack77, unpack77_with_context, UnpackContext};
+use crate::util::four2a_c2c;
+use crate::HashCallBook;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+const COSTAS: [u8; 7] = [3, 1, 4, 0, 6, 5, 2];
+const GRAY_MAP: [u8; 8] = [0, 1, 3, 2, 5, 6, 4, 7];
+
+/// Shared WSJT-X-shaped 32-sample symbol FFT from `ft8b.f90`.
+pub(crate) fn extract_symbol_spectrum(
+    cd0_re: &[f64],
+    cd0_im: &[f64],
+    i1: isize,
+    symb_re: &mut [f64],
+    symb_im: &mut [f64],
+) {
+    debug_assert!(symb_re.len() >= COSTAS_SYMBOL_LEN);
+    debug_assert!(symb_im.len() >= COSTAS_SYMBOL_LEN);
+
+    symb_re[..COSTAS_SYMBOL_LEN].fill(0.0);
+    symb_im[..COSTAS_SYMBOL_LEN].fill(0.0);
+
+    if i1 >= 0 && (i1 + COSTAS_SYMBOL_LEN as isize - 1) < NP2 as isize {
+        let i1 = i1 as usize;
+        symb_re[..COSTAS_SYMBOL_LEN].copy_from_slice(&cd0_re[i1..i1 + COSTAS_SYMBOL_LEN]);
+        symb_im[..COSTAS_SYMBOL_LEN].copy_from_slice(&cd0_im[i1..i1 + COSTAS_SYMBOL_LEN]);
+    }
+
+    four2a_c2c(
+        &mut symb_re[..COSTAS_SYMBOL_LEN],
+        &mut symb_im[..COSTAS_SYMBOL_LEN],
+        -1,
+    );
+}
 
 pub(super) fn ft8b(
     _dd0: &[f64],
