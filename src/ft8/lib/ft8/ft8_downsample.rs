@@ -6,10 +6,25 @@
 //! - called by `wsjtx/lib/ft8/ft8_a7.f90`
 
 use super::{
-    build_taper, nint_wsjtx_real, DecodeWorkspace, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DOWNSAMPLE_FAC,
-    NFFT1_LONG, NFFT2, TAPER_SIZE,
+    nint_wsjtx_real, DecodeWorkspace, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DOWNSAMPLE_FAC, NFFT1_LONG,
+    NFFT2, PI_F32, TAPER_SIZE,
 };
 use crate::util::four2a_c2c;
+use std::sync::OnceLock;
+
+/// Lazy-initialized FT8 downsample taper.
+pub(super) fn build_taper() -> &'static Vec<f64> {
+    static T: OnceLock<Vec<f64>> = OnceLock::new();
+    T.get_or_init(|| {
+        let mut t = vec![0.0; TAPER_SIZE];
+        let last = TAPER_SIZE - 1;
+        for (i, slot) in t.iter_mut().enumerate().take(TAPER_SIZE) {
+            let x = (i as f32 * PI_F32) / last as f32;
+            *slot = (0.5f32 * (1.0f32 + x.cos())) as f64;
+        }
+        t
+    })
+}
 
 pub(super) fn ft8_downsample(
     cx_re: &[f64],

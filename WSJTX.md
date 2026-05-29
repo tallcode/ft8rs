@@ -91,23 +91,20 @@ Rust 代码不完全使用 Fortran 大小写，但语义尽量贴近：
 
 ### File-layout Alignment
 
-FT8 regular decode 的主要阶段按 `wsjtx/lib/ft8/*.f90` 镜像到
-`src/ft8/lib/ft8/*.rs`。Rust 对外仍通过 `crate::ft8::decode` 暴露稳定 API，
-但物理文件名尽量和 WSJT-X 保持同名，方便熟悉 WSJT-X 的开发者直接定位：
+FT8 regular decode 的主要阶段按 `wsjtx/lib/**/*.f90` 镜像到
+`src/ft8/lib/**/*.rs`。Rust 对外仍通过 `crate::ft8::decode` 暴露稳定 API，
+但物理文件名和 WSJT-X 保持同名，方便熟悉 WSJT-X 的开发者直接定位：
 
-- `src/ft8/lib/ft8/ft8_decode.rs`: 对外 decode facade、outer `ft8_decode`
-  控制流、public decode API 和 sample preparation。对应
-  `wsjtx/lib/ft8_decode.f90`，但放在 `lib/ft8` 下以保持 FT8 解码器聚合。
+- `src/ft8/lib/ft8_decode.rs`: 对外 decode facade、outer `ft8_decode`
+  控制流、public decode API、sample preparation，以及 Fortran 局部数组在
+  Rust 中对应的候选/工作区记录。对应 `wsjtx/lib/ft8_decode.f90`。
 - `src/ft8/lib/ft8/ft8_params.rs`: WSJT-X `ft8_params.f90` style constants。
-- `src/ft8/lib/ft8/workspace.rs`: Rust work buffers plus candidate/result/AP
-  option structs；这些是 Fortran 局部数组/记录的 Rust 聚合，没有单独 f90。
-- `src/ft8/lib/ft8/baseline.rs`: WSJT-X `baseline.f90` /
-  `get_spectrum_baseline.f90` shaped spectrum baseline helpers。
-- `src/ft8/lib/ft8/sync_templates.rs`: Costas/taper/frequency-tweak template
-  builders；对应 `sync8.f90`、`sync8d.f90`、`ft8_downsample.f90` 中的模板数据。
-- `src/ft8/lib/ft8/sync8d.rs`: WSJT-X `sync8d.f90` Costas sync power helper。
-- `src/ft8/lib/ft8/symbols.rs`: shared 32-sample symbol FFT extraction helper；
-  对应 `ft8b.f90` 和 `ft8_a7.f90` 中相同的 `csymb` 提取形状。
+- `src/ft8/lib/ft8/baseline.rs`: WSJT-X `baseline.f90` polynomial spectrum
+  baseline fit。
+- `src/ft8/lib/ft8/get_spectrum_baseline.rs`: WSJT-X
+  `get_spectrum_baseline.f90` Welch spectrum average and baseline call。
+- `src/ft8/lib/ft8/sync8d.rs`: WSJT-X `sync8d.f90` Costas sync power helper；
+  Rust 复用的 Costas/frequency-shift template cache 也放在这里。
 - `src/ft8/lib/ft8/sync8.rs`: `sync8` candidate search、
   baseline-normalized sync metrics、candidate pruning/order。
 - `src/ft8/lib/ft8/ft8b.rs`: `ft8b` candidate decode、soft-symbol extraction、
@@ -115,23 +112,28 @@ FT8 regular decode 的主要阶段按 `wsjtx/lib/ft8/*.f90` 镜像到
 - `src/ft8/lib/ft8/ft8_downsample.rs`: 192k -> 3200 -> 200 Hz downsample path。
 - `src/ft8/lib/ft8/ft8_a7.rs`: WSJT-X `ft8_a7.f90:ft8_a7d` AP brute-force
   decoder。
-- `src/ft8/lib/ft8/decode174_91.rs`: WSJT-X `decode174_91.f90` /
-  `bpdecode174_91.f90` / `osd174_91.f90` LDPC decoder。
+- `src/ft8/lib/ft8/decode174_91.rs`: WSJT-X `decode174_91.f90` BP/OSD
+  orchestration。
+- `src/ft8/lib/ft8/bpdecode174_91.rs`: WSJT-X `bpdecode174_91.f90` BP decoder。
+- `src/ft8/lib/ft8/osd174_91.rs`: WSJT-X `osd174_91.f90` ordered-statistics
+  decoder。
+- `src/ft8/lib/ft8/get_crc14.rs`: WSJT-X `get_crc14.f90` CRC helper。
+- `src/ft8/lib/ft8/chkcrc14a.rs`: WSJT-X `chkcrc14a.f90` CRC checker。
+- `src/ft8/lib/ft8/ldpc_174_91_c_generator.rs`: WSJT-X
+  `ldpc_174_91_c_generator.f90` generator table。
 - `src/ft8/lib/ft8/ldpc_174_91_c_parity.rs`: WSJT-X
   `ldpc_174_91_c_parity.f90` parity-check table。
 - `src/ft8/lib/ft8/subtractft8.rs`: WSJT-X `subtractft8.f90` residual
   subtraction。
-- `src/ft8/lib/77bit/packjt77.rs`: WSJT-X `77bit/packjt77.f90` pack side。
-- `src/ft8/lib/77bit/unpack77.rs`: WSJT-X `77bit/packjt77.f90` receive
-  unpack side split into its own Rust file to keep pack/unpack readable。
-- `src/ft8/lib/77bit/hashcall.rs`: receive hash-call table around
-  `packjt77.f90:ihashcall` and WSJT-X runtime callbook behavior。
-- `src/ft8/lib/77bit/protocol.rs`: Rust grouping for shared 77-bit alphabets,
-  LDPC generator hex strings and protocol constants pulled from `packjt77.f90`,
-  `ft8_params.f90` and `ldpc_174_91_c_generator.f90`。
+- `src/ft8/lib/77bit/packjt77.rs`: WSJT-X `77bit/packjt77.f90` pack and unpack
+  side in one physical Rust file；hash-call runtime callbook also lives next to
+  `ihashcall` here。`crate::ft8::unpack_jt77` is only a Rust module alias to keep
+  existing call sites stable; it is not a second source file。
 - `src/ft8/lib/indexx.rs`: WSJT-X `indexx.f90` helper used by sync and OSD。
+- `src/ft8/lib/nuttal_window.rs`: WSJT-X `nuttal_window.f90`。
+- `src/ft8/lib/platanh.rs`: WSJT-X `platanh.f90`。
 
-这些镜像文件通过 `src/ft8/mod.rs` 的 `#[path = "lib/ft8/..."]` 挂载到
+这些镜像文件通过 `src/ft8/mod.rs` 的 `#[path = "lib/..."]` 挂载到
 既有 Rust module 名称，所以上层 stream/input/output 不需要知道内部物理
 路径。核心阶段不使用文本 `include!` 合并作用域。
 
@@ -427,10 +429,10 @@ FT8RS_TRACE_TIMERS=1 cargo test --release test_stream_decode_short_audio -- --no
   Existing AP tests still cover active bit positions, gates, message edge cases
   and source-shaped control flow, but the project will not block completion on a
   full independent AP byte-for-byte fixture matrix。
-- The current WSJT-X-shaped file split mirrors `wsjtx/lib/**/*.f90` under
-  `src/ft8/lib/**/*.rs`; `ft8_params.rs` mirrors WSJT-X parameter naming,
-  `workspace.rs` holds Rust-only buffers/types, and no core stage relies on
-  textual `include!` glue。
+- The current WSJT-X-shaped file split mirrors implemented FT8/JT77
+  `wsjtx/lib/**/*.f90` files under `src/ft8/lib/**/*.rs`; Rust work buffers are
+  kept inside `ft8_decode.rs` rather than a separate source file, and no core
+  stage relies on textual `include!` glue。
 - `tests/wsjtx_source_audit_test.rs` can compare selected Rust source shapes
   against a local `../wsjtx/lib/ft8` checkout. These tests currently cover
   `ft8_params.f90`, `ft8_downsample.f90`, `sync8d.f90` and the deep
@@ -519,8 +521,9 @@ Current release workflow:
   recomputes AP `xbase` from the current slot `sbase` before `ft8_a7d`。
 - AP `ft8_a7d` and regular `ft8b` now share the exact same downsample helper,
   eliminating the duplicate taper/downsample implementation in AP。
-- `sync8d.f90` behavior and the 32-point symbol FFT extraction are shared by AP
-  and regular decode through `sync8d.rs` and `symbols.rs`。
+- `sync8d.f90` behavior is shared by AP and regular decode through
+  `sync8d.rs`; the 32-point symbol FFT extraction now lives in `ft8b.rs`, matching
+  the regular decode source location while AP calls the same helper。
 - `osd174_91` now includes the WSJT-X `ndeep>=3` `npre2` pair-pattern path
   (`boxit91/fetchit91` equivalent) even though current FT8 `ft8b` still uses
   `norder=2`。

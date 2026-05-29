@@ -1,17 +1,10 @@
-//! Shared WSJT-X FT8/JT77 protocol constants used by the decoder.
+//! LDPC (174,91) generator matrix data.
 //!
 //! Source mapping:
-//! - `wsjtx/lib/ft8/ft8_params.f90`
-//! - `wsjtx/lib/77bit/packjt77.f90`
 //! - `wsjtx/lib/ft8/ldpc_174_91_c_generator.f90`
 
-pub const SAMPLE_RATE: usize = 12_000;
-
-/// FT8 LDPC(174,91) code length.
-pub const N_LDPC: usize = 174;
-
 #[rustfmt::skip]
-pub const G_HEX: [&str; 83] = [
+pub(crate) const G_HEX: [&str; 83] = [
     "8329ce11bf31eaf509f27fc",
     "761c264e25c259335493132",
     "dc265902fb277c6410a1bdc",
@@ -96,15 +89,3 @@ pub const G_HEX: [&str; 83] = [
     "2644ebadeb44b9467d1f42c",
     "608cc857594bfbb55d69600",
 ];
-
-pub const FT_ALPH: &[u8; 42] = b" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?";
-pub const A1: &[u8; 37] = b" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-pub const A2: &[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-pub const A3: &[u8; 10] = b"0123456789";
-pub const A4: &[u8; 27] = b" ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-pub const C38: &[u8; 38] = b" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/";
-
-pub const N_TOKENS: usize = 2_063_592;
-pub const MAX22: usize = 4_194_304; // 2^22
-pub const MAX28: usize = 268_435_456; // 2^28
-pub const MAXGRID4: usize = 32_400;

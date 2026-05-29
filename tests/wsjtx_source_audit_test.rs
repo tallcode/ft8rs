@@ -31,19 +31,26 @@ fn wsjtx_mirrored_source_paths_exist() {
     let root = project_root();
 
     for path in [
-        "src/ft8/lib/ft8/ft8_decode.rs",
+        "src/ft8/lib/ft8_decode.rs",
         "src/ft8/lib/ft8/ft8b.rs",
         "src/ft8/lib/ft8/ft8_a7.rs",
         "src/ft8/lib/ft8/ft8_downsample.rs",
         "src/ft8/lib/ft8/ft8_params.rs",
         "src/ft8/lib/ft8/sync8.rs",
         "src/ft8/lib/ft8/sync8d.rs",
+        "src/ft8/lib/ft8/bpdecode174_91.rs",
+        "src/ft8/lib/ft8/chkcrc14a.rs",
         "src/ft8/lib/ft8/decode174_91.rs",
+        "src/ft8/lib/ft8/get_crc14.rs",
+        "src/ft8/lib/ft8/get_spectrum_baseline.rs",
+        "src/ft8/lib/ft8/ldpc_174_91_c_generator.rs",
         "src/ft8/lib/ft8/ldpc_174_91_c_parity.rs",
+        "src/ft8/lib/ft8/osd174_91.rs",
         "src/ft8/lib/ft8/subtractft8.rs",
         "src/ft8/lib/77bit/packjt77.rs",
-        "src/ft8/lib/77bit/unpack77.rs",
         "src/ft8/lib/indexx.rs",
+        "src/ft8/lib/nuttal_window.rs",
+        "src/ft8/lib/platanh.rs",
     ] {
         assert!(
             root.join(path).is_file(),
@@ -57,6 +64,14 @@ fn wsjtx_mirrored_source_paths_exist() {
         "src/ft8/decode174_91.rs",
         "src/ft8/pack_jt77.rs",
         "src/ft8/unpack_jt77.rs",
+        "src/ft8/lib/77bit/unpack77.rs",
+        "src/ft8/lib/77bit/hashcall.rs",
+        "src/ft8/lib/77bit/protocol.rs",
+        "src/ft8/lib/ft8/constants.rs",
+        "src/ft8/lib/ft8/ft8_decode.rs",
+        "src/ft8/lib/ft8/symbols.rs",
+        "src/ft8/lib/ft8/sync_templates.rs",
+        "src/ft8/lib/ft8/workspace.rs",
         "src/ft8/subtract_ft8.rs",
         "src/ft8/indexx.rs",
         "src/ft8/ldpc_tables.rs",
@@ -235,7 +250,7 @@ fn wsjtx_osd174_91_deep_path_shape_matches_rust_osd() {
     };
 
     let wsjtx = read_to_string(&wsjtx_ft8.join("osd174_91.f90"));
-    let rust = read_to_string(&project_root().join("src/ft8/lib/ft8/decode174_91.rs"));
+    let rust = read_to_string(&project_root().join("src/ft8/lib/ft8/osd174_91.rs"));
 
     for expected in [
         "subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)",

@@ -7,9 +7,9 @@ use crate::ft8::decode::{
     decode_f64_with_sbase, decode_f64_with_sbase_and_residual, DecodeOptions, DecodedMessage,
     SyncMode,
 };
-use crate::ft8::hashcall::HashCallBook;
 use crate::ft8::subtract_ft8::subtract_ft8_refined;
 use crate::stream::time::SlotTimestamp;
+use crate::HashCallBook;
 
 const SAMPLE_RATE: u32 = 12000;
 const NMAX: usize = 15 * 12_000;
