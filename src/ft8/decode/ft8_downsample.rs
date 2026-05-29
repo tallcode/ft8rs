@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    build_taper, nint_wsjtx_real, DecodeWorkspace, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DOWNSAMPLE_FAC,
+    NFFT1_LONG, NFFT2, TAPER_SIZE,
+};
+use crate::util::four2a_c2c;
 
 pub(super) fn ft8_downsample(
     cx_re: &[f64],
@@ -61,7 +65,7 @@ pub(super) fn ft8_downsample(
     four2a_c2c(&mut workspace.cd0_re, &mut workspace.cd0_im, 1);
 
     for i in 0..NFFT2 {
-        workspace.cd0_re[i] = ((workspace.cd0_re[i] * DOWNSAMPLE_FAC) as f32) as f64;
-        workspace.cd0_im[i] = ((workspace.cd0_im[i] * DOWNSAMPLE_FAC) as f32) as f64;
+        workspace.cd0_re[i] = ((workspace.cd0_re[i] as f32) * DOWNSAMPLE_FAC) as f64;
+        workspace.cd0_im[i] = ((workspace.cd0_im[i] as f32) * DOWNSAMPLE_FAC) as f64;
     }
 }

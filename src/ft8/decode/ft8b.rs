@@ -1,5 +1,18 @@
 use super::ft8_downsample::ft8_downsample;
-use super::*;
+use super::{
+    build_costas_sync_templates, build_frequency_shift_sync_templates, nint_wsjtx_f32,
+    DecodeWorkspace, FrequencySearchResult, Ft8ApSet, Ft8bApOptions, Ft8bResult, Ft8bStats,
+    TimeRefineResult, TimeSearchResult, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DT2, FS2, NFFT1, NN, NP2,
+};
+use crate::ft8::constants::{COSTAS, GRAY_MAP};
+use crate::ft8::decode174_91::{decode174_91, DecodeResult};
+use crate::ft8::hashcall::HashCallBook;
+use crate::ft8::pack_jt77::{is_stdcall, pack77};
+use crate::ft8::protocol::{C38, N_LDPC, SAMPLE_RATE};
+use crate::ft8::unpack_jt77::{unpack77, unpack77_with_context, UnpackContext};
+use crate::util::four2a_c2c;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 pub(super) fn ft8b(
     _dd0: &[f64],
