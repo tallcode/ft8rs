@@ -1,9 +1,12 @@
-# STREAM - FT8 Streaming Decode Alignment
+# WSJT-X Alignment Notes
 
-本文只保留当前仍有工程价值的状态、架构边界、WSJT-X 对齐规则和下一步
-排查重点。历史尝试流水放在 `TRY.md`，用户入口和 CLI 用法放在 `README.md`。
+本文是 `ft8rs` 当前唯一的 WSJT-X 对齐技术记录。它合并了原 `STREAM.md`
+和 `TRY.md` 中仍有价值的内容：架构边界、参数、测试基线、关键踩坑、已经
+确认的对齐点、拒绝过的尝试，以及仍未完全贴合 WSJT-X 的地方。
 
-## 1. Scope
+`README.md` 只保留用户入口、编译、CLI 和测试命令。
+
+## Scope
 
 `ft8rs` 的目标是做一个独立、纯粹的 FT8 流式解码模块，尽量对齐 WSJT-X
 的 FT8 接收能力。JTDX 可以作为参考，但默认行为必须先对齐 WSJT-X。
@@ -26,14 +29,16 @@
 - `wsjtx/lib/ft8/ft8_a7.f90`
 - `wsjtx/lib/ft8/ft8_downsample.f90`
 - `wsjtx/lib/ft8/subtractft8.f90`
+- `wsjtx/lib/ft8/decode174_91.f90`
+- `wsjtx/lib/ft8/osd174_91.f90`
 - `wsjtx/lib/77bit/packjt77.f90`
 
-## 2. Current Baseline
+## Current Baseline
 
 | Fixture | Requirement | Current |
 |---|---:|---:|
 | `210703_133430.wav` | at least `19/20`, slot under `15s` | `21` unique messages |
-| `230208_140300.wav` | WSJT-X target floor `425`, each slot under `15s`, no fixture offset | `425/425` target rows |
+| `230208_140300.wav` | WSJT-X target floor `425`, slot under `15s`, no fixture offset | `425/425` target rows |
 
 测试规则：
 
@@ -41,9 +46,11 @@
 - 长测必须保留每段 `15s` 超时约束。
 - 长测保留灵敏度 early-abort，当前严重失败阈值为 `425-10`。
 - 不允许通过降低 `ncand/ndepth`、关闭 AP、放宽门限或扩大非 WSJT-X 搜索来追分。
-- `230208_140300.csv` 的 `Extra` 列用于标记来源：空值表示多重验证基线，
-  `W` 表示 WSJT-X 额外解码，这两类都属于当前 WSJT-X 对齐目标；`J` 表示
-  JTDX 额外解码，`E` 表示其他/问题解码，这两类暂不进入 miss/diff 关注范围。
+- `230208_140300.csv` 的 `Extra` 列用于标记来源：
+  - 空值：多重验证基线，属于 WSJT-X target。
+  - `W`：WSJT-X 额外解码，属于 WSJT-X target。
+  - `J`：JTDX 额外解码，保留参考但不进入 WSJT-X miss/diff。
+  - `E`：其他或问题解码，保留参考但不进入 WSJT-X miss/diff。
 
 常用命令：
 
@@ -54,11 +61,11 @@ cargo test --release --features fftw test_stream_decode_short_audio -- --nocaptu
 cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture
 ```
 
-## 3. Module Boundaries
+## Module Boundaries
 
-当前结构方向：
+当前结构：
 
-- `src/ft8`: 解码器核心。拥有 FT8/JT77 协议逻辑、pack/unpack、LDPC、AP、
+- `src/ft8`: FT8 解码核心。拥有 FT8/JT77 协议逻辑、pack/unpack、LDPC、AP、
   hash callbook、CRC、subtraction、WSJT-X 对齐常量和内部工具。
 - `src/stream`: 流式适配层。负责 slot 切分、时间戳、EOF tail slot、
   `nzhsym=41/47/50` 阶段推进，以及跨 slot 的 `StreamDecodeSession`。
@@ -69,10 +76,30 @@ cargo test --release --features fftw test_stream_decode_long_audio -- --nocaptur
 - `src/main.rs`: CLI 参数解析和 input/output 组合，不承载解码细节。
 - `src/util`: 只保留真正跨模块使用的基础设施，目前主要是 FFT 后端分发。
 
-解码器应保持相对独立。上层可以使用显式暴露的 session/config/result
-接口，但不应依赖 FT8 内部实现细节。
+解码器应保持相对独立。上层可以使用显式暴露的 session/config/result 接口，
+但不应依赖 FT8 内部实现细节。
 
-## 4. Audio and Slot Model
+### Deliberate Rust Naming
+
+Rust 代码不完全使用 Fortran 大小写，但语义尽量贴近：
+
+- `nfa/nfb/ndepth/nfqso/nftx/ncontest/nzhsym/ncand` 保持 WSJT-X 风格。
+- `nqso_progress` 对应 WSJT-X `nQSOProgress`。
+- `enabled/cq_only` 分别对应 `lft8apon/lapcqonly`。
+- `ft8_a7d`、`ft8_downsample`、`sync8`、`subtract_ft8` 等核心函数名保留
+  WSJT-X 源码名，方便逐段核对。
+
+### Remaining File-layout Gap
+
+`src/ft8/decode.rs` 仍同时承载了 `ft8_decode` 外层、`sync8`、`ft8b`、
+`ft8_downsample` 和部分 metric/SNR helper。这个布局还没有完全按 WSJT-X
+文件拆成 `ft8_decode.rs`、`sync8.rs`、`ft8b.rs`、`ft8_downsample.rs`。
+
+原因：当前灵敏度已经达到 WSJT-X target `425/425`，最后阶段优先保住成果，
+不再做纯文件移动型大改。以后 WSJT-X 升级需要大规模源码 diff 时，这会是
+最值得优先重构的工程遗憾。
+
+## Audio and Slot Model
 
 WSJT-X FT8 解码边界：
 
@@ -91,7 +118,7 @@ WSJT-X FT8 解码边界：
 12 kHz stream。长文件不能简单丢弃尾部；EOF 时需要 flush 最后一个非空
 tail slot。
 
-## 5. FFT Policy
+## FFT Policy
 
 当前只保留 `3840` FFT size，后端在编译期选择：
 
@@ -106,7 +133,7 @@ FT8 tone spacing `6.25 Hz` 正好是 2 个 bin。
 发布策略：
 
 - Release artifact 使用默认 `RustFFT@3840`，避免 FFTW runtime 依赖。
-- CI 仍跑 `--features fftw` 的 release stream tests，保护 WSJT-X 对齐路径。
+- CI 跑 `--features fftw` 的 release stream tests，保护 WSJT-X 对齐路径。
 - 做 WSJT-X 数值级比较时，优先使用 `--features fftw`。
 
 FT8 核心 FFT 调用命名和缩放策略按 WSJT-X `four2a` 对齐：
@@ -116,7 +143,7 @@ FT8 核心 FFT 调用命名和缩放策略按 WSJT-X `four2a` 对齐：
 - `four2a_c2c(re, im, 1)` 对应 complex inverse。
 - 两个方向都不做 normalization；调用点像 Fortran 一样显式乘各自的 `fac`。
 
-## 6. WSJT-X Streaming Control Flow
+## WSJT-X Streaming Control Flow
 
 ### `nzhsym=41/47/50`
 
@@ -126,7 +153,7 @@ WSJT-X disk-file FT8 decode 会跑渐进式 partial passes：
 |---:|---:|---|
 | `41` | `41*3456 = 141696` samples | early decode, rest zero-padded |
 | `47` | `47*3456 = 162432` samples | subtract selected early decodes, save cleaned early buffer |
-| `50` | `50*3456 = 172800` samples | combine cleaned early part with original tail, zero-pad the rest, then full decode and AP |
+| `50` | `50*3456 = 172800` samples | combine cleaned early part with original tail, zero-pad rest, then full decode and AP |
 
 重要点：
 
@@ -145,7 +172,6 @@ WSJT-X regular outer loop：
 - `syncmin=2.1` when `ndepth<=2`, otherwise `1.3`。
 - `sync8` 在当前 residual 上找候选。
 - `ft8b` 按 WSJT-X candidate order 尝试候选。
-- valid codeword 的 subtract 时序按 WSJT-X effective regular path 保留。
 - 每个 pass 后，后续 sync 和 `sbase` 必须来自当前 residual。
 
 ### `ft8b`
@@ -159,18 +185,20 @@ WSJT-X regular outer loop：
 - `imetric=2` squares temporary `s2` before bit extraction。
 - `try_decode_passes` 对 CRC-good 但 post-gate 不合法的 codeword 继续后续 pass，
   对齐 WSJT-X `cycle` 语义。
-- AP pass scheduling follows `nappasses` and `naptypes` keyed by `nQSOProgress`，
-  with `lapcqonly/ncontest/lft8apon/nzhsym` gates。
+- AP pass scheduling follows current `wsjtx/lib/ft8/ft8b.f90`：
+  `npasses=5+2*nappasses(nQSOProgress)`，`lapcqonly=>7`，`nzhsym<50=>5`。
+- AP magnitude follows current WSJT-X FT8, not FT4:
+  `apmag=maxval(abs(llrz))*1.1` after selecting the current pass metric.
 
 Known gaps：
 
-- deeper `ndeep>=3` LDPC/OSD branches are not fully ported。
-- AP masks 还需要更多 bit-level fixtures。
-- 部分剩余 miss 可能来自 windowing、padding、AP memory 或 soft-symbol 边界。
+- deeper `ndeep>=3` LDPC/OSD behavior is not fully ported。
+- AP masks need more direct bit-level fixtures against WSJT-X-generated patterns。
+- Some AP memory storage details are simplified compared with Fortran arrays。
 
-## 7. `sync8` and Baseline
+## `sync8` and Baseline
 
-重要 WSJT-X 细节：
+Important WSJT-X details:
 
 - `NFFT1=3840`, `df=3.125 Hz`, `JZ=62`。
 - `jstrt=0.5/tstep` assigned to integer, so it truncates to `12`。
@@ -185,7 +213,7 @@ Known gaps：
 `sbase` indexing follows WSJT-X 1-based convention: FFT bin 0/DC is omitted and
 vector index 0 is unused。
 
-## 8. Pack/Unpack and Hash Semantics
+## Pack/Unpack and Hash Semantics
 
 项目范围是 FT8 receive/decode。JT77 中的 WSPR-style payload forms 不作为
 `ft8rs` 目标，WSPR-specific pack/unpack code intentionally excluded。
@@ -218,7 +246,7 @@ Important gates:
 `HashCallBook` is shared across stream slots through the decode session. Upper
 layers must not create independent callbooks per slot。
 
-## 9. AP and Cross-slot Memory
+## AP and Cross-slot Memory
 
 WSJT-X `ft8_a7` behavior:
 
@@ -233,8 +261,7 @@ Current `ft8rs` status:
 
 - Same-parity previous/current AP memory is represented in stream session。
 - File and monitor paths pass the slot timestamp into the stream session, so
-  AP parity uses WSJT-X `jseq = mod(nutc/5,2)` instead of a timestamp-free
-  toggle。
+  AP parity uses WSJT-X `jseq = mod(nutc/5,2)` instead of a timestamp-free toggle。
 - Current regular decodes suppress near previous AP candidates。
 - AP results preserve refined `freq` and `dt`。
 - `ft8_a7d` sync refinement uses `ctwk * Costas` for frequency tweak and plain
@@ -249,7 +276,7 @@ Remaining AP risk:
 - Exact `ndec(jseq,k)` storage is still simplified compared with Fortran arrays。
 - AP bit masks need direct fixtures against WSJT-X-generated patterns。
 
-## 10. Subtraction and Waveform
+## Subtraction and Waveform
 
 `subtractft8` indexing follows WSJT-X 1-based sample variables:
 
@@ -276,35 +303,34 @@ Other retained alignment:
 - `gen_ft8wave` envelope matches WSJT-X: first ramp `(1-cos(angle))/2`, last ramp
   `(1+cos(angle))/2`。
 
-## 11. Recording Start Offset Diagnostic
+## Important Pitfalls Fixed
 
-The old `230208_140300.wav` fixture was `48 kHz / 32-bit` and its sample 0 was
-about `+0.785s` later than the timestamp in the filename. That file and the
-old offset comparison CSVs are kept under `tests/old/`。
+These were the most expensive or easy-to-miss alignment bugs:
 
-The active `tests/ft8/230208_140300.wav` fixture is normalized:
+- `sync8d` time indexing must not wrap. WSJT-X uses signed indices and contributes
+  zero outside the buffer; modulo wrap pulls energy from the end of `cd0`。
+- `sync8` Fortran 1-based time-bin access caused a full `0.04s` offset until fixed。
+- `subtractft8` `nstart/j` conversion must preserve Fortran's 1-based loop exactly。
+- Old `230208_140300.wav` had a stable `+0.785s` recording-start offset and 48 kHz
+  format; the active fixture is now normalized to 12 kHz with inserted leading silence。
+- AP parity must use WSJT-X `jseq=mod(nutc/5,2)` from the slot timestamp; simple
+  toggling can put AP memory in the wrong parity。
+- `pack_jt77::is_stdcall()` and stream AP `chkcall` both needed careful 1-based
+  call-area conversion。
+- Type 3 false positive `CQ 001 IZ7MMG 549 2025` was fixed by validating the two
+  RTTY callsign slots against WSJT-X `pack77_3/chkcall` structure, not by disabling
+  Type 3 or contest messages。
+- Resolved hash display forms such as `<RK4FF>` and `RK4FF` need robust diff
+  matching; unresolved `<...>` must remain distinct。
+- Earlier suspicion about FT8 AP `npasses` and `apmag` was rechecked against current
+  `wsjtx/lib/ft8/ft8b.f90`: `5+2*nappasses`, `lapcqonly=>7`, and `*1.1` are current
+  WSJT-X FT8 behavior. The `*1.01` note belongs to other/older commented paths,
+  not the active current FT8 `ft8b` path.
 
-- `12 kHz / mono / 16-bit PCM`。
-- `285.000s`, exactly 19 FT8 slots。
-- `0.785s` of leading silence was inserted before the old audio, so sample 0
-  aligns with `230208_140300`。
-- The long-test harness now slices slots directly with `slot_start_offset=0`。
+## Performance Notes
 
-The long-file harness still prints a residual diagnostic based on matched
-messages:
-
-```text
-baseline_drift - decoded_dt
-```
-
-For the active normalized fixture, median residual should stay near `+0.000s`。
-This keeps the fixture usable for comparison with other FT8 decoders that cannot
-handle the old sample-rate and start-offset quirks。
-
-## 12. Performance Notes
-
-Performance work must not alter sensitivity-related parameters, candidate
-search space, AP pass semantics, or residual subtract order。
+Performance work must not alter sensitivity-related parameters, candidate search
+space, AP pass semantics, or residual subtract order。
 
 No-algorithm-change optimizations already applied:
 
@@ -320,6 +346,13 @@ Rejected or low-priority:
 - candidate parallelism: risks changing duplicate/subtract/residual order。
 - FFTW wisdom / FFTW threads: FFT is not the current dominant cost。
 - broad `sync8` f32 rewrites: previously reduced long score。
+- candidate-level `cd0` cache: removed from the active regular path. WSJT-X shares
+  the long 192k FFT per pass, but each `ft8b` candidate still down-samples at its
+  own `f1`; keeping a candidate cache made later audits easier to misread and did
+  not improve sensitivity。
+- duplicate-gated regular subtract: rejected for now; current effective path
+  preserves the behavior that recovered the WSJT-X target baseline。
+- forcing local `ibest` offsets for misses: useful diagnosis, not a committed heuristic。
 
 Timer tracing is explicit and silent by default:
 
@@ -327,7 +360,22 @@ Timer tracing is explicit and silent by default:
 FT8RS_TRACE_TIMERS=1 cargo test --release test_stream_decode_short_audio -- --nocapture
 ```
 
-## 13. Release Workflow
+## Scope Decisions and Deferred Work
+
+- FT8 receive/decode is the project scope. WSPR-style Type 0.6 payloads are not
+  implemented as FT8 targets。
+- SuperFox / special modern modes were investigated but are not part of the
+  current WSJT-X FT8 baseline。
+- `ft8bvar` / JTDX more aggressive paths are references only; do not import those
+  behaviors unless the goal changes away from WSJT-X parity。
+- `decode.rs` should eventually be split by WSJT-X source file names when the next
+  large source audit begins。
+- Direct fixtures are still needed for AP mask bits, baseline numerical parity,
+  candidate ordering, EOF tail slot, and hash display forms。
+- Deeper `ndeep>=3` LDPC/OSD parity remains the largest algorithmic gap recorded
+  in code comments/docs。
+
+## Release Workflow
 
 Current release workflow:
 
@@ -338,23 +386,61 @@ Current release workflow:
 - macOS artifact is currently disabled because hosted runner queue time is too long。
 - Release artifacts do not require FFTW runtime libraries。
 
-## 14. Near-term Priorities
+## Milestone Summary
 
-1. Continue source-level architecture comparison in `ft8_decode`、`ft8b`、
-   `ft8_a7`、`sync8`、`ft8_downsample`。
-2. Use miss-only diff to locate architecture gaps before changing parameters。
-3. Keep the recording-start offset diagnostic while comparing file windowing、
-   padding、continuous-buffer behavior and AP memory。
-4. Add focused fixtures where useful and cheap: AP mask bits, baseline numerical
-   parity, candidate ordering, EOF tail slot, and hash display forms。
-5. Only after control-flow parity is accounted for, use source and miss analysis
-   to audit remaining parameter differences。
+### Milestone 1: 361 -> 381
 
-## 15. Active Documents
+- Converted stream decoder from one-shot full decode to WSJT-X-style
+  `nzhsym=41/47/50` progressive flow。
+- Fixed `sync8d` out-of-range behavior: signed index + zero contribution instead
+  of modulo wrap。
 
-- `README.md`: user-facing overview and CLI/build examples。
-- `STREAM.md`: technical alignment report and current status。
-- `TRY.md`: compact attempt log。
+### Milestone 2: 381 -> 401
 
-Other Markdown reports should either be removed or folded into `STREAM.md` /
-`TRY.md`。
+- Aligned pass FFT lifetime: refresh long FFT per outer pass, not after every
+  subtract inside the pass。
+- Fixed outer `syncmin`: depth 1/2 uses `2.1`, depth 3 uses `1.3`。
+- Fixed `sync8` Fortran 1-based time-bin access。
+- AP `sync8d` frequency tweak uses `ctwk * Costas`; second time refine uses plain Costas sync。
+- Fixed `stdcall()` 0-based conversion, restoring weak CQ AP templates for calls
+  such as `F1PPH`、`R6KEE`、`IW1PUR`。
+
+### Milestone 3: 401 -> 422
+
+- Fixed several 1-based/0-based and message gate issues:
+  - `subtractft8` sample index。
+  - `pack77_1` `R GRID` third-word check。
+  - `split77/chkcall` standard callsign checks。
+  - `unpack77` CQ invalid guards。
+  - stream AP memory `chkcall` digit-position semantics。
+- Long-file harness decodes EOF tail slot instead of dropping it。
+- Diff CSV output fixed to stable columns and more robust message matching。
+- Recording-start diagnostic found stable `+0.785s` timing residual。
+
+### Milestone 4: 422 -> 425 target rows
+
+- The old `48 kHz` fixture's `+0.785s` start offset was folded into a new
+  normalized `12 kHz` fixture, so tests no longer need an offset parameter。
+- `gen_ft8wave` envelope and `subtractft8` refined-DT `sqf()` were aligned to WSJT-X。
+- Many numeric-homology cleanups were made in FFT/downsample, `ft8b`, `ft8_a7d`,
+  LDPC/OSD, `sync8` ordering, and `nuttall_window`。
+- Stream AP parity now derives `jseq` from slot `nutc` using WSJT-X
+  `mod(nutc/5,2)`。
+- AP symbol extraction uses the shared `four2a_c2c(...,-1)` wrapper instead of a
+  local 32-point FFT。
+- CSV baseline semantics were corrected: blank and `W` rows are the WSJT-X target
+  set, while `J`/`E` rows stay in the fixture but are ignored for WSJT-X miss/diff。
+- Current release long test reaches `425/425` WSJT-X target rows; the earlier
+  `UT7UJ IV3KEI JN65` weak miss is recovered in both target slots。
+
+## Recent Validation
+
+- `cargo test --release test_stream_decode_short_audio -- --nocapture`
+  - `21` unique messages。
+- `FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture`
+  - total `434/458`。
+  - WSJT-X target `425/425`。
+  - timing residual median near `+0.000s`。
+  - every slot under `15s`。
+  - diff file contains only the header。
+
