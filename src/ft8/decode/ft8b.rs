@@ -1,8 +1,9 @@
 use super::ft8_downsample::ft8_downsample;
 use super::{
-    build_costas_sync_templates, build_frequency_shift_sync_templates, nint_wsjtx_f32,
-    DecodeWorkspace, FrequencySearchResult, Ft8ApSet, Ft8bApOptions, Ft8bResult, Ft8bStats,
-    TimeRefineResult, TimeSearchResult, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DT2, FS2, NFFT1, NN, NP2,
+    build_costas_sync_templates, build_frequency_shift_sync_templates, extract_symbol_spectrum,
+    nint_wsjtx_f32, sync8d, DecodeWorkspace, FrequencySearchResult, Ft8ApSet, Ft8bApOptions,
+    Ft8bResult, Ft8bStats, TimeRefineResult, TimeSearchResult, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN,
+    DT2, FS2, NFFT1, NN,
 };
 use crate::ft8::constants::{COSTAS, GRAY_MAP};
 use crate::ft8::decode174_91::{decode174_91, DecodeResult};
@@ -10,7 +11,6 @@ use crate::ft8::hashcall::HashCallBook;
 use crate::ft8::pack_jt77::{is_stdcall, pack77};
 use crate::ft8::protocol::{C38, N_LDPC, SAMPLE_RATE};
 use crate::ft8::unpack_jt77::{unpack77, unpack77_with_context, UnpackContext};
-use crate::util::four2a_c2c;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -214,7 +214,7 @@ fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> TimeSearch
     let cs = build_costas_sync_templates();
     for offset in -10..=10 {
         let idx = i0_raw + offset;
-        let sync = sync8d_isize(cd0_re, cd0_im, idx, &cs.re, &cs.im);
+        let sync = sync8d(cd0_re, cd0_im, idx, &cs.re, &cs.im);
         if sync > smax {
             smax = sync;
             ibest = idx;
@@ -232,7 +232,7 @@ fn find_best_frequency_shift(
     let mut delfbest = 0.0;
     let templates = build_frequency_shift_sync_templates();
     for tpl in templates {
-        let sync = sync8d_isize(cd0_re, cd0_im, ibest, &tpl.re, &tpl.im);
+        let sync = sync8d(cd0_re, cd0_im, ibest, &tpl.re, &tpl.im);
         if sync > smax {
             smax = sync;
             delfbest = tpl.delf;
@@ -250,7 +250,7 @@ fn refine_time_offset(
     ss.fill(0.0);
     let cs = build_costas_sync_templates();
     for idt in -4..=4 {
-        ss[(idt + 4) as usize] = sync8d_isize(cd0_re, cd0_im, ibest + idt, &cs.re, &cs.im);
+        ss[(idt + 4) as usize] = sync8d(cd0_re, cd0_im, ibest + idt, &cs.re, &cs.im);
     }
 
     let mut max_idx: isize = 4;
@@ -271,20 +271,13 @@ fn extract_soft_symbols(ibest: isize, workspace: &mut DecodeWorkspace) {
     let cd0_im = &workspace.cd0_im;
     for k in 0..NN {
         let i1 = ibest + (k as isize) * (COSTAS_SYMBOL_LEN as isize);
-        workspace.symb_re.fill(0.0);
-        workspace.symb_im.fill(0.0);
-
-        // TS behavior: skip symbols that don't fit in [0, NP2)
-        if i1 >= 0 && (i1 + COSTAS_SYMBOL_LEN as isize - 1) < NP2 as isize {
-            let i1u = i1 as usize;
-            for j in 0..COSTAS_SYMBOL_LEN {
-                workspace.symb_re[j] = cd0_re[i1u + j];
-                workspace.symb_im[j] = cd0_im[i1u + j];
-            }
-        }
-        // else: symb stays zero (no wrap-around)
-
-        four2a_c2c(&mut workspace.symb_re, &mut workspace.symb_im, -1);
+        extract_symbol_spectrum(
+            cd0_re,
+            cd0_im,
+            i1,
+            &mut workspace.symb_re,
+            &mut workspace.symb_im,
+        );
         for tone in 0..8 {
             let re = (workspace.symb_re[tone] as f32 / 1000.0) as f64;
             let im = (workspace.symb_im[tone] as f32 / 1000.0) as f64;
@@ -465,42 +458,6 @@ pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
             bmet[i] = ((bmet[i] as f32) / sigma) as f64;
         }
     }
-}
-
-fn sync8d_isize(
-    cd0_re: &[f64],
-    cd0_im: &[f64],
-    i0: isize,
-    sync_re: &[f64],
-    sync_im: &[f64],
-) -> f64 {
-    let mut sync = 0.0f32;
-    let stride = 36 * COSTAS_SYMBOL_LEN;
-
-    for i in 0..COSTAS_BLOCKS {
-        let base = i * COSTAS_SYMBOL_LEN;
-        let mut i_start = i0 + (i as isize) * (COSTAS_SYMBOL_LEN as isize);
-
-        for _block in 0..3 {
-            if i_start >= 0 && i_start + COSTAS_SYMBOL_LEN as isize <= NP2 as isize {
-                let i_start = i_start as usize;
-                let mut z_re = 0.0f32;
-                let mut z_im = 0.0f32;
-                for j in 0..COSTAS_SYMBOL_LEN {
-                    let s_re = sync_re[base + j] as f32;
-                    let s_im = sync_im[base + j] as f32;
-                    let d_re = cd0_re[i_start + j] as f32;
-                    let d_im = cd0_im[i_start + j] as f32;
-                    z_re += d_re * s_re + d_im * s_im;
-                    z_im += d_im * s_re - d_re * s_im;
-                }
-                sync += z_re * z_re + z_im * z_im;
-            }
-            i_start += stride as isize;
-        }
-    }
-
-    sync as f64
 }
 
 fn is_valid_message_type(message77: &[u8]) -> bool {

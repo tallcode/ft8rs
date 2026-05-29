@@ -4,23 +4,30 @@ use crate::util::four2a_r2c;
 use std::time::Instant;
 
 mod baseline;
-mod decode_types;
+mod costas_sync;
 mod ft8_downsample;
+mod ft8_params;
 mod ft8b;
+mod symbols;
 mod sync8;
 mod sync_templates;
+mod workspace;
 
 use self::baseline::get_spectrum_baseline;
-use self::decode_types::*;
-pub(crate) use self::decode_types::{
+pub(crate) use self::costas_sync::{sync8d, sync8d_twk};
+pub(crate) use self::ft8_downsample::ft8_downsample_from_cx;
+pub(crate) use self::ft8_params::{
     COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DOWNSAMPLE_FAC, DT2, FS2,
-    NFFT1_LONG, NFFT2, NN, NP2, TAPER_SIZE, TWO_PI,
+    NFFT1, NFFT1_LONG, NFFT2, NHSYM, NMAX, NN, NP2, NSPS, NSTEP, PI_F32, TAPER_SIZE, TWO_PI,
+    TWO_PI_F32,
 };
 pub(crate) use self::ft8b::normalize_bmet;
 use self::ft8b::{duration_ms, ft8_ap_set, ft8b, trace_timer, trace_timers_enabled};
+pub(crate) use self::symbols::extract_symbol_spectrum;
 use self::sync8::sync8;
 pub(crate) use self::sync_templates::build_costas_sync_templates;
 use self::sync_templates::{build_frequency_shift_sync_templates, build_taper};
+use self::workspace::*;
 
 /// sync8 spectral mode - different representations favour different SNR regimes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

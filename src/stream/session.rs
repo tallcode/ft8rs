@@ -51,19 +51,63 @@ impl WsjtxMsg37 {
     fn contains(&self, needle: &str) -> bool {
         String::from_utf8_lossy(&self.bytes).contains(needle)
     }
+
+    fn word_bounds(&self) -> Option<(usize, usize, usize)> {
+        let first_space = self.bytes.iter().position(|&byte| byte == b' ')?;
+        let second_rel = self.bytes[first_space + 1..]
+            .iter()
+            .position(|&byte| byte == b' ')?;
+        let second_space = first_space + 1 + second_rel;
+        Some((first_space, first_space + 1, second_space))
+    }
+
+    fn fortran_slice_trimmed(&self, start: usize, end: usize) -> String {
+        let end = end.min(WSJTX_MSG37_LEN);
+        if start >= end {
+            return String::new();
+        }
+        String::from_utf8_lossy(&self.bytes[start..end])
+            .trim_end()
+            .to_string()
+    }
 }
 
 /// Info saved from a slot decode for AP decode in the next slot.
-/// Matches WSJT-X ft8_a7_save: dt0, f0, msg0("call_1 call_2")
+/// Matches WSJT-X ft8_a7_save: dt0, f0, msg0("call_1 call_2 [grid4]").
 #[derive(Clone, Debug)]
 struct A7SaveEntry {
     msg0: WsjtxMsg37,
+    dt0: f64, // WSJT-X convention: dt = candidate_dt - 0.5
+    f0: f64,
+}
+
+#[derive(Clone, Debug)]
+struct A7DecodeFields {
     call_1: String,
     call_2: String,
-    grid4: String, // "    " or 4-char grid
-    dt0: f64,      // WSJT-X convention: dt = candidate_dt - 0.5
-    f0: f64,
-    xbase: f64, // noise baseline at this frequency (from sbase)
+    grid4: String,
+}
+
+impl A7SaveEntry {
+    fn decode_fields(&self) -> Option<A7DecodeFields> {
+        let (i1, call_2_start, i2) = self.msg0.word_bounds()?;
+        let call_1 = self.msg0.fortran_slice_trimmed(0, i1);
+        let call_2 = self.msg0.fortran_slice_trimmed(call_2_start, i2);
+        let grid4_raw = self.msg0.fortran_slice_trimmed(i2 + 1, i2 + 5);
+        let mut grid4 = if grid4_raw.is_empty() {
+            String::from("    ")
+        } else {
+            grid4_raw
+        };
+        if grid4 == "RR73" || grid4.contains('+') || grid4.contains('-') {
+            grid4 = String::from("    ");
+        }
+        Some(A7DecodeFields {
+            call_1,
+            call_2,
+            grid4,
+        })
+    }
 }
 
 /// WSJT-X uses jseq = mod(nutc/5, 2) to alternate even/odd sequences.
@@ -344,7 +388,7 @@ impl StreamDecodeSession {
         let mut entries_to_save: Vec<A7SaveEntry> = all_regular
             .iter()
             .copied()
-            .filter_map(|d| ft8_a7_save_entry(d, &sbase))
+            .filter_map(ft8_a7_save_entry)
             .collect();
         trace_timer(
             "stream.a7_save",
@@ -363,7 +407,7 @@ impl StreamDecodeSession {
             let downsample_cache = ApDownsampleCache::new(&full_residual);
             let mut ap_msgs: Vec<ApDecodeResult> = Vec::new();
             for entry in &ap_candidates {
-                let result = decode_a7_with_frequency_retries(&downsample_cache, entry);
+                let result = decode_a7_with_frequency_retries(&downsample_cache, entry, &sbase);
                 if let Some(r) = result {
                     let norm_r = normal(&r.msg);
                     if !ap_msgs.iter().any(|a| normal(&a.msg) == norm_r) {
@@ -395,7 +439,7 @@ impl StreamDecodeSession {
         }
 
         for r in &ap_results {
-            if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, r.freq, r.dt, &sbase) {
+            if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, r.freq, r.dt) {
                 entries_to_save.push(entry);
             }
             let key = normal(&r.msg);
@@ -504,19 +548,22 @@ fn jseq_from_nutc(nutc: u32) -> usize {
 fn decode_a7_with_frequency_retries(
     downsample_cache: &ApDownsampleCache,
     entry: &A7SaveEntry,
+    sbase: &[f64],
 ) -> Option<ApDecodeResult> {
+    let fields = entry.decode_fields()?;
+    let xbase = a7_xbase(entry.f0, sbase);
     // Try the saved WSJT-X f0 first. A very weak a7 decode can sit on a
     // half-Hz boundary, so if the exact saved f0 fails, retry the adjacent
     // 0.5 Hz bins used by ft8_a7d's own frequency search.
     for offset in [0.0, 0.5, -0.5] {
         if let Some(result) = ft8_a7d_with_downsample_cache(
             downsample_cache,
-            &entry.call_1,
-            &entry.call_2,
-            &entry.grid4,
+            &fields.call_1,
+            &fields.call_2,
+            &fields.grid4,
             entry.dt0,
             entry.f0 + offset,
-            entry.xbase,
+            xbase,
         ) {
             return Some(result);
         }
@@ -540,18 +587,13 @@ fn dd0_partial_nzhsym(samples: &[f64], nzhsym: usize) -> Vec<f64> {
     out
 }
 
-/// Extract call_1/call_2/grid4/xbase from a decoded message.
+/// Extract the WSJT-X `msg0`/`dt0`/`f0` table entry from a decoded message.
 /// Matches WSJT-X ft8_a7_save logic.
-fn ft8_a7_save_entry(d: &DecodedMessage, sbase: &[f64]) -> Option<A7SaveEntry> {
-    ft8_a7_save_entry_from_parts(&d.msg, d.freq, d.dt, sbase)
+fn ft8_a7_save_entry(d: &DecodedMessage) -> Option<A7SaveEntry> {
+    ft8_a7_save_entry_from_parts(&d.msg, d.freq, d.dt)
 }
 
-fn ft8_a7_save_entry_from_parts(
-    msg: &str,
-    freq: f64,
-    dt: f64,
-    sbase: &[f64],
-) -> Option<A7SaveEntry> {
+fn ft8_a7_save_entry_from_parts(msg: &str, freq: f64, dt: f64) -> Option<A7SaveEntry> {
     let words = split77_words(msg);
     if words.len() < 2 {
         return None;
@@ -566,50 +608,33 @@ fn ft8_a7_save_entry_from_parts(
         return None;
     }
 
-    let (fragment, call_1, call_2) = if words[0] == "CQ" && words.len() >= 3 && words[1].len() <= 2
-    {
-        (
-            format!("CQ {} {}", words[1], words[2]),
-            "CQ".to_string(),
-            words[1].clone(),
-        )
+    let fragment = if words[0] == "CQ" && words.len() >= 3 && words[1].len() <= 2 {
+        format!("CQ {} {}", words[1], words[2])
     } else {
-        (
-            format!("{} {}", words[0], words[1]),
-            words[0].clone(),
-            words[1].clone(),
-        )
+        format!("{} {}", words[0], words[1])
     };
 
-    // Extract grid4
-    let mut grid4 = String::from("    ");
-    if words.len() >= 3 {
-        let last = words.last().unwrap();
-        if is_grid4(last) {
-            grid4 = last.clone();
-        }
-    }
-
-    // Compute xbase from sbase (matching WSJT-X: 10^(0.1*(sbase(nint(f1/3.125))-40.0)))
-    let xbase = {
-        let df = crate::ft8::sync8_df();
-        let freq_bin = nint_wsjtx_f32(freq / df).max(1) as usize;
-        if freq_bin < sbase.len() {
-            (10.0f32.powf(0.1 * (sbase[freq_bin] as f32 - 40.0))) as f64
-        } else {
-            1.0 // fallback
-        }
+    let msg0 = if words.len() >= 3 && is_grid4(words.last().unwrap()) {
+        format!("{} {}", fragment, words.last().unwrap())
+    } else {
+        fragment
     };
 
     Some(A7SaveEntry {
-        msg0: WsjtxMsg37::from_trimmed(&fragment),
-        call_1,
-        call_2,
-        grid4,
+        msg0: WsjtxMsg37::from_trimmed(&msg0),
         dt0: dt,
         f0: freq,
-        xbase,
     })
+}
+
+fn a7_xbase(f1: f64, sbase: &[f64]) -> f64 {
+    let df = crate::ft8::sync8_df();
+    let freq_bin = nint_wsjtx_f32(f1 / df).max(1) as usize;
+    if freq_bin < sbase.len() {
+        (10.0f32.powf(0.1 * (sbase[freq_bin] as f32 - 40.0))) as f64
+    } else {
+        1.0
+    }
 }
 
 fn split77_words(msg: &str) -> Vec<String> {
@@ -639,8 +664,13 @@ fn suppress_previous_a7_entries(
         .iter()
         .filter(|prev| {
             !current.iter().any(|cur| {
+                let Some(cur_fields) = cur.decode_fields() else {
+                    return false;
+                };
                 (cur.f0 - prev.f0).abs() <= 3.0
-                    && prev.msg0.contains(&format!(" {}", cur.call_2.trim()))
+                    && prev
+                        .msg0
+                        .contains(&format!(" {}", cur_fields.call_2.trim()))
             })
         })
         .cloned()
@@ -848,27 +878,23 @@ mod tests {
 
     #[test]
     fn a7_save_entry_matches_wsjtx_cq_grid_and_skip_rules() {
-        let sbase = vec![40.0; 2000];
+        let cq = ft8_a7_save_entry_from_parts("CQ D1DX KN87", 1500.0, 0.2).unwrap();
+        assert_eq!(cq.msg0.trimmed(), "CQ D1DX KN87");
+        let cq_fields = cq.decode_fields().unwrap();
+        assert_eq!(cq_fields.call_1, "CQ");
+        assert_eq!(cq_fields.call_2, "D1DX");
+        assert_eq!(cq_fields.grid4, "KN87");
 
-        let cq = ft8_a7_save_entry_from_parts("CQ D1DX KN87", 1500.0, 0.2, &sbase).unwrap();
-        assert_eq!(cq.msg0.trimmed(), "CQ D1DX");
-        assert_eq!(cq.call_1, "CQ");
-        assert_eq!(cq.call_2, "D1DX");
-        assert_eq!(cq.grid4, "KN87");
-
-        let report = ft8_a7_save_entry_from_parts("K1ABC W9XYZ -07", 1500.0, 0.2, &sbase).unwrap();
+        let report = ft8_a7_save_entry_from_parts("K1ABC W9XYZ -07", 1500.0, 0.2).unwrap();
         assert_eq!(report.msg0.trimmed(), "K1ABC W9XYZ");
-        assert_eq!(report.call_1, "K1ABC");
-        assert_eq!(report.call_2, "W9XYZ");
-        assert_eq!(report.grid4, "    ");
+        let report_fields = report.decode_fields().unwrap();
+        assert_eq!(report_fields.call_1, "K1ABC");
+        assert_eq!(report_fields.call_2, "W9XYZ");
+        assert_eq!(report_fields.grid4, "    ");
 
-        assert!(ft8_a7_save_entry_from_parts("CQ DX DL8YHR JO41", 1500.0, 0.2, &sbase).is_none());
-        assert!(
-            ft8_a7_save_entry_from_parts("EA5/DH0YAH RK4FF RR73", 1500.0, 0.2, &sbase).is_none()
-        );
-        assert!(
-            ft8_a7_save_entry_from_parts("<RK4FF> EA5/DH0YAH 73", 1500.0, 0.2, &sbase).is_none()
-        );
+        assert!(ft8_a7_save_entry_from_parts("CQ DX DL8YHR JO41", 1500.0, 0.2).is_none());
+        assert!(ft8_a7_save_entry_from_parts("EA5/DH0YAH RK4FF RR73", 1500.0, 0.2).is_none());
+        assert!(ft8_a7_save_entry_from_parts("<RK4FF> EA5/DH0YAH 73", 1500.0, 0.2).is_none());
     }
 
     #[test]
@@ -910,15 +936,10 @@ mod tests {
     }
 
     fn test_a7_entry(msg0: &str) -> A7SaveEntry {
-        let words: Vec<&str> = msg0.split_whitespace().collect();
         A7SaveEntry {
             msg0: WsjtxMsg37::from_trimmed(msg0),
-            call_1: words.first().copied().unwrap_or("K1ABC").to_string(),
-            call_2: words.get(1).copied().unwrap_or("W9XYZ").to_string(),
-            grid4: "    ".to_string(),
             dt0: 0.0,
             f0: 1500.0,
-            xbase: 1.0,
         }
     }
 }
