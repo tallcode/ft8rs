@@ -15,8 +15,8 @@
 //!  10. Validate: dmin<100 AND dmin2/dmin>1.3
 
 use super::decode::{
-    build_costas_sync_templates, normalize_bmet, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DOWNSAMPLE_BAUD,
-    DOWNSAMPLE_DF, DOWNSAMPLE_FAC, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TAPER_SIZE, TWO_PI,
+    build_costas_sync_templates, extract_symbol_spectrum, ft8_downsample_from_cx, normalize_bmet,
+    sync8d, sync8d_twk, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TWO_PI,
 };
 use crate::ft8::pack_jt77::{is_stdcall, pack77};
 use crate::ft8::protocol::G_HEX;
@@ -85,7 +85,6 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
 ) -> Option<ApDecodeResult> {
     let one = build_one_table();
     let costas = build_costas_sync_templates();
-    let taper_data = build_taper();
 
     let std_1 = is_stdcall(call_1) || is_cq_call_1(call_1);
     let std_2 = is_stdcall(call_2);
@@ -94,13 +93,13 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     let mut ibest: isize = 0;
 
     // ── First downsample at f1 ──
-    let (cd0_re, cd0_im) = ap_downsample(downsample_cache, f1, &taper_data);
+    let (cd0_re, cd0_im) = ap_downsample(downsample_cache, f1);
 
     // ── Time alignment ±10 ──
     let i0 = nint_wsjtx_f32((xdt + 0.5) * FS2);
     let mut smax = 0.0f64;
     for idt in (i0 - 10)..=(i0 + 10) {
-        let sync = ap_sync8d(&cd0_re, &cd0_im, idt, &costas.re, &costas.im);
+        let sync = sync8d(&cd0_re, &cd0_im, idt, &costas.re, &costas.im);
         if sync > smax {
             smax = sync;
             ibest = idt;
@@ -113,7 +112,7 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
         let delf = ifr as f64 * 0.5;
         let dphi = TWO_PI * delf * DT2;
         let (ctwk_re, ctwk_im) = build_ctwk(dphi);
-        let sync = ap_sync8d_twk(
+        let sync = sync8d_twk(
             &cd0_re, &cd0_im, ibest, &costas.re, &costas.im, &ctwk_re, &ctwk_im,
         );
         if sync > smax {
@@ -129,12 +128,12 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     let f1_refined = f1 + delfbest;
 
     // ── Second downsample with refined f1 ──
-    let (cd0_re, cd0_im) = ap_downsample(downsample_cache, f1 + delfbest, &taper_data);
+    let (cd0_re, cd0_im) = ap_downsample(downsample_cache, f1 + delfbest);
 
     // ── Time refinement ±4 ──
     let mut ss = [0.0f64; 9];
     for idt in -4..=4 {
-        let sync = ap_sync8d(&cd0_re, &cd0_im, ibest + idt, &costas.re, &costas.im);
+        let sync = sync8d(&cd0_re, &cd0_im, ibest + idt, &costas.re, &costas.im);
         ss[(idt + 4) as usize] = sync;
     }
     let mut idx = 0usize;
@@ -158,17 +157,7 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     let mut symb_im = [0.0f64; 32];
     for k in 1..=NN {
         let i1 = ibest + (k as isize - 1) * 32;
-        if i1 >= 0 && i1 + 31 <= NP2 as isize - 1 {
-            let start = i1 as usize;
-            for j in 0..32 {
-                symb_re[j] = cd0_re[start + j];
-                symb_im[j] = cd0_im[start + j];
-            }
-        } else {
-            symb_re.fill(0.0);
-            symb_im.fill(0.0);
-        }
-        crate::util::four2a_c2c(&mut symb_re, &mut symb_im, -1);
+        extract_symbol_spectrum(&cd0_re, &cd0_im, i1, &mut symb_re, &mut symb_im);
         for tone in 0..8 {
             let sym_re = symb_re[tone] as f32;
             let sym_im = symb_im[tone] as f32;
@@ -628,155 +617,25 @@ fn build_one_table() -> &'static [[bool; 9]; 512] {
     })
 }
 
-fn build_taper() -> &'static [f64; 101] {
-    static T: std::sync::OnceLock<[f64; 101]> = std::sync::OnceLock::new();
-    T.get_or_init(|| {
-        let mut t = [0.0f64; 101];
-        for i in 0..101 {
-            let x = (i as f32 * std::f32::consts::PI) / 100.0f32;
-            t[i] = (0.5f32 * (1.0f32 + x.cos())) as f64;
-        }
-        t
-    })
-}
-
-fn ap_downsample(
-    downsample_cache: &ApDownsampleCache,
-    f0: f64,
-    taper: &[f64; 101],
-) -> (Vec<f64>, Vec<f64>) {
-    let df = DOWNSAMPLE_DF;
-    let baud = DOWNSAMPLE_BAUD;
-    let f0 = f0 as f32;
-    let i0 = nint_wsjtx_real(f0 / df).max(0) as usize;
-    let ft = f0 + 8.5f32 * baud;
-    let it_end = (nint_wsjtx_real(ft / df).max(0) as usize).min(NFFT1_LONG / 2);
-    let fb = f0 - 1.5f32 * baud;
-    let ib = 1.max(nint_wsjtx_real(fb / df).max(0) as usize);
-
+fn ap_downsample(downsample_cache: &ApDownsampleCache, f0: f64) -> (Vec<f64>, Vec<f64>) {
     let mut cd0_re = vec![0.0f64; NFFT2];
     let mut cd0_im = vec![0.0f64; NFFT2];
-    let mut k = 0;
-    for i in ib..=it_end {
-        if k >= NFFT2 {
-            break;
-        }
-        cd0_re[k] = downsample_cache.cx_re[i];
-        cd0_im[k] = downsample_cache.cx_im[i];
-        k += 1;
-    }
-
-    for i in 0..TAPER_SIZE {
-        if i >= NFFT2 {
-            break;
-        }
-        let tap = taper[TAPER_SIZE - 1 - i];
-        cd0_re[i] *= tap;
-        cd0_im[i] *= tap;
-    }
-    let end_tap = k.saturating_sub(1);
-    for i in 0..TAPER_SIZE {
-        let idx = end_tap.saturating_sub(TAPER_SIZE - 1) + i;
-        if idx < NFFT2 {
-            let tap = taper[i];
-            cd0_re[idx] *= tap;
-            cd0_im[idx] *= tap;
-        }
-    }
-
-    let shift = (i0 as isize) - (ib as isize);
-    if shift != 0 {
-        let mut tmp_re = vec![0.0f64; NFFT2];
-        let mut tmp_im = vec![0.0f64; NFFT2];
-        for i in 0..NFFT2 {
-            let src = ((i as isize + shift).rem_euclid(NFFT2 as isize)) as usize;
-            tmp_re[i] = cd0_re[src];
-            tmp_im[i] = cd0_im[src];
-        }
-        cd0_re = tmp_re;
-        cd0_im = tmp_im;
-    }
-
-    crate::util::four2a_c2c(&mut cd0_re, &mut cd0_im, 1);
-    for i in 0..NFFT2 {
-        cd0_re[i] = ((cd0_re[i] as f32) * DOWNSAMPLE_FAC) as f64;
-        cd0_im[i] = ((cd0_im[i] as f32) * DOWNSAMPLE_FAC) as f64;
-    }
+    let mut shift_re = vec![0.0f64; NFFT2];
+    let mut shift_im = vec![0.0f64; NFFT2];
+    ft8_downsample_from_cx(
+        &downsample_cache.cx_re,
+        &downsample_cache.cx_im,
+        f0,
+        &mut cd0_re,
+        &mut cd0_im,
+        &mut shift_re,
+        &mut shift_im,
+    );
     (cd0_re, cd0_im)
 }
 
 fn nint_wsjtx_f32(x: f64) -> isize {
     (x as f32).round() as isize
-}
-
-fn nint_wsjtx_real(x: f32) -> isize {
-    x.round() as isize
-}
-
-fn ap_sync8d(cd0_re: &[f64], cd0_im: &[f64], i0: isize, sync_re: &[f64], sync_im: &[f64]) -> f64 {
-    let mut sync = 0.0f32;
-    let stride = 36 * COSTAS_SYMBOL_LEN;
-    for i in 0..COSTAS_BLOCKS {
-        let mut i_start = i0 + (i as isize) * (COSTAS_SYMBOL_LEN as isize);
-        for _block in 0..3 {
-            if i_start >= 0 && i_start + COSTAS_SYMBOL_LEN as isize <= NP2 as isize {
-                let s = i_start as usize;
-                let mut zr = 0.0f32;
-                let mut zi = 0.0f32;
-                for j in 0..COSTAS_SYMBOL_LEN {
-                    let base = i * COSTAS_SYMBOL_LEN + j;
-                    let d_re = cd0_re[s + j] as f32;
-                    let d_im = cd0_im[s + j] as f32;
-                    let s_re = sync_re[base] as f32;
-                    let s_im = sync_im[base] as f32;
-                    zr += d_re * s_re + d_im * s_im;
-                    zi += d_re * s_im - d_im * s_re;
-                }
-                sync += zr * zr + zi * zi;
-            }
-            i_start += stride as isize;
-        }
-    }
-    sync as f64
-}
-
-fn ap_sync8d_twk(
-    cd0_re: &[f64],
-    cd0_im: &[f64],
-    i0: isize,
-    sync_re: &[f64],
-    sync_im: &[f64],
-    twk_re: &[f64; 32],
-    twk_im: &[f64; 32],
-) -> f64 {
-    let mut sync = 0.0f32;
-    let stride = 36 * COSTAS_SYMBOL_LEN;
-    for i in 0..COSTAS_BLOCKS {
-        let mut i_start = i0 + (i as isize) * (COSTAS_SYMBOL_LEN as isize);
-        for _block in 0..3 {
-            if i_start >= 0 && i_start + COSTAS_SYMBOL_LEN as isize <= NP2 as isize {
-                let s = i_start as usize;
-                let mut zr = 0.0f32;
-                let mut zi = 0.0f32;
-                for j in 0..COSTAS_SYMBOL_LEN {
-                    let base = i * COSTAS_SYMBOL_LEN + j;
-                    let twk_re = twk_re[j] as f32;
-                    let twk_im = twk_im[j] as f32;
-                    let sync_re = sync_re[base] as f32;
-                    let sync_im = sync_im[base] as f32;
-                    let tpl_re = twk_re * sync_re - twk_im * sync_im;
-                    let tpl_im = twk_re * sync_im + twk_im * sync_re;
-                    let d_re = cd0_re[s + j] as f32;
-                    let d_im = cd0_im[s + j] as f32;
-                    zr += d_re * tpl_re + d_im * tpl_im;
-                    zi += d_re * tpl_im - d_im * tpl_re;
-                }
-                sync += zr * zr + zi * zi;
-            }
-            i_start += stride as isize;
-        }
-    }
-    sync as f64
 }
 
 fn build_ctwk(dphi: f64) -> ([f64; 32], [f64; 32]) {
