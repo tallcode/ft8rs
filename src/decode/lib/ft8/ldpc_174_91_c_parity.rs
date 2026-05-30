@@ -7,6 +7,7 @@
 /// Nm[i] = list of variable-node indices (0-based) for check i (i=0..82)
 /// nrw[i] = row weight for check i
 /// ncw = 3  (column weight – every bit participates in exactly 3 checks)
+use std::sync::OnceLock;
 
 // Mn: 174 rows, each with 3 check-node indices (1-based, from Fortran)
 #[rustfmt::skip]
@@ -74,6 +75,11 @@ const NRW_DATA: [usize; 83] = [
 
 pub const NCW: usize = 3;
 
+struct NmCache {
+    rows: [[usize; 7]; 83],
+    lens: [usize; 83],
+}
+
 /// Mn[j] = check indices (0-based) for bit j (0..173). Each entry has exactly 3 elements.
 pub fn mn(j: usize) -> [usize; 3] {
     let base = j * 3;
@@ -87,38 +93,27 @@ pub fn mn(j: usize) -> [usize; 3] {
 /// Nm[i] = bit indices (0-based) for check i (0..82). Variable length (nrw[i] elements).
 /// Returns a slice of up to 7 elements.
 pub fn nm(i: usize) -> &'static [usize] {
-    let _base = i * 7;
-    let _weight = NRW_DATA[i];
-    // We need to return a slice from the static data, but with 0-padding entries removed.
-    // Since we can't easily return a variable-length static slice, we'll build it.
-    // For performance, let's use a different approach: return indices into NM_FLAT.
-    // Actually, let's just compute it once and cache, or return a Vec.
-    // For now, let's build it on the fly (it's called during init, not hot path).
-    static mut NM_CACHE: [[usize; 7]; 83] = [[0; 7]; 83];
-    static mut NM_LEN_CACHE: [usize; 83] = [0; 83];
-    static mut NM_INIT: bool = false;
-
-    unsafe {
-        if !NM_INIT {
-            for i in 0..83 {
-                let base = i * 7;
-                let mut len = 0;
-                for k in 0..7 {
-                    let v = NM_FLAT[base + k];
-                    if v != 0 {
-                        NM_CACHE[i][len] = v - 1;
-                        len += 1;
-                    }
+    static NM_CACHE: OnceLock<NmCache> = OnceLock::new();
+    let cache = NM_CACHE.get_or_init(|| {
+        let mut rows = [[0usize; 7]; 83];
+        let mut lens = [0usize; 83];
+        for i in 0..83 {
+            let base = i * 7;
+            let mut len = 0;
+            for k in 0..7 {
+                let v = NM_FLAT[base + k];
+                if v != 0 {
+                    rows[i][len] = v - 1;
+                    len += 1;
                 }
-                NM_LEN_CACHE[i] = len;
             }
-            NM_INIT = true;
+            lens[i] = len;
         }
-        let len = NM_LEN_CACHE[i];
-        &NM_CACHE[i][..len]
-    }
-}
+        NmCache { rows, lens }
+    });
 
+    &cache.rows[i][..cache.lens[i]]
+}
 /// nrw[i] = row weight for check i
 pub fn nrw(i: usize) -> usize {
     NRW_DATA[i]

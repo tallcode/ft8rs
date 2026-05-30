@@ -161,11 +161,15 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
         let i1 = ibest + (k as isize - 1) * 32;
         extract_symbol_spectrum(&cd0_re, &cd0_im, i1, &mut symb_re, &mut symb_im);
         for tone in 0..8 {
-            let sym_re = symb_re[tone] as f32;
-            let sym_im = symb_im[tone] as f32;
-            cs_re[tone][k] = (sym_re / 1000.0) as f64;
-            cs_im[tone][k] = (sym_im / 1000.0) as f64;
-            s8[tone][k] = ap_wsjtx_cabs(sym_re, sym_im) as f64;
+            let csymb_re = symb_re[tone] as f32;
+            let csymb_im = symb_im[tone] as f32;
+
+            // WSJT-X ft8_a7.f90:
+            //   cs(0:7,k)=csymb(1:8)/1e3
+            //   s8(0:7,k)=abs(csymb(1:8))
+            cs_re[tone][k] = (csymb_re / 1000.0) as f64;
+            cs_im[tone][k] = (csymb_im / 1000.0) as f64;
+            s8[tone][k] = ap_wsjtx_cabs(csymb_re, csymb_im) as f64;
         }
     }
 
@@ -480,8 +484,14 @@ fn build_ap_message(
 }
 
 fn is_cq_call_1(call_1: &str) -> bool {
-    let c = call_1.trim_end();
-    c == "CQ" || c.starts_with("CQ ")
+    // WSJT-X uses character*12 and tests call_1(1:3).eq.'CQ '.
+    // Short strings are therefore space-padded before the first-3-column compare.
+    let bytes = call_1.as_bytes();
+    [
+        bytes.first().copied().unwrap_or(b' '),
+        bytes.get(1).copied().unwrap_or(b' '),
+        bytes.get(2).copied().unwrap_or(b' '),
+    ] == *b"CQ "
 }
 
 #[cfg(test)]
