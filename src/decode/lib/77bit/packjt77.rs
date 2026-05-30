@@ -1047,7 +1047,7 @@ mod tests {
     #[test]
     fn type1_r_grid_uses_third_word_like_wsjtx() {
         let bits = super::pack77("K1ABC W9XYZ R FN42");
-        let msg = crate::ft8::pack_jt77::unpack77(&bits, None).unwrap();
+        let msg = crate::decode::packjt77::unpack77(&bits, None).unwrap();
         assert_eq!(msg, "K1ABC W9XYZ R FN42");
     }
 
@@ -1075,28 +1075,28 @@ mod tests {
         let book = HashCallBook::new();
         book.save("R5AF/O");
         let bits = super::pack77("RA3Y RR73; JR1FTJ <R5AF/O> +00");
-        let msg = crate::ft8::pack_jt77::unpack77(&bits, Some(&book)).unwrap();
+        let msg = crate::decode::packjt77::unpack77(&bits, Some(&book)).unwrap();
         assert_eq!(msg, "RA3Y RR73; JR1FTJ <R5AF/O> +00");
     }
 
     #[test]
     fn type03_field_day_round_trips() {
         let bits = super::pack77("WA9XYZ KA1ABC R 16A EMA");
-        let msg = crate::ft8::pack_jt77::unpack77(&bits, None).unwrap();
+        let msg = crate::decode::packjt77::unpack77(&bits, None).unwrap();
         assert_eq!(msg, "WA9XYZ KA1ABC R 16A EMA");
     }
 
     #[test]
     fn type05_telemetry_round_trips() {
         let bits = super::pack77("0123456789ABCDEF01");
-        let msg = crate::ft8::pack_jt77::unpack77(&bits, None).unwrap();
+        let msg = crate::decode::packjt77::unpack77(&bits, None).unwrap();
         assert_eq!(msg, "123456789ABCDEF01");
     }
 
     #[test]
     fn type3_rtty_round_trips() {
         let bits = super::pack77("TU; W9XYZ K1ABC R 579 MA");
-        let msg = crate::ft8::pack_jt77::unpack77(&bits, None).unwrap();
+        let msg = crate::decode::packjt77::unpack77(&bits, None).unwrap();
         assert_eq!(msg, "TU; W9XYZ K1ABC R 579 MA");
     }
 
@@ -1106,7 +1106,7 @@ mod tests {
         book.save("K1ABC");
         book.save("G4ABC/P");
         let bits = super::pack77("<K1ABC> <G4ABC/P> R 590003 IO91NP");
-        let msg = crate::ft8::pack_jt77::unpack77(&bits, Some(&book)).unwrap();
+        let msg = crate::decode::packjt77::unpack77(&bits, Some(&book)).unwrap();
         assert_eq!(msg, "<K1ABC> <G4ABC/P> R 590003 IO91NP");
     }
 }

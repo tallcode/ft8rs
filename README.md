@@ -228,7 +228,7 @@ FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocap
 
 当前按四层划分：
 
-- `src/ft8`: FT8 单 slot 解码核心，继续按 WSJT-X `ft8_decode`、`ft8b`、`ft8_a7` 对齐。
+- `src/decode`: 独立解码核心，当前聚焦 FT8，继续按 WSJT-X `lib` 下的 `ft8_decode`、`ft8b`、`ft8_a7` 对齐。
   FT8/JT77 协议内部模块也归属这里，例如 pack/unpack、LDPC、hashcall、subtract 和协议常量。
 - `src/stream`: 流式 slot 适配层，负责 12 kHz / 15 秒 slot 驱动、跨 slot `HashCallBook`、同奇偶 AP memory。
 - `src/input`: 输入入口层，当前包含文件入口和声卡入口。
@@ -242,7 +242,7 @@ FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocap
 
 decoder 参数命名尽量贴近 WSJT-X，例如 `nfa`、`nfb`、`ndepth`、`nQSOProgress`、`lft8apon`、`lapcqonly`、`nzhsym`。后续继续对齐源码时，应优先保持这些命名和 WSJT-X 控制流的一一对应关系。
 
-`src/util` 只保留真正跨层的 FFT 基础设施。只有 FT8 解码器使用的协议工具不放在 `util`，而是放回 `src/ft8`。
+`src/util` 只保留真正跨层的 FFT 基础设施。只有 FT8 解码器使用的协议工具不放在 `util`，而是放回 `src/decode`。
 
 ## License
 

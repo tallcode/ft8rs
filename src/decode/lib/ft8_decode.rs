@@ -3,7 +3,7 @@
 //! Source mapping:
 //! - `wsjtx/lib/ft8_decode.f90`
 
-use crate::ft8::decode174_91::N_LDPC;
+use crate::decode::decode174_91::N_LDPC;
 use crate::util::four2a_r2c;
 use crate::HashCallBook;
 use std::time::{Duration, Instant};
@@ -14,6 +14,8 @@ mod baseline;
 mod ft8_downsample;
 #[path = "ft8/ft8_params.rs"]
 mod ft8_params;
+#[path = "ft8/ft8apset.rs"]
+mod ft8apset;
 #[path = "ft8/ft8b.rs"]
 mod ft8b;
 #[path = "ft8/get_spectrum_baseline.rs"]
@@ -22,6 +24,8 @@ mod get_spectrum_baseline;
 mod sync8;
 #[path = "ft8/sync8d.rs"]
 mod sync8d;
+#[path = "ft8/twkfreq1.rs"]
+mod twkfreq1;
 
 use self::baseline::baseline;
 pub(crate) use self::ft8_downsample::ft8_downsample_from_cx;
@@ -30,13 +34,16 @@ pub(crate) use self::ft8_params::{
     NFFT1, NFFT1_LONG, NFFT2, NHSYM, NMAX, NN, NP2, NSPS, NSTEP, PI_F32, SAMPLE_RATE, TAPER_SIZE,
     TWO_PI, TWO_PI_F32,
 };
-use self::ft8b::{duration_ms, ft8_ap_set, ft8b, trace_timer, trace_timers_enabled};
+use self::ft8apset::ft8_ap_set;
+use self::ft8apset::{M73, MCQ, MCQFD, MCQRU, MCQTEST, MCQWW, MRR73, MRRR};
+use self::ft8b::{duration_ms, ft8b, trace_timer, trace_timers_enabled};
 pub(crate) use self::ft8b::{extract_symbol_spectrum, normalize_bmet};
 use self::get_spectrum_baseline::get_spectrum_baseline;
 use self::sync8::sync8;
 pub(crate) use self::sync8d::{
     build_costas_sync_templates, build_frequency_shift_sync_templates, sync8d, sync8d_twk,
 };
+pub(crate) use self::twkfreq1::twkfreq1;
 
 /// sync8 spectral mode - different representations favour different SNR regimes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -389,7 +396,7 @@ fn decode_from_f64(
                 ft8b_stats.as_mut(),
             ) {
                 let message_key = normalize_message_key(&r.msg);
-                crate::ft8::subtract_ft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
+                crate::decode::subtractft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
                 if seen_messages.contains(&message_key) {
                     duplicates += 1;
                     continue;
@@ -506,7 +513,7 @@ fn nint_wsjtx_real(x: f32) -> isize {
 
 #[cfg(test)]
 mod tests {
-    use super::ft8b::{apply_wsjt_ap_mask, is_acceptable_unpacked_message, M73, MCQ, MRR73, MRRR};
+    use super::ft8b::{apply_wsjt_ap_mask, is_acceptable_unpacked_message};
     use super::sync8::finalize_sync8_candidates;
     use super::*;
 

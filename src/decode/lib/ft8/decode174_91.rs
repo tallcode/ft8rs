@@ -3,8 +3,8 @@
 //! Source mapping:
 //! - `wsjtx/lib/ft8/decode174_91.f90`
 
-use crate::ft8::bpdecode174_91::bp_decode174_91_with_posteriors;
-use crate::ft8::osd174_91::osd_decode174_91;
+use crate::decode::bpdecode174_91::bp_decode174_91_with_posteriors;
+use crate::decode::osd174_91::osd_decode174_91;
 
 pub(crate) const KK: usize = 91;
 pub(crate) const N_LDPC: usize = 174;

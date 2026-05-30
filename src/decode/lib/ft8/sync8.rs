@@ -7,7 +7,7 @@ use super::SAMPLE_RATE;
 use super::{
     get_spectrum_baseline, nint_wsjtx_f32, Candidate, SyncMode, COSTAS_BLOCKS, NHSYM, NSPS, NSTEP,
 };
-use crate::ft8::indexx::indexx_ascending;
+use crate::decode::indexx::indexx_ascending;
 use crate::util::{four2a_r2c, sync8_fft_size};
 
 const COSTAS: [u8; 7] = [3, 1, 4, 0, 6, 5, 2];

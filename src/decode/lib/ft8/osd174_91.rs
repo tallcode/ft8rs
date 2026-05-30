@@ -3,9 +3,9 @@
 //! Source mapping:
 //! - `wsjtx/lib/ft8/osd174_91.f90`
 
-use crate::ft8::chkcrc14a::check_crc14;
-use crate::ft8::decode174_91::{DecodeResult, KK, N_LDPC};
-use crate::ft8::indexx::indexx_ascending;
+use crate::decode::chkcrc14a::check_crc14;
+use crate::decode::decode174_91::{DecodeResult, KK, N_LDPC};
+use crate::decode::indexx::indexx_ascending;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -352,7 +352,7 @@ fn get_generator() -> &'static [u8] {
                 gen[i * n + i] = 1;
             }
 
-            use crate::ft8::ldpc_174_91_c_generator::G_HEX;
+            use crate::decode::ldpc_174_91_c_generator::G_HEX;
             for (m_idx, hex_str) in G_HEX.iter().enumerate().take(83) {
                 for j in 0..23 {
                     let byte = hex_str.as_bytes()[j];
@@ -380,7 +380,7 @@ fn get_generator() -> &'static [u8] {
 #[cfg(test)]
 mod tests {
     use super::{fetchit91_pattern, osd_decode174_91};
-    use crate::ft8::decode174_91::N_LDPC;
+    use crate::decode::decode174_91::N_LDPC;
 
     #[test]
     fn fetchit91_pattern_matches_wsjtx_left_shift_order() {

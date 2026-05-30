@@ -11,7 +11,7 @@ pub(super) fn get_spectrum_baseline(dd: &[f64], mut nfa: f64, mut nfb: f64) -> V
     let nh1 = nfft / 2;
     let nst = nh1;
     let nf = 93usize;
-    let mut window = crate::ft8::nuttal_window::nuttal_window(nfft);
+    let mut window = crate::decode::nuttal_window::nuttal_window(nfft);
     let wsum: f64 = window.iter().sum();
     let wscale = NSPS as f64 * 2.0 / 300.0 / wsum;
     for slot in &mut window {
