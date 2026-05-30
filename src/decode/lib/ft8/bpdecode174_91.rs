@@ -3,9 +3,9 @@
 //! Source mapping:
 //! - `wsjtx/lib/ft8/bpdecode174_91.f90`
 
-use crate::ft8::chkcrc14a::check_crc14;
-use crate::ft8::decode174_91::{DecodeResult, KK, M_LDPC, N_LDPC};
-use crate::ft8::ldpc_tables::*;
+use crate::decode::chkcrc14a::check_crc14;
+use crate::decode::decode174_91::{DecodeResult, KK, M_LDPC, N_LDPC};
+use crate::decode::ldpc_174_91_c_parity::*;
 
 /// BP decoding result with accumulated posteriors for OSD.
 pub(crate) struct BPResult {
@@ -160,7 +160,7 @@ pub(crate) fn bp_decode174_91_with_posteriors(
                         tmn *= tanhtoc[k * m + ichk];
                     }
                 }
-                tov[i * n + j] = 2.0 * crate::ft8::platanh::platanh(-tmn);
+                tov[i * n + j] = 2.0 * crate::decode::platanh::platanh(-tmn);
             }
         }
     }

@@ -15,14 +15,14 @@
 //!   9. Brute-force 206 message variants → Hamming distance → best match
 //!  10. Validate: dmin<100 AND dmin2/dmin>1.3
 
-use super::decode::{
+use crate::decode::encode174_91::encode174_91;
+use crate::decode::ft8_decode::{
     build_costas_sync_templates, extract_symbol_spectrum, ft8_downsample_from_cx, normalize_bmet,
-    sync8d, sync8d_twk, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TWO_PI,
+    sync8d, sync8d_twk, twkfreq1, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TWO_PI,
 };
-use crate::ft8::ldpc_174_91_c_generator::G_HEX;
-use crate::ft8::pack_jt77::{is_stdcall, pack77};
+use crate::decode::genft8::get_ft8_tones_from_codeword;
+use crate::decode::packjt77::{is_stdcall, pack77};
 
-const ICOS7: [usize; 7] = [3, 1, 4, 0, 6, 5, 2];
 const GRAY_MAP: [u8; 8] = [0, 1, 3, 2, 5, 6, 4, 7];
 
 /// Result of AP decode
@@ -294,17 +294,17 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
 
         // WSJT-X genft8 does: pack77 → unpack77 → msgsent (normalized form)
         // We must use msgsent as msgbest, not raw msg
-        let msgsent = crate::ft8::unpack_jt77::unpack77(&msg77, None);
+        let msgsent = crate::decode::packjt77::unpack77(&msg77, None);
         if msgsent.is_none() {
             continue;
         }
 
-        let cw = codeword_174_91(&msg77);
+        let cw = encode174_91(&msg77);
         if cw.len() != 174 {
             continue;
         }
 
-        let itone = tones_from_codeword(&cw);
+        let itone = get_ft8_tones_from_codeword(&cw);
 
         // Signal power
         let mut pow = 0.0f64;
@@ -484,59 +484,6 @@ fn is_cq_call_1(call_1: &str) -> bool {
     c == "CQ" || c.starts_with("CQ ")
 }
 
-fn codeword_174_91(msg77: &[u8]) -> Vec<u8> {
-    let g = generate_ldpc_g_matrix();
-    let poly = 0x2757u16;
-    let mut crc: u16 = 0;
-
-    for bit_idx in 0..96 {
-        let next_bit = if bit_idx < 77 { msg77[bit_idx] } else { 0 };
-        if (crc & 0x2000) != 0 {
-            crc = ((crc << 1) | next_bit as u16) ^ poly;
-        } else {
-            crc = (crc << 1) | next_bit as u16;
-        }
-        crc &= 0x3fff;
-    }
-
-    let mut msg91 = msg77.to_vec();
-    for i in 0..14 {
-        msg91.push(((crc >> (13 - i)) & 1) as u8);
-    }
-
-    let mut codeword = msg91.clone();
-    for row in g.iter().take(83) {
-        let mut sum = 0;
-        for j in 0..91 {
-            sum += msg91[j] * row[j];
-        }
-        codeword.push(sum % 2);
-    }
-    codeword
-}
-
-fn generate_ldpc_g_matrix() -> Vec<Vec<u8>> {
-    let k = 91;
-    let m = 83;
-    let mut gen = vec![vec![0u8; k]; m];
-
-    for i in 0..m {
-        let hex_str = G_HEX[i];
-        for j in 0..23 {
-            let byte = hex_str.as_bytes()[j];
-            let val = u8::from_str_radix(&format!("{}", byte as char), 16).unwrap_or(0);
-            let limit = if j == 22 { 3 } else { 4 };
-            for jj in 1..=limit {
-                let col = j * 4 + jj - 1;
-                if (val & (1 << (4 - jj))) != 0 {
-                    gen[i][col] = 1;
-                }
-            }
-        }
-    }
-    gen
-}
-
 #[cfg(test)]
 mod tests {
     use super::build_ap_message;
@@ -585,27 +532,6 @@ fn count_hard_errors(cw: &[u8], llr: &[f64]) -> usize {
     count
 }
 
-/// Decode 174-bit codeword to 79 tones (genft8 entry get_ft8_tones_from_77bits).
-fn tones_from_codeword(cw: &[u8]) -> [i32; 79] {
-    let mut itone = [0i32; 79];
-    for i in 0..7 {
-        itone[i] = ICOS7[i] as i32;
-        itone[36 + i] = ICOS7[i] as i32;
-        itone[72 + i] = ICOS7[i] as i32;
-    }
-    let mut k = 7;
-    for j in 1..=58 {
-        let idx = 3 * (j - 1);
-        if j == 30 {
-            k += 7;
-        }
-        let bits = (cw[idx] as usize) * 4 + (cw[idx + 1] as usize) * 2 + (cw[idx + 2] as usize);
-        itone[k] = GRAY_MAP[bits] as i32;
-        k += 1;
-    }
-    itone
-}
-
 fn build_one_table() -> &'static [[bool; 9]; 512] {
     static ONE: std::sync::OnceLock<[[bool; 9]; 512]> = std::sync::OnceLock::new();
     ONE.get_or_init(|| {
@@ -651,36 +577,4 @@ fn build_ctwk(dphi: f64) -> ([f64; 32], [f64; 32]) {
         phi = (phi + dphi) % twopi;
     }
     (re, im)
-}
-
-fn twkfreq1(
-    ca_re: &[f64],
-    ca_im: &[f64],
-    npts: usize,
-    fsample: f64,
-    a: &[f64; 5],
-) -> (Vec<f64>, Vec<f64>) {
-    let twopi = 6.283185307;
-    let x0 = 0.5 * (npts as f64 + 1.0);
-    let s = 2.0 / npts as f64;
-    let mut cb_re = Vec::with_capacity(npts);
-    let mut cb_im = Vec::with_capacity(npts);
-    let mut w_re = 1.0f64;
-    let mut w_im = 0.0f64;
-    for i in 1..=npts {
-        let x = s * (i as f64 - x0);
-        let p2 = 1.5 * x * x - 0.5;
-        let p3 = 2.5 * x.powi(3) - 1.5 * x;
-        let p4 = 4.375 * x.powi(4) - 3.75 * x * x + 0.375;
-        let dphi = (a[0] + x * a[1] + p2 * a[2] + p3 * a[3] + p4 * a[4]) * (twopi / fsample);
-        let ws_re = dphi.cos();
-        let ws_im = dphi.sin();
-        let nw_re = w_re * ws_re - w_im * ws_im;
-        let nw_im = w_re * ws_im + w_im * ws_re;
-        w_re = nw_re;
-        w_im = nw_im;
-        cb_re.push(w_re * ca_re[i - 1] - w_im * ca_im[i - 1]);
-        cb_im.push(w_re * ca_im[i - 1] + w_im * ca_re[i - 1]);
-    }
-    (cb_re, cb_im)
 }

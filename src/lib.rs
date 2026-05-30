@@ -1,10 +1,10 @@
-pub mod ft8;
+pub mod decode;
 pub mod input;
 pub mod stream;
 pub(crate) mod util;
 
-pub use ft8::decode::{decode_with_sbase, DecodeOptions, DecodedMessage, SyncMode};
-pub use ft8::HashCallBook;
+pub use decode::ft8_decode::{decode_with_sbase, DecodeOptions, DecodedMessage, SyncMode};
+pub use decode::HashCallBook;
 pub use stream::session::{
     StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage, WsjtxDecodeConfig,
 };

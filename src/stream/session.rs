@@ -2,12 +2,12 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use crate::ft8::ap_decode::{ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache};
-use crate::ft8::decode::{
+use crate::decode::ft8_a7::{ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache};
+use crate::decode::ft8_decode::{
     decode_f64_with_sbase, decode_f64_with_sbase_and_residual, DecodeOptions, DecodedMessage,
     SyncMode,
 };
-use crate::ft8::subtract_ft8::subtract_ft8_refined;
+use crate::decode::subtractft8::subtract_ft8_refined;
 use crate::stream::time::SlotTimestamp;
 use crate::HashCallBook;
 
@@ -628,7 +628,7 @@ fn ft8_a7_save_entry_from_parts(msg: &str, freq: f64, dt: f64) -> Option<A7SaveE
 }
 
 fn a7_xbase(f1: f64, sbase: &[f64]) -> f64 {
-    let df = crate::ft8::sync8_df();
+    let df = crate::decode::sync8_df();
     let freq_bin = nint_wsjtx_f32(f1 / df).max(1) as usize;
     if freq_bin < sbase.len() {
         (10.0f32.powf(0.1 * (sbase[freq_bin] as f32 - 40.0))) as f64

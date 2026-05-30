@@ -3,7 +3,7 @@
 //! Source mapping:
 //! - `wsjtx/lib/ft8/chkcrc14a.f90`
 
-use crate::ft8::get_crc14::compute_crc14;
+use crate::decode::get_crc14::compute_crc14;
 
 pub(crate) fn check_crc14(bits91: &[u8]) -> bool {
     let received_crc = bits_to_int(&bits91[77..91]);

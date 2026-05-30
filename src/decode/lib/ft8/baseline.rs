@@ -4,7 +4,7 @@
 //! - `wsjtx/lib/ft8/baseline.f90`
 
 use super::nint_wsjtx_f32;
-use crate::ft8::indexx::indexx_ascending;
+use crate::decode::indexx::indexx_ascending;
 
 pub(super) fn baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) -> Vec<f64> {
     // WSJT-X stores sbase(1:NH1), with FFT bin 0/DC omitted. Keep index 0

@@ -65,7 +65,8 @@ cargo test --release --features fftw test_stream_decode_long_audio -- --nocaptur
 
 当前结构：
 
-- `src/ft8`: FT8 解码核心。拥有 FT8/JT77 协议逻辑、pack/unpack、LDPC、AP、
+- `src/decode`: 独立解码核心。当前聚焦 FT8，同时拥有 JT77
+  pack/unpack、LDPC、AP、
   hash callbook、CRC、subtraction、WSJT-X 对齐常量和内部工具。
 - `src/stream`: 流式适配层。负责 slot 切分、时间戳、EOF tail slot、
   `nzhsym=41/47/50` 阶段推进，以及跨 slot 的 `StreamDecodeSession`。
@@ -86,56 +87,67 @@ Rust 代码不完全使用 Fortran 大小写，但语义尽量贴近：
 - `nfa/nfb/ndepth/nfqso/nftx/ncontest/nzhsym/ncand` 保持 WSJT-X 风格。
 - `nqso_progress` 对应 WSJT-X `nQSOProgress`。
 - `enabled/cq_only` 分别对应 `lft8apon/lapcqonly`。
-- `ft8_a7d`、`ft8_downsample`、`sync8`、`subtract_ft8` 等核心函数名保留
+- `ft8_a7d`、`ft8_downsample`、`sync8`、`subtractft8` 等核心阶段名保留
   WSJT-X 源码名，方便逐段核对。
 
 ### File-layout Alignment
 
 FT8 regular decode 的主要阶段按 `wsjtx/lib/**/*.f90` 镜像到
-`src/ft8/lib/**/*.rs`。Rust 对外仍通过 `crate::ft8::decode` 暴露稳定 API，
-但物理文件名和 WSJT-X 保持同名，方便熟悉 WSJT-X 的开发者直接定位：
+`src/decode/lib/**/*.rs`。父目录叫 `decode`，表示这是独立解码核心，不是
+UI/stream/input 层，也不局限于 `ft8` 子目录；子目录 `lib` 刻意保留，因为它
+对应 WSJT-X 的 `wsjtx/lib`。Rust 对外仍通过 crate root 暴露稳定 API，但
+物理文件名和内部 module 名尽量与 WSJT-X 保持同名，方便熟悉 WSJT-X 的
+开发者直接定位：
 
-- `src/ft8/lib/ft8_decode.rs`: 对外 decode facade、outer `ft8_decode`
+- `src/decode/lib/ft8_decode.rs`: 对外 decode facade、outer `ft8_decode`
   控制流、public decode API、sample preparation，以及 Fortran 局部数组在
   Rust 中对应的候选/工作区记录。对应 `wsjtx/lib/ft8_decode.f90`。
-- `src/ft8/lib/ft8/ft8_params.rs`: WSJT-X `ft8_params.f90` style constants。
-- `src/ft8/lib/ft8/baseline.rs`: WSJT-X `baseline.f90` polynomial spectrum
+- `src/decode/lib/ft8/ft8_params.rs`: WSJT-X `ft8_params.f90` style constants。
+- `src/decode/lib/ft8/baseline.rs`: WSJT-X `baseline.f90` polynomial spectrum
   baseline fit。
-- `src/ft8/lib/ft8/get_spectrum_baseline.rs`: WSJT-X
+- `src/decode/lib/ft8/get_spectrum_baseline.rs`: WSJT-X
   `get_spectrum_baseline.f90` Welch spectrum average and baseline call。
-- `src/ft8/lib/ft8/sync8d.rs`: WSJT-X `sync8d.f90` Costas sync power helper；
+- `src/decode/lib/ft8/sync8d.rs`: WSJT-X `sync8d.f90` Costas sync power helper；
   Rust 复用的 Costas/frequency-shift template cache 也放在这里。
-- `src/ft8/lib/ft8/sync8.rs`: `sync8` candidate search、
+- `src/decode/lib/ft8/sync8.rs`: `sync8` candidate search、
   baseline-normalized sync metrics、candidate pruning/order。
-- `src/ft8/lib/ft8/ft8b.rs`: `ft8b` candidate decode、soft-symbol extraction、
+- `src/decode/lib/ft8/ft8b.rs`: `ft8b` candidate decode、soft-symbol extraction、
   bit metrics、LDPC/AP pass scheduling、SNR/post gates。
-- `src/ft8/lib/ft8/ft8_downsample.rs`: 192k -> 3200 -> 200 Hz downsample path。
-- `src/ft8/lib/ft8/ft8_a7.rs`: WSJT-X `ft8_a7.f90:ft8_a7d` AP brute-force
+- `src/decode/lib/ft8/ft8_downsample.rs`: 192k -> 3200 -> 200 Hz downsample path。
+- `src/decode/lib/ft8/ft8_a7.rs`: WSJT-X `ft8_a7.f90:ft8_a7d` AP brute-force
   decoder。
-- `src/ft8/lib/ft8/decode174_91.rs`: WSJT-X `decode174_91.f90` BP/OSD
+- `src/decode/lib/ft8/ft8apset.rs`: WSJT-X `ft8apset.f90` AP bit-mask setup。
+- `src/decode/lib/ft8/twkfreq1.rs`: WSJT-X `twkfreq1.f90` AP frequency-tweak
+  helper。
+- `src/decode/lib/ft8/gen_ft8wave.rs`: WSJT-X `gen_ft8wave.f90` reference waveform
+  generation used by residual subtraction。
+- `src/decode/lib/ft8/encode174_91.rs`: WSJT-X `encode174_91.f90` CRC+LDPC encoder。
+- `src/decode/lib/ft8/genft8.rs`: WSJT-X `genft8.f90` 77-bit-to-tone generation。
+- `src/decode/lib/ft8/decode174_91.rs`: WSJT-X `decode174_91.f90` BP/OSD
   orchestration。
-- `src/ft8/lib/ft8/bpdecode174_91.rs`: WSJT-X `bpdecode174_91.f90` BP decoder。
-- `src/ft8/lib/ft8/osd174_91.rs`: WSJT-X `osd174_91.f90` ordered-statistics
+- `src/decode/lib/ft8/bpdecode174_91.rs`: WSJT-X `bpdecode174_91.f90` BP decoder。
+- `src/decode/lib/ft8/osd174_91.rs`: WSJT-X `osd174_91.f90` ordered-statistics
   decoder。
-- `src/ft8/lib/ft8/get_crc14.rs`: WSJT-X `get_crc14.f90` CRC helper。
-- `src/ft8/lib/ft8/chkcrc14a.rs`: WSJT-X `chkcrc14a.f90` CRC checker。
-- `src/ft8/lib/ft8/ldpc_174_91_c_generator.rs`: WSJT-X
+- `src/decode/lib/ft8/get_crc14.rs`: WSJT-X `get_crc14.f90` CRC helper。
+- `src/decode/lib/ft8/chkcrc14a.rs`: WSJT-X `chkcrc14a.f90` CRC checker。
+- `src/decode/lib/ft8/ldpc_174_91_c_generator.rs`: WSJT-X
   `ldpc_174_91_c_generator.f90` generator table。
-- `src/ft8/lib/ft8/ldpc_174_91_c_parity.rs`: WSJT-X
+- `src/decode/lib/ft8/ldpc_174_91_c_parity.rs`: WSJT-X
   `ldpc_174_91_c_parity.f90` parity-check table。
-- `src/ft8/lib/ft8/subtractft8.rs`: WSJT-X `subtractft8.f90` residual
+- `src/decode/lib/ft8/subtractft8.rs`: WSJT-X `subtractft8.f90` residual
   subtraction。
-- `src/ft8/lib/77bit/packjt77.rs`: WSJT-X `77bit/packjt77.f90` pack and unpack
+- `src/decode/lib/77bit/packjt77.rs`: WSJT-X `77bit/packjt77.f90` pack and unpack
   side in one physical Rust file；hash-call runtime callbook also lives next to
-  `ihashcall` here。`crate::ft8::unpack_jt77` is only a Rust module alias to keep
-  existing call sites stable; it is not a second source file。
-- `src/ft8/lib/indexx.rs`: WSJT-X `indexx.f90` helper used by sync and OSD。
-- `src/ft8/lib/nuttal_window.rs`: WSJT-X `nuttal_window.f90`。
-- `src/ft8/lib/platanh.rs`: WSJT-X `platanh.f90`。
+  `ihashcall` here。
+- `src/decode/lib/indexx.rs`: WSJT-X `indexx.f90` helper used by sync and OSD。
+- `src/decode/lib/nuttal_window.rs`: WSJT-X `nuttal_window.f90`。
+- `src/decode/lib/platanh.rs`: WSJT-X `platanh.f90`。
 
-这些镜像文件通过 `src/ft8/mod.rs` 的 `#[path = "lib/..."]` 挂载到
-既有 Rust module 名称，所以上层 stream/input/output 不需要知道内部物理
-路径。核心阶段不使用文本 `include!` 合并作用域。
+这些镜像文件通过 `src/decode/mod.rs` 的 `#[path = "lib/..."]` 挂载。核心
+module 名也尽量采用 WSJT-X 文件名，例如 `ft8_decode`、`ft8_a7`、
+`subtractft8`、`packjt77` 和 `ldpc_174_91_c_parity`。上层
+stream/input/output 不需要知道内部物理路径，核心阶段不使用文本
+`include!` 合并作用域。
 
 ## Audio and Slot Model
 
@@ -372,7 +384,7 @@ These were the most expensive or easy-to-miss alignment bugs:
   format; the active fixture is now normalized to 12 kHz with inserted leading silence。
 - AP parity must use WSJT-X `jseq=mod(nutc/5,2)` from the slot timestamp; simple
   toggling can put AP memory in the wrong parity。
-- `pack_jt77::is_stdcall()` and stream AP `chkcall` both needed careful 1-based
+- `packjt77::is_stdcall()` and stream AP `chkcall` both needed careful 1-based
   call-area conversion。
 - Type 3 false positive `CQ 001 IZ7MMG 549 2025` was fixed by validating the two
   RTTY callsign slots against WSJT-X `pack77_3/chkcall` structure, not by disabling
@@ -430,7 +442,7 @@ FT8RS_TRACE_TIMERS=1 cargo test --release test_stream_decode_short_audio -- --no
   and source-shaped control flow, but the project will not block completion on a
   full independent AP byte-for-byte fixture matrix。
 - The current WSJT-X-shaped file split mirrors implemented FT8/JT77
-  `wsjtx/lib/**/*.f90` files under `src/ft8/lib/**/*.rs`; Rust work buffers are
+  `wsjtx/lib/**/*.f90` files under `src/decode/lib/**/*.rs`; Rust work buffers are
   kept inside `ft8_decode.rs` rather than a separate source file, and no core
   stage relies on textual `include!` glue。
 - `tests/wsjtx_source_audit_test.rs` can compare selected Rust source shapes
