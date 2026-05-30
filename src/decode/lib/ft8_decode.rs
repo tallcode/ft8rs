@@ -45,17 +45,6 @@ pub(crate) use self::sync8d::{
 };
 pub(crate) use self::twkfreq1::twkfreq1;
 
-/// sync8 spectral mode - different representations favour different SNR regimes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SyncMode {
-    /// Power spectrum: s = Re2 + Im2 (best for strong signals)
-    Power = 0,
-    /// Amplitude spectrum: s = sqrt(Re2 + Im2) (better for weak signals, compresses dynamic range)
-    Amplitude = 1,
-    /// Absolute sum: s = |Re| + |Im| (most robust against impulsive noise)
-    AbsSum = 2,
-}
-
 #[derive(Clone)]
 pub struct DecodedMessage {
     pub freq: f64,
@@ -91,9 +80,6 @@ pub struct DecodeOptions {
     /// Messages already decoded in an earlier progressive stage for the same
     /// slot. WSJT-X carries these in `allmessages`/`ndecodes` when nzhsym=50.
     pub initial_messages: Vec<String>,
-    /// Sync spectral mode: Power (default), Amplitude (better for weak signals),
-    /// AbsSum (robust against impulsive noise).
-    pub sync_mode: Option<SyncMode>,
 }
 
 #[derive(Clone)]
@@ -288,7 +274,6 @@ fn decode_from_f64(
         .unwrap_or_else(|| default_outer_sync_min(ndepth));
     let ncand = options.ncand.unwrap_or(1000);
     let book = options.hashcallbook;
-    let sync_mode = options.sync_mode.unwrap_or(SyncMode::Power);
     let nfqso = options.nfqso.unwrap_or(0.0);
     let nagain = options.nagain.unwrap_or(false);
     let ncontest = options.ncontest.unwrap_or(0);
@@ -354,8 +339,7 @@ fn decode_from_f64(
         };
 
         let t_sync = Instant::now();
-        let (candidates, pass_sbase) =
-            sync8(&residual, ifa, ifb, pass_syncmin, nfqso, ncand, sync_mode);
+        let (candidates, pass_sbase) = sync8(&residual, ifa, ifb, pass_syncmin, nfqso, ncand);
         sbase = pass_sbase;
         trace_timer(
             "decode.pass.sync8",

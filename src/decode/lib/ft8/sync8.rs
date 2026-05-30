@@ -4,9 +4,7 @@
 //! - `wsjtx/lib/ft8/sync8.f90`
 
 use super::SAMPLE_RATE;
-use super::{
-    get_spectrum_baseline, nint_wsjtx_f32, Candidate, SyncMode, COSTAS_BLOCKS, NHSYM, NSPS, NSTEP,
-};
+use super::{get_spectrum_baseline, nint_wsjtx_f32, Candidate, COSTAS_BLOCKS, NHSYM, NSPS, NSTEP};
 use crate::decode::indexx::indexx_ascending;
 use crate::util::{four2a_r2c, sync8_fft_size};
 
@@ -67,7 +65,6 @@ pub(super) fn sync8(
     syncmin: f64,
     nfqso: f64,
     maxcand: usize,
-    mode: SyncMode,
 ) -> (Vec<Candidate>, Vec<f64>) {
     let jz = 62;
     let fft_size = sync8_fft_size();
@@ -105,11 +102,7 @@ pub(super) fn sync8(
             four2a_r2c(x_re, x_im);
             let row_offset = j;
             for i in 0..half_size {
-                let val = match mode {
-                    SyncMode::Amplitude => (x_re[i] * x_re[i] + x_im[i] * x_im[i]).sqrt(),
-                    SyncMode::AbsSum => x_re[i].abs() + x_im[i].abs(),
-                    _ => x_re[i] * x_re[i] + x_im[i] * x_im[i],
-                };
+                let val = x_re[i] * x_re[i] + x_im[i] * x_im[i];
                 s[i * NHSYM + row_offset] = val;
                 savg[i] += val;
             }

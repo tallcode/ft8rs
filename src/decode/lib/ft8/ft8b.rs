@@ -313,14 +313,16 @@ fn extract_soft_symbols(ibest: isize, workspace: &mut DecodeWorkspace) {
             &mut workspace.symb_im,
         );
         for tone in 0..8 {
-            let re = (workspace.symb_re[tone] as f32 / 1000.0) as f64;
-            let im = (workspace.symb_im[tone] as f32 / 1000.0) as f64;
             let idx = tone * NN + k;
-            workspace.cs_re[idx] = re;
-            workspace.cs_im[idx] = im;
-            let s8_re = workspace.symb_re[tone] as f32;
-            let s8_im = workspace.symb_im[tone] as f32;
-            workspace.s8[idx] = wsjtx_cabs(s8_re, s8_im) as f64;
+            let csymb_re = workspace.symb_re[tone] as f32;
+            let csymb_im = workspace.symb_im[tone] as f32;
+
+            // WSJT-X ft8b.f90:
+            //   cs(0:7,k)=csymb(1:8)/1e3
+            //   s8(0:7,k)=abs(csymb(1:8))
+            workspace.cs_re[idx] = (csymb_re / 1000.0) as f64;
+            workspace.cs_im[idx] = (csymb_im / 1000.0) as f64;
+            workspace.s8[idx] = wsjtx_cabs(csymb_re, csymb_im) as f64;
         }
     }
 }

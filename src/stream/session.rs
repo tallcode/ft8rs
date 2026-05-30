@@ -5,7 +5,6 @@ use std::time::Instant;
 use crate::decode::ft8_a7::{ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache};
 use crate::decode::ft8_decode::{
     decode_f64_with_sbase, decode_f64_with_sbase_and_residual, DecodeOptions, DecodedMessage,
-    SyncMode,
 };
 use crate::decode::subtractft8::subtract_ft8_refined;
 use crate::stream::time::SlotTimestamp;
@@ -538,7 +537,6 @@ impl StreamDecodeSession {
             lft8apon: Some(self.params.lft8apon && nzhsym == 50),
             lapcqonly: Some(self.params.lapcqonly),
             nagain: Some(self.params.nagain),
-            sync_mode: Some(SyncMode::Power),
             nzhsym: Some(nzhsym),
             ..Default::default()
         }
