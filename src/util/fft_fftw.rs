@@ -3,11 +3,17 @@
 /// WSJT-X uses FFTW with arbitrary sizes (NFFT1=3840), not powers of 2.
 /// 3840-pt FFT → df=3.125 Hz → 6.25 Hz tone spacing = exactly 2 bins.
 
+const FFTW_MEASURE: u32 = 0;
+const FFTW_EXHAUSTIVE: u32 = 1 << 3;
+const FFTW_PATIENT: u32 = 1 << 5;
 const FFTW_ESTIMATE: u32 = 1 << 6;
+const FFTW_ESTIMATE_PATIENT: u32 = 1 << 7;
 
 type PlanHandle = *mut std::ffi::c_void;
 
 extern "C" {
+    fn fftw_init_threads() -> i32;
+    fn fftw_plan_with_nthreads(nthreads: i32);
     fn fftw_plan_dft_r2c_1d(n: i32, input: *mut f64, output: *mut f64, flags: u32) -> PlanHandle;
     fn fftw_plan_dft_1d(
         n: i32,
@@ -23,12 +29,62 @@ extern "C" {
     fn fftw_destroy_plan(plan: PlanHandle);
 }
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Mutex protecting FFTW plan creation (FFTW planner is not thread-safe).
 /// Plan *execution* is thread-safe with ESTIMATE flag, but creating plans
 /// requires serialization. We use a single global mutex for all planning.
 static PLANNING_MUTEX: Mutex<()> = Mutex::new(());
+static FFT_THREADS: AtomicUsize = AtomicUsize::new(1);
+static FFT_PATIENCE: AtomicUsize = AtomicUsize::new(1);
+static PLANS_CREATED: AtomicBool = AtomicBool::new(false);
+static THREAD_INIT: OnceLock<bool> = OnceLock::new();
+
+pub fn set_fft_threads(threads: usize) -> Result<(), String> {
+    if threads == 0 {
+        return Err("--fft-threads must be at least 1".to_string());
+    }
+    if threads > i32::MAX as usize {
+        return Err(format!("--fft-threads is too large: {threads}"));
+    }
+
+    let previous = FFT_THREADS.load(Ordering::SeqCst);
+    if PLANS_CREATED.load(Ordering::SeqCst) && previous != threads {
+        return Err(
+            "--fft-threads must be configured before the first FFT plan is created".to_string(),
+        );
+    }
+
+    ensure_fftw_threads_initialized()?;
+    FFT_THREADS.store(threads, Ordering::SeqCst);
+    Ok(())
+}
+
+pub fn set_fft_patience(patience: usize) -> Result<(), String> {
+    if patience > 4 {
+        return Err("--patience must be in 0..=4".to_string());
+    }
+
+    let previous = FFT_PATIENCE.load(Ordering::SeqCst);
+    if PLANS_CREATED.load(Ordering::SeqCst) && previous != patience {
+        return Err(
+            "--patience must be configured before the first FFT plan is created".to_string(),
+        );
+    }
+
+    FFT_PATIENCE.store(patience, Ordering::SeqCst);
+    Ok(())
+}
+
+fn ensure_fftw_threads_initialized() -> Result<(), String> {
+    let ok = *THREAD_INIT.get_or_init(|| unsafe { fftw_init_threads() != 0 });
+    if ok {
+        Ok(())
+    } else {
+        Err("fftw_init_threads failed".to_string())
+    }
+}
 
 /// One plan + its scratch buffers, created together so the plan's pointers stay valid.
 struct PlanAndBuffers {
@@ -49,6 +105,7 @@ impl PlanAndBuffers {
     fn r2c(n: usize) -> Self {
         // FFTW planner is not thread-safe — serialize creation
         let _g = PLANNING_MUTEX.lock().unwrap();
+        prepare_plan_threads();
         let mut buf_in = vec![0.0f64; n];
         let mut buf_out = vec![0.0f64; n + 2]; // (n/2+1) complex = n+2 reals
         let plan = unsafe {
@@ -56,7 +113,7 @@ impl PlanAndBuffers {
                 n as i32,
                 buf_in.as_mut_ptr(),
                 buf_out.as_mut_ptr(),
-                FFTW_ESTIMATE,
+                planning_flags(),
             )
         };
         if plan.is_null() {
@@ -71,6 +128,7 @@ impl PlanAndBuffers {
 
     fn c2c(n: usize, forward: bool) -> Self {
         let _g = PLANNING_MUTEX.lock().unwrap();
+        prepare_plan_threads();
         let len = n * 2;
         let mut buf_in = vec![0.0f64; len];
         let mut buf_out = vec![0.0f64; len];
@@ -81,7 +139,7 @@ impl PlanAndBuffers {
                 buf_in.as_mut_ptr(),
                 buf_out.as_mut_ptr(),
                 sign,
-                FFTW_ESTIMATE,
+                planning_flags(),
             )
         };
         if plan.is_null() {
@@ -93,6 +151,24 @@ impl PlanAndBuffers {
             buf_out,
         }
     }
+}
+
+fn planning_flags() -> u32 {
+    match FFT_PATIENCE.load(Ordering::SeqCst) {
+        0 => FFTW_ESTIMATE,
+        1 => FFTW_ESTIMATE_PATIENT,
+        2 => FFTW_MEASURE,
+        3 => FFTW_PATIENT,
+        4 => FFTW_EXHAUSTIVE,
+        _ => FFTW_ESTIMATE_PATIENT,
+    }
+}
+
+fn prepare_plan_threads() {
+    ensure_fftw_threads_initialized().expect("fftw_init_threads failed");
+    let threads = FFT_THREADS.load(Ordering::SeqCst).max(1);
+    unsafe { fftw_plan_with_nthreads(threads as i32) };
+    PLANS_CREATED.store(true, Ordering::SeqCst);
 }
 
 use std::collections::HashMap;

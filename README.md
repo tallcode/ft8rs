@@ -39,6 +39,18 @@ cargo build --release --features fftw
 编译后不能在运行时切换 FFT 引擎：默认产物是 `rustfft @ 3840`，带
 `--features fftw` 的产物是 `FFTW @ 3840`。
 
+FFTW 构建支持 WSJT-X `jt9` 风格的 FFT 线程参数：
+
+```bash
+cargo build --release --features fftw
+target/release/ft8rs file tests/ft8/210703_133430.wav -m 3 -w 1
+```
+
+`--fft-threads` 也可写作 `-m`。默认值为 1。默认 RustFFT 构建没有 FFTW
+那种单个 plan 内部多线程接口，因此 `--fft-threads > 1` 会明确报错。
+`--patience` 也可写作 `-w`，取值 0..=4，默认值为 1；默认 RustFFT 构建
+只接受默认值 1。
+
 ## 编译 CLI
 
 推荐始终编译 release 版本：
@@ -111,20 +123,60 @@ target/release/ft8rs file recording.wav --start-time 230208_140300
 target/release/ft8rs file recording.wav --start-time 140300
 ```
 
-### 指定频率范围和深度
+### 解码参数
+
+CLI 参数按用途分组。常用短别名如下：
+
+- Decode context: `-c/--my-call`、`-G/--my-grid`、`-x/--his-call`、
+  `-g/--his-grid`、`-Q/--qso-progress`
+- Frequency: `-L/--low`、`-H/--high`、`-f/--rx-frequency`、
+  `-T/--tx-frequency`、`-A/--ap-width`
+- Decode: `-d/--depth`、`-C/--max-candidates`、`-P/--no-ap`、
+  `-O/--cq-only`
+- FFTW: `-m/--fft-threads`、`-w/--patience`
+- Input/output: `-s/--start-time`、`-i/--device`、`-S/--slots`、
+  `-u/--udp`、`-o/--udp-host`、`-p/--udp-port`
+
+指定频率范围、深度和候选数量：
 
 ```bash
 target/release/ft8rs file tests/ft8/230208_140300.wav \
-  --low 200 \
-  --high 3000 \
-  --depth 3 \
-  --max-candidates 1000
+  -L 200 \
+  -H 3000 \
+  -d 3 \
+  -C 1000 \
+  -m 1 \
+  -w 1
+```
+
+### 指定 AP/Hash 上下文
+
+`file` 和 `monitor` 都支持 WSJT-X `jt9` 风格的上下文参数：
+
+```bash
+target/release/ft8rs file tests/ft8/230208_140300.wav \
+  -c K1ABC \
+  -G FN20 \
+  -x W9XYZ \
+  -g EN60 \
+  -Q 0
+```
+
+其中 `--my-call` 和 `--his-call` 会参与 WSJT-X 风格 AP 解码和 hash-call
+unpack；`--my-grid` 和 `--his-grid` 作为正式 decode config 保留，用于和
+WSJT-X CLI 参数形态对齐。`--qso-progress` / `-Q` 取值为 `0..=5`，用于
+WSJT-X 风格 AP pass 选择。
+
+FFTW 构建下可以用 `-m` / `--fft-threads` 指定大 FFT plan 线程数：
+
+```bash
+target/release/ft8rs file tests/ft8/230208_140300.wav -m 3 -w 1
 ```
 
 禁用 AP 解码：
 
 ```bash
-target/release/ft8rs file tests/ft8/230208_140300.wav --no-ap
+target/release/ft8rs file tests/ft8/230208_140300.wav -P
 ```
 
 ### 实时监听入口
@@ -140,14 +192,14 @@ target/release/ft8rs monitor
 带 `--device` 时进入声卡采集解码入口。`--device` 可以使用上面列表里的 `Index`，也可以使用完整设备名：
 
 ```bash
-target/release/ft8rs monitor --device 0
-target/release/ft8rs monitor --device "MacBook Pro Microphone"
+target/release/ft8rs monitor -i 0
+target/release/ft8rs monitor -i "MacBook Pro Microphone"
 ```
 
 测试时可以限制监听段数：
 
 ```bash
-target/release/ft8rs monitor --device "VB-Cable A" --slots 2
+target/release/ft8rs monitor -i "VB-Cable A" -S 2
 ```
 
 默认只输出 CLI。加上 `--udp` 后，`monitor` 会把每条解码结果按
@@ -155,8 +207,8 @@ WSJT-X UDP Decode packet 兼容格式发给 UDP report destination。默认目�
 地址是 `127.0.0.1:2238`，可以修改：
 
 ```bash
-target/release/ft8rs monitor --device "VB-Cable A" --udp
-target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --udp-port 2238
+target/release/ft8rs monitor -i "VB-Cable A" -u
+target/release/ft8rs monitor -i "VB-Cable A" -u -o 127.0.0.1 -p 2238
 ```
 
 声卡输入按系统 UTC 时间对齐到下一个 15 秒 slot 后开始采集，每段采集完成后进入同一套渐进解码输出路径：早期结果先打印，完整 slot 和 AP 阶段继续补充新结果。每段消息后面使用同样的分隔符，并标出本段解码数量。

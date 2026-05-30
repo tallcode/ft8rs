@@ -20,7 +20,9 @@ fn main() {
         }
     }
 
-    // Link against system libfftw3.
+    // Link against system libfftw3. The threads library is needed for the
+    // WSJT-X-style -m/--fft-threads path.
+    println!("cargo:rustc-link-lib=fftw3_threads");
     println!("cargo:rustc-link-lib=fftw3");
 
     println!("cargo:rerun-if-changed=src/util/fft_fftw.rs");

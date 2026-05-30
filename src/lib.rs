@@ -10,3 +10,5 @@ pub use stream::session::{
 };
 pub use stream::SlotTimestamp;
 pub use util::engine_name as fft_engine_name;
+pub use util::set_fft_patience;
+pub use util::set_fft_threads;

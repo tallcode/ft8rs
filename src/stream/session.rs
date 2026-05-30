@@ -129,7 +129,9 @@ pub struct WsjtxDecodeConfig {
     pub lapcqonly: bool,
     pub nagain: bool,
     pub mycall: Option<String>,
+    pub mygrid: Option<String>,
     pub hiscall: Option<String>,
+    pub hisgrid: Option<String>,
 }
 
 pub type StreamDecodeConfig = WsjtxDecodeConfig;
@@ -151,7 +153,9 @@ impl Default for WsjtxDecodeConfig {
             lapcqonly: false,
             nagain: false,
             mycall: None,
+            mygrid: None,
             hiscall: None,
+            hisgrid: None,
         }
     }
 }

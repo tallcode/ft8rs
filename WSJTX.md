@@ -87,6 +87,26 @@ Rust 代码不完全使用 Fortran 大小写，但语义尽量贴近：
 - `nfa/nfb/ndepth/nfqso/nftx/ncontest/nzhsym/ncand` 保持 WSJT-X 风格。
 - `nqso_progress` 对应 WSJT-X `nQSOProgress`。
 - `enabled/cq_only` 分别对应 `lft8apon/lapcqonly`。
+- CLI 支持 WSJT-X `jt9` 风格上下文参数 `-c/--my-call`、`-G/--my-grid`、
+  `-x/--his-call`、`-g/--his-grid`。当前 FT8 AP/hash 路径实际使用
+  `mycall/hiscall`；grid 字段保留在 decode config 中，保持接口形态和后续
+  对齐空间。
+- CLI 支持 `-Q/--qso-progress`，对应 WSJT-X AP pass selection 使用的
+  `nQSOProgress`，当前取值限制为 `0..=5`。
+- CLI 支持 `-L/--low`、`-H/--high`、`-f/--rx-frequency`、
+  `-T/--tx-frequency`、`-A/--ap-width`。这些参数分别写入 `nfa/nfb`、
+  `nfqso/nftx/napwid`，用于 regular decode 频率范围、AP/focused retry
+  频率上下文和 AP 频率门限。
+- CLI 支持 `-d/--depth`、`-C/--max-candidates`、`-P/--no-ap`、
+  `-O/--cq-only`，分别写入 `ndepth/ncand/lft8apon/lapcqonly`。
+- CLI 支持 `-m THREADS` / `--fft-threads THREADS`。该参数只在 FFTW
+  构建中提供真正的 FFTW 内部线程；RustFFT 构建只接受默认值 1。
+- CLI 支持 `-w PATIENCE` / `--patience PATIENCE`。该参数只在 FFTW
+  构建中提供真正的 FFTW planning patience；RustFFT 构建只接受默认值 1。
+- CLI input/output 扩展参数也提供短别名：`-s/--start-time`、
+  `-i/--device`、`-S/--slots`、`-u/--udp`、`-o/--udp-host`、
+  `-p/--udp-port`。这些是 ft8rs 流式入口参数，不属于 WSJT-X decode
+  core。
 - `ft8_a7d`、`ft8_downsample`、`sync8`、`subtractft8` 等核心阶段名保留
   WSJT-X 源码名，方便逐段核对。
 
@@ -176,6 +196,13 @@ tail slot。
 - 对齐测试构建：`FFTW @ 3840`，通过 `--features fftw` 启用。
 - 运行时 FFT 后端切换已移除。
 - `rustfft@4096` 已移除。
+- FFTW 构建支持 WSJT-X `jt9 -m/--fft-threads` 语义。该参数配置
+  `fftw_plan_with_nthreads()`，必须在首次 FFT plan 创建前生效；默认
+  RustFFT 构建中 `--fft-threads > 1` 会报错，因为 RustFFT 没有 FFTW
+  plan-level threading API。
+- FFTW 构建支持 WSJT-X `jt9 -w/--patience` 语义。映射和 `four2a.f90`
+  一致：`0=FFTW_ESTIMATE`、`1=FFTW_ESTIMATE_PATIENT`、`2=FFTW_MEASURE`、
+  `3=FFTW_PATIENT`、`4=FFTW_EXHAUSTIVE`。默认 RustFFT 构建只接受默认值 1。
 
 原因：WSJT-X `sync8` 使用 `NFFT1=3840`，`12000/3840=3.125 Hz/bin`，
 FT8 tone spacing `6.25 Hz` 正好是 2 个 bin。
@@ -413,7 +440,8 @@ No-algorithm-change optimizations already applied:
 Rejected or low-priority:
 
 - candidate parallelism: risks changing duplicate/subtract/residual order。
-- FFTW wisdom / FFTW threads: FFT is not the current dominant cost。
+- FFTW wisdom: FFT is not the current dominant cost。FFTW plan-level threads are
+  implemented for `--features fftw` builds via `-m/--fft-threads`。
 - broad `sync8` f32 rewrites: previously reduced long score。
 - candidate-level `cd0` cache: removed from the active regular path. WSJT-X shares
   the long 192k FFT per pass, but each `ft8b` candidate still down-samples at its
