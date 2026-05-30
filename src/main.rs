@@ -35,53 +35,116 @@ struct FileArgs {
     /// Input WAV file
     input: PathBuf,
 
+    #[command(flatten, next_help_heading = "Decode context")]
+    decode: DecodeArgs,
+
     /// Timestamp for the first decoded slot, e.g. 230208_140300 or 140300.
     /// If omitted, ft8rs tries to infer it from the file name.
-    #[arg(long)]
+    #[arg(
+        short = 's',
+        long,
+        value_name = "YYMMDD_HHMMSS|HHMMSS",
+        help_heading = "Input"
+    )]
     start_time: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+struct DecodeArgs {
+    /// My callsign, used by WSJT-X-style AP decode and hash-call unpacking.
+    #[arg(short = 'c', long, help_heading = "Decode context")]
+    my_call: Option<String>,
+
+    /// My grid locator, retained in the decode config for WSJT-X CLI parity.
+    #[arg(short = 'G', long, help_heading = "Decode context")]
+    my_grid: Option<String>,
+
+    /// His callsign, used by WSJT-X-style AP decode and hash-call unpacking.
+    #[arg(short = 'x', long, help_heading = "Decode context")]
+    his_call: Option<String>,
+
+    /// His grid locator, retained in the decode config for WSJT-X CLI parity.
+    #[arg(short = 'g', long, help_heading = "Decode context")]
+    his_grid: Option<String>,
+
+    /// QSO progress (0-5), used by WSJT-X-style AP pass selection.
+    #[arg(short = 'Q', long, help_heading = "Decode context")]
+    qso_progress: Option<usize>,
 
     /// Lower decode frequency bound in Hz
-    #[arg(long)]
+    #[arg(short = 'L', long, help_heading = "Frequency")]
     low: Option<f64>,
 
     /// Upper decode frequency bound in Hz
-    #[arg(long)]
+    #[arg(short = 'H', long, help_heading = "Frequency")]
     high: Option<f64>,
 
+    /// Receive/QSO frequency offset in Hz, used by AP and focused retry logic.
+    #[arg(short = 'f', long, help_heading = "Frequency")]
+    rx_frequency: Option<f64>,
+
+    /// Transmit frequency offset in Hz, used by AP frequency gating.
+    #[arg(short = 'T', long, help_heading = "Frequency")]
+    tx_frequency: Option<f64>,
+
+    /// AP frequency gate width in Hz.
+    #[arg(short = 'A', long, help_heading = "Frequency")]
+    ap_width: Option<f64>,
+
     /// WSJT-X decode depth
-    #[arg(long)]
+    #[arg(short = 'd', long, help_heading = "Decode")]
     depth: Option<usize>,
 
     /// Maximum sync candidates per pass
-    #[arg(long)]
+    #[arg(short = 'C', long, help_heading = "Decode")]
     max_candidates: Option<usize>,
 
     /// Disable AP decoding
-    #[arg(long)]
+    #[arg(short = 'P', long, help_heading = "Decode")]
     no_ap: bool,
+
+    /// Restrict AP decoding to CQ-style AP.
+    #[arg(short = 'O', long, help_heading = "Decode")]
+    cq_only: bool,
+
+    /// Number of threads to process large FFTs. Values greater than 1 require an FFTW build.
+    #[arg(short = 'm', long, default_value_t = 1, help_heading = "FFTW")]
+    fft_threads: usize,
+
+    /// FFTW3 planning patience (0-4). Values other than 1 require an FFTW build.
+    #[arg(short = 'w', long, default_value_t = 1, help_heading = "FFTW")]
+    patience: usize,
 }
 
 #[derive(Args)]
 struct MonitorArgs {
     /// Input device selector: use the Index shown by `ft8rs monitor`, or the full device name.
     /// Omit this option to list input devices.
-    #[arg(long)]
+    #[arg(short = 'i', long, help_heading = "Input")]
     device: Option<String>,
 
+    #[command(flatten, next_help_heading = "Decode context")]
+    decode: DecodeArgs,
+
     /// Stop after this many 15-second slots. Omit to keep listening.
-    #[arg(long)]
+    #[arg(short = 'S', long, help_heading = "Input")]
     slots: Option<usize>,
 
     /// Send UDP decode reports in the WSJT-X-compatible packet format.
-    #[arg(long)]
+    #[arg(short = 'u', long, help_heading = "Output")]
     udp: bool,
 
     /// UDP report destination host.
-    #[arg(long, default_value = "127.0.0.1")]
+    #[arg(
+        short = 'o',
+        long,
+        default_value = "127.0.0.1",
+        help_heading = "Output"
+    )]
     udp_host: String,
 
     /// UDP report destination port.
-    #[arg(long, default_value_t = 2238)]
+    #[arg(short = 'p', long, default_value_t = 2238, help_heading = "Output")]
     udp_port: u16,
 }
 
@@ -112,12 +175,52 @@ fn run_file(args: FileArgs) -> Result<(), String> {
         })?,
     };
 
+    let config = stream_decode_config(&args.decode)?;
+
+    let outputs = RefCell::new(Outputs::new(None)?);
+    decode_wav_file_streaming_decodes(
+        &args.input,
+        FileDecodeOptions { start_time, config },
+        |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
+        |timestamp, count| outputs.borrow_mut().on_slot_complete(timestamp, count),
+    )
+}
+
+fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String> {
+    validate_decode_args(args)?;
+    ft8rs::set_fft_patience(args.patience)?;
+    ft8rs::set_fft_threads(args.fft_threads)?;
+
     let mut config = StreamDecodeConfig::default();
+    if let Some(value) = normalized_nonempty(&args.my_call) {
+        config.mycall = Some(value);
+    }
+    if let Some(value) = normalized_nonempty(&args.my_grid) {
+        config.mygrid = Some(value);
+    }
+    if let Some(value) = normalized_nonempty(&args.his_call) {
+        config.hiscall = Some(value);
+    }
+    if let Some(value) = normalized_nonempty(&args.his_grid) {
+        config.hisgrid = Some(value);
+    }
     if let Some(low) = args.low {
         config.nfa = low;
     }
     if let Some(high) = args.high {
         config.nfb = high;
+    }
+    if let Some(rx_frequency) = args.rx_frequency {
+        config.nfqso = rx_frequency;
+    }
+    if let Some(tx_frequency) = args.tx_frequency {
+        config.nftx = tx_frequency;
+    }
+    if let Some(qso_progress) = args.qso_progress {
+        config.nQSOProgress = qso_progress;
+    }
+    if let Some(ap_width) = args.ap_width {
+        config.napwid = ap_width;
     }
     if let Some(depth) = args.depth {
         config.ndepth = depth;
@@ -128,14 +231,47 @@ fn run_file(args: FileArgs) -> Result<(), String> {
     if args.no_ap {
         config.lft8apon = false;
     }
+    if args.cq_only {
+        config.lapcqonly = true;
+    }
+    Ok(config)
+}
 
-    let outputs = RefCell::new(Outputs::new(None)?);
-    decode_wav_file_streaming_decodes(
-        &args.input,
-        FileDecodeOptions { start_time, config },
-        |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
-        |timestamp, count| outputs.borrow_mut().on_slot_complete(timestamp, count),
-    )
+fn validate_decode_args(args: &DecodeArgs) -> Result<(), String> {
+    if let Some(qso_progress) = args.qso_progress {
+        if qso_progress > 5 {
+            return Err("--qso-progress must be in 0..=5".to_string());
+        }
+    }
+    if let Some(depth) = args.depth {
+        if !(1..=3).contains(&depth) {
+            return Err("--depth must be in 1..=3".to_string());
+        }
+    }
+    if let Some(max_candidates) = args.max_candidates {
+        if max_candidates == 0 {
+            return Err("--max-candidates must be at least 1".to_string());
+        }
+    }
+    if let Some(ap_width) = args.ap_width {
+        if ap_width <= 0.0 {
+            return Err("--ap-width must be greater than 0".to_string());
+        }
+    }
+    if let (Some(low), Some(high)) = (args.low, args.high) {
+        if low >= high {
+            return Err("--low must be less than --high".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn normalized_nonempty(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_uppercase())
 }
 
 fn run_monitor(args: MonitorArgs) -> Result<(), String> {
@@ -151,7 +287,7 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
     decode_soundcard_streaming_decodes(
         ft8rs::input::SoundcardDecodeOptions {
             device: args.device,
-            config: StreamDecodeConfig::default(),
+            config: stream_decode_config(&args.decode)?,
             max_slots: args.slots,
         },
         |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),

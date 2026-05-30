@@ -33,6 +33,54 @@ pub fn engine_name() -> &'static str {
     }
 }
 
+/// Configure WSJT-X-style FFT threads.
+///
+/// This is meaningful only for the FFTW backend. RustFFT does not expose
+/// plan-level internal threading, so `threads > 1` is rejected there instead of
+/// silently pretending to honor the option.
+pub fn set_fft_threads(threads: usize) -> Result<(), String> {
+    if threads == 0 {
+        return Err("--fft-threads must be at least 1".to_string());
+    }
+
+    #[cfg(feature = "fftw")]
+    {
+        fft_fftw::set_fft_threads(threads)
+    }
+    #[cfg(not(feature = "fftw"))]
+    {
+        if threads == 1 {
+            Ok(())
+        } else {
+            Err("--fft-threads > 1 requires an FFTW build (--features fftw)".to_string())
+        }
+    }
+}
+
+/// Configure WSJT-X-style FFTW planning patience.
+///
+/// WSJT-X maps patience 0..=4 to FFTW ESTIMATE, ESTIMATE_PATIENT, MEASURE,
+/// PATIENT and EXHAUSTIVE respectively. RustFFT has no FFTW planning phase, so
+/// only the WSJT-X default value is accepted there.
+pub fn set_fft_patience(patience: usize) -> Result<(), String> {
+    if patience > 4 {
+        return Err("--patience must be in 0..=4".to_string());
+    }
+
+    #[cfg(feature = "fftw")]
+    {
+        fft_fftw::set_fft_patience(patience)
+    }
+    #[cfg(not(feature = "fftw"))]
+    {
+        if patience == 1 {
+            Ok(())
+        } else {
+            Err("--patience requires an FFTW build (--features fftw)".to_string())
+        }
+    }
+}
+
 // ── WSJT-X four2a dispatch ──
 
 /// WSJT-X/FFTPACK-style complex FFT.
