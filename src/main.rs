@@ -15,8 +15,10 @@ use ft8rs::SlotTimestamp;
 use output::udp::UdpConfig;
 use output::Outputs;
 
+const VERSION: &str = env!("FT8RS_VERSION");
+
 #[derive(Parser)]
-#[command(name = "ft8rs", about = "FT8 streaming decoder")]
+#[command(name = "ft8rs", version = VERSION, about = "FT8 streaming decoder")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -51,23 +53,23 @@ struct FileArgs {
 
 #[derive(Args, Clone, Debug)]
 struct DecodeArgs {
-    /// My callsign, used by WSJT-X-style AP decode and hash-call unpacking.
+    /// My callsign, used by AP decode and hash-call unpacking.
     #[arg(short = 'c', long, help_heading = "Decode context")]
     my_call: Option<String>,
 
-    /// My grid locator, retained in the decode config for WSJT-X CLI parity.
+    /// My grid locator, retained in the decode config.
     #[arg(short = 'G', long, help_heading = "Decode context")]
     my_grid: Option<String>,
 
-    /// His callsign, used by WSJT-X-style AP decode and hash-call unpacking.
+    /// His callsign, used by AP decode and hash-call unpacking.
     #[arg(short = 'x', long, help_heading = "Decode context")]
     his_call: Option<String>,
 
-    /// His grid locator, retained in the decode config for WSJT-X CLI parity.
+    /// His grid locator, retained in the decode config.
     #[arg(short = 'g', long, help_heading = "Decode context")]
     his_grid: Option<String>,
 
-    /// QSO progress (0-5), used by WSJT-X-style AP pass selection.
+    /// QSO progress (0-5), used by AP pass selection.
     #[arg(short = 'Q', long, help_heading = "Decode context")]
     qso_progress: Option<usize>,
 
@@ -91,7 +93,7 @@ struct DecodeArgs {
     #[arg(short = 'A', long, help_heading = "Frequency")]
     ap_width: Option<f64>,
 
-    /// WSJT-X decode depth
+    /// Decode depth
     #[arg(short = 'd', long, help_heading = "Decode")]
     depth: Option<usize>,
 
@@ -130,7 +132,7 @@ struct MonitorArgs {
     #[arg(short = 'S', long, help_heading = "Input")]
     slots: Option<usize>,
 
-    /// Send UDP decode reports in the WSJT-X-compatible packet format.
+    /// Send UDP decode reports in the compatible packet format.
     #[arg(short = 'u', long, help_heading = "Output")]
     udp: bool,
 

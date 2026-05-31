@@ -71,9 +71,9 @@ thread_local! {
         std::cell::RefCell::new(ScratchBuffers::new());
 }
 
-/// WSJT-X/FFTPACK-style complex FFT without normalization in either direction.
+/// four2a/FFTPACK-style complex FFT without normalization in either direction.
 ///
-/// Used by WSJT-X-aligned call sites that apply the Fortran `fac` explicitly.
+/// Used by call sites that apply the Fortran `fac` explicitly.
 #[inline]
 pub fn four2a_c2c(re: &mut [f64], im: &mut [f64], isign: i32) {
     let inverse = match isign {
@@ -219,7 +219,7 @@ mod tests {
     }
 }
 
-/// WSJT-X/FFTPACK-style real-to-complex forward FFT.
+/// four2a/FFTPACK-style real-to-complex forward FFT.
 #[inline]
 pub fn four2a_r2c(re: &mut [f64], im: &mut [f64]) {
     let n = re.len();

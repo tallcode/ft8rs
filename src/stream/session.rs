@@ -1,6 +1,4 @@
 use std::collections::HashSet;
-use std::sync::OnceLock;
-use std::time::Instant;
 
 use crate::decode::ft8_a7::{ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache};
 use crate::decode::ft8_decode::{
@@ -13,22 +11,22 @@ use crate::HashCallBook;
 const SAMPLE_RATE: u32 = 12000;
 const NMAX: usize = 15 * 12_000;
 const NZHSYM_STRIDE: usize = 3456;
-const WSJTX_MSG37_LEN: usize = 37;
+const AP_MSG_LEN: usize = 37;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct WsjtxMsg37 {
-    bytes: [u8; WSJTX_MSG37_LEN],
+struct FixedMsg37 {
+    bytes: [u8; AP_MSG_LEN],
 }
 
-impl WsjtxMsg37 {
+impl FixedMsg37 {
     fn from_trimmed(value: &str) -> Self {
-        let mut bytes = [b' '; WSJTX_MSG37_LEN];
+        let mut bytes = [b' '; AP_MSG_LEN];
         for (idx, byte) in value
             .trim()
             .as_bytes()
             .iter()
             .copied()
-            .take(WSJTX_MSG37_LEN)
+            .take(AP_MSG_LEN)
             .enumerate()
         {
             bytes[idx] = byte.to_ascii_uppercase();
@@ -61,7 +59,7 @@ impl WsjtxMsg37 {
     }
 
     fn fortran_slice_trimmed(&self, start: usize, end: usize) -> String {
-        let end = end.min(WSJTX_MSG37_LEN);
+        let end = end.min(AP_MSG_LEN);
         if start >= end {
             return String::new();
         }
@@ -72,11 +70,10 @@ impl WsjtxMsg37 {
 }
 
 /// Info saved from a slot decode for AP decode in the next slot.
-/// Matches WSJT-X ft8_a7_save: dt0, f0, msg0("call_1 call_2 [grid4]").
 #[derive(Clone, Debug)]
 struct A7SaveEntry {
-    msg0: WsjtxMsg37,
-    dt0: f64, // WSJT-X convention: dt = candidate_dt - 0.5
+    msg0: FixedMsg37,
+    dt0: f64,
     f0: f64,
 }
 
@@ -109,11 +106,9 @@ impl A7SaveEntry {
     }
 }
 
-/// WSJT-X uses jseq = mod(nutc/5, 2) to alternate even/odd sequences.
-/// AP decode only uses entries from the same parity (even→even, odd→odd).
 #[allow(non_snake_case)]
 #[derive(Clone, Debug)]
-pub struct WsjtxDecodeConfig {
+pub struct StreamDecodeConfig {
     pub nfa: f64,
     pub nfb: f64,
     pub syncmin: Option<f64>,
@@ -133,9 +128,7 @@ pub struct WsjtxDecodeConfig {
     pub hisgrid: Option<String>,
 }
 
-pub type StreamDecodeConfig = WsjtxDecodeConfig;
-
-impl Default for WsjtxDecodeConfig {
+impl Default for StreamDecodeConfig {
     fn default() -> Self {
         Self {
             nfa: 200.0,
@@ -179,17 +172,17 @@ pub struct StreamSlotDecodeState {
 }
 
 pub struct StreamDecodeSession {
-    params: WsjtxDecodeConfig,
+    params: StreamDecodeConfig,
     book: HashCallBook,
-    /// WSJT-X-style AP memory: a7[jseq][k], where jseq is even/odd UTC
-    /// sequence parity and k=0/1 is previous/current for that parity.
+    /// AP memory: a7[jseq][k], where jseq is even/odd UTC sequence parity and
+    /// k=0/1 is previous/current for that parity.
     a7: [[Vec<A7SaveEntry>; 2]; 2],
-    /// Current sequence parity: 0=even, 1=odd. Matches WSJT-X `jseq=mod(nutc/5,2)`.
+    /// Current sequence parity: 0=even, 1=odd.
     jseq: usize,
 }
 
 impl StreamDecodeSession {
-    pub fn new(params: WsjtxDecodeConfig) -> Self {
+    pub fn new(params: StreamDecodeConfig) -> Self {
         Self {
             params,
             book: HashCallBook::new(),
@@ -276,22 +269,14 @@ impl StreamDecodeSession {
     {
         self.ft8_a7_new_slot(timestamp);
 
-        let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         let early_dd = dd0_partial_nzhsym(&state.dd0, 41);
-        let t_decode = Instant::now();
         let (early_results, _) = if self.params.ndepth == 1 {
             (Vec::new(), Vec::new())
         } else {
             decode_f64_with_sbase(&early_dd, self.ft8_decode_options(41))
         };
-        trace_timer(
-            "stream.nzhsym41.decode",
-            t_decode,
-            Some(format!("regular={}", early_results.len())),
-        );
         state.early_results = early_results;
-        let t_emit = Instant::now();
         for d in &state.early_results {
             push_regular_decode(
                 &mut state.seen,
@@ -301,39 +286,22 @@ impl StreamDecodeSession {
                 &mut on_decode,
             )?;
         }
-        trace_timer(
-            "stream.nzhsym41.emit",
-            t_emit,
-            Some(format!("merged={}", state.merged.len())),
-        );
-        trace_timer("stream.nzhsym41.total", t_stage, None);
         Ok(())
     }
 
     pub fn subtract_slot_nzhsym47(&self, state: &mut StreamSlotDecodeState, samples: &[f32]) {
-        let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         state.dd1 = dd0_partial_nzhsym(&state.dd0, 47);
         state.early_subtracted = vec![false; state.early_results.len()];
         let lrefinedt = self.params.ndepth > 2;
-        let mut subtracted = 0usize;
         for (idx, d) in state.early_results.iter().enumerate() {
             if d.dt < 0.396 {
                 let mut itone = [0i32; 79];
                 itone.copy_from_slice(&d.itone[..79]);
                 subtract_ft8_refined(&mut state.dd1, &itone, d.freq, d.dt + 0.5, lrefinedt);
                 state.early_subtracted[idx] = true;
-                subtracted += 1;
             }
         }
-        trace_timer(
-            "stream.nzhsym47.subtract",
-            t_stage,
-            Some(format!(
-                "early={} subtracted={subtracted}",
-                state.early_results.len()
-            )),
-        );
     }
 
     pub fn decode_slot_nzhsym50_and_finish<F>(
@@ -345,11 +313,9 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        let t_stage = Instant::now();
         state.dd0 = dd0_from_samples(samples);
         let mut full_dd = state.dd0.clone();
         full_dd[50 * NZHSYM_STRIDE..].fill(0.0);
-        let mut late_subtracted = 0usize;
         if !self.params.nagain {
             let clean_prefix = (47 * NZHSYM_STRIDE).min(NMAX);
             full_dd[..clean_prefix].copy_from_slice(&state.dd1[..clean_prefix]);
@@ -358,31 +324,18 @@ impl StreamDecodeSession {
                     let mut itone = [0i32; 79];
                     itone.copy_from_slice(&d.itone[..79]);
                     subtract_ft8_refined(&mut full_dd, &itone, d.freq, d.dt + 0.5, true);
-                    late_subtracted += 1;
                 }
             }
         }
-        trace_timer(
-            "stream.nzhsym50.prepare",
-            t_stage,
-            Some(format!("late_subtracted={late_subtracted}")),
-        );
 
-        let t_full = Instant::now();
         let mut full_options = self.ft8_decode_options(50);
         full_options.initial_messages = state.early_results.iter().map(|d| d.msg.clone()).collect();
         let (full_results, sbase, full_residual) =
             decode_f64_with_sbase_and_residual(&full_dd, full_options);
-        trace_timer(
-            "stream.nzhsym50.decode",
-            t_full,
-            Some(format!("regular={}", full_results.len())),
-        );
 
-        // Build current a7 table entries before AP. WSJT-X ft8_a7_save uses
-        // these current entries to suppress previous entries already accounted
-        // for by a regular decode in this sequence.
-        let t_a7_save = Instant::now();
+        // Build current a7 table entries before AP. Current entries suppress
+        // previous entries already accounted for by a regular decode in this
+        // sequence.
         let all_regular: Vec<&DecodedMessage> = state
             .early_results
             .iter()
@@ -393,13 +346,7 @@ impl StreamDecodeSession {
             .copied()
             .filter_map(ft8_a7_save_entry)
             .collect();
-        trace_timer(
-            "stream.a7_save",
-            t_a7_save,
-            Some(format!("entries={}", entries_to_save.len())),
-        );
 
-        let t_ap = Instant::now();
         let previous_entries = &self.a7[self.jseq][0];
         let ap_candidates = suppress_previous_a7_entries(previous_entries, &entries_to_save);
         let ap_allowed =
@@ -424,17 +371,7 @@ impl StreamDecodeSession {
             }
             ap_msgs
         };
-        trace_timer(
-            "stream.ft8_a7d",
-            t_ap,
-            Some(format!(
-                "candidates={} decoded={}",
-                ap_candidates.len(),
-                ap_results.len()
-            )),
-        );
 
-        let t_merge = Instant::now();
         for d in &full_results {
             push_regular_decode(
                 &mut state.seen,
@@ -464,22 +401,11 @@ impl StreamDecodeSession {
                 state.merged.push(decode);
             }
         }
-        trace_timer(
-            "stream.merge",
-            t_merge,
-            Some(format!("merged={}", state.merged.len())),
-        );
 
-        // Matches WSJT-X: save current decodes as ndec(jseq,1). They move to
-        // ndec(jseq,0) at the next nzhsym=41/new-UTC transition for this parity.
+        // Save current decodes for the next same-parity slot.
         self.a7[self.jseq][1] = entries_to_save;
         self.jseq = 1 - self.jseq;
 
-        trace_timer(
-            "stream.nzhsym50.total",
-            t_stage,
-            Some(format!("merged={}", state.merged.len())),
-        );
         Ok(state.merged)
     }
 
@@ -490,7 +416,7 @@ impl StreamDecodeSession {
         self.a7[self.jseq][0] = std::mem::take(&mut self.a7[self.jseq][1]);
     }
 
-    /// Full progressive decode matching WSJT-X flow:
+    /// Full progressive decode flow:
     /// 1. nzhsym=41: early decode on a zero-padded partial buffer.
     /// 2. nzhsym=47: subtract early decodes from the partial buffer and save dd1.
     /// 3. nzhsym=50: decode full buffer with early-cleaned prefix.
@@ -558,10 +484,9 @@ fn decode_a7_from_saved_entry_with_adapter_retries(
 ) -> Option<ApDecodeResult> {
     let fields = entry.decode_fields()?;
     let xbase = a7_xbase(entry.f0, sbase);
-    // Stream-adapter retry guard. The decoder core ft8_a7d mirrors WSJT-X
-    // ft8_a7.f90 and already performs its internal ifr=-5..5 frequency peak.
-    // These seed offsets only compensate saved-entry frequency quantization at
-    // the adapter boundary; removing them drops the long WSJT-X baseline by one.
+    // Stream-adapter retry guard. The decoder core ft8_a7d already performs
+    // its internal ifr=-5..5 frequency peak. These seed offsets compensate
+    // saved-entry frequency quantization at the adapter boundary.
     for offset in [0.0, 0.5, -0.5] {
         if let Some(result) = ft8_a7d_with_downsample_cache(
             downsample_cache,
@@ -594,8 +519,6 @@ fn dd0_partial_nzhsym(samples: &[f64], nzhsym: usize) -> Vec<f64> {
     out
 }
 
-/// Extract the WSJT-X `msg0`/`dt0`/`f0` table entry from a decoded message.
-/// Matches WSJT-X ft8_a7_save logic.
 fn ft8_a7_save_entry(d: &DecodedMessage) -> Option<A7SaveEntry> {
     ft8_a7_save_entry_from_parts(&d.msg, d.freq, d.dt)
 }
@@ -606,7 +529,7 @@ fn ft8_a7_save_entry_from_parts(msg: &str, freq: f64, dt: f64) -> Option<A7SaveE
         return None;
     }
 
-    // Skip messages with / or < (WSJT-X: if(index(msg,'/').ge.1 .or. index(msg,'<').ge.1) go to 999)
+    // Skip compound/hash forms for AP memory.
     if msg.contains('/') || msg.contains('<') {
         return None;
     }
@@ -628,7 +551,7 @@ fn ft8_a7_save_entry_from_parts(msg: &str, freq: f64, dt: f64) -> Option<A7SaveE
     };
 
     Some(A7SaveEntry {
-        msg0: WsjtxMsg37::from_trimmed(&msg0),
+        msg0: FixedMsg37::from_trimmed(&msg0),
         dt0: dt,
         f0: freq,
     })
@@ -636,7 +559,7 @@ fn ft8_a7_save_entry_from_parts(msg: &str, freq: f64, dt: f64) -> Option<A7SaveE
 
 fn a7_xbase(f1: f64, sbase: &[f64]) -> f64 {
     let df = crate::decode::sync8_df();
-    let freq_bin = nint_wsjtx_f32(f1 / df).max(1) as usize;
+    let freq_bin = nint_reference_f32(f1 / df).max(1) as usize;
     if freq_bin < sbase.len() {
         (10.0f32.powf(0.1 * (sbase[freq_bin] as f32 - 40.0))) as f64
     } else {
@@ -651,7 +574,7 @@ fn split77_words(msg: &str) -> Vec<String> {
         .collect();
     if words.len() >= 3 && words[0] == "CQ" {
         let call = words[2].trim_end_matches("/R").trim_end_matches("/P");
-        if is_wsjtx_chkcall(call) {
+        if is_reference_chkcall(call) {
             words[0] = format!("CQ_{}", words[1]);
             words.remove(1);
         }
@@ -659,7 +582,7 @@ fn split77_words(msg: &str) -> Vec<String> {
     words
 }
 
-fn nint_wsjtx_f32(x: f64) -> isize {
+fn nint_reference_f32(x: f64) -> isize {
     (x as f32).round() as isize
 }
 
@@ -757,7 +680,7 @@ fn is_hashable_callsign_token(token: &str) -> bool {
         && bare.chars().any(|c| c.is_ascii_digit())
 }
 
-fn is_wsjtx_chkcall(token: &str) -> bool {
+fn is_reference_chkcall(token: &str) -> bool {
     let w = token.trim().to_ascii_uppercase();
     if w.is_empty()
         || w.len() > 11
@@ -825,36 +748,16 @@ fn normal(msg: &str) -> String {
         .join(" ")
 }
 
-fn trace_timers_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("FT8RS_TRACE_TIMERS")
-            .ok()
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    })
-}
-
-fn trace_timer(label: &str, start: Instant, detail: Option<String>) {
-    if !trace_timers_enabled() {
-        return;
-    }
-    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-    match detail {
-        Some(detail) => eprintln!("[ft8rs-timer] {label}: {elapsed_ms:.1} ms ({detail})"),
-        None => eprintln!("[ft8rs-timer] {label}: {elapsed_ms:.1} ms"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        ft8_a7_save_entry_from_parts, is_wsjtx_chkcall, jseq_from_nutc, split77_words, A7SaveEntry,
-        StreamDecodeSession, WsjtxDecodeConfig, WsjtxMsg37,
+        ft8_a7_save_entry_from_parts, is_reference_chkcall, jseq_from_nutc, split77_words,
+        A7SaveEntry, FixedMsg37, StreamDecodeConfig, StreamDecodeSession,
     };
     use crate::stream::time::SlotTimestamp;
 
     #[test]
-    fn jseq_matches_wsjtx_nutc_parity() {
+    fn jseq_matches_nutc_parity() {
         assert_eq!(jseq_from_nutc(140300), 0);
         assert_eq!(jseq_from_nutc(140315), 1);
         assert_eq!(jseq_from_nutc(140330), 0);
@@ -863,7 +766,7 @@ mod tests {
 
     #[test]
     fn split77_words_does_not_treat_grid_as_cq_call() {
-        assert!(!is_wsjtx_chkcall("KN87"));
+        assert!(!is_reference_chkcall("KN87"));
         assert_eq!(
             split77_words("CQ D1DX KN87"),
             vec!["CQ".to_string(), "D1DX".to_string(), "KN87".to_string()]
@@ -872,7 +775,7 @@ mod tests {
 
     #[test]
     fn split77_words_keeps_cq_dx_call_rewrite() {
-        assert!(is_wsjtx_chkcall("DL8YHR"));
+        assert!(is_reference_chkcall("DL8YHR"));
         assert_eq!(
             split77_words("CQ DX DL8YHR JO41"),
             vec![
@@ -884,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn a7_save_entry_matches_wsjtx_cq_grid_and_skip_rules() {
+    fn a7_save_entry_matches_cq_grid_and_skip_rules() {
         let cq = ft8_a7_save_entry_from_parts("CQ D1DX KN87", 1500.0, 0.2).unwrap();
         assert_eq!(cq.msg0.trimmed(), "CQ D1DX KN87");
         let cq_fields = cq.decode_fields().unwrap();
@@ -906,7 +809,7 @@ mod tests {
 
     #[test]
     fn msg37_storage_is_fixed_width_uppercase_and_blank_padded() {
-        let msg37 = WsjtxMsg37::from_trimmed("k1abc w9xyz rr73");
+        let msg37 = FixedMsg37::from_trimmed("k1abc w9xyz rr73");
 
         assert_eq!(msg37.trimmed(), "K1ABC W9XYZ RR73");
         assert_eq!(msg37.bytes.len(), 37);
@@ -917,12 +820,12 @@ mod tests {
 
     #[test]
     fn chkcall_uses_third_character_digit_when_both_second_and_third_are_digits() {
-        assert!(is_wsjtx_chkcall("A12BC"));
+        assert!(is_reference_chkcall("A12BC"));
     }
 
     #[test]
     fn a7_memory_moves_current_to_previous_by_jseq_at_new_slot() {
-        let mut session = StreamDecodeSession::new(WsjtxDecodeConfig::default());
+        let mut session = StreamDecodeSession::new(StreamDecodeConfig::default());
         session.a7[0][1].push(test_a7_entry("K1ABC W9XYZ"));
         session.a7[1][1].push(test_a7_entry("N0CALL W1AW"));
 
@@ -944,7 +847,7 @@ mod tests {
 
     fn test_a7_entry(msg0: &str) -> A7SaveEntry {
         A7SaveEntry {
-            msg0: WsjtxMsg37::from_trimmed(msg0),
+            msg0: FixedMsg37::from_trimmed(msg0),
             dt0: 0.0,
             f0: 1500.0,
         }
