@@ -27,8 +27,3 @@ pub(crate) const FS2: f64 = SAMPLE_RATE as f64 / NDOWN as f64;
 pub(crate) const DT2: f64 = 1.0 / FS2;
 pub(crate) const DOWNSAMPLE_DF: f32 = SAMPLE_RATE as f32 / NFFT1_LONG as f32;
 pub(crate) const DOWNSAMPLE_BAUD: f32 = SAMPLE_RATE as f32 / NSPS as f32;
-/// Downsample scale after the unnormalized inverse FFT.
-///
-/// Keep the scale as f32 before storing the downsampled symbols back into f64
-/// buffers, matching the default-REAL calculation in the reference routine.
-pub(crate) const DOWNSAMPLE_FAC: f32 = 0.00004034357698401436f32;

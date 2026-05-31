@@ -169,7 +169,6 @@ fn wsjtx_ft8_downsample_shape_matches_shared_rust_helper() {
         "const NFFT2: usize = 3200",
         "const DOWNSAMPLE_DF: f32 = SAMPLE_RATE as f32 / NFFT1_LONG as f32",
         "const DOWNSAMPLE_BAUD: f32 = SAMPLE_RATE as f32 / NSPS as f32",
-        "const DOWNSAMPLE_FAC: f32",
     ] {
         assert!(
             params.contains(expected),
@@ -188,7 +187,8 @@ fn wsjtx_ft8_downsample_shape_matches_shared_rust_helper() {
         "let idx = end_tap - TAPER_SIZE + 1 + i",
         "let shift = i0 as isize - ib as isize",
         "four2a_c2c(&mut cd0_re[..NFFT2], &mut cd0_im[..NFFT2], 1)",
-        "((cd0_re[i] as f32) * DOWNSAMPLE_FAC) as f64",
+        "let fac = 1.0f32 / ((NFFT1_LONG as f32) * (NFFT2 as f32)).sqrt()",
+        "((cd0_re[i] as f32) * fac) as f64",
     ] {
         assert!(
             rust.contains(expected),

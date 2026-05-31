@@ -4,8 +4,8 @@
 //! - `wsjtx/lib/ft8/ft8_downsample.f90`
 
 use super::{
-    nint_wsjtx_real, DecodeWorkspace, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DOWNSAMPLE_FAC, NFFT1_LONG,
-    NFFT2, PI_F32, TAPER_SIZE,
+    nint_wsjtx_real, DecodeWorkspace, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, NFFT1_LONG, NFFT2, PI_F32,
+    TAPER_SIZE,
 };
 use crate::util::four2a_c2c;
 use std::sync::OnceLock;
@@ -109,8 +109,12 @@ pub(crate) fn ft8_downsample_from_cx(
 
     four2a_c2c(&mut cd0_re[..NFFT2], &mut cd0_im[..NFFT2], 1);
 
+    // WSJT-X ft8_downsample.f90:
+    //   fac=1.0/sqrt(float(NFFT1)*NFFT2)
+    //   c1=fac*c1
+    let fac = 1.0f32 / ((NFFT1_LONG as f32) * (NFFT2 as f32)).sqrt();
     for i in 0..NFFT2 {
-        cd0_re[i] = ((cd0_re[i] as f32) * DOWNSAMPLE_FAC) as f64;
-        cd0_im[i] = ((cd0_im[i] as f32) * DOWNSAMPLE_FAC) as f64;
+        cd0_re[i] = ((cd0_re[i] as f32) * fac) as f64;
+        cd0_im[i] = ((cd0_im[i] as f32) * fac) as f64;
     }
 }

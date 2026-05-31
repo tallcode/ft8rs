@@ -117,25 +117,6 @@ pub(super) fn sync8(
         let sync2d_len = (ib - ia + 1) * width;
         sync2d[..sync2d_len].fill(0.0);
 
-        // WSJT-X sync8.f90:150: scale spectrum to reference level
-        let mut s_max = 0.0;
-        for i in 0..half_size {
-            for j in 0..NHSYM {
-                if s[i * NHSYM + j] > s_max {
-                    s_max = s[i * NHSYM + j];
-                }
-            }
-        }
-        if s_max > 1e-30 {
-            let fac = 20.0 / s_max;
-            for v in s.iter_mut() {
-                *v *= fac;
-            }
-            for v in savg.iter_mut() {
-                *v *= fac;
-            }
-        }
-
         for i in ia..=ib {
             for jj in (-(jz as isize)..=(jz as isize)).step_by(1) {
                 let mut ta = 0.0;
@@ -274,18 +255,34 @@ pub(super) fn sync8(
             }
         }
 
-        let candidates = finalize_sync8_candidates(candidate0, syncmin, nfqso, maxcand);
+        suppress_near_dupe_sync8_candidates(candidate0);
+
+        // WSJT-X sync8.f90 keeps this normalization after near-dupe
+        // suppression and before candidate sorting:
+        //   fac=20.0/maxval(s)
+        //   s=fac*s
+        // The local `s` is not used afterwards, but preserving the order keeps
+        // the Rust control flow visually aligned with the reference routine.
+        scale_symbol_spectrum_to_reference_level(s);
+
+        let candidates = order_sync8_candidates(candidate0, syncmin, nfqso, maxcand);
 
         (candidates, sbase)
     })
 }
 
+#[cfg(test)]
 pub(super) fn finalize_sync8_candidates(
     candidate0: &mut [Candidate],
     syncmin: f64,
     nfqso: f64,
     maxcand: usize,
 ) -> Vec<Candidate> {
+    suppress_near_dupe_sync8_candidates(candidate0);
+    order_sync8_candidates(candidate0, syncmin, nfqso, maxcand)
+}
+
+fn suppress_near_dupe_sync8_candidates(candidate0: &mut [Candidate]) {
     for i in 0..candidate0.len() {
         for j in 0..i {
             let fdiff = candidate0[i].freq.abs() - candidate0[j].freq.abs();
@@ -302,7 +299,29 @@ pub(super) fn finalize_sync8_candidates(
             }
         }
     }
+}
 
+fn scale_symbol_spectrum_to_reference_level(s: &mut [f64]) {
+    let mut s_max = 0.0;
+    for &v in s.iter() {
+        if v > s_max {
+            s_max = v;
+        }
+    }
+    if s_max > 0.0 {
+        let fac = 20.0 / s_max;
+        for v in s.iter_mut() {
+            *v *= fac;
+        }
+    }
+}
+
+fn order_sync8_candidates(
+    candidate0: &mut [Candidate],
+    syncmin: f64,
+    nfqso: f64,
+    maxcand: usize,
+) -> Vec<Candidate> {
     let sync_values: Vec<f64> = candidate0.iter().map(|c| c.sync).collect();
     let sorted_idx = indexx_ascending(&sync_values);
 
