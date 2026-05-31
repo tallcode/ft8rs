@@ -15,12 +15,9 @@ default = []
 fftw = []
 
 [dependencies]
-rayon = "1"
 rustfft = "6"
 
 hound = "3"
 num-bigint = "0.4"
-num-complex = "0.4"
-num-traits = "0.2"
 clap = { version = "4", features = ["derive"] }
 cpal = "0.15"
