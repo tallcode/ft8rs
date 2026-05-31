@@ -160,10 +160,19 @@ Common options:
 
 ```bash
 target/release/ft8rs file tests/ft8/230208_140300.wav \
+  --profile wsjtx \
   --low 200 \
   --high 3000 \
   --depth 3 \
   --max-candidates 1000
+```
+
+Decode profiles:
+
+```text
+wsjtx  - current WSJT-X-aligned decoder, default
+jtdx   - JTDX-oriented high-sensitivity decoder path, under development
+hybrid - WSJT-X + JTDX result union, under development
 ```
 
 Short aliases:
@@ -173,6 +182,7 @@ Short aliases:
 | `--start-time` | `-s` | file start timestamp |
 | `--device` | `-i` | soundcard input index or name |
 | `--slots` | `-S` | number of slots to decode |
+| `--profile` | | decode profile: `wsjtx`, `jtdx`, or `hybrid` |
 | `--low` | `-L` | low decode frequency |
 | `--high` | `-H` | high decode frequency |
 | `--rx-frequency` | `-f` | focused receive frequency |
@@ -182,6 +192,9 @@ Short aliases:
 | `--max-candidates` | `-C` | sync candidates |
 | `--no-ap` | `-P` | disable AP decode |
 | `--cq-only` | `-O` | CQ-only AP mode |
+| `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
+| `--force-sync` | | enable JTDX forced sync time-window tracking |
+| `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid` |
 | `--my-call` | `-c` | local callsign context |
 | `--my-grid` | `-G` | local grid context |
 | `--his-call` | `-x` | DX callsign context |

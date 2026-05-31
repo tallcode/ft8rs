@@ -31,31 +31,31 @@ fn wsjtx_mirrored_source_paths_exist() {
     let root = project_root();
 
     for path in [
-        "src/decode/lib/ft8_decode.rs",
-        "src/decode/lib/ft8/ft8b.rs",
-        "src/decode/lib/ft8/ft8_a7.rs",
-        "src/decode/lib/ft8/ft8_downsample.rs",
-        "src/decode/lib/ft8/ft8_params.rs",
-        "src/decode/lib/ft8/sync8.rs",
-        "src/decode/lib/ft8/sync8d.rs",
-        "src/decode/lib/ft8/bpdecode174_91.rs",
-        "src/decode/lib/ft8/chkcrc14a.rs",
-        "src/decode/lib/ft8/decode174_91.rs",
-        "src/decode/lib/ft8/encode174_91.rs",
-        "src/decode/lib/ft8/ft8apset.rs",
-        "src/decode/lib/ft8/gen_ft8wave.rs",
-        "src/decode/lib/ft8/genft8.rs",
-        "src/decode/lib/ft8/get_crc14.rs",
-        "src/decode/lib/ft8/get_spectrum_baseline.rs",
-        "src/decode/lib/ft8/ldpc_174_91_c_generator.rs",
-        "src/decode/lib/ft8/ldpc_174_91_c_parity.rs",
-        "src/decode/lib/ft8/osd174_91.rs",
-        "src/decode/lib/ft8/subtractft8.rs",
-        "src/decode/lib/77bit/packjt77.rs",
-        "src/decode/lib/indexx.rs",
-        "src/decode/lib/nuttal_window.rs",
-        "src/decode/lib/platanh.rs",
-        "src/decode/lib/ft8/twkfreq1.rs",
+        "src/decode/lib_wsjtx/ft8_decode.rs",
+        "src/decode/lib_wsjtx/ft8/ft8b.rs",
+        "src/decode/lib_wsjtx/ft8/ft8_a7.rs",
+        "src/decode/lib_wsjtx/ft8/ft8_downsample.rs",
+        "src/decode/lib_wsjtx/ft8/ft8_params.rs",
+        "src/decode/lib_wsjtx/ft8/sync8.rs",
+        "src/decode/lib_wsjtx/ft8/sync8d.rs",
+        "src/decode/lib_wsjtx/ft8/bpdecode174_91.rs",
+        "src/decode/lib_wsjtx/ft8/chkcrc14a.rs",
+        "src/decode/lib_wsjtx/ft8/decode174_91.rs",
+        "src/decode/lib_wsjtx/ft8/encode174_91.rs",
+        "src/decode/lib_wsjtx/ft8/ft8apset.rs",
+        "src/decode/lib_wsjtx/ft8/gen_ft8wave.rs",
+        "src/decode/lib_wsjtx/ft8/genft8.rs",
+        "src/decode/lib_wsjtx/ft8/get_crc14.rs",
+        "src/decode/lib_wsjtx/ft8/get_spectrum_baseline.rs",
+        "src/decode/lib_wsjtx/ft8/ldpc_174_91_c_generator.rs",
+        "src/decode/lib_wsjtx/ft8/ldpc_174_91_c_parity.rs",
+        "src/decode/lib_wsjtx/ft8/osd174_91.rs",
+        "src/decode/lib_wsjtx/ft8/subtractft8.rs",
+        "src/decode/lib_wsjtx/77bit/packjt77.rs",
+        "src/decode/lib_wsjtx/indexx.rs",
+        "src/decode/lib_wsjtx/nuttal_window.rs",
+        "src/decode/lib_wsjtx/platanh.rs",
+        "src/decode/lib_wsjtx/ft8/twkfreq1.rs",
     ] {
         assert!(
             root.join(path).is_file(),
@@ -96,7 +96,7 @@ fn wsjtx_ft8_params_constants_match_rust_params() {
     };
 
     let wsjtx = read_to_string(&wsjtx_ft8.join("ft8_params.f90"));
-    let rust = read_to_string(&project_root().join("src/decode/lib/ft8/ft8_params.rs"));
+    let rust = read_to_string(&project_root().join("src/decode/lib_wsjtx/ft8/ft8_params.rs"));
 
     for expected in [
         "parameter (KK=91)",
@@ -139,9 +139,9 @@ fn wsjtx_ft8_downsample_shape_matches_shared_rust_helper() {
     };
 
     let wsjtx = read_to_string(&wsjtx_ft8.join("ft8_downsample.f90"));
-    let params = read_to_string(&project_root().join("src/decode/lib/ft8/ft8_params.rs"));
-    let rust = read_to_string(&project_root().join("src/decode/lib/ft8/ft8_downsample.rs"));
-    let ap = read_to_string(&project_root().join("src/decode/lib/ft8/ft8_a7.rs"));
+    let params = read_to_string(&project_root().join("src/decode/lib_wsjtx/ft8/ft8_params.rs"));
+    let rust = read_to_string(&project_root().join("src/decode/lib_wsjtx/ft8/ft8_downsample.rs"));
+    let ap = read_to_string(&project_root().join("src/decode/lib_wsjtx/ft8/ft8_a7.rs"));
 
     for expected in [
         "parameter (NFFT1=192000,NFFT2=3200)",
@@ -209,9 +209,9 @@ fn wsjtx_sync8d_shape_matches_shared_rust_costas_sync() {
     };
 
     let wsjtx = read_to_string(&wsjtx_ft8.join("sync8d.f90"));
-    let rust = read_to_string(&project_root().join("src/decode/lib/ft8/sync8d.rs"));
-    let ft8b = read_to_string(&project_root().join("src/decode/lib/ft8/ft8b.rs"));
-    let ap = read_to_string(&project_root().join("src/decode/lib/ft8/ft8_a7.rs"));
+    let rust = read_to_string(&project_root().join("src/decode/lib_wsjtx/ft8/sync8d.rs"));
+    let ft8b = read_to_string(&project_root().join("src/decode/lib_wsjtx/ft8/ft8b.rs"));
+    let ap = read_to_string(&project_root().join("src/decode/lib_wsjtx/ft8/ft8_a7.rs"));
 
     for expected in [
         "subroutine sync8d(cd0,i0,ctwk,itwk,sync)",
@@ -256,7 +256,7 @@ fn wsjtx_osd174_91_deep_path_shape_matches_rust_osd() {
     };
 
     let wsjtx = read_to_string(&wsjtx_ft8.join("osd174_91.f90"));
-    let rust = read_to_string(&project_root().join("src/decode/lib/ft8/osd174_91.rs"));
+    let rust = read_to_string(&project_root().join("src/decode/lib_wsjtx/ft8/osd174_91.rs"));
 
     for expected in [
         "subroutine osd174_91(llr,k,apmask,ndeep,message91,cw,nhardmin,dmin)",
