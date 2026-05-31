@@ -6,7 +6,6 @@
 use crate::decode::decode174_91::N_LDPC;
 use crate::util::four2a_r2c;
 use crate::HashCallBook;
-use std::time::{Duration, Instant};
 
 #[path = "ft8/baseline.rs"]
 mod baseline;
@@ -35,7 +34,7 @@ pub(crate) use self::ft8_params::{
 };
 use self::ft8apset::ft8_ap_set;
 use self::ft8apset::{M73, MCQ, MCQFD, MCQRU, MCQTEST, MCQWW, MRR73, MRRR};
-use self::ft8b::{duration_ms, ft8b, trace_timer, trace_timers_enabled};
+use self::ft8b::ft8b;
 pub(crate) use self::ft8b::{extract_symbol_spectrum, normalize_bmet};
 use self::get_spectrum_baseline::get_spectrum_baseline;
 use self::sync8::sync8;
@@ -153,19 +152,6 @@ pub(super) struct DecodeWorkspace {
     pub(super) ss: Vec<f64>,
 }
 
-#[derive(Default)]
-pub(super) struct Ft8bStats {
-    pub(super) calls: usize,
-    pub(super) sync_rejects: usize,
-    pub(super) decode_failures: usize,
-    pub(super) downsample: Duration,
-    pub(super) align: Duration,
-    pub(super) symbols: Duration,
-    pub(super) metrics: Duration,
-    pub(super) ldpc: Duration,
-    pub(super) post: Duration,
-}
-
 pub(super) fn create_decode_workspace() -> DecodeWorkspace {
     DecodeWorkspace {
         cd0_re: vec![0.0; NFFT2],
@@ -260,7 +246,6 @@ fn decode_from_f64(
     _t_dd: std::time::Duration,
     _t_start: std::time::Instant,
 ) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
-    let t_decode_total = Instant::now();
     // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
     if dd.len() > NMAX {
         dd.truncate(NMAX);
@@ -310,26 +295,14 @@ fn decode_from_f64(
     let mut sbase: Vec<f64> = Vec::new();
     for pass_idx in 0..max_passes {
         if pass_idx == 2 && ndecodes_total == 0 {
-            trace_timer(
-                "decode.pass.skip",
-                t_decode_total,
-                Some(format!("nzhsym={nzhsym} pass={}", pass_idx + 1)),
-            );
             continue;
         }
-        let t_pass = Instant::now();
         let pass_syncmin = syncmin;
         cx_re.fill(0.0);
         cx_im.fill(0.0);
 
-        let t_fft = Instant::now();
         cx_re[..residual.len()].copy_from_slice(&residual);
         four2a_r2c(&mut cx_re, &mut cx_im);
-        trace_timer(
-            "decode.pass.fft",
-            t_fft,
-            Some(format!("nzhsym={nzhsym} pass={}", pass_idx + 1)),
-        );
 
         let (ifa, ifb) = if nagain {
             (nfqso - 20.0, nfqso + 20.0)
@@ -337,30 +310,15 @@ fn decode_from_f64(
             (nfa, nfb)
         };
 
-        let t_sync = Instant::now();
         let (candidates, pass_sbase) = sync8(&residual, ifa, ifb, pass_syncmin, nfqso, ncand);
         sbase = pass_sbase;
-        trace_timer(
-            "decode.pass.sync8",
-            t_sync,
-            Some(format!(
-                "nzhsym={nzhsym} pass={} candidates={}",
-                pass_idx + 1,
-                candidates.len()
-            )),
-        );
 
         // WSJT-X ft8_decode.f90: pass 1 uses imetric=1, passes 2/3 use imetric=2.
         let pass_imetric = if pass_idx == 0 { 1 } else { 2 };
 
         let mut cand_ws = create_decode_workspace();
-        let mut ft8b_stats = trace_timers_enabled().then(Ft8bStats::default);
         // Candidate decoding is sequential so each accepted signal updates the residual
         // before later candidates are evaluated.
-        let t_candidates = Instant::now();
-        let decoded_before = decoded.len();
-        let mut accepted = 0usize;
-        let mut duplicates = 0usize;
         for cand in &candidates {
             if let Some(r) = ft8b(
                 &residual,
@@ -376,17 +334,14 @@ fn decode_from_f64(
                 &book,
                 None,
                 &mut cand_ws,
-                ft8b_stats.as_mut(),
             ) {
                 let message_key = normalize_message_key(&r.msg);
                 crate::decode::subtractft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
                 if seen_messages.contains(&message_key) {
-                    duplicates += 1;
                     continue;
                 }
                 seen_messages.insert(message_key);
                 ndecodes_total += 1;
-                accepted += 1;
                 decoded.push(DecodedMessage {
                     freq: r.freq,
                     dt: r.dt - 0.5,
@@ -397,50 +352,8 @@ fn decode_from_f64(
                 });
             }
         }
-        trace_timer(
-            "decode.pass.candidates",
-            t_candidates,
-            Some(format!(
-                "nzhsym={nzhsym} pass={} accepted={accepted} duplicates={duplicates} total_decoded={}",
-                pass_idx + 1,
-                decoded.len()
-            )),
-        );
-        if let Some(stats) = &ft8b_stats {
-            trace_timer(
-                "decode.pass.ft8b",
-                t_candidates,
-                Some(format!(
-                    "nzhsym={nzhsym} pass={} calls={} sync_rejects={} decode_failures={} downsample={:.1}ms align={:.1}ms symbols={:.1}ms metrics={:.1}ms ldpc={:.1}ms post={:.1}ms",
-                    pass_idx + 1,
-                    stats.calls,
-                    stats.sync_rejects,
-                    stats.decode_failures,
-                    duration_ms(stats.downsample),
-                    duration_ms(stats.align),
-                    duration_ms(stats.symbols),
-                    duration_ms(stats.metrics),
-                    duration_ms(stats.ldpc),
-                    duration_ms(stats.post),
-                )),
-            );
-        }
-        trace_timer(
-            "decode.pass.total",
-            t_pass,
-            Some(format!(
-                "nzhsym={nzhsym} pass={} new_decodes={}",
-                pass_idx + 1,
-                decoded.len() - decoded_before
-            )),
-        );
     }
 
-    trace_timer(
-        "decode.total",
-        t_decode_total,
-        Some(format!("nzhsym={nzhsym} decoded={}", decoded.len())),
-    );
     (decoded, sbase, residual)
 }
 

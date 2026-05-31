@@ -1,8 +1,8 @@
 [package]
 name = "ft8rs"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
-description = "WSJT-X-aligned FT8 streaming decoder"
+description = "FT8 streaming decoder"
 license = "GPL-3.0"
 
 [[bin]]
@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Compile-time: default rustfft@3840. Enable fftw for WSJT-X-aligned FFTW@3840 tests.
+# Compile-time: default rustfft@3840. Enable fftw for FFTW@3840 validation.
 fftw = []
 
 [dependencies]

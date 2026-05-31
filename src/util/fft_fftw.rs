@@ -1,7 +1,7 @@
-/// FFT engine wrapping libfftw3 to match WSJT-X four2a exactly.
+/// FFT engine wrapping libfftw3 for four2a-compatible transforms.
 ///
-/// WSJT-X uses FFTW with arbitrary sizes (NFFT1=3840), not powers of 2.
-/// 3840-pt FFT → df=3.125 Hz → 6.25 Hz tone spacing = exactly 2 bins.
+/// The 3840-point sync FFT gives df=3.125 Hz, so 6.25 Hz tone spacing is
+/// exactly 2 bins.
 
 const FFTW_MEASURE: u32 = 0;
 const FFTW_EXHAUSTIVE: u32 = 1 << 3;
@@ -215,9 +215,9 @@ thread_local! {
 
 // ──────────────────────────────── Public API ────────────────────────────────
 
-/// WSJT-X/FFTPACK-style complex FFT without normalization in either direction.
+/// four2a/FFTPACK-style complex FFT without normalization in either direction.
 ///
-/// Used by WSJT-X-aligned call sites that apply the Fortran `fac` explicitly.
+/// Used by call sites that apply the Fortran `fac` explicitly.
 #[inline]
 pub fn four2a_c2c(re: &mut [f64], im: &mut [f64], isign: i32) {
     let inverse = match isign {

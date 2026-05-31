@@ -116,7 +116,7 @@ mod tests {
     use super::SlotTimestamp;
 
     #[test]
-    fn parses_wsjtx_timestamp() {
+    fn parses_timestamp() {
         let ts = SlotTimestamp::parse("230208_140300").unwrap();
         assert_eq!(ts.format(), "230208_140300");
         assert_eq!(ts.format_time(), "140300");
@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_unix_seconds_as_utc_wsjtx_timestamp() {
+    fn formats_unix_seconds_as_utc_timestamp() {
         let ts = SlotTimestamp::from_unix_seconds_utc(1_675_864_980);
         assert_eq!(ts.format(), "230208_140300");
     }

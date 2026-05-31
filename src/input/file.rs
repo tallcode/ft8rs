@@ -92,7 +92,7 @@ mod tests {
     use super::infer_start_time_from_path;
 
     #[test]
-    fn infers_start_time_from_wsjtx_filename() {
+    fn infers_start_time_from_timestamped_filename() {
         let ts = infer_start_time_from_path("tests/ft8/230208_140300.wav").unwrap();
         assert_eq!(ts.format(), "230208_140300");
     }

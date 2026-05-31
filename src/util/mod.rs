@@ -6,9 +6,9 @@ pub(crate) mod fft_rustfft;
 /// Compile-time FFT dispatcher.
 ///
 /// Default: rustfft @ 3840, no external FFTW runtime dependency.
-/// Feature `fftw`: FFTW @ 3840, used for WSJT-X-aligned tests.
+/// Feature `fftw`: FFTW @ 3840, used for FFTW validation.
 
-/// sync8 FFT size: both compile-time engines use the WSJT-X-aligned 3840 bins.
+/// sync8 FFT size: both compile-time engines use 3840 bins.
 #[inline]
 pub fn sync8_fft_size() -> usize {
     3840
@@ -33,7 +33,7 @@ pub fn engine_name() -> &'static str {
     }
 }
 
-/// Configure WSJT-X-style FFT threads.
+/// Configure FFTW plan threads.
 ///
 /// This is meaningful only for the FFTW backend. RustFFT does not expose
 /// plan-level internal threading, so `threads > 1` is rejected there instead of
@@ -57,11 +57,11 @@ pub fn set_fft_threads(threads: usize) -> Result<(), String> {
     }
 }
 
-/// Configure WSJT-X-style FFTW planning patience.
+/// Configure FFTW planning patience.
 ///
-/// WSJT-X maps patience 0..=4 to FFTW ESTIMATE, ESTIMATE_PATIENT, MEASURE,
-/// PATIENT and EXHAUSTIVE respectively. RustFFT has no FFTW planning phase, so
-/// only the WSJT-X default value is accepted there.
+/// Patience 0..=4 maps to FFTW ESTIMATE, ESTIMATE_PATIENT, MEASURE, PATIENT
+/// and EXHAUSTIVE respectively. RustFFT has no FFTW planning phase, so only
+/// the default value is accepted there.
 pub fn set_fft_patience(patience: usize) -> Result<(), String> {
     if patience > 4 {
         return Err("--patience must be in 0..=4".to_string());
@@ -81,9 +81,9 @@ pub fn set_fft_patience(patience: usize) -> Result<(), String> {
     }
 }
 
-// ── WSJT-X four2a dispatch ──
+// ── four2a dispatch ──
 
-/// WSJT-X/FFTPACK-style complex FFT.
+/// four2a/FFTPACK-style complex FFT.
 ///
 /// Mirrors `call four2a(c, n, 1, isign, 1)`: `isign=-1` is forward,
 /// `isign=1` is inverse, and neither direction applies normalization.
@@ -99,7 +99,7 @@ pub fn four2a_c2c(re: &mut [f64], im: &mut [f64], isign: i32) {
     }
 }
 
-/// WSJT-X/FFTPACK-style real-to-complex forward FFT.
+/// four2a/FFTPACK-style real-to-complex forward FFT.
 ///
 /// Mirrors `call four2a(x, n, 1, -1, 0)`.
 #[inline]

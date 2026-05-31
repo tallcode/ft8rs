@@ -6,7 +6,7 @@
 use super::ft8_downsample::ft8_downsample;
 use super::{
     build_costas_sync_templates, build_frequency_shift_sync_templates, nint_wsjtx_f32, sync8d,
-    DecodeWorkspace, FrequencySearchResult, Ft8bApOptions, Ft8bResult, Ft8bStats, TimeRefineResult,
+    DecodeWorkspace, FrequencySearchResult, Ft8bApOptions, Ft8bResult, TimeRefineResult,
     TimeSearchResult, COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DT2, FS2, M73, MCQ, MCQFD, MCQRU, MCQTEST,
     MCQWW, MRR73, MRRR, NFFT1, NN, NP2, SAMPLE_RATE,
 };
@@ -15,8 +15,6 @@ use crate::decode::genft8::get_ft8_tones_from_codeword;
 use crate::decode::packjt77::{unpack77_with_context, UnpackContext};
 use crate::util::four2a_c2c;
 use crate::HashCallBook;
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
 
 const COSTAS: [u8; 7] = [3, 1, 4, 0, 6, 5, 2];
 const GRAY_MAP: [u8; 8] = [0, 1, 3, 2, 5, 6, 4, 7];
@@ -62,32 +60,14 @@ pub(super) fn ft8b(
     _book: &Option<HashCallBook>,
     _sbase_welch: Option<&[f64]>,
     workspace: &mut DecodeWorkspace,
-    mut stats: Option<&mut Ft8bStats>,
 ) -> Option<Ft8bResult> {
-    if let Some(stats) = stats.as_deref_mut() {
-        stats.calls += 1;
-    }
-    let collect_stats = stats.is_some();
-    let t_downsample = collect_stats.then(Instant::now);
     ft8_downsample(cx_re, cx_im, f1, workspace);
-    if let Some(stats) = stats.as_deref_mut() {
-        add_elapsed(&mut stats.downsample, t_downsample);
-    }
 
-    let t_align = collect_stats.then(Instant::now);
     let time0 = find_best_time_offset(&workspace.cd0_re, &workspace.cd0_im, xdt);
     let freq0 = find_best_frequency_shift(&workspace.cd0_re, &workspace.cd0_im, time0.ibest);
-    if let Some(stats) = stats.as_deref_mut() {
-        add_elapsed(&mut stats.align, t_align);
-    }
     f1 += freq0.delfbest;
-    let t_downsample = collect_stats.then(Instant::now);
     ft8_downsample(cx_re, cx_im, f1, workspace);
-    if let Some(stats) = stats.as_deref_mut() {
-        add_elapsed(&mut stats.downsample, t_downsample);
-    }
 
-    let t_align = collect_stats.then(Instant::now);
     let time1 = refine_time_offset(
         &workspace.cd0_re,
         &workspace.cd0_im,
@@ -96,11 +76,7 @@ pub(super) fn ft8b(
     );
     let ibest = time1.ibest;
     let xdt = (ibest as f64 - 1.0) * DT2;
-    if let Some(stats) = stats.as_deref_mut() {
-        add_elapsed(&mut stats.align, t_align);
-    }
 
-    let t_symbols = collect_stats.then(Instant::now);
     extract_soft_symbols(ibest, workspace);
 
     // WSJT-X ft8b.f90: syncmin=6, imetric=2 => 7, depth<=2 => 8,
@@ -113,21 +89,11 @@ pub(super) fn ft8b(
         7
     };
     let nsync = compute_nsync(&workspace.s8);
-    if let Some(stats) = stats.as_deref_mut() {
-        add_elapsed(&mut stats.symbols, t_symbols);
-    }
     if nsync < min_costas_hits {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.sync_rejects += 1;
-        }
         return None;
     }
 
-    let t_metrics = collect_stats.then(Instant::now);
     build_bit_metrics(workspace, imetric);
-    if let Some(stats) = stats.as_deref_mut() {
-        add_elapsed(&mut stats.metrics, t_metrics);
-    }
 
     // ── xbase: noise baseline at candidate frequency (for xsnr2) ──
     // sbase is built by sync8 with NFFT1=3840 → df=3.125 Hz/bin.
@@ -143,34 +109,18 @@ pub(super) fn ft8b(
         }
     };
 
-    let t_ldpc = collect_stats.then(Instant::now);
     let result = try_decode_passes(workspace, depth, f1, ap_options, _book);
-    if let Some(stats) = stats.as_deref_mut() {
-        add_elapsed(&mut stats.ldpc, t_ldpc);
-    }
     let Some(result) = result else {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.decode_failures += 1;
-        }
         return None;
     };
 
-    let t_post = collect_stats.then(Instant::now);
     if result.cw.iter().all(|&b| b == 0) {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.decode_failures += 1;
-            add_elapsed(&mut stats.post, t_post);
-        }
         return None;
     }
 
     let message77 = &result.message91[..77];
     let (_n3v, i3v) = message_type(message77);
     if !is_valid_message_type(message77) {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.decode_failures += 1;
-            add_elapsed(&mut stats.post, t_post);
-        }
         return None;
     }
 
@@ -181,24 +131,12 @@ pub(super) fn ft8b(
     );
     let msg = unpack77_with_context(message77, unpack_context);
     let Some(msg) = msg else {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.decode_failures += 1;
-            add_elapsed(&mut stats.post, t_post);
-        }
         return None;
     };
     if !is_acceptable_unpacked_message(&msg, i3v, ap_options.ncontest) {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.decode_failures += 1;
-            add_elapsed(&mut stats.post, t_post);
-        }
         return None;
     }
     if msg.trim().is_empty() {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.decode_failures += 1;
-            add_elapsed(&mut stats.post, t_post);
-        }
         return None;
     }
 
@@ -213,10 +151,6 @@ pub(super) fn ft8b(
     // WSJT-X ft8b.f90: false-positive bail-out
     // if (nsync.le.10 .and. xsnr.lt.-25.0) then nbadcrc=1; return
     if nsync <= 10 && snr < -25.0 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.decode_failures += 1;
-            add_elapsed(&mut stats.post, t_post);
-        }
         return None;
     }
     if snr < -25.0 {
@@ -228,10 +162,6 @@ pub(super) fn ft8b(
     for i in 0..79 {
         itone[i] = tones[i] as i32;
     }
-    if let Some(stats) = stats.as_deref_mut() {
-        add_elapsed(&mut stats.post, t_post);
-    }
-
     Some(Ft8bResult {
         msg,
         freq: f1,
@@ -554,36 +484,6 @@ fn compute_snr(s8: &[f64], itone: &[u8], xbase: f64) -> (f64, f64) {
     xsnr2 = 10.0 * xsnr2.log10() - 27.0;
 
     (xsnr as f64, xsnr2 as f64)
-}
-
-pub(super) fn trace_timers_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("FT8RS_TRACE_TIMERS")
-            .ok()
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    })
-}
-
-pub(super) fn trace_timer(label: &str, start: Instant, detail: Option<String>) {
-    if !trace_timers_enabled() {
-        return;
-    }
-    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-    match detail {
-        Some(detail) => eprintln!("[ft8rs-timer] {label}: {elapsed_ms:.1} ms ({detail})"),
-        None => eprintln!("[ft8rs-timer] {label}: {elapsed_ms:.1} ms"),
-    }
-}
-
-fn add_elapsed(target: &mut Duration, start: Option<Instant>) {
-    if let Some(start) = start {
-        *target += start.elapsed();
-    }
-}
-
-pub(super) fn duration_ms(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1000.0
 }
 
 fn get_tones(cw: &[u8]) -> Vec<u8> {
