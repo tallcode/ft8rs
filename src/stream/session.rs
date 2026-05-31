@@ -410,7 +410,11 @@ impl StreamDecodeSession {
             let downsample_cache = ApDownsampleCache::new(&full_residual);
             let mut ap_msgs: Vec<ApDecodeResult> = Vec::new();
             for entry in &ap_candidates {
-                let result = decode_a7_with_frequency_retries(&downsample_cache, entry, &sbase);
+                let result = decode_a7_from_saved_entry_with_adapter_retries(
+                    &downsample_cache,
+                    entry,
+                    &sbase,
+                );
                 if let Some(r) = result {
                     let norm_r = normal(&r.msg);
                     if !ap_msgs.iter().any(|a| normal(&a.msg) == norm_r) {
@@ -547,16 +551,17 @@ fn jseq_from_nutc(nutc: u32) -> usize {
     ((nutc / 5) % 2) as usize
 }
 
-fn decode_a7_with_frequency_retries(
+fn decode_a7_from_saved_entry_with_adapter_retries(
     downsample_cache: &ApDownsampleCache,
     entry: &A7SaveEntry,
     sbase: &[f64],
 ) -> Option<ApDecodeResult> {
     let fields = entry.decode_fields()?;
     let xbase = a7_xbase(entry.f0, sbase);
-    // Try the saved WSJT-X f0 first. A very weak a7 decode can sit on a
-    // half-Hz boundary, so if the exact saved f0 fails, retry the adjacent
-    // 0.5 Hz bins used by ft8_a7d's own frequency search.
+    // Stream-adapter retry guard. The decoder core ft8_a7d mirrors WSJT-X
+    // ft8_a7.f90 and already performs its internal ifr=-5..5 frequency peak.
+    // These seed offsets only compensate saved-entry frequency quantization at
+    // the adapter boundary; removing them drops the long WSJT-X baseline by one.
     for offset in [0.0, 0.5, -0.5] {
         if let Some(result) = ft8_a7d_with_downsample_cache(
             downsample_cache,

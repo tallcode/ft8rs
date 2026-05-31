@@ -30,9 +30,8 @@ mod twkfreq1;
 use self::baseline::baseline;
 pub(crate) use self::ft8_downsample::ft8_downsample_from_cx;
 pub(crate) use self::ft8_params::{
-    COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DOWNSAMPLE_FAC, DT2, FS2,
-    NFFT1, NFFT1_LONG, NFFT2, NHSYM, NMAX, NN, NP2, NSPS, NSTEP, PI_F32, SAMPLE_RATE, TAPER_SIZE,
-    TWO_PI, TWO_PI_F32,
+    COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DT2, FS2, NFFT1, NFFT1_LONG,
+    NFFT2, NHSYM, NMAX, NN, NP2, NSPS, NSTEP, PI_F32, SAMPLE_RATE, TAPER_SIZE, TWO_PI, TWO_PI_F32,
 };
 use self::ft8apset::ft8_ap_set;
 use self::ft8apset::{M73, MCQ, MCQFD, MCQRU, MCQTEST, MCQWW, MRR73, MRRR};
