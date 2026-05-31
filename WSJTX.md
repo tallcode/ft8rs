@@ -5,8 +5,12 @@ against WSJT-X. User build and CLI instructions belong in `README.md`.
 
 ## Scope
 
-`ft8rs` targets FT8 receive/decode compatibility with WSJT-X. JTDX can be used
-as a diagnostic reference, but default behavior should follow WSJT-X first.
+`ft8rs` targets FT8 receive/decode compatibility with WSJT-X in the default
+`wsjtx` profile. This file records only source-alignment notes, test baseline
+rules, and known maintenance constraints for that profile.
+
+Other profiles have separate technical reports and must not add design notes to
+this file.
 
 Priority order:
 
@@ -53,29 +57,29 @@ under `tests/old`.
 
 ## Source Layout
 
-The decode core lives under `src/decode`. Files under `src/decode/lib` mirror
+The decode core lives under `src/decode`. Files under `src/decode/lib_wsjtx` mirror
 WSJT-X `wsjtx/lib` names where practical.
 
 Important mappings:
 
-- `src/decode/lib/ft8_decode.rs` -> `wsjtx/lib/ft8_decode.f90`
-- `src/decode/lib/ft8/ft8_params.rs` -> `wsjtx/lib/ft8/ft8_params.f90`
-- `src/decode/lib/ft8/sync8.rs` -> `wsjtx/lib/ft8/sync8.f90`
-- `src/decode/lib/ft8/sync8d.rs` -> `wsjtx/lib/ft8/sync8d.f90`
-- `src/decode/lib/ft8/ft8b.rs` -> `wsjtx/lib/ft8/ft8b.f90`
-- `src/decode/lib/ft8/ft8_downsample.rs` -> `wsjtx/lib/ft8/ft8_downsample.f90`
-- `src/decode/lib/ft8/ft8_a7.rs` -> `wsjtx/lib/ft8/ft8_a7.f90`
-- `src/decode/lib/ft8/ft8apset.rs` -> `wsjtx/lib/ft8/ft8apset.f90`
-- `src/decode/lib/ft8/twkfreq1.rs` -> `wsjtx/lib/ft8/twkfreq1.f90`
-- `src/decode/lib/ft8/gen_ft8wave.rs` -> `wsjtx/lib/ft8/gen_ft8wave.f90`
-- `src/decode/lib/ft8/encode174_91.rs` -> `wsjtx/lib/ft8/encode174_91.f90`
-- `src/decode/lib/ft8/genft8.rs` -> `wsjtx/lib/ft8/genft8.f90`
-- `src/decode/lib/ft8/decode174_91.rs` -> `wsjtx/lib/ft8/decode174_91.f90`
-- `src/decode/lib/ft8/bpdecode174_91.rs` -> `wsjtx/lib/ft8/bpdecode174_91.f90`
-- `src/decode/lib/ft8/osd174_91.rs` -> `wsjtx/lib/ft8/osd174_91.f90`
-- `src/decode/lib/ft8/subtractft8.rs` -> `wsjtx/lib/ft8/subtractft8.f90`
-- `src/decode/lib/77bit/packjt77.rs` -> `wsjtx/lib/77bit/packjt77.f90`
-- `src/decode/lib/indexx.rs` -> `wsjtx/lib/indexx.f90`
+- `src/decode/lib_wsjtx/ft8_decode.rs` -> `wsjtx/lib/ft8_decode.f90`
+- `src/decode/lib_wsjtx/ft8/ft8_params.rs` -> `wsjtx/lib/ft8/ft8_params.f90`
+- `src/decode/lib_wsjtx/ft8/sync8.rs` -> `wsjtx/lib/ft8/sync8.f90`
+- `src/decode/lib_wsjtx/ft8/sync8d.rs` -> `wsjtx/lib/ft8/sync8d.f90`
+- `src/decode/lib_wsjtx/ft8/ft8b.rs` -> `wsjtx/lib/ft8/ft8b.f90`
+- `src/decode/lib_wsjtx/ft8/ft8_downsample.rs` -> `wsjtx/lib/ft8/ft8_downsample.f90`
+- `src/decode/lib_wsjtx/ft8/ft8_a7.rs` -> `wsjtx/lib/ft8/ft8_a7.f90`
+- `src/decode/lib_wsjtx/ft8/ft8apset.rs` -> `wsjtx/lib/ft8/ft8apset.f90`
+- `src/decode/lib_wsjtx/ft8/twkfreq1.rs` -> `wsjtx/lib/ft8/twkfreq1.f90`
+- `src/decode/lib_wsjtx/ft8/gen_ft8wave.rs` -> `wsjtx/lib/ft8/gen_ft8wave.f90`
+- `src/decode/lib_wsjtx/ft8/encode174_91.rs` -> `wsjtx/lib/ft8/encode174_91.f90`
+- `src/decode/lib_wsjtx/ft8/genft8.rs` -> `wsjtx/lib/ft8/genft8.f90`
+- `src/decode/lib_wsjtx/ft8/decode174_91.rs` -> `wsjtx/lib/ft8/decode174_91.f90`
+- `src/decode/lib_wsjtx/ft8/bpdecode174_91.rs` -> `wsjtx/lib/ft8/bpdecode174_91.f90`
+- `src/decode/lib_wsjtx/ft8/osd174_91.rs` -> `wsjtx/lib/ft8/osd174_91.f90`
+- `src/decode/lib_wsjtx/ft8/subtractft8.rs` -> `wsjtx/lib/ft8/subtractft8.f90`
+- `src/decode/lib_wsjtx/77bit/packjt77.rs` -> `wsjtx/lib/77bit/packjt77.f90`
+- `src/decode/lib_wsjtx/indexx.rs` -> `wsjtx/lib/indexx.f90`
 
 The stream, input, output, and CLI layers must not depend on private FT8 work
 buffers. Use the public session/config/result interfaces.

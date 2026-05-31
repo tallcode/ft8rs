@@ -1,4 +1,5 @@
-use crate::stream::session::StreamDecodeConfig;
+use crate::stream::profile::ProfileStreamDecodeSession;
+use crate::stream::session::{DecodeProfile, StreamDecodeConfig};
 use crate::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
 
 use cpal::traits::StreamTrait;
@@ -157,7 +158,7 @@ pub fn open_soundcard_stream(options: SoundcardDecodeOptions) -> Result<(), Stri
 
 fn decode_soundcard_slots<F>(options: SoundcardDecodeOptions, mut on_slot: F) -> Result<(), String>
 where
-    F: FnMut(&mut StreamDecodeSession, SlotTimestamp, &[f32]) -> Result<(), String>,
+    F: FnMut(&mut ProfileStreamDecodeSession, SlotTimestamp, &[f32]) -> Result<(), String>,
 {
     let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
     let samples_per_slot = sample_rate as usize * SLOT_SECONDS as usize;
@@ -166,7 +167,7 @@ where
     sleep_until_unix_seconds(first_slot_start)?;
     drain_pending_audio(&rx);
 
-    let mut decoder = StreamDecodeSession::new(options.config);
+    let mut decoder = ProfileStreamDecodeSession::new(options.config);
     let mut collector = NativeSampleCollector::new(&rx);
     let mut slot_index = 0usize;
     loop {
@@ -226,6 +227,10 @@ fn start_decode_worker(
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     thread::spawn(move || {
+        if config.profile != DecodeProfile::Wsjtx {
+            run_profile_worker(config, cmd_rx, event_tx);
+            return;
+        }
         let mut decoder = StreamDecodeSession::new(config);
         let mut slot_state = None;
         while let Ok(command) = cmd_rx.recv() {
@@ -308,6 +313,54 @@ fn start_decode_worker(
         }
     });
     (cmd_tx, event_rx)
+}
+
+fn run_profile_worker(
+    config: StreamDecodeConfig,
+    cmd_rx: Receiver<DecodeWorkerCommand>,
+    event_tx: Sender<DecodeWorkerEvent>,
+) {
+    let mut decoder = ProfileStreamDecodeSession::new(config);
+    while let Ok(command) = cmd_rx.recv() {
+        let result = match command {
+            DecodeWorkerCommand::Nzhsym41 { .. } | DecodeWorkerCommand::Nzhsym47 { .. } => Ok(None),
+            DecodeWorkerCommand::Nzhsym50 {
+                timestamp,
+                samples_12k,
+            } => {
+                let event_tx = event_tx.clone();
+                decoder
+                    .decode_slot_streaming_at(&timestamp, &samples_12k, |decode| {
+                        event_tx
+                            .send(DecodeWorkerEvent::Decode {
+                                timestamp: timestamp.clone(),
+                                decode: decode.clone(),
+                            })
+                            .map_err(|err| err.to_string())
+                    })
+                    .map(|results| {
+                        Some(DecodeWorkerEvent::SlotComplete {
+                            timestamp,
+                            count: results.len(),
+                        })
+                    })
+            }
+            DecodeWorkerCommand::Stop => break,
+        };
+
+        match result {
+            Ok(Some(event)) => {
+                if event_tx.send(event).is_err() {
+                    break;
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                let _ = event_tx.send(DecodeWorkerEvent::Error(err));
+                break;
+            }
+        }
+    }
 }
 
 fn send_worker_command(

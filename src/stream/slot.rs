@@ -1,4 +1,5 @@
-use crate::stream::session::{StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage};
+use crate::stream::profile::ProfileStreamDecodeSession;
+use crate::stream::session::{StreamDecodeConfig, StreamDecodedMessage};
 use crate::stream::time::SlotTimestamp;
 
 const SAMPLE_RATE: u32 = 12_000;
@@ -29,7 +30,7 @@ where
 {
     let samples_per_slot = SAMPLE_RATE as usize * SLOT_SECONDS;
     let total_slots = samples_12k.len().div_ceil(samples_per_slot);
-    let mut decoder = StreamDecodeSession::new(config);
+    let mut decoder = ProfileStreamDecodeSession::new(config);
 
     for slot in 0..total_slots {
         let start = slot * samples_per_slot;
@@ -55,7 +56,7 @@ where
 {
     let samples_per_slot = SAMPLE_RATE as usize * SLOT_SECONDS;
     let total_slots = samples_12k.len().div_ceil(samples_per_slot);
-    let mut decoder = StreamDecodeSession::new(config);
+    let mut decoder = ProfileStreamDecodeSession::new(config);
 
     for slot in 0..total_slots {
         let start = slot * samples_per_slot;

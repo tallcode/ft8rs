@@ -9,7 +9,7 @@ use ft8rs::input::{
     decode_soundcard_streaming_decodes, decode_wav_file_streaming_decodes,
     infer_start_time_from_path, list_soundcards, FileDecodeOptions, SoundcardFormatInfo,
 };
-use ft8rs::stream::StreamDecodeConfig;
+use ft8rs::stream::{DecodeProfile, StreamDecodeConfig};
 use ft8rs::SlotTimestamp;
 
 use output::udp::UdpConfig;
@@ -53,6 +53,10 @@ struct FileArgs {
 
 #[derive(Args, Clone, Debug)]
 struct DecodeArgs {
+    /// Decode profile: wsjtx, jtdx, or hybrid.
+    #[arg(long, default_value = "wsjtx", help_heading = "Decode")]
+    profile: String,
+
     /// My callsign, used by AP decode and hash-call unpacking.
     #[arg(short = 'c', long, help_heading = "Decode context")]
     my_call: Option<String>,
@@ -108,6 +112,18 @@ struct DecodeArgs {
     /// Restrict AP decoding to CQ-style AP.
     #[arg(short = 'O', long, help_heading = "Decode")]
     cq_only: bool,
+
+    /// Enable JTDX SWL mode for profile=jtdx or profile=hybrid.
+    #[arg(long, help_heading = "Decode")]
+    swl: bool,
+
+    /// Enable JTDX forced sync time-window tracking for profile=jtdx or profile=hybrid.
+    #[arg(long, help_heading = "Decode")]
+    force_sync: bool,
+
+    /// Enable JTDX Hound AP table for profile=jtdx or profile=hybrid.
+    #[arg(long, help_heading = "Decode")]
+    hound: bool,
 
     /// Number of threads to process large FFTs. Values greater than 1 require an FFTW build.
     #[arg(short = 'm', long, default_value_t = 1, help_heading = "FFTW")]
@@ -194,6 +210,7 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     ft8rs::set_fft_threads(args.fft_threads)?;
 
     let mut config = StreamDecodeConfig::default();
+    config.profile = DecodeProfile::parse(&args.profile)?;
     if let Some(value) = normalized_nonempty(&args.my_call) {
         config.mycall = Some(value);
     }
@@ -236,6 +253,9 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     if args.cq_only {
         config.lapcqonly = true;
     }
+    config.swl = args.swl;
+    config.lforcesync = args.force_sync;
+    config.lhound = args.hound;
     Ok(config)
 }
 

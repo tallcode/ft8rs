@@ -13,6 +13,34 @@ const NMAX: usize = 15 * 12_000;
 const NZHSYM_STRIDE: usize = 3456;
 const AP_MSG_LEN: usize = 37;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeProfile {
+    Wsjtx,
+    Jtdx,
+    Hybrid,
+}
+
+impl DecodeProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Wsjtx => "wsjtx",
+            Self::Jtdx => "jtdx",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "wsjtx" => Ok(Self::Wsjtx),
+            "jtdx" => Ok(Self::Jtdx),
+            "hybrid" => Ok(Self::Hybrid),
+            _ => Err(format!(
+                "unknown profile '{value}'; expected one of: wsjtx, jtdx, hybrid"
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FixedMsg37 {
     bytes: [u8; AP_MSG_LEN],
@@ -109,6 +137,7 @@ impl A7SaveEntry {
 #[allow(non_snake_case)]
 #[derive(Clone, Debug)]
 pub struct StreamDecodeConfig {
+    pub profile: DecodeProfile,
     pub nfa: f64,
     pub nfb: f64,
     pub syncmin: Option<f64>,
@@ -122,6 +151,17 @@ pub struct StreamDecodeConfig {
     pub lft8apon: bool,
     pub lapcqonly: bool,
     pub nagain: bool,
+    pub swl: bool,
+    pub nft8cycles: usize,
+    pub nft8swlcycles: usize,
+    pub lft8lowth: bool,
+    pub nagcc: bool,
+    pub lforcesync: bool,
+    pub lhound: bool,
+    pub ncandthin: usize,
+    pub filter: bool,
+    pub hide_dupes: bool,
+    pub hide_hash: bool,
     pub mycall: Option<String>,
     pub mygrid: Option<String>,
     pub hiscall: Option<String>,
@@ -131,6 +171,7 @@ pub struct StreamDecodeConfig {
 impl Default for StreamDecodeConfig {
     fn default() -> Self {
         Self {
+            profile: DecodeProfile::Wsjtx,
             nfa: 200.0,
             nfb: 3000.0,
             syncmin: None,
@@ -144,11 +185,54 @@ impl Default for StreamDecodeConfig {
             lft8apon: true,
             lapcqonly: false,
             nagain: false,
+            swl: false,
+            nft8cycles: 1,
+            nft8swlcycles: 1,
+            lft8lowth: false,
+            nagcc: false,
+            lforcesync: false,
+            lhound: false,
+            ncandthin: 100,
+            filter: false,
+            hide_dupes: false,
+            hide_hash: false,
             mycall: None,
             mygrid: None,
             hiscall: None,
             hisgrid: None,
         }
+    }
+}
+
+impl StreamDecodeConfig {
+    pub fn clone_for_profile_wsjt_x(&self) -> Self {
+        let mut config = self.clone();
+        config.profile = DecodeProfile::Wsjtx;
+        config
+    }
+
+    pub fn clone_for_profile_jtdx(&self) -> Self {
+        let mut config = self.clone();
+        config.profile = DecodeProfile::Jtdx;
+        config
+    }
+
+    pub fn clone_for_profile_jtdx_high_sensitivity(&self) -> Self {
+        let mut config = self.clone_for_profile_jtdx();
+        config.nft8cycles = 3;
+        config.nft8swlcycles = 3;
+        config.lft8lowth = true;
+        config.nagcc = true;
+        config.ncandthin = 100;
+        config.filter = false;
+        config.hide_dupes = false;
+        config.hide_hash = false;
+        config.ncand = config.ncand.max(1000);
+        config.ndepth = config.ndepth.max(3);
+        config.lft8apon = true;
+        config.lapcqonly = false;
+        config.nagain = false;
+        config
     }
 }
 
