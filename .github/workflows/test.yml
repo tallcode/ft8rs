@@ -1,0 +1,49 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  release-tests:
+    name: Release tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo build data
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-test-${{ runner.os }}-
+
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfftw3-dev pkg-config
+
+      - name: Run default short stream test
+        run: cargo test --release test_stream_decode_short_audio -- --nocapture
+
+      - name: Run default long stream test
+        run: cargo test --release test_stream_decode_long_audio -- --nocapture
+
+      - name: Run FFTW short stream test
+        run: cargo test --release --features fftw test_stream_decode_short_audio -- --nocapture
+
+      - name: Run FFTW long stream test
+        run: cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture

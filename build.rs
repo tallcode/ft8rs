@@ -2,6 +2,11 @@ use std::env;
 use std::process::Command;
 
 fn main() {
+    link_fftw_when_enabled();
+
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
     println!("cargo:rerun-if-env-changed=FT8RS_RELEASE_TAG");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_TYPE");
@@ -27,6 +32,43 @@ fn main() {
     };
 
     println!("cargo:rustc-env=FT8RS_VERSION={version}");
+}
+
+fn link_fftw_when_enabled() {
+    if env::var_os("CARGO_FEATURE_FFTW").is_none() {
+        return;
+    }
+
+    emit_pkg_config_link_search("fftw3");
+
+    // Keep the order explicit: fftw3_threads depends on fftw3. Some installs
+    // provide fftw3.pc but not fftw3_threads.pc, so link the threaded library
+    // explicitly after discovering the shared FFTW library search paths.
+    println!("cargo:rustc-link-lib=fftw3_threads");
+    println!("cargo:rustc-link-lib=fftw3");
+}
+
+fn emit_pkg_config_link_search(package: &str) {
+    let Ok(output) = Command::new("pkg-config")
+        .args(["--libs", package])
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let Ok(flags) = String::from_utf8(output.stdout) else {
+        return;
+    };
+
+    for flag in flags.split_whitespace() {
+        if let Some(path) = flag.strip_prefix("-L") {
+            if !path.is_empty() {
+                println!("cargo:rustc-link-search=native={path}");
+            }
+        }
+    }
 }
 
 fn release_tag() -> Option<String> {

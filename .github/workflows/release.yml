@@ -1,9 +1,7 @@
-name: CI and release
+name: Release
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*.*.*"
 
@@ -11,38 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  test:
-    name: Release tests
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfftw3-dev pkg-config
-
-      - name: Run default short stream test
-        run: cargo test --release test_stream_decode_short_audio -- --nocapture
-
-      - name: Run default long stream test
-        run: cargo test --release test_stream_decode_long_audio -- --nocapture
-
-      - name: Run FFTW short stream test
-        run: cargo test --release --features fftw test_stream_decode_short_audio -- --nocapture
-
-      - name: Run FFTW long stream test
-        run: cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture
-
   build:
     name: Build ${{ matrix.package_name }}
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -69,6 +37,17 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo build data
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-release-${{ runner.os }}-
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -112,7 +91,6 @@ jobs:
 
   release:
     name: Publish GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
 
