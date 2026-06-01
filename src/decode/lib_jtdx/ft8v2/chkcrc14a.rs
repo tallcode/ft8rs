@@ -8,7 +8,7 @@ pub(crate) fn chkcrc14a(decoded91: &[u8]) -> bool {
     ncrc14 == icrc14
 }
 
-fn crc14(msg77: &[u8]) -> u16 {
+pub(crate) fn crc14(msg77: &[u8]) -> u16 {
     let mut crc: u16 = 0;
     for bit_idx in 0..96 {
         let next_bit = if bit_idx < 77 { msg77[bit_idx] } else { 0 };

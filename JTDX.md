@@ -162,6 +162,9 @@ Implemented or scaffolded:
 - JTDX `ft8b.rs` contains the early sync/downsample/symbol-extraction slice;
 - JTDX-owned `ft8v2` now has CRC, BP, reordered parity data, and unpack
   support in its own module path;
+- JTDX-owned `encode174_91` now adds CRC14 and LDPC parity bits from the JTDX
+  generator matrix, giving this profile its own encode path for source-derived
+  reference tone generation;
 - JTDX-owned OSD fallback and generator data exist in `ft8v2`;
 - JTDX `agccft8.rs` exists and `sync8.rs` can use the AGC sync branch for
   candidate generation;
@@ -201,6 +204,8 @@ Implemented or scaffolded:
   accepted `itone` sequence to accumulate signal/noise ratios over all 79
   symbols, applies the high-SNR and low-SNR nonlinear corrections, then clamps
   regular decodes at `-23 dB` and AP/deep decodes at `-24 dB`;
+- AP/deep SNR estimation also keeps the source `iaptype>4` post-correction:
+  very weak AP/deep rows fall back to `xsnrs-1.0` and clamp at `-26 dB`;
 - false-positive filter quality now keeps the OSD `dmin` contribution and uses
   the source expression `qual=1.0-(nharderrors+dmin)/60.0`;
 - `--hound` selects the JTDX `nhaptypes` AP table; hound AP types `21`, `22`,
@@ -216,6 +221,10 @@ Implemented or scaffolded:
   first/last-sample scaling when `syncav < 2.5`, supports the source
   `lreverse` pass selection, and stores both forward `cs` and reversed `csr`
   matrices for later metric retries;
+- during `lreverse` passes, symbol extraction now also preserves the source
+  `cscs` forward-symbol matrix before replacing `cs` with the reversed symbol
+  matrix. This prepares the later `isubp1=3/6/9` combined `cscs/csr` metric
+  variants without enabling those source paths prematurely;
 - the symbol-metric path now applies the JTDX tone-spectrum normalization after
   extraction: `sp` is built from the Costas-prefix and data/tail ranges, the
   weakest tone row is used as reference, and rows above the `spr > 1.5`
@@ -223,6 +232,24 @@ Implemented or scaffolded:
 - regular decode now recomputes bit metrics for `isubp1=1` from `cs` and
   `isubp1=2` from `csr`, so the second regular subpass is no longer only an
   LLR-source re-selection over the same forward-symbol data;
+- regular bit-metric extraction now explicitly converts the Fortran 1-based
+  symbol columns to Rust 0-based columns. The JTDX source data halves use
+  `ks=8..36` and `ks=44..72`; Rust must consume columns `7..35` and `43..71`
+  from the 79-symbol arrays;
+- `ft8b` now builds initial `tone8myc` / `tone8`-style reference tone hints
+  with the JTDX-owned pack/encode path. Those hints drive first-pass
+  `lmycsignal`, `lqsosig`, `lqsosigtype3`, and `lqsocandave` classifiers used
+  by `nsubpasses` and AP/deep OSD depth selection;
+- `ft8b` now owns a JTDX-private even/odd signal-history cache for CQ,
+  MyCall, and QSO candidate symbol matrices. It clears temporary signal
+  storage at slot start, promotes temporary matrices to the current parity at
+  slot end, and can recover `csold` for a later candidate using the JTDX
+  frequency/DT proximity rules;
+- high-order metric sources for `cs+csold` power and `abs(cs)+abs(csold)` sum
+  variants are now available to the bit-metric builder. They are still used
+  conservatively: ordinary regular decode continues to skip `isubp1>2`, while
+  AP/deep still needs the full source-shaped nested loop before these paths are
+  considered fully aligned;
 - regular decode unpacks 77-bit payloads through the JTDX-owned unpack context
   with `mycall` / `hiscall` available for hash-style call presentation;
 - the JTDX session now owns its own JTDX `HashCallBook`; decoded calls are
@@ -262,13 +289,18 @@ Implemented or scaffolded:
   first-callsign rejection to run in Rust;
 - regular non-AP BP/OSD decode can attempt to emit messages without calling
   `lib_wsjtx` decoder internals;
+- `profile=jtdx` no longer falls back to the protected WSJT-X stream decoder
+  when the native path emits no rows. Empty output now means native JTDX did
+  not decode that slot;
 - monitor mode can use `profile=jtdx` at the full-slot boundary.
 
 Not complete yet:
 
 - higher JTDX regular `nsubpasses` metric variants beyond the current
-  forward/reverse `cs`/`csr` pair, especially `csold` and combined
-  `cscs/csr` paths;
+  forward/reverse `cs`/`csr` pair. `cscs`, `csold`, and the first signal
+  classifiers are present, but AP/deep still needs the full source nested
+  `isubp1/isubp2` loop and remaining skip/gating matrix before the higher
+  subpasses can be enabled broadly;
 - full JTDX FT8v2 source-level refinement;
 - deeper AGC state integration with the JTDX-owned slot buffer;
 - source-level validation of the newly wired `lforcesync` / forced-DT /
@@ -455,9 +487,10 @@ Current AP boundary:
   repeated `llrb` selections for subpasses `10`, `13`, and `16`;
 - regular LLR source selection now follows the source `isubp1=1..2` and
   `isubp2=1..4` control flow for the currently available forward `cs` and
-  reverse `csr` metric arrays. The higher `nsubpasses` variants that depend on
-  `csold` and combined `cscs/csr` metrics still need their own source-level
-  port before that loop is complete;
+  reverse `csr` metric arrays. `cscs` is now available as saved forward data
+  from `lreverse`, and `csold` is now available from the private signal-history
+  cache. The remaining gap is moving AP/deep execution into the source-shaped
+  nested `isubp1/isubp2` loop with all source skip/gating rules;
 - AP mask strength uses `max(abs(bmeta))*2.83*1.01`, matching the source
   expression `maxval(abs(llra))*1.01` after `llra=2.83*bmeta`;
 - AP OSD fallback depth follows the source default branch: `ndeep=3` unless
@@ -521,14 +554,11 @@ Initial JTDX tests are informational:
 
 Current closure note:
 
-- `profile=jtdx` currently runs the native JTDX path first, then falls back to
-  the protected WSJT-X-aligned stream decoder if the native path emits zero
-  rows. This keeps CLI/file/monitor/output plumbing testable while native JTDX
-  regular decode is still being repaired.
-- Fallback rows must not be counted as a JTDX sensitivity baseline.
+- `profile=jtdx` currently runs only the native JTDX path. If the native path
+  emits zero rows, the profile emits zero rows.
 - The native JTDX blocker is in `ft8b` after sync candidate generation:
-  candidates are present, but regular BP/OSD is not yet producing accepted
-  non-zero FT8 codewords.
+  candidates are present, and accepted native rows still need to be verified
+  after the latest symbol-index and metric-source repairs.
 
 ## Implementation Order
 
@@ -547,7 +577,7 @@ Current closure note:
 
 - Do not reuse WSJT-X `ft8b`, `sync8`, `ft8_downsample`, `packjt77`,
   `subtractft8`, or AP internals.
-- Do not treat the temporary profile-level fallback as native JTDX alignment.
+- Do not reintroduce profile-level fallback to the protected WSJT-X decoder.
 - Do not extract shared decoder internals.
 - Do not enable SWL by default.
 - Do not describe incomplete JTDX skeleton output as JTDX-aligned.

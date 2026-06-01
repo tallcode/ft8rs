@@ -90,6 +90,9 @@ Implemented or scaffolded:
 - output remains normal decoded messages, not profile/debug metadata;
 - hybrid can call the initial JTDX regular BP path when `profile=hybrid` is
   selected;
+- the JTDX worker is native-only. It no longer returns protected WSJT-X
+  fallback rows, so hybrid source attribution cannot silently collapse into
+  WSJT-X-equivalent output;
 - file/full-slot hybrid decode runs the WSJT-X and JTDX session workers in
   parallel for each slot;
 - WSJT-X progressive `nzhsym=41/47/50` callbacks are forwarded immediately
