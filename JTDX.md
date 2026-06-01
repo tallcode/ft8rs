@@ -297,6 +297,9 @@ Implemented or scaffolded:
   is rejected when its two-call base duplicates a previously received regular
   base message. These deep results intentionally bypass the broad regular/AP
   `chkfalse8` path, as in the source;
+- the JTDX session now carries the slot-local `lft8sdec` flag. Accepted FT8S
+  rows set it before later candidates are processed, and `ft8b` uses it in the
+  focused-QSO and AP-gate branches that the source guards with `lft8sdec`;
 - regular decode unpacks 77-bit payloads through the JTDX-owned unpack context
   with `mycall` / `hiscall` available for hash-style call presentation;
 - the JTDX session now owns its own JTDX `HashCallBook`; decoded calls are
@@ -532,6 +535,19 @@ Current AP boundary:
   not silently fall back to free text and inject an unrelated AP mask;
 - AP LLR source selection follows the JTDX `isubp2` table, including the
   repeated `llrb` selections for subpasses `10`, `13`, and `16`;
+- hard sync gating now mirrors the source CQ-specific branches more closely:
+  `lcqcand` with `nsync=4/5/6` uses the JTDX `nsync+nsync2` plus CQ-shape
+  thresholds and sets the dynamic `lapcqonly` control flag, while non-CQ
+  candidates still require `nsync>=7`;
+- the source `syncdist.f90` rank-distribution check is represented as
+  `lskipnotap`, so suspicious Costas rank distributions skip regular decode
+  while still allowing AP/deep work as in `ft8b.f90`;
+- the extended soft-sync gate from `ft8b.f90` is represented and is only
+  applied for the same out-of-QSO or in-QSO `stophint` cases as the source;
+- the first AP CPU-pruning signal ratios are represented: `scqnr` is derived
+  from the JTDX `cwfilter.f90` `msgcq25(2)` tone row, `smycnr` is derived from
+  the configured `MyCall` tone row, and AP types `1/2/3` use the source
+  subpass thresholds before constructing masks;
 - regular LLR source selection now follows the source `isubp1=1..2` and
   `isubp2=1..4` control flow for the forward `cs` and reverse `csr` metric
   arrays. `cscs` is available as saved forward data from `lreverse`, `csold`

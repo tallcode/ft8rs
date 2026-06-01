@@ -257,6 +257,9 @@ Initial status:
   (`lrepliedother`, second-position `mycall`, and FT8SD base-message duplicate
   rejection) while bypassing the broad regular/AP `chkfalse8` path, matching
   the JTDX `lft8s/lft8sd` control-flow boundary;
+- native JTDX slot state now carries `lft8sdec`; accepted FT8S rows feed that
+  state back into later candidates so focused-QSO virtual attempts and AP
+  gates can follow the source's "FT8S already decoded" branch;
 - JTDX `ft8b` now has a private even/odd signal-history cache for CQ,
   MyCall, and QSO candidate symbol matrices. Slot-local temporary signal
   matrices are promoted at slot end, and later candidates can recover `csold`
@@ -268,6 +271,10 @@ Initial status:
   `csr`, `cscs/csr`, and `cs/csold` variants can feed AP/deep work. Ordinary
   regular decode still skips `isubp1>2`, matching the source rule that those
   extra subpasses are not ordinary regular decodes;
+- JTDX hard/soft sync gating now follows the `ft8b.f90` source shape more
+  closely: weak CQ candidates can set the dynamic `lapcqonly` branch,
+  sync-rank distribution can set `lskipnotap`, and the extended soft-sync gate
+  is applied only in the same out-of-QSO / `stophint` cases as the source;
 - item 10 has an initial regular-output filter layer;
 - item 9 has AP type tables, a subpass planner, and BP/OSD AP execution for
   template-safe mask families, but not every AP/deep/special mask family;
@@ -281,8 +288,12 @@ Remaining implementation order:
    `nsubpasses`. The current gate set covers standard/nonstandard call shape,
    missing my/his-call, AP width, QSO-candidate priority, MyCall priority,
    CQ-only, `lqsomsgdcd`, `stophint`, `nmic`, standard/nonstandard DXCall
-   signal classifiers, the `s256` CQ classifier, and QSO end-message
-   classifiers (`RRR`/`73`/`RR73`);
+   signal classifiers, the `s256` CQ classifier, QSO end-message classifiers
+   (`RRR`/`73`/`RR73`), and the source-shaped hard/soft sync gate. Remaining
+   gates are mostly Hound fox-report/RR73 classifiers, later
+   source-specific CPU-pruning branches, and AP/deep false-positive coverage.
+   The first CQ/MyCall `scqnr` / `smycnr` AP-pruning checks and slot-local
+   `lft8sdec` state are represented;
 2. complete JTDX-owned FT8v2 source-level refinement, especially any remaining
    differences in OSD/BP acceptance thresholds and packed-message handling;
 3. source-audit and tighten JTDX subtract/downsample residual interaction,
@@ -309,8 +320,16 @@ Remaining implementation order:
 Next checkpoint:
 
 - source-audit and tighten the remaining AP/deep per-`iaptype` gates against
-  JTDX `ft8b.f90`, especially Hound fox-report/RR73 branches and other
-  source-specific pruning gates that still need source-complete classifiers;
+  JTDX `ft8b.f90`, especially Hound fox-report/RR73 branches and
+  false-positive gates that still need source-complete classifiers;
+- do not silently approximate JTDX `searchcalls.f90` / `ALLCALL7.TXT`.
+  The local JTDX source tree contains the database-backed path, but ft8rs has
+  not yet chosen whether to embed the call database, load it as an optional
+  runtime asset, or keep the current heuristic-only `chkflscall` behavior;
+- Hound remains explicit and incomplete for source-level parity. The AP table
+  and special-message template are wired, but base-call handling and the
+  fox-report/RR73 signal classifiers from the JTDX `tone8` / `ft8b` path still
+  need a dedicated source audit before Hound output can be treated as aligned;
 - source-audit the FT8S/FT8SD false-decode state (`lrepliedother`,
   `msgsrcvd`, and source `stophint` boundaries) against JTDX before using the
   native profile for sensitivity comparisons;
@@ -331,13 +350,16 @@ Current closure status:
 - `profile=jtdx` now runs only the native JTDX path. The earlier WSJT-X
   fallback closure has been removed so JTDX and hybrid results cannot be
   mistaken for protected WSJT-X rows.
-- The native JTDX `ft8b` path still needs repair before JTDX reporting can be
-  promoted. The current native blocker is after sync candidate generation:
-  candidates are present, but regular BP/OSD has not yet been verified to
-  produce accepted native JTDX messages after the latest `twkfreq1` and `csr`
-  metric alignment work.
+- The native JTDX `ft8b` path has been tightened further at source level:
+  dynamic weak-CQ `lapcqonly`, sync-rank `lskipnotap`, extended soft-sync
+  gating, slot-local `lft8sdec`, and the first `scqnr` / `smycnr` AP-pruning
+  checks are represented. This is still a code-level alignment checkpoint, not
+  a promoted sensitivity baseline.
 - `profile=hybrid` currently runs both workers and can only gain JTDX rows once
   native JTDX emits accepted messages.
+- Temporary diagnostic output should not be committed. Current JTDX follow-up
+  work should be tracked in this plan and in `JTDX.md` / `HYBRID.md` instead
+  of leaving ad hoc decoder prints or trace paths.
 
 ### Step 5: Build Hybrid Skeleton
 

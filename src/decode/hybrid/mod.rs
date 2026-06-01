@@ -92,11 +92,11 @@ fn merge_decodes_with_source(
     jtdx: &[StreamDecodedMessage],
 ) -> Vec<HybridDecodedMessage> {
     let mut rows: Vec<HybridDecodedMessage> = Vec::new();
-    let mut by_msg: HashMap<String, usize> = HashMap::new();
+    let mut by_msg: HashMap<String, Vec<usize>> = HashMap::new();
 
     for decode in wsjtx {
         let key = normalized_message(&decode.msg);
-        by_msg.insert(key, rows.len());
+        by_msg.entry(key).or_default().push(rows.len());
         rows.push(HybridDecodedMessage {
             decode: decode.clone(),
             source: DecodeSource::Wsjtx,
@@ -105,13 +105,16 @@ fn merge_decodes_with_source(
 
     for decode in jtdx {
         let key = normalized_message(&decode.msg);
-        if let Some(idx) = by_msg.get(&key).copied() {
-            if is_same_signal(&rows[idx].decode, decode) {
-                rows[idx].source = DecodeSource::Both;
-                continue;
-            }
+        if let Some(idx) = by_msg.get(&key).and_then(|indices| {
+            indices
+                .iter()
+                .copied()
+                .find(|&idx| is_same_signal(&rows[idx].decode, decode))
+        }) {
+            rows[idx].source = DecodeSource::Both;
+            continue;
         }
-        by_msg.insert(key, rows.len());
+        by_msg.entry(key).or_default().push(rows.len());
         rows.push(HybridDecodedMessage {
             decode: decode.clone(),
             source: DecodeSource::Jtdx,
