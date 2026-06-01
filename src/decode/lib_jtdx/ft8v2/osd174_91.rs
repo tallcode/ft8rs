@@ -274,7 +274,6 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
         cw,
         nharderror,
         dmin,
-        iter: 0,
     })
 }
 

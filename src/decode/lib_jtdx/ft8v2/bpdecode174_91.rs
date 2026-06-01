@@ -13,7 +13,6 @@ pub(crate) struct BpDecodeResult {
     pub(crate) cw: [u8; N],
     pub(crate) nharderror: isize,
     pub(crate) dmin: f32,
-    pub(crate) iter: usize,
 }
 
 pub(crate) fn bpdecode174_91(
@@ -74,7 +73,6 @@ pub(crate) fn bpdecode174_91(
                     cw,
                     nharderror,
                     dmin: 0.0,
-                    iter,
                 });
             }
         }

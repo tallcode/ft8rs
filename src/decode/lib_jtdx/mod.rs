@@ -24,7 +24,7 @@ pub mod sync8d;
 pub mod syncdist;
 pub mod twkfreq1;
 
-use crate::stream::session::{StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage};
+use crate::stream::session::{StreamDecodeConfig, StreamDecodedMessage};
 use crate::stream::time::SlotTimestamp;
 
 use self::agccft8::agccft8;
@@ -39,12 +39,10 @@ pub struct JtdxStreamDecodeSession {
     _state: ft8_mod1::Ft8Mod1,
     book: HashCallBook,
     ft8b_workspace: ft8b::Ft8bWorkspace,
-    fallback: StreamDecodeSession,
 }
 
 impl JtdxStreamDecodeSession {
     pub fn new(config: StreamDecodeConfig) -> Self {
-        let fallback = StreamDecodeSession::new(config.clone_for_profile_wsjt_x());
         let config = config.clone_for_profile_jtdx_high_sensitivity();
         let mut state = ft8_mod1::Ft8Mod1::default();
         state.nft8cycles = config.nft8cycles;
@@ -60,7 +58,6 @@ impl JtdxStreamDecodeSession {
             state.hisgrid4 = hisgrid.chars().take(4).collect();
         }
         Self {
-            fallback,
             _config: config,
             _state: state,
             book: HashCallBook::new(),
@@ -90,6 +87,7 @@ impl JtdxStreamDecodeSession {
         reset_decode_arrays(&mut self._state);
         prepare_qso_memory(&self._config, &mut self._state, interval);
         apply_agc_state(&self._config, &mut self._state);
+        self.ft8b_workspace.begin_slot();
         let passes = ft8_decode::decode_passes(&self._config, self._state.avexdt);
         let npass = passes.len();
         let mut decoded = Vec::new();
@@ -154,12 +152,11 @@ impl JtdxStreamDecodeSession {
                 newdat1 = false;
             }
         }
+        self.ft8b_workspace.finish_slot(
+            interval == IntervalKind::Even,
+            interval == IntervalKind::Odd,
+        );
         update_avexdt_after_slot(&self._config, &mut self._state, &decoded);
-        if decoded.is_empty() {
-            return self
-                .fallback
-                .decode_slot_streaming_at(timestamp, samples, on_decode);
-        }
         Ok(decoded)
     }
 }

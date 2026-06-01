@@ -8,8 +8,9 @@ use super::ft8_mod1::{
 use super::ft8_params::{DT2, FS2};
 use super::ft8apset::build_ap_mask;
 use super::ft8v2::bpdecode174_91::{bpdecode174_91, BpDecodeResult, N};
+use super::ft8v2::encode174_91::encode174_91;
 use super::ft8v2::osd174_91::osd174_91;
-use super::ft8v2::packjt77::{unpack77_with_context, HashCallBook, UnpackContext};
+use super::ft8v2::packjt77::{pack77, unpack77_with_context, HashCallBook, UnpackContext};
 use super::ft8v2::subtractft8::subtractft8;
 use super::gen_ft8wave::gen_ft8wave;
 use super::sync8::SyncCandidate;
@@ -56,9 +57,17 @@ struct SymbolMetrics {
     cs_im: [[f32; 79]; 8],
     csr_re: [[f32; 79]; 8],
     csr_im: [[f32; 79]; 8],
+    cscs_re: [[f32; 79]; 8],
+    cscs_im: [[f32; 79]; 8],
     syncav: f32,
     nsync: usize,
     nsync2: usize,
+}
+
+#[derive(Clone, Debug)]
+struct CsMatrix {
+    re: [[f32; 79]; 8],
+    im: [[f32; 79]; 8],
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +78,59 @@ struct BitMetrics {
     bmetd: [f32; N],
 }
 
+#[derive(Clone, Debug, Default)]
+struct ToneHints {
+    idtonemyc: Option<[i32; 58]>,
+    idtone56: Vec<[i32; 58]>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SignalClassifier {
+    lcqsignal: bool,
+    lmycsignal: bool,
+    lqsosig: bool,
+    lqsosigtype3: bool,
+    lqsocandave: bool,
+    nweak: usize,
+    nsubpasses: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MetricSource {
+    Cs,
+    Csr,
+    CscsCsrPower,
+    CsCsoldPower,
+    CsCsoldSum,
+}
+
+#[derive(Clone, Debug)]
+struct SignalEntry {
+    freq: f32,
+    xdt: f32,
+    cs: CsMatrix,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SignalMemory {
+    evencq: Vec<SignalEntry>,
+    oddcq: Vec<SignalEntry>,
+    evenmyc: Vec<SignalEntry>,
+    oddmyc: Vec<SignalEntry>,
+    evenqso: Option<SignalEntry>,
+    oddqso: Option<SignalEntry>,
+    tmpcqsig: Vec<SignalEntry>,
+    tmpmycsig: Vec<SignalEntry>,
+    tmpqsosig: Option<SignalEntry>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SignalKind {
+    Cq,
+    MyCall,
+    Qso,
+}
+
 #[derive(Debug)]
 pub struct Ft8bWorkspace {
     downsample: DownsampleWorkspace,
@@ -76,6 +138,7 @@ pub struct Ft8bWorkspace {
     freqsub: Vec<f32>,
     npos: usize,
     lsubtracted: bool,
+    signal_memory: SignalMemory,
 }
 
 impl Default for Ft8bWorkspace {
@@ -86,13 +149,97 @@ impl Default for Ft8bWorkspace {
             freqsub: vec![0.0; 200],
             npos: 0,
             lsubtracted: false,
+            signal_memory: SignalMemory::default(),
         }
     }
 }
 
 impl Ft8bWorkspace {
+    pub fn begin_slot(&mut self) {
+        self.signal_memory.tmpcqsig.clear();
+        self.signal_memory.tmpmycsig.clear();
+        self.signal_memory.tmpqsosig = None;
+    }
+
+    pub fn finish_slot(&mut self, levenint: bool, loddint: bool) {
+        self.signal_memory.finish_slot(levenint, loddint);
+    }
+
     pub fn new_pass(&mut self) {
         self.npos = 0;
+    }
+}
+
+impl SignalMemory {
+    fn finish_slot(&mut self, levenint: bool, loddint: bool) {
+        if levenint {
+            self.evencq = self.tmpcqsig.clone();
+            self.evenmyc = self.tmpmycsig.clone();
+            self.evenqso = self.tmpqsosig.clone();
+        } else if loddint {
+            self.oddcq = self.tmpcqsig.clone();
+            self.oddmyc = self.tmpmycsig.clone();
+            self.oddqso = self.tmpqsosig.clone();
+        }
+        self.tmpcqsig.clear();
+        self.tmpmycsig.clear();
+        self.tmpqsosig = None;
+    }
+
+    fn find_old(
+        &self,
+        kind: SignalKind,
+        context: Ft8bCandidateContext,
+        freq: f64,
+        xdt: f64,
+    ) -> Option<CsMatrix> {
+        let entries: &[SignalEntry] = match (kind, context.levenint, context.loddint) {
+            (SignalKind::Cq, true, _) => &self.evencq,
+            (SignalKind::Cq, _, true) => &self.oddcq,
+            (SignalKind::MyCall, true, _) => &self.evenmyc,
+            (SignalKind::MyCall, _, true) => &self.oddmyc,
+            (SignalKind::Qso, true, _) => return self.match_one(&self.evenqso, freq, xdt),
+            (SignalKind::Qso, _, true) => return self.match_one(&self.oddqso, freq, xdt),
+            _ => return None,
+        };
+        entries
+            .iter()
+            .find(|entry| {
+                (entry.freq as f64 - freq).abs() < 2.0 && (entry.xdt as f64 - xdt).abs() < 0.05
+            })
+            .map(|entry| entry.cs.clone())
+    }
+
+    fn match_one(&self, entry: &Option<SignalEntry>, freq: f64, xdt: f64) -> Option<CsMatrix> {
+        entry
+            .as_ref()
+            .filter(|entry| {
+                (entry.freq as f64 - freq).abs() < 2.0 && (entry.xdt as f64 - xdt).abs() < 0.05
+            })
+            .map(|entry| entry.cs.clone())
+    }
+
+    fn remember_tmp(&mut self, kind: SignalKind, freq: f64, xdt: f64, cs: CsMatrix) {
+        let entry = SignalEntry {
+            freq: freq as f32,
+            xdt: xdt as f32,
+            cs,
+        };
+        match kind {
+            SignalKind::Cq => {
+                if self.tmpcqsig.len() < super::ft8_mod1::NUM_CQ_SIG {
+                    self.tmpcqsig.push(entry);
+                }
+            }
+            SignalKind::MyCall => {
+                if self.tmpmycsig.len() < super::ft8_mod1::NUM_MYC_SIG {
+                    self.tmpmycsig.push(entry);
+                }
+            }
+            SignalKind::Qso => {
+                self.tmpqsosig = Some(entry);
+            }
+        }
     }
 }
 
@@ -122,15 +269,22 @@ pub fn ft8b(
     let attempts = qso_attempts(qso_plan);
     for iqso in attempts {
         let cd0 = match iqso {
-            2 => &workspace.downsample_out.c2,
-            3 => &workspace.downsample_out.c3,
-            _ => &workspace.downsample_out.c0,
+            2 => workspace.downsample_out.c2.clone(),
+            3 => workspace.downsample_out.c3.clone(),
+            _ => workspace.downsample_out.c0.clone(),
         };
-        if let Some((result, ibest)) =
-            try_ft8b_decode_for_iqso(cd0, config, book, candidate, context, iqso, qso_plan.xdt0)
-        {
+        if let Some((result, ibest)) = try_ft8b_decode_for_iqso(
+            &cd0,
+            config,
+            book,
+            candidate,
+            context,
+            iqso,
+            qso_plan.xdt0,
+            &mut workspace.signal_memory,
+        ) {
             if context.lsubtract {
-                let xdt3 = refined_subtract_dt(cd0, &result.itone, ibest);
+                let xdt3 = refined_subtract_dt(&cd0, &result.itone, ibest);
                 subtractft8(dd8, &result.itone, result.freq, xdt3 as f32, config.swl);
                 workspace.lsubtracted = true;
                 if workspace.npos < workspace.freqsub.len() {
@@ -153,6 +307,7 @@ fn try_ft8b_decode_for_iqso(
     context: Ft8bCandidateContext,
     iqso: usize,
     xdt0: f32,
+    signal_memory: &mut SignalMemory,
 ) -> Option<(Ft8bDecodeResult, isize)> {
     let sync_context = Sync8dContext {
         ipass: context.ipass,
@@ -213,6 +368,7 @@ fn try_ft8b_decode_for_iqso(
         config,
         book,
         context,
+        signal_memory,
     )
     .map(|result| (result, ibest))
 }
@@ -336,6 +492,8 @@ fn extract_symbol_metrics(
     let mut cs_im = [[0.0f32; 79]; 8];
     let mut csr_re = [[0.0f32; 79]; 8];
     let mut csr_im = [[0.0f32; 79]; 8];
+    let mut cscs_re = [[0.0f32; 79]; 8];
+    let mut cscs_im = [[0.0f32; 79]; 8];
     let mut snrsync = [0.0f32; 21];
     let mut re = [0.0f64; 32];
     let mut im = [0.0f64; 32];
@@ -440,6 +598,11 @@ fn extract_symbol_metrics(
         }
 
         if lreverse {
+            four2a_c2c(&mut re, &mut im, -1);
+            for tone in 0..8 {
+                cscs_re[tone][k] = (re[tone + 1] / 1000.0) as f32;
+                cscs_im[tone][k] = (im[tone + 1] / 1000.0) as f32;
+            }
             four2a_c2c(&mut rr_re, &mut rr_im, -1);
             for tone in 0..8 {
                 cs_re[tone][k] = (rr_re[tone + 1] / 1000.0) as f32;
@@ -466,7 +629,15 @@ fn extract_symbol_metrics(
         }
     }
 
-    normalize_tone_spectra(&mut s8, &mut cs_re, &mut cs_im, &mut csr_re, &mut csr_im);
+    normalize_tone_spectra(
+        &mut s8,
+        &mut cs_re,
+        &mut cs_im,
+        &mut csr_re,
+        &mut csr_im,
+        &mut cscs_re,
+        &mut cscs_im,
+    );
 
     SymbolMetrics {
         s8,
@@ -474,6 +645,8 @@ fn extract_symbol_metrics(
         cs_im,
         csr_re,
         csr_im,
+        cscs_re,
+        cscs_im,
         syncav,
         nsync,
         nsync2,
@@ -486,6 +659,8 @@ fn normalize_tone_spectra(
     cs_im: &mut [[f32; 79]; 8],
     csr_re: &mut [[f32; 79]; 8],
     csr_im: &mut [[f32; 79]; 8],
+    cscs_re: &mut [[f32; 79]; 8],
+    cscs_im: &mut [[f32; 79]; 8],
 ) {
     let mut sp = [0.0f32; 8];
     for tone in 0..8 {
@@ -514,6 +689,8 @@ fn normalize_tone_spectra(
                 cs_im[tone][k] /= sprsqr;
                 csr_re[tone][k] /= sprsqr;
                 csr_im[tone][k] /= sprsqr;
+                cscs_re[tone][k] /= sprsqr;
+                cscs_im[tone][k] /= sprsqr;
             }
         }
     }
@@ -624,20 +801,47 @@ fn regular_decode(
     config: &StreamDecodeConfig,
     book: &HashCallBook,
     context: Ft8bCandidateContext,
+    signal_memory: &mut SignalMemory,
 ) -> Option<Ft8bDecodeResult> {
-    let _ap_subpasses = plan_ap_subpasses(config);
-    let primary_metrics = build_bit_metrics(metrics, false);
+    let tone_hints = ToneHints::from_config(config);
+    let classifier = classify_signal(metrics, config, refined_freq, context, &tone_hints);
+    remember_candidate_signal(signal_memory, metrics, classifier, refined_freq, refined_dt);
+    let csold = select_csold(signal_memory, classifier, context, refined_freq, refined_dt);
+    let primary_metrics = build_bit_metrics(metrics, MetricSource::Cs);
 
     let apmask = [0i8; N];
-    for isubp1 in 1..=2 {
+    for isubp1 in 1..=classifier.nsubpasses {
+        if classifier.nweak == 1 && isubp1 == 2 {
+            continue;
+        }
+        if isubp1 > 2 && isubp1 < 6 && classifier.lmycsignal {
+            continue;
+        }
         let bit_metrics = if isubp1 == 1 {
             primary_metrics.clone()
+        } else if isubp1 == 2 {
+            build_bit_metrics(metrics, MetricSource::Csr)
+        } else if matches!(isubp1, 3 | 6 | 9) {
+            build_bit_metrics(metrics, MetricSource::CscsCsrPower)
+        } else if matches!(isubp1, 4 | 7 | 10) {
+            let Some(csold) = csold.as_ref() else {
+                continue;
+            };
+            build_bit_metrics_with_csold(metrics, MetricSource::CsCsoldPower, csold)
+        } else if matches!(isubp1, 5 | 8 | 11) {
+            let Some(csold) = csold.as_ref() else {
+                continue;
+            };
+            build_bit_metrics_with_csold(metrics, MetricSource::CsCsoldSum, csold)
         } else {
-            build_bit_metrics(metrics, true)
+            continue;
         };
 
         for isubp2 in 1..=4 {
             if !config.swl && isubp2 == 4 {
+                continue;
+            }
+            if isubp1 > 2 {
                 continue;
             }
             let llr_source = regular_llr_source(config, context, isubp1, isubp2, &bit_metrics);
@@ -684,7 +888,7 @@ fn regular_decode(
             }
         }
         if let Some(result) = bpdecode174_91(&llrz, &ap.apmask, 30)
-            .or_else(|| osd174_91(&llrz, &ap.apmask, ap_ndeep(config, iaptype)))
+            .or_else(|| osd174_91(&llrz, &ap.apmask, ap_ndeep(config, iaptype, classifier)))
             .and_then(|decoded| {
                 decoded_to_result(
                     metrics,
@@ -704,7 +908,188 @@ fn regular_decode(
     None
 }
 
-fn build_bit_metrics(metrics: &SymbolMetrics, reverse: bool) -> BitMetrics {
+impl ToneHints {
+    fn from_config(config: &StreamDecodeConfig) -> Self {
+        let mut hints = Self::default();
+        let Some(mycall) = normalized_config_call(config.mycall.as_deref()) else {
+            return hints;
+        };
+
+        hints.idtonemyc = tones58_from_message(&format!("{mycall} AA1AAA FN25"));
+        if let Some(hiscall) = normalized_config_call(config.hiscall.as_deref()) {
+            hints.idtone56 = build_idtone56(&mycall, &hiscall);
+        }
+        hints
+    }
+}
+
+fn remember_candidate_signal(
+    signal_memory: &mut SignalMemory,
+    metrics: &SymbolMetrics,
+    classifier: SignalClassifier,
+    refined_freq: f64,
+    refined_dt: f64,
+) {
+    let cs = CsMatrix {
+        re: metrics.cs_re,
+        im: metrics.cs_im,
+    };
+    if classifier.lcqsignal {
+        signal_memory.remember_tmp(SignalKind::Cq, refined_freq, refined_dt, cs.clone());
+    }
+    if classifier.lmycsignal {
+        signal_memory.remember_tmp(SignalKind::MyCall, refined_freq, refined_dt, cs.clone());
+    }
+    if classifier.lqsocandave {
+        signal_memory.remember_tmp(SignalKind::Qso, refined_freq, refined_dt, cs);
+    }
+}
+
+fn select_csold(
+    signal_memory: &SignalMemory,
+    classifier: SignalClassifier,
+    context: Ft8bCandidateContext,
+    refined_freq: f64,
+    refined_dt: f64,
+) -> Option<CsMatrix> {
+    if classifier.lqsocandave {
+        return signal_memory.find_old(SignalKind::Qso, context, refined_freq, refined_dt);
+    }
+    if classifier.lmycsignal {
+        return signal_memory.find_old(SignalKind::MyCall, context, refined_freq, refined_dt);
+    }
+    if classifier.lcqsignal {
+        return signal_memory.find_old(SignalKind::Cq, context, refined_freq, refined_dt);
+    }
+    None
+}
+
+fn classify_signal(
+    metrics: &SymbolMetrics,
+    config: &StreamDecodeConfig,
+    refined_freq: f64,
+    context: Ft8bCandidateContext,
+    hints: &ToneHints,
+) -> SignalClassifier {
+    let lapmyc = normalized_config_call(config.mycall.as_deref()).is_some();
+    let mut nmic = 0usize;
+    if let Some(idtonemyc) = &hints.idtonemyc {
+        for k11 in 8..=16 {
+            let sym = k11 - 1;
+            if max_tone(&metrics.s8, sym, None) as i32 == idtonemyc[k11 - 8] {
+                nmic += 1;
+            }
+        }
+    }
+    let mut rscq = 0.0f32;
+    for k11 in 8..=16 {
+        let sym = k11 - 1;
+        let best = max_tone(&metrics.s8, sym, None);
+        if k11 < 16 {
+            if best == 0 {
+                rscq += 1.0;
+            }
+        } else if best == 1 {
+            rscq += 1.0;
+        }
+    }
+    for (sym, tones) in [(16usize, [0usize, 1usize]), (26, [0, 1]), (32, [2, 3])] {
+        let best = max_tone(&metrics.s8, sym, None);
+        if tones.contains(&best) {
+            rscq += 0.5;
+        }
+    }
+
+    let lcqsignal = rscq > 3.1;
+    let lmycsignal = lapmyc && nmic > 2;
+    let dfqso = (config.nfqso - refined_freq).abs();
+    let mut lqsosig = false;
+    let mut lqsosigtype3 = false;
+    let mut ndxt = 0usize;
+    if !context.lqsomsgdcd
+        && (dfqso < config.napwid || (config.nftx - refined_freq).abs() < config.napwid)
+        && lapmyc
+        && normalized_config_call(config.hiscall.as_deref()).is_some()
+        && !hints.idtone56.is_empty()
+    {
+        let qso_tones = &hints.idtone56[0];
+        let mut nqsot = 0usize;
+        for i in 1..=19 {
+            if max_tone(&metrics.s8, i + 6, None) as i32 == qso_tones[i - 1] {
+                nqsot += 1;
+            }
+        }
+        lqsosig = nqsot > 6;
+        for i in 20..=22 {
+            if max_tone(&metrics.s8, i + 6, None) as i32 == qso_tones[i - 1] {
+                nqsot += 1;
+            }
+        }
+        lqsosigtype3 = nqsot > 3;
+
+        for k11 in 17..=26 {
+            if max_tone(&metrics.s8, k11 - 1, None) as i32 == qso_tones[k11 - 8] {
+                ndxt += 1;
+            }
+        }
+    }
+
+    let lsubptxfreq = lapmyc
+        && (refined_freq - config.nftx).abs() < 2.0
+        && !config.lhound
+        && !context.lqsomsgdcd
+        && (context.nlasttx == 1 || context.nlasttx == 2);
+    let nweak = if config.swl || dfqso < 2.0 || lsubptxfreq {
+        2
+    } else {
+        1
+    };
+    let mut nsubpasses = nweak;
+    if lcqsignal {
+        nsubpasses = 3;
+    }
+    if lmycsignal && !is_nonstandard_call(config.mycall.as_deref().unwrap_or("")) {
+        nsubpasses = 6;
+    }
+    let lqsocandave = lapmyc
+        && ndxt > 2
+        && nmic > 2
+        && !context.lqsomsgdcd
+        && !is_nonstandard_call(config.mycall.as_deref().unwrap_or(""))
+        && !is_nonstandard_call(config.hiscall.as_deref().unwrap_or(""))
+        && dfqso < config.napwid / 2.0;
+    if lqsocandave {
+        nsubpasses = 9;
+    }
+
+    SignalClassifier {
+        lcqsignal,
+        lmycsignal,
+        lqsosig,
+        lqsosigtype3,
+        lqsocandave,
+        nweak,
+        nsubpasses,
+    }
+}
+
+fn build_bit_metrics(metrics: &SymbolMetrics, source: MetricSource) -> BitMetrics {
+    build_bit_metrics_inner(metrics, source, None)
+}
+
+fn build_bit_metrics_with_csold(
+    metrics: &SymbolMetrics,
+    source: MetricSource,
+    csold: &CsMatrix,
+) -> BitMetrics {
+    build_bit_metrics_inner(metrics, source, Some(csold))
+}
+
+fn build_bit_metrics_inner(
+    metrics: &SymbolMetrics,
+    source: MetricSource,
+    csold: Option<&CsMatrix>,
+) -> BitMetrics {
     let mut out = BitMetrics {
         bmeta: [0.0f32; N],
         bmetb: [0.0f32; N],
@@ -714,11 +1099,11 @@ fn build_bit_metrics(metrics: &SymbolMetrics, reverse: bool) -> BitMetrics {
     let srr = sync_snr_ratio(metrics);
     for nsym in 1..=3 {
         let nt = (1usize << (3 * nsym)) - 1;
-        for ihalf in 1..=2 {
-            let mut k = 1usize;
-            while k <= 29 {
-                let ks = if ihalf == 1 { k + 7 } else { k + 43 };
-                let i32 = 1 + (k - 1) * 3 + (ihalf - 1) * 87;
+        for ihalf in 0..2 {
+            let mut k = 0usize;
+            while k < 29 {
+                let ks = if ihalf == 0 { k + 7 } else { k + 43 };
+                let i32 = 1 + k * 3 + ihalf * 87;
                 let ibmax = match nsym {
                     1 => 2,
                     2 => 5,
@@ -729,31 +1114,24 @@ fn build_bit_metrics(metrics: &SymbolMetrics, reverse: bool) -> BitMetrics {
                     let i1 = i / 64;
                     let i2 = (i & 63) / 8;
                     let i33 = i & 7;
-                    let value = match nsym {
-                        1 => complex_abs(metrics, reverse, GRAYMAP[i33] as usize, ks),
-                        2 => complex_abs_sum(
-                            metrics,
-                            reverse,
-                            &[(GRAYMAP[i2] as usize, ks), (GRAYMAP[i33] as usize, ks + 1)],
-                        ),
-                        _ => complex_abs_sum(
-                            metrics,
-                            reverse,
-                            &[
-                                (GRAYMAP[i1] as usize, ks),
-                                (GRAYMAP[i2] as usize, ks + 1),
-                                (GRAYMAP[i33] as usize, ks + 2),
-                            ],
-                        ),
+                    let tones = match nsym {
+                        1 => [(GRAYMAP[i33] as usize, ks), (0, 0), (0, 0)],
+                        2 => [
+                            (GRAYMAP[i2] as usize, ks),
+                            (GRAYMAP[i33] as usize, ks + 1),
+                            (0, 0),
+                        ],
+                        _ => [
+                            (GRAYMAP[i1] as usize, ks),
+                            (GRAYMAP[i2] as usize, ks + 1),
+                            (GRAYMAP[i33] as usize, ks + 2),
+                        ],
                     };
-                    *slot = if srr < 2.5 {
-                        if srr > 2.3 {
-                            value * value
-                        } else if value < 5.77 {
-                            1.0 + 8.0 * value.powi(2) - 0.12 * value.powi(4)
-                        } else {
-                            (value + 5.82).powi(2)
-                        }
+                    let value = metric_source_value(metrics, source, csold, &tones[..nsym]);
+                    *slot = if source == MetricSource::Cs && srr < 2.5 {
+                        shape_primary_metric(value, srr)
+                    } else if source != MetricSource::Cs && srr < 2.5 {
+                        (0.5 * value).powi(3)
                     } else {
                         value
                     };
@@ -786,6 +1164,16 @@ fn build_bit_metrics(metrics: &SymbolMetrics, reverse: bool) -> BitMetrics {
     normalizebmet(&mut out.bmetc);
     normalizebmet(&mut out.bmetd);
     out
+}
+
+fn shape_primary_metric(value: f32, srr: f32) -> f32 {
+    if srr > 2.3 {
+        value * value
+    } else if value < 5.77 {
+        1.0 + 8.0 * value.powi(2) - 0.12 * value.powi(4)
+    } else {
+        (value + 5.82).powi(2)
+    }
 }
 
 fn regular_llr_source<'a>(
@@ -830,7 +1218,16 @@ fn ap_llr_source<'a>(
     }
 }
 
-fn ap_ndeep(config: &StreamDecodeConfig, _iaptype: i32) -> usize {
+fn ap_ndeep(config: &StreamDecodeConfig, iaptype: i32, classifier: SignalClassifier) -> usize {
+    if (classifier.lqsosig
+        || classifier.lmycsignal
+        || classifier.lqsosigtype3
+        || classifier.lqsocandave)
+        && iaptype != 0
+        && !config.nagain
+    {
+        return 4;
+    }
     if config.nagain {
         5
     } else {
@@ -873,6 +1270,14 @@ fn ap_type_table(config: &StreamDecodeConfig) -> &'static [[i32; 27]; 6] {
     }
 }
 
+fn normalized_config_call(call: Option<&str>) -> Option<String> {
+    let call = call?.trim().trim_start_matches('<').trim_end_matches('>');
+    if call.len() < 3 {
+        return None;
+    }
+    Some(call.to_ascii_uppercase())
+}
+
 fn is_nonstandard_call(call: &str) -> bool {
     let call = call.trim();
     if call.is_empty() {
@@ -886,6 +1291,33 @@ fn is_nonstandard_call(call: &str) -> bool {
             .as_bytes()
             .iter()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+}
+
+fn build_idtone56(mycall: &str, hiscall: &str) -> Vec<[i32; 58]> {
+    const RPT: [&str; 56] = [
+        "-01", "-02", "-03", "-04", "-05", "-06", "-07", "-08", "-09", "-10", "-11", "-12", "-13",
+        "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26",
+        "R-01", "R-02", "R-03", "R-04", "R-05", "R-06", "R-07", "R-08", "R-09", "R-10", "R-11",
+        "R-12", "R-13", "R-14", "R-15", "R-16", "R-17", "R-18", "R-19", "R-20", "R-21", "R-22",
+        "R-23", "R-24", "R-25", "R-26", "AA00", "RRR", "RR73", "73",
+    ];
+
+    RPT.iter()
+        .filter_map(|rpt| tones58_from_message(&format!("{mycall} {hiscall} {rpt}")))
+        .collect()
+}
+
+fn tones58_from_message(msg: &str) -> Option<[i32; 58]> {
+    let packed = pack77(msg);
+    if packed.len() < 77 {
+        return None;
+    }
+    let codeword = encode174_91(&packed[..77]);
+    let itone = tones_from_codeword(&codeword);
+    let mut out = [0i32; 58];
+    out[..29].copy_from_slice(&itone[7..36]);
+    out[29..].copy_from_slice(&itone[43..72]);
+    Some(out)
 }
 
 fn decoded_to_result(
@@ -934,7 +1366,6 @@ fn decoded_to_result(
     if config.hide_hash && msg.find("<...>").is_some_and(|idx| idx >= 6) {
         return None;
     }
-    let _niterations = decoded.iter;
     Some(Ft8bDecodeResult {
         msg37: msg,
         msg37_2: String::new(),
@@ -987,25 +1418,44 @@ fn sync_snr_ratio(metrics: &SymbolMetrics) -> f32 {
     synclev / snoiselev
 }
 
-fn complex_abs(metrics: &SymbolMetrics, reverse: bool, tone: usize, k: usize) -> f32 {
-    if reverse {
-        (metrics.csr_re[tone][k].powi(2) + metrics.csr_im[tone][k].powi(2)).sqrt()
-    } else {
-        (metrics.cs_re[tone][k].powi(2) + metrics.cs_im[tone][k].powi(2)).sqrt()
+fn metric_source_value(
+    metrics: &SymbolMetrics,
+    source: MetricSource,
+    csold: Option<&CsMatrix>,
+    pairs: &[(usize, usize)],
+) -> f32 {
+    match source {
+        MetricSource::Cs => complex_abs_sum(&metrics.cs_re, &metrics.cs_im, pairs),
+        MetricSource::Csr => complex_abs_sum(&metrics.csr_re, &metrics.csr_im, pairs),
+        MetricSource::CscsCsrPower => {
+            let a = complex_abs_sum(&metrics.cscs_re, &metrics.cscs_im, pairs);
+            let b = complex_abs_sum(&metrics.csr_re, &metrics.csr_im, pairs);
+            a * a + b * b
+        }
+        MetricSource::CsCsoldPower => {
+            let old = csold.expect("csold metric source requires csold");
+            let a = complex_abs_sum(&metrics.cs_re, &metrics.cs_im, pairs);
+            let b = complex_abs_sum(&old.re, &old.im, pairs);
+            a * a + b * b
+        }
+        MetricSource::CsCsoldSum => {
+            let old = csold.expect("csold metric source requires csold");
+            complex_abs_sum(&metrics.cs_re, &metrics.cs_im, pairs)
+                + complex_abs_sum(&old.re, &old.im, pairs)
+        }
     }
 }
 
-fn complex_abs_sum(metrics: &SymbolMetrics, reverse: bool, pairs: &[(usize, usize)]) -> f32 {
+fn complex_abs_sum(
+    re_table: &[[f32; 79]; 8],
+    im_table: &[[f32; 79]; 8],
+    pairs: &[(usize, usize)],
+) -> f32 {
     let mut re = 0.0f32;
     let mut im = 0.0f32;
     for &(tone, k) in pairs {
-        if reverse {
-            re += metrics.csr_re[tone][k];
-            im += metrics.csr_im[tone][k];
-        } else {
-            re += metrics.cs_re[tone][k];
-            im += metrics.cs_im[tone][k];
-        }
+        re += re_table[tone][k];
+        im += im_table[tone][k];
     }
     (re * re + im * im).sqrt()
 }
@@ -1075,15 +1525,25 @@ fn estimate_snr(metrics: &SymbolMetrics, itone: &[i32; 79], iaptype: i32) -> f32
             xsnr = 49.0;
         }
     }
+    let xsnrs = xsnr;
     if xsnr < -17.0 {
         if xsnr < -22.5 && xsnr > -23.5 {
             xsnr = -22.5;
         }
         xsnr = xsnr - (1.0 + 1.4 / (23.0 + xsnr)).powi(2) + 1.2;
     }
-    if iaptype == 0 {
+    xsnr = if iaptype == 0 {
         xsnr.max(-23.0)
     } else {
         xsnr.max(-24.0)
+    };
+    if iaptype > 4 {
+        if xsnr < -22.0 {
+            xsnr = xsnrs - 1.0;
+        }
+        if xsnr < -26.0 {
+            xsnr = -26.0;
+        }
     }
+    xsnr
 }
