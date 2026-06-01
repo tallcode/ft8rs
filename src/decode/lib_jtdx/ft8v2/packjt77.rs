@@ -1,4 +1,4 @@
-//! JTDX-owned FT8/JT77 message packing.
+//! JTDX-owned FT8 77-bit message packing.
 //!
 //! Mirrors JTDX `lib/ft8v2/packjt77.f90`.
 ///

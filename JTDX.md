@@ -51,7 +51,9 @@ This file is the technical record for `profile=jtdx` only.
   explicitly audited and documented as identical.
 - Do not extract common decoder internals yet.
 - Treat JTDX `ft8_mod1.f90` as the state model for this path.
-- Keep SWL optional, not enabled by default.
+- Current implementation priority is normal FT8 high-sensitivity decoding.
+- Keep SWL optional, not enabled by default, and do not expand SWL-only behavior
+  in this milestone.
 
 ## High-Sensitivity Defaults
 
@@ -73,11 +75,9 @@ hound = false
 These are ft8rs high-sensitivity defaults. They should not be described as
 JTDX GUI defaults.
 
-`swl` can be exposed later as an explicit option:
-
-```bash
-ft8rs file input.wav --start-time 230208_140300 --profile jtdx --swl
-```
+SWL-specific tuning is deferred. Existing SWL switches may remain for
+compatibility with the profile surface, but high-sensitivity normal FT8 is the
+active target.
 
 Hound AP table selection is explicit:
 
@@ -246,10 +246,23 @@ Implemented or scaffolded:
   slot end, and can recover `csold` for a later candidate using the JTDX
   frequency/DT proximity rules;
 - high-order metric sources for `cs+csold` power and `abs(cs)+abs(csold)` sum
-  variants are now available to the bit-metric builder. They are still used
-  conservatively: ordinary regular decode continues to skip `isubp1>2`, while
-  AP/deep still needs the full source-shaped nested loop before these paths are
-  considered fully aligned;
+  variants are now available to the bit-metric builder. When `csold` is found
+  from the private signal-history cache, CQ/MyCall/QSO candidate subpass counts
+  are raised to the JTDX source levels `5/8/11`. AP/deep attempts now execute
+  inside the same `isubp1` metric-source loop as regular decode, so these
+  high-order metric variants can feed AP/deep work. Ordinary regular decode
+  continues to skip `isubp1>2`;
+- AP/deep gating now has the first source-shaped branch layer for the JTDX AP
+  type tables: standard/nonstandard call shape, missing configured calls,
+  AP-width checks, `lapcqonly`, `lqsomsgdcd`, `stophint`, `nmic`, QSO-candidate
+  priority, MyCall priority, standard-DX `ldxcsig/lcqdxcsig`, and the
+  `RRR`/`73`/`RR73` QSO-end classifiers are represented from the state
+  currently available in Rust;
+- JTDX-owned `packjt77sd` now packs/unpacks the FT8S message subset and
+  `genft8sd` produces source-shaped tone sequences for superdeep matching.
+  `ft8b` has an initial conservative FT8S fallback for configured
+  `mycall/hiscall` QSO messages near the QSO frequency after regular/AP
+  BP+OSD attempts fail;
 - regular decode unpacks 77-bit payloads through the JTDX-owned unpack context
   with `mycall` / `hiscall` available for hash-style call presentation;
 - the JTDX session now owns its own JTDX `HashCallBook`; decoded calls are
@@ -296,11 +309,12 @@ Implemented or scaffolded:
 
 Not complete yet:
 
-- higher JTDX regular `nsubpasses` metric variants beyond the current
-  forward/reverse `cs`/`csr` pair. `cscs`, `csold`, and the first signal
-  classifiers are present, but AP/deep still needs the full source nested
-  `isubp1/isubp2` loop and remaining skip/gating matrix before the higher
-  subpasses can be enabled broadly;
+- the remaining JTDX AP/deep skip/gating matrix. AP/deep now runs inside the
+  source-shaped nested `isubp1/isubp2` loop and can consume `csr`,
+  `cscs/csr`, and `cs/csold` metric variants, but the Rust gate set is still
+  missing source-complete nonstandard-DX search classifiers, the JTDX `s256`
+  CQ classifier branch, Hound fox-report/RR73 classifiers, and several
+  source-specific CPU-pruning gates;
 - full JTDX FT8v2 source-level refinement;
 - deeper AGC state integration with the JTDX-owned slot buffer;
 - source-level validation of the newly wired `lforcesync` / forced-DT /
@@ -308,8 +322,7 @@ Not complete yet:
 - source-level validation of the newly wired odd/even `calldteven` /
   `calldtodd`, `incall`, and `lastrxmsg` restoration behavior with real JTDX
   profile output;
-- remaining AP/deep/superdeep source-level gating around the newly wired mask
-  families;
+- remaining AP/deep source-level gating around the newly wired mask families;
 - source-level validation of the newly added subtract and pass-shift paths
   against JTDX before baseline testing;
 - AP/deep-specific source-level false-positive filter coverage after AP/deep
@@ -486,11 +499,12 @@ Current AP boundary:
 - AP LLR source selection follows the JTDX `isubp2` table, including the
   repeated `llrb` selections for subpasses `10`, `13`, and `16`;
 - regular LLR source selection now follows the source `isubp1=1..2` and
-  `isubp2=1..4` control flow for the currently available forward `cs` and
-  reverse `csr` metric arrays. `cscs` is now available as saved forward data
-  from `lreverse`, and `csold` is now available from the private signal-history
-  cache. The remaining gap is moving AP/deep execution into the source-shaped
-  nested `isubp1/isubp2` loop with all source skip/gating rules;
+  `isubp2=1..4` control flow for the forward `cs` and reverse `csr` metric
+  arrays. `cscs` is available as saved forward data from `lreverse`, `csold`
+  is available from the private signal-history cache, and AP/deep execution now
+  runs inside the source-shaped nested `isubp1/isubp2` loop. The remaining gap
+  is completing the source classifiers and pruning gates that are not yet
+  represented in Rust;
 - AP mask strength uses `max(abs(bmeta))*2.83*1.01`, matching the source
   expression `maxval(abs(llra))*1.01` after `llra=2.83*bmeta`;
 - AP OSD fallback depth follows the source default branch: `ndeep=3` unless
@@ -533,7 +547,10 @@ Current false-positive boundary:
 Remaining filter caveats:
 
 - JTDX `searchcalls` / `ALLCALL7.TXT` backed filters are not fully modeled yet;
-- FT8S / superdeep-specific bypass and rejection branches are still incomplete;
+- FT8S / superdeep-specific bypass and rejection branches are part of the
+  current normal-FT8 high-sensitivity milestone. The first FT8S candidate
+  matcher exists, but source-complete `ft8s`, `ft8sd`, `ft8sd1`, `ft8mf1`,
+  `ft8mfcq`, and `tonesd` behavior is still incomplete;
 - ARRL RTTY contest rewrite handling is not promoted as a target behavior in
   ft8rs yet, because this project remains focused on FT8 decode behavior.
 
@@ -580,4 +597,5 @@ Current closure note:
 - Do not reintroduce profile-level fallback to the protected WSJT-X decoder.
 - Do not extract shared decoder internals.
 - Do not enable SWL by default.
+- Do not expand SWL-only behavior in this normal-FT8 milestone.
 - Do not describe incomplete JTDX skeleton output as JTDX-aligned.

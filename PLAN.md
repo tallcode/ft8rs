@@ -27,6 +27,10 @@ Rules:
 
 - `wsjtx` remains the default.
 - WSJT-X behavior must not change while adding JTDX or hybrid.
+- Current scope is normal FT8 decoding, with `jtdx` optimized for
+  high-sensitivity behavior first.
+- SWL-specific expansion is deferred. Existing SWL switches may remain, but do
+  not spend this phase implementing or tuning SWL-only behavior.
 - JTDX code lives in its own implementation path.
 - Hybrid lives outside both decoder implementations.
 - Do not extract shared decoder internals in this phase.
@@ -221,15 +225,27 @@ Initial status:
   protected WSJT-X encoder path;
 - JTDX `ft8b` now builds initial `tone8myc` / `tone8`-style reference tone
   hints from configured calls and uses them for the first native
-  `lmycsignal`, `lqsosig`, `lqsosigtype3`, and `lqsocandave` classifiers;
+  `lmycsignal`, `lqsosig`, `lqsosigtype3`, standard-DX
+  `ldxcsig/lcqdxcsig`, nonstandard-DX `ldxcsig/lcqdxcnssig`, QSO end-message,
+  and `lqsocandave` classifiers;
+- JTDX `ft8b` now computes the 256-point `s256` CQ classifier branch from
+  `cd0(ibest+224:ibest+479)*ctwk256`, matching the normal FT8 high-sensitivity
+  source path used to raise `lcqsignal` beyond the basic `rscq` check;
+- JTDX-owned `packjt77sd` and `genft8sd` now exist for FT8S/superdeep message
+  tone generation. The native `ft8b` path has an initial conservative FT8S
+  fallback that tries configured `mycall/hiscall` message candidates after
+  regular/AP BP+OSD paths fail near the QSO frequency;
 - JTDX `ft8b` now has a private even/odd signal-history cache for CQ,
   MyCall, and QSO candidate symbol matrices. Slot-local temporary signal
   matrices are promoted at slot end, and later candidates can recover `csold`
   by matching frequency and DT;
 - high-order JTDX bit-metric sources for `cs+csold` power and sum variants are
-  wired into the metric builder. Regular non-AP decode still skips
-  `isubp1>2`, matching the source rule that those extra subpasses feed AP/deep
-  work rather than ordinary regular decode;
+  wired into the metric builder. When matching prior slot symbol matrices are
+  found, JTDX raises CQ/MyCall/QSO candidate `nsubpasses` to `5/8/11` and
+  AP/deep attempts now run inside the same `isubp1` metric-source loop, so
+  `csr`, `cscs/csr`, and `cs/csold` variants can feed AP/deep work. Ordinary
+  regular decode still skips `isubp1>2`, matching the source rule that those
+  extra subpasses are not ordinary regular decodes;
 - item 10 has an initial regular-output filter layer;
 - item 9 has AP type tables, a subpass planner, and BP/OSD AP execution for
   template-safe mask families, but not every AP/deep/special mask family;
@@ -238,32 +254,37 @@ Initial status:
 
 Remaining implementation order:
 
-1. complete JTDX AP/deep use of high-order `nsubpasses`. The `cscs`, `csold`,
-   signal classifier, and metric-source plumbing are now present, but the AP
-   loop still needs to run inside the source-shaped `isubp1` matrix and honor
-   all remaining source skip/gating rules before it should be considered
-   aligned;
+1. complete the remaining JTDX AP/deep source gating matrix. AP/deep now runs
+   inside the source-shaped `isubp1` metric-source loop and can use high-order
+   `nsubpasses`. The current gate set covers standard/nonstandard call shape,
+   missing my/his-call, AP width, QSO-candidate priority, MyCall priority,
+   CQ-only, `lqsomsgdcd`, `stophint`, `nmic`, standard/nonstandard DXCall
+   signal classifiers, the `s256` CQ classifier, and QSO end-message
+   classifiers (`RRR`/`73`/`RR73`);
 2. complete JTDX-owned FT8v2 source-level refinement, especially any remaining
    differences in OSD/BP acceptance thresholds and packed-message handling;
 3. source-audit and tighten JTDX subtract/downsample residual interaction,
    including `freqsub`, `npos`, `lsubtracted`, and focused-QSO retry products;
 4. source-audit the newly connected AGC forced-DT / `avexdt` behavior and
    focused-QSO odd/even memory behavior against JTDX with real profile output;
-5. complete remaining AP/deep mask-family gating. The known deferred pieces are
-   signal-classified `lqsosig`, `lmycsignal`, `ldxcsig`, `lcqsignal`,
-   `lqsocandave`, and their associated `ndeep=4` raises;
+5. complete remaining signal-classified AP/deep gates. The known deferred
+   pieces are hound fox report/RR73 classifiers, source-specific CPU-pruning
+   gates, and the associated `ndeep=4` raises;
 6. complete remaining AP/deep-specific false-positive filter coverage,
    including filters that depend on JTDX signal classifiers;
 7. decide how to handle JTDX `searchcalls` / `ALLCALL7.TXT` backed filters.
    They are not currently modeled and should not be silently approximated;
-8. keep FT8S / superdeep-specific branches documented as not implemented until
-   their source dependency closure is intentionally ported.
+8. complete the remaining FT8S / superdeep branches that are part of JTDX's
+   normal FT8 high-sensitivity path. The initial FT8S candidate matcher exists,
+   but source-complete `ft8s`, `ft8sd`, `ft8sd1`, `ft8mf1`, `ft8mfcq`, and
+   `tonesd` behavior is not fully ported yet. SWL-specific behavior remains
+   deferred.
 
 Next checkpoint:
 
-- move AP/deep execution into the same `isubp1` metric-source loop as the
-  regular JTDX path, so `csr`, `cscs/csr`, and `cs/csold` variants can feed the
-  AP attempts instead of only being prepared;
+- source-audit and tighten the remaining AP/deep per-`iaptype` gates against
+  JTDX `ft8b.f90`, especially Hound fox-report/RR73 branches and other
+  source-specific pruning gates that still need source-complete classifiers;
 - after that, run only compile checks first, then re-enable profile-level short
   decode smoke tests once native JTDX emits stable rows;
 - keep any new temporary instrumentation out of committed code. If a diagnostic
@@ -325,6 +346,7 @@ Initial status:
 - Do not share hashcallbook or AP memory between WSJT-X and JTDX.
 - Do not share residual, odd/even memory, or JTDX state in hybrid phase 1.
 - Do not enable SWL by default.
+- Do not expand SWL-only decode behavior in this milestone.
 - Do not use hybrid to hide JTDX implementation shortcuts.
 - Do not let JTDX/hybrid technical notes drift into `WSJTX.md`.
 
@@ -338,11 +360,8 @@ ft8rs file tests/ft8/230208_140300.wav --start-time 230208_140300 --profile jtdx
 ft8rs file tests/ft8/230208_140300.wav --start-time 230208_140300 --profile hybrid
 ```
 
-Optional SWL remains explicit:
-
-```bash
-ft8rs file tests/ft8/230208_140300.wav --start-time 230208_140300 --profile jtdx --swl
-```
+SWL-specific behavior is deferred. Keep the current option surface stable if it
+already exists, but do not use SWL as the development target for this milestone.
 
 If experimental external tuning is needed later, add a separate option such as
 `--profile-file`. Do not overload `--profile` with both names and file paths in

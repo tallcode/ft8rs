@@ -5,12 +5,13 @@ use super::ft8_downsample::{ft8_downsample, DownsampleOutput, DownsampleWorkspac
 use super::ft8_mod1::{
     GRAYMAP, ICOS7, NAPPASSES, NAPTYPES, NDXNSAPTYPES, NHAPTYPES, NMYCNSAPTYPES,
 };
-use super::ft8_params::{DT2, FS2};
+use super::ft8_params::{DT2, FS2, TWO_PI};
 use super::ft8apset::build_ap_mask;
 use super::ft8v2::bpdecode174_91::{bpdecode174_91, BpDecodeResult, N};
 use super::ft8v2::encode174_91::encode174_91;
 use super::ft8v2::osd174_91::osd174_91;
 use super::ft8v2::packjt77::{pack77, unpack77_with_context, HashCallBook, UnpackContext};
+use super::ft8v2::packjt77sd::genft8sd;
 use super::ft8v2::subtractft8::subtractft8;
 use super::gen_ft8wave::gen_ft8wave;
 use super::sync8::SyncCandidate;
@@ -59,6 +60,7 @@ struct SymbolMetrics {
     csr_im: [[f32; 79]; 8],
     cscs_re: [[f32; 79]; 8],
     cscs_im: [[f32; 79]; 8],
+    s256: [f32; 27],
     syncav: f32,
     nsync: usize,
     nsync2: usize,
@@ -82,6 +84,8 @@ struct BitMetrics {
 struct ToneHints {
     idtonemyc: Option<[i32; 58]>,
     idtone56: Vec<[i32; 58]>,
+    idtonecqdxcns: Option<[i32; 58]>,
+    idtonedxcns73: Option<[i32; 58]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -91,6 +95,13 @@ struct SignalClassifier {
     lqsosig: bool,
     lqsosigtype3: bool,
     lqsocandave: bool,
+    lqso73: bool,
+    lqsorr73: bool,
+    lqsorrr: bool,
+    ldxcsig: bool,
+    lcqdxcsig: bool,
+    lcqdxcnssig: bool,
+    nmic: usize,
     nweak: usize,
     nsubpasses: usize,
 }
@@ -494,6 +505,7 @@ fn extract_symbol_metrics(
     let mut csr_im = [[0.0f32; 79]; 8];
     let mut cscs_re = [[0.0f32; 79]; 8];
     let mut cscs_im = [[0.0f32; 79]; 8];
+    let s256 = compute_s256(cd0, ibest);
     let mut snrsync = [0.0f32; 21];
     let mut re = [0.0f64; 32];
     let mut im = [0.0f64; 32];
@@ -647,10 +659,39 @@ fn extract_symbol_metrics(
         csr_im,
         cscs_re,
         cscs_im,
+        s256,
         syncav,
         nsync,
         nsync2,
     }
+}
+
+fn compute_s256(cd0: &super::ft8_downsample::ComplexC, ibest: isize) -> [f32; 27] {
+    let mut re = [0.0f64; 256];
+    let mut im = [0.0f64; 256];
+    let dphi = TWO_PI * 3.125 * DT2;
+    let mut phi = 0.0f64;
+    for i in 0..256 {
+        let src = ibest + 224 + i as isize;
+        let twk_re = phi.cos();
+        let twk_im = phi.sin();
+        if (super::ft8_downsample::C_LOW..=super::ft8_downsample::C_HIGH).contains(&src) {
+            let idx = super::ft8_downsample::ComplexC::idx(src);
+            re[i] = cd0.re[idx] * twk_re - cd0.im[idx] * twk_im;
+            im[i] = cd0.re[idx] * twk_im + cd0.im[idx] * twk_re;
+        }
+        phi = (phi + dphi) % TWO_PI;
+    }
+    four2a_c2c(&mut re, &mut im, -1);
+
+    let mut s256 = [0.0f32; 27];
+    for i in 0..=8 {
+        s256[i] = (re[i + 1] * re[i + 1] + im[i + 1] * im[i + 1]).sqrt() as f32;
+    }
+    for i in 9..=26 {
+        s256[i] = (re[i] * re[i] + im[i] * im[i]).sqrt() as f32;
+    }
+    s256
 }
 
 fn normalize_tone_spectra(
@@ -793,6 +834,15 @@ fn max_tone(s8: &[[f32; 79]; 8], k: usize, skip: Option<usize>) -> usize {
     best
 }
 
+fn maxloc_1based(values: &[f32]) -> usize {
+    values
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(idx, _)| idx + 1)
+        .unwrap_or(0)
+}
+
 fn regular_decode(
     metrics: &SymbolMetrics,
     _candidate: SyncCandidate,
@@ -807,10 +857,11 @@ fn regular_decode(
     let classifier = classify_signal(metrics, config, refined_freq, context, &tone_hints);
     remember_candidate_signal(signal_memory, metrics, classifier, refined_freq, refined_dt);
     let csold = select_csold(signal_memory, classifier, context, refined_freq, refined_dt);
+    let nsubpasses = nsubpasses_with_csold(classifier, csold.is_some());
     let primary_metrics = build_bit_metrics(metrics, MetricSource::Cs);
 
     let apmask = [0i8; N];
-    for isubp1 in 1..=classifier.nsubpasses {
+    for isubp1 in 1..=nsubpasses {
         if classifier.nweak == 1 && isubp1 == 2 {
             continue;
         }
@@ -859,53 +910,394 @@ fn regular_decode(
                 }
             }
         }
-    }
 
-    let apmag = primary_metrics
-        .bmeta
-        .iter()
-        .map(|value| value.abs())
-        .fold(0.0f32, f32::max)
-        * 2.83
-        * 1.01;
-    for (isubp2, iaptype) in plan_ap_subpasses(config) {
-        let Some(ap) = build_ap_mask(config, iaptype) else {
-            continue;
-        };
-        let llr_source = ap_llr_source(
-            isubp2,
-            &primary_metrics.bmeta,
-            &primary_metrics.bmetb,
-            &primary_metrics.bmetc,
-        );
-        let mut llrz = [0.0f32; N];
-        for i in 0..N {
-            llrz[i] = 2.83 * llr_source[i];
-        }
-        for i in 0..77 {
-            if ap.apmask[i] == 1 {
-                llrz[i] = apmag * if ap.message77[i] == 1 { 1.0 } else { -1.0 };
+        if config.lft8apon {
+            let apmag = bit_metrics
+                .bmeta
+                .iter()
+                .map(|value| (2.83 * value).abs())
+                .fold(0.0f32, f32::max)
+                * 1.01;
+            for (isubp2, iaptype) in plan_ap_subpasses(config) {
+                if !jtdx_ap_subpass_allowed(
+                    config,
+                    context,
+                    classifier,
+                    refined_freq,
+                    isubp1,
+                    iaptype,
+                ) {
+                    continue;
+                }
+                let Some(ap) = build_ap_mask(config, iaptype) else {
+                    continue;
+                };
+                let llr_source = ap_llr_source(
+                    isubp2,
+                    &bit_metrics.bmeta,
+                    &bit_metrics.bmetb,
+                    &bit_metrics.bmetc,
+                );
+                let mut llrz = [0.0f32; N];
+                for i in 0..N {
+                    llrz[i] = 2.83 * llr_source[i];
+                }
+                for i in 0..77 {
+                    if ap.apmask[i] == 1 {
+                        llrz[i] = apmag * if ap.message77[i] == 1 { 1.0 } else { -1.0 };
+                    }
+                }
+                if let Some(result) = bpdecode174_91(&llrz, &ap.apmask, 30)
+                    .or_else(|| osd174_91(&llrz, &ap.apmask, ap_ndeep(config, iaptype, classifier)))
+                    .and_then(|decoded| {
+                        decoded_to_result(
+                            metrics,
+                            refined_freq,
+                            refined_dt,
+                            decoded,
+                            config,
+                            book,
+                            iaptype,
+                        )
+                    })
+                {
+                    return Some(result);
+                }
             }
         }
-        if let Some(result) = bpdecode174_91(&llrz, &ap.apmask, 30)
-            .or_else(|| osd174_91(&llrz, &ap.apmask, ap_ndeep(config, iaptype, classifier)))
-            .and_then(|decoded| {
-                decoded_to_result(
-                    metrics,
-                    refined_freq,
-                    refined_dt,
-                    decoded,
-                    config,
-                    book,
-                    iaptype,
-                )
-            })
-        {
-            return Some(result);
-        }
+    }
+
+    if let Some(result) = try_ft8s(
+        metrics,
+        refined_freq,
+        refined_dt,
+        config,
+        book,
+        context,
+        classifier,
+    ) {
+        return Some(result);
     }
 
     None
+}
+
+fn try_ft8s(
+    metrics: &SymbolMetrics,
+    refined_freq: f64,
+    refined_dt: f64,
+    config: &StreamDecodeConfig,
+    book: &HashCallBook,
+    context: Ft8bCandidateContext,
+    classifier: SignalClassifier,
+) -> Option<Ft8bDecodeResult> {
+    if context.lqsomsgdcd || context.stophint {
+        return None;
+    }
+    if (refined_freq - config.nfqso).abs() >= 2.0 {
+        return None;
+    }
+    let mycall = normalized_config_call(config.mycall.as_deref())?;
+    let hiscall = normalized_config_call(config.hiscall.as_deref())?;
+    let candidates = build_ft8s_candidates(&mycall, &hiscall);
+    let demod = strongest_data_tones(&metrics.s8);
+    let mut best: Option<(usize, usize, String, [u8; 77], [i32; 79])> = None;
+    for msg in candidates {
+        let Some((msgsent, msgbits, itone)) = genft8sd(&msg) else {
+            continue;
+        };
+        let tones = data_tones_from_itone(&itone);
+        let mut nmatch = 0usize;
+        let mut ncrcpaty = 0usize;
+        for i in 0..58 {
+            if tones[i] == demod[i] {
+                nmatch += 1;
+                if i >= 25 {
+                    ncrcpaty += 1;
+                }
+            }
+        }
+        if best.as_ref().is_none_or(|(best_match, best_crc, _, _, _)| {
+            nmatch > *best_match || (nmatch == *best_match && ncrcpaty > *best_crc)
+        }) {
+            best = Some((nmatch, ncrcpaty, msgsent, msgbits, itone));
+        }
+    }
+
+    let (nmatch, ncrcpaty, msg, msgbits, itone) = best?;
+    let threshold = if classifier.lqsosig || classifier.lmycsignal {
+        26
+    } else {
+        29
+    };
+    if nmatch <= threshold || ncrcpaty <= 10 {
+        return None;
+    }
+    decoded_bits_to_result(
+        metrics,
+        refined_freq,
+        refined_dt,
+        msg,
+        msgbits,
+        itone,
+        config,
+        book,
+    )
+}
+
+fn build_ft8s_candidates(mycall: &str, hiscall: &str) -> Vec<String> {
+    const RPT: [&str; 56] = [
+        "-01", "-02", "-03", "-04", "-05", "-06", "-07", "-08", "-09", "-10", "-11", "-12", "-13",
+        "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26",
+        "R-01", "R-02", "R-03", "R-04", "R-05", "R-06", "R-07", "R-08", "R-09", "R-10", "R-11",
+        "R-12", "R-13", "R-14", "R-15", "R-16", "R-17", "R-18", "R-19", "R-20", "R-21", "R-22",
+        "R-23", "R-24", "R-25", "R-26", "AA00", "RRR", "RR73", "73",
+    ];
+    RPT.iter()
+        .map(|rpt| format!("{mycall} {hiscall} {rpt}"))
+        .collect()
+}
+
+fn strongest_data_tones(s8: &[[f32; 79]; 8]) -> [i32; 58] {
+    let mut out = [0i32; 58];
+    for i in 1..=58 {
+        let sym = if i <= 29 { i + 6 } else { i + 13 };
+        out[i - 1] = max_tone(s8, sym, None) as i32;
+    }
+    out
+}
+
+fn data_tones_from_itone(itone: &[i32; 79]) -> [i32; 58] {
+    let mut out = [0i32; 58];
+    out[..29].copy_from_slice(&itone[7..36]);
+    out[29..].copy_from_slice(&itone[43..72]);
+    out
+}
+
+fn nsubpasses_with_csold(classifier: SignalClassifier, has_csold: bool) -> usize {
+    if !has_csold {
+        return classifier.nsubpasses;
+    }
+    if classifier.lqsocandave {
+        11
+    } else if classifier.lmycsignal {
+        8
+    } else if classifier.lcqsignal {
+        5
+    } else {
+        classifier.nsubpasses
+    }
+}
+
+fn jtdx_ap_subpass_allowed(
+    config: &StreamDecodeConfig,
+    context: Ft8bCandidateContext,
+    classifier: SignalClassifier,
+    refined_freq: f64,
+    isubp1: usize,
+    iaptype: i32,
+) -> bool {
+    let lapmyc = normalized_config_call(config.mycall.as_deref()).is_some();
+    let lnomycall = !lapmyc;
+    let lnohiscall = normalized_config_call(config.hiscall.as_deref()).is_none();
+    let lmycallstd = lapmyc && !is_nonstandard_call(config.mycall.as_deref().unwrap_or(""));
+    let lhiscallstd = !lnohiscall && !is_nonstandard_call(config.hiscall.as_deref().unwrap_or(""));
+    let loutapwid = (refined_freq - config.nfqso).abs() > config.napwid
+        && (refined_freq - config.nftx).abs() > config.napwid;
+
+    if classifier.lqsocandave {
+        if isubp1 > 2 && isubp1 < 9 {
+            return false;
+        }
+        if context.lqsomsgdcd {
+            return false;
+        }
+        if isubp1 > 8 && !is_qso_candidate_ap_type(iaptype) {
+            return false;
+        }
+    } else if classifier.lmycsignal && lmycallstd {
+        if isubp1 > 2 && isubp1 < 6 {
+            return false;
+        }
+        if isubp1 > 5 && isubp1 < 9 && iaptype != 2 {
+            return false;
+        }
+    }
+
+    if config.lhound {
+        if lnomycall && iaptype > 1 && iaptype < 31 {
+            return false;
+        }
+        if lhiscallstd && iaptype == 31 && !classifier.lcqsignal {
+            return false;
+        }
+        if context.lqsomsgdcd && iaptype > 0 && iaptype < 25 {
+            return false;
+        }
+        if !context.stophint && (iaptype == 31 || iaptype == 36) {
+            return false;
+        }
+        if !lapmyc && matches!(iaptype, 23 | 24) {
+            return false;
+        }
+        if config.lapcqonly && matches!(iaptype, 31 | 36 | 111) {
+            return false;
+        }
+        return true;
+    }
+
+    if lmycallstd && (lhiscallstd || lnohiscall) {
+        if context.lqsomsgdcd && iaptype > 2 && iaptype < 31 {
+            return false;
+        }
+        if iaptype == 2 {
+            if !lapmyc || config.lapcqonly {
+                return false;
+            }
+            if config.nQSOProgress != 0 && classifier.nmic < 2 {
+                return false;
+            }
+        }
+        if !context.stophint && iaptype > 30 {
+            return false;
+        }
+        if context.stophint && iaptype > 2 && iaptype < 31 {
+            return false;
+        }
+        if iaptype > 2 && lnohiscall {
+            return false;
+        }
+        if iaptype > 2 && iaptype < 31 && loutapwid {
+            return false;
+        }
+        if iaptype == 3 && !classifier.lqsosigtype3 {
+            return false;
+        }
+        if iaptype == 4 && !classifier.lqsorrr {
+            return false;
+        }
+        if iaptype == 5 && !classifier.lqso73 {
+            return false;
+        }
+        if iaptype == 6 && !classifier.lqsorr73 {
+            return false;
+        }
+        if iaptype == 31 && !classifier.lcqdxcsig {
+            return false;
+        }
+        if iaptype == 31 && !lhiscallstd && config.lapcqonly {
+            return false;
+        }
+        if iaptype > 31 && config.lapcqonly {
+            return false;
+        }
+        if iaptype == 35 && !classifier.lqso73 {
+            return false;
+        }
+        if iaptype == 36 && !classifier.lqsorr73 {
+            return false;
+        }
+        return true;
+    }
+
+    if lmycallstd && !lhiscallstd && !lnohiscall {
+        if iaptype == 2 && config.lapcqonly {
+            return false;
+        }
+        if !context.stophint && iaptype > 30 {
+            return false;
+        }
+        if (context.lqsomsgdcd || !lapmyc) && iaptype > 1 && iaptype < 15 {
+            return false;
+        }
+        if iaptype == 12 && !classifier.lqsorrr {
+            return false;
+        }
+        if iaptype == 13 && !classifier.lqso73 {
+            return false;
+        }
+        if iaptype == 14 && !classifier.lqsorr73 {
+            return false;
+        }
+        if iaptype > 30 && config.lapcqonly {
+            return false;
+        }
+        if iaptype > 2 && iaptype < 15 && loutapwid {
+            return false;
+        }
+        return true;
+    }
+
+    if !lmycallstd && !lhiscallstd && !lnohiscall {
+        if iaptype > 1 && iaptype < 31 {
+            return false;
+        }
+        if !context.stophint && iaptype > 1 {
+            return false;
+        }
+        if iaptype > 30 && config.lapcqonly {
+            return false;
+        }
+        if iaptype == 31 && !classifier.lcqdxcnssig {
+            return false;
+        }
+        if iaptype > 34 && !classifier.ldxcsig {
+            return false;
+        }
+        return true;
+    }
+
+    if !lmycallstd && (lhiscallstd || lnohiscall) {
+        if isubp1 == 2 && classifier.nweak == 1 {
+            return false;
+        }
+        if isubp1 > 5 {
+            return false;
+        }
+        if iaptype == 40 && config.lapcqonly {
+            return false;
+        }
+        if iaptype > 40 && iaptype < 45 && context.lqsomsgdcd {
+            return false;
+        }
+        if iaptype == 42 && !classifier.lqsorrr {
+            return false;
+        }
+        if iaptype == 43 && !classifier.lqso73 {
+            return false;
+        }
+        if iaptype == 44 && !classifier.lqsorr73 {
+            return false;
+        }
+        if iaptype > 39 && !lapmyc {
+            return false;
+        }
+        if lnomycall && iaptype > 39 && iaptype < 45 {
+            return false;
+        }
+        if lnohiscall && iaptype != 1 && iaptype != 40 {
+            return false;
+        }
+        if iaptype > 30 && iaptype < 40 && !context.stophint {
+            return false;
+        }
+        if iaptype == 31 && !classifier.lcqdxcsig {
+            return false;
+        }
+        if iaptype > 34 && iaptype < 37 && (!classifier.ldxcsig || config.lapcqonly) {
+            return false;
+        }
+        if iaptype > 30 && iaptype < 40 && loutapwid {
+            return false;
+        }
+        return true;
+    }
+
+    false
+}
+
+fn is_qso_candidate_ap_type(iaptype: i32) -> bool {
+    matches!(iaptype, 3..=6 | 11..=14 | 21 | 23 | 24 | 41..=44)
 }
 
 impl ToneHints {
@@ -918,6 +1310,16 @@ impl ToneHints {
         hints.idtonemyc = tones58_from_message(&format!("{mycall} AA1AAA FN25"));
         if let Some(hiscall) = normalized_config_call(config.hiscall.as_deref()) {
             hints.idtone56 = build_idtone56(&mycall, &hiscall);
+            if is_nonstandard_call(config.hiscall.as_deref().unwrap_or("")) {
+                let hiscall_raw = config
+                    .hiscall
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_uppercase();
+                hints.idtonecqdxcns = tones58_from_message(&format!("CQ {hiscall_raw}"));
+                hints.idtonedxcns73 = tones58_from_message(&format!("<AA1AAA> {hiscall_raw} 73"));
+            }
         }
         hints
     }
@@ -1000,11 +1402,21 @@ fn classify_signal(
         }
     }
 
-    let lcqsignal = rscq > 3.1;
+    let s256_peak = maxloc_1based(&metrics.s256[..=8]);
+    let mut lcqsignal = s256_peak == 5 || rscq > 3.1;
+    if (!lcqsignal && s256_peak == 4) || s256_peak == 6 {
+        let s2563_peak = maxloc_1based(&metrics.s256);
+        if s2563_peak == 4 || s2563_peak == 6 {
+            lcqsignal = true;
+        }
+    }
     let lmycsignal = lapmyc && nmic > 2;
     let dfqso = (config.nfqso - refined_freq).abs();
     let mut lqsosig = false;
     let mut lqsosigtype3 = false;
+    let mut lqso73 = false;
+    let mut lqsorr73 = false;
+    let mut lqsorrr = false;
     let mut ndxt = 0usize;
     if !context.lqsomsgdcd
         && (dfqso < config.napwid || (config.nftx - refined_freq).abs() < config.napwid)
@@ -1031,6 +1443,77 @@ fn classify_signal(
             if max_tone(&metrics.s8, k11 - 1, None) as i32 == qso_tones[k11 - 8] {
                 ndxt += 1;
             }
+        }
+
+        if dfqso < config.napwid
+            && matches!(config.nQSOProgress, 3 | 4)
+            && hints.idtone56.len() >= 56
+        {
+            let mut nqsoend = [0usize; 3];
+            for i in 24..=58 {
+                let sym = if i < 30 { i + 6 } else { i + 13 };
+                let best = max_tone(&metrics.s8, sym, None) as i32;
+                if best == hints.idtone56[55][i - 1] {
+                    nqsoend[0] += 1;
+                }
+                if best == hints.idtone56[54][i - 1] {
+                    nqsoend[1] += 1;
+                }
+                if best == hints.idtone56[53][i - 1] {
+                    nqsoend[2] += 1;
+                }
+            }
+            if let Some((idx, count)) = nqsoend
+                .iter()
+                .copied()
+                .enumerate()
+                .max_by_key(|&(_, count)| count)
+            {
+                if count > 6 {
+                    match idx {
+                        0 => lqso73 = true,
+                        1 => lqsorr73 = true,
+                        _ => lqsorrr = true,
+                    }
+                }
+            }
+        }
+    }
+
+    let hiscall_is_nonstandard = is_nonstandard_call(config.hiscall.as_deref().unwrap_or(""));
+    let mut ldxcsig = !hiscall_is_nonstandard && ndxt > 3;
+    let lcqdxcsig = lcqsignal && ldxcsig;
+    let mut lcqdxcnssig = false;
+    if hiscall_is_nonstandard && normalized_config_call(config.hiscall.as_deref()).is_some() {
+        let mut ncqdxcnst = 0usize;
+        if let Some(idtonecqdxcns) = &hints.idtonecqdxcns {
+            for i in 1..=4 {
+                if max_tone(&metrics.s8, i + 6, None) as i32 == idtonecqdxcns[i - 1] {
+                    ncqdxcnst += 1;
+                }
+            }
+            let mut ndxt_ns = 0usize;
+            for i in 5..=23 {
+                let best = max_tone(&metrics.s8, i + 6, None) as i32;
+                if let Some(idtonedxcns73) = &hints.idtonedxcns73 {
+                    if best == idtonedxcns73[i - 1] {
+                        ndxt_ns += 1;
+                    }
+                }
+                if best == idtonecqdxcns[i - 1] {
+                    ncqdxcnst += 1;
+                }
+            }
+            ldxcsig = if dfqso < config.napwid {
+                ndxt_ns > 4
+            } else {
+                ndxt_ns > 5
+            };
+            lcqdxcnssig = if dfqso < config.napwid {
+                ncqdxcnst > 5
+            } else {
+                ncqdxcnst > 6
+            };
         }
     }
 
@@ -1068,6 +1551,13 @@ fn classify_signal(
         lqsosig,
         lqsosigtype3,
         lqsocandave,
+        lqso73,
+        lqsorr73,
+        lqsorrr,
+        ldxcsig,
+        lcqdxcsig,
+        lcqdxcnssig,
+        nmic,
         nweak,
         nsubpasses,
     }
@@ -1373,6 +1863,55 @@ fn decoded_to_result(
         freq: refined_freq as f32,
         dt: refined_dt as f32,
         iaptype,
+        i3: i3 as i32,
+        n3: n3 as i32,
+        itone,
+    })
+}
+
+fn decoded_bits_to_result(
+    metrics: &SymbolMetrics,
+    refined_freq: f64,
+    refined_dt: f64,
+    msg: String,
+    message77: [u8; 77],
+    itone: [i32; 79],
+    config: &StreamDecodeConfig,
+    _book: &HashCallBook,
+) -> Option<Ft8bDecodeResult> {
+    let (i3, n3) = i3_n3(&message77);
+    if i3 > 4 || (i3 == 0 && n3 > 5) {
+        return None;
+    }
+    let xsnr = estimate_snr(metrics, &itone, 0);
+    let filter_context = FilterContext {
+        mycall: config.mycall.clone().unwrap_or_default(),
+        hiscall: config.hiscall.clone().unwrap_or_default(),
+        hisgrid4: config
+            .hisgrid
+            .as_deref()
+            .unwrap_or("")
+            .chars()
+            .take(4)
+            .collect(),
+        quality: 1.0,
+        xsnr,
+        rxdt: refined_dt as f32 - 0.5,
+    };
+    let lcall1hash = msg.starts_with('<');
+    if !accept_decoded_message(&msg, "", i3, n3, 0, lcall1hash, &filter_context) {
+        return None;
+    }
+    if config.hide_hash && msg.find("<...>").is_some_and(|idx| idx >= 6) {
+        return None;
+    }
+    Some(Ft8bDecodeResult {
+        msg37: msg,
+        msg37_2: String::new(),
+        snr: xsnr,
+        freq: refined_freq as f32,
+        dt: refined_dt as f32,
+        iaptype: 0,
         i3: i3 as i32,
         n3: n3 as i32,
         itone,
