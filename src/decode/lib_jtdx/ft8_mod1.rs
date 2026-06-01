@@ -149,6 +149,8 @@ pub struct Ft8Mod1 {
     pub oddcopy: Vec<OddEvenMessage>,
     pub even: Vec<OddEvenMessage>,
     pub odd: Vec<OddEvenMessage>,
+    pub msgsrcvd: Vec<String>,
+    pub lrepliedother: bool,
     pub first_osd: bool,
     pub gen: Vec<i8>,
 }
@@ -184,6 +186,8 @@ impl Default for Ft8Mod1 {
             oddcopy: vec![OddEvenMessage::default(); 130],
             even: vec![OddEvenMessage::default(); 130],
             odd: vec![OddEvenMessage::default(); 130],
+            msgsrcvd: vec![String::new(); 130],
+            lrepliedother: false,
             first_osd: true,
             gen: vec![0; KK * N_LDPC],
         }

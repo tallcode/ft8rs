@@ -118,12 +118,19 @@ Initial file mapping target:
 ```text
 src/decode/lib_jtdx/ft8_decode.rs
 src/decode/lib_jtdx/ft8b.rs
+src/decode/lib_jtdx/ft8s.rs
+src/decode/lib_jtdx/ft8sd.rs
+src/decode/lib_jtdx/ft8sd1.rs
 src/decode/lib_jtdx/ft8apset.rs
 src/decode/lib_jtdx/sync8.rs
 src/decode/lib_jtdx/sync8d.rs
+src/decode/lib_jtdx/tone8.rs
+src/decode/lib_jtdx/tonesd.rs
 src/decode/lib_jtdx/ft8_downsample.rs
 src/decode/lib_jtdx/ft8_mod1.rs
 src/decode/lib_jtdx/ft8_params.rs
+src/decode/lib_jtdx/ft8mf1.rs
+src/decode/lib_jtdx/ft8mfcq.rs
 src/decode/lib_jtdx/agccft8.rs
 src/decode/lib_jtdx/partintft8.rs
 
@@ -260,9 +267,36 @@ Implemented or scaffolded:
   currently available in Rust;
 - JTDX-owned `packjt77sd` now packs/unpacks the FT8S message subset and
   `genft8sd` produces source-shaped tone sequences for superdeep matching.
-  `ft8b` has an initial conservative FT8S fallback for configured
+  `ft8s.rs` now mirrors the main JTDX `ft8s.f90` matcher for configured
   `mycall/hiscall` QSO messages near the QSO frequency after regular/AP
-  BP+OSD attempts fail;
+  BP+OSD attempts fail, including the source candidate windows, iterative
+  demodulation passes, threshold ladder, and sync/parity ratio guards;
+- `ft8sd1.rs` and `ft8sd.rs` now mirror the previous-slot superdeep recovery
+  branches fed by JTDX odd/even copy state. The `ft8b` path now looks up
+  `msgd/lcq` from the previous-slot copy by frequency and DT proximity and can
+  run the source-shaped `ft8sd1` and `ft8sd` threshold ladders before giving up
+  on that candidate;
+- `ft8mf1.rs` and `ft8mfcq.rs` now mirror the JTDX memory-filter superdeep
+  scoring branches. They build the `tonesd` report/grid candidate tone tables
+  locally, score them against the ranked data-symbol powers, apply the
+  source-shaped message-state rejections, and return only messages that pass
+  the `u1/u2/qual/thresh` gates;
+- `tonesd.rs` now mirrors the JTDX `tonesd.f90` superdeep sync-template
+  construction. When a previous-slot `msgd/lcq` candidate is available, `ft8b`
+  promotes the source-shaped `iqso=4` attempt and passes the generated
+  `csyncsd` / `csyncsdcq` templates into `sync8d` so virtual-candidate
+  superdeep sync contributes to the DT/frequency search;
+- `tone8.rs` now supplies the JTDX `csynce` sync-template family for focused
+  QSO virtual attempts `iqso=2/3`, and `sync8d` also builds the `csynccq`
+  extension from the JTDX `cwfilter.f90` seed message. This closes the known
+  sync-template family gap in the native JTDX path at the source-shape level;
+- FT8S and FT8SD decode results are now tagged separately from regular BP/OSD
+  results. The JTDX session applies the source-specific false-decode guards
+  from `ft8b.f90`: `lft8s` is rejected after `lrepliedother`, FT8S/FT8SD is
+  rejected when configured `mycall` appears as the later callsign, and FT8SD
+  is rejected when its two-call base duplicates a previously received regular
+  base message. These deep results intentionally bypass the broad regular/AP
+  `chkfalse8` path, as in the source;
 - regular decode unpacks 77-bit payloads through the JTDX-owned unpack context
   with `mycall` / `hiscall` available for hash-style call presentation;
 - the JTDX session now owns its own JTDX `HashCallBook`; decoded calls are
@@ -548,9 +582,14 @@ Remaining filter caveats:
 
 - JTDX `searchcalls` / `ALLCALL7.TXT` backed filters are not fully modeled yet;
 - FT8S / superdeep-specific bypass and rejection branches are part of the
-  current normal-FT8 high-sensitivity milestone. The first FT8S candidate
-  matcher exists, but source-complete `ft8s`, `ft8sd`, `ft8sd1`, `ft8mf1`,
-  `ft8mfcq`, and `tonesd` behavior is still incomplete;
+  current normal-FT8 high-sensitivity milestone. The main `ft8s.f90` matcher is
+  now represented as `ft8s.rs`, and `ft8sd1` / `ft8sd` previous-slot recovery
+  branches plus `ft8mf1` / `ft8mfcq` memory-filter branches are present.
+  `tonesd` virtual-candidate sync waveform support is wired for `iqso=4`, and
+  `sync8d` now has the `csynce`, `csynccq`, `csyncsd`, and `csyncsdcq`
+  template families. FT8S/FT8SD-specific false-decode gates are represented.
+  Remaining work is source audit of the combined superdeep control flow before
+  profile measurement;
 - ARRL RTTY contest rewrite handling is not promoted as a target behavior in
   ft8rs yet, because this project remains focused on FT8 decode behavior.
 

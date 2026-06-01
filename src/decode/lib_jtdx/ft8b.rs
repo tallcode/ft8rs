@@ -7,18 +7,44 @@ use super::ft8_mod1::{
 };
 use super::ft8_params::{DT2, FS2, TWO_PI};
 use super::ft8apset::build_ap_mask;
+use super::ft8mf1::ft8mf1;
+use super::ft8mfcq::ft8mfcq;
+use super::ft8s::ft8s;
+use super::ft8sd::ft8sd;
+use super::ft8sd1::ft8sd1;
 use super::ft8v2::bpdecode174_91::{bpdecode174_91, BpDecodeResult, N};
 use super::ft8v2::encode174_91::encode174_91;
 use super::ft8v2::osd174_91::osd174_91;
 use super::ft8v2::packjt77::{pack77, unpack77_with_context, HashCallBook, UnpackContext};
-use super::ft8v2::packjt77sd::genft8sd;
 use super::ft8v2::subtractft8::subtractft8;
 use super::gen_ft8wave::gen_ft8wave;
 use super::sync8::SyncCandidate;
 use super::sync8d::{build_ctwk, sync8d, Sync8dContext};
+use super::tone8::build_csynce;
+use super::tonesd::tonesd;
 use super::twkfreq1::twkfreq1;
 use crate::stream::session::StreamDecodeConfig;
 use crate::util::four2a_c2c;
+
+#[derive(Clone, Copy, Debug)]
+pub struct LastRxMsgText {
+    bytes: [u8; 37],
+    len: usize,
+}
+
+impl LastRxMsgText {
+    pub fn from_str(value: &str) -> Self {
+        let mut bytes = [b' '; 37];
+        let src = value.as_bytes();
+        let len = src.len().min(bytes.len());
+        bytes[..len].copy_from_slice(&src[..len]);
+        Self { bytes, len }
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len]).unwrap_or("")
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Ft8bCandidateContext {
@@ -33,6 +59,9 @@ pub struct Ft8bCandidateContext {
     pub stophint: bool,
     pub nlasttx: usize,
     pub call_dt_xdt: Option<f32>,
+    pub sd_msg: Option<LastRxMsgText>,
+    pub sd_lcq: bool,
+    pub last_rx_msg: Option<LastRxMsgText>,
     pub last_rx_xdt: Option<f32>,
     pub last_rx_is_rrr: bool,
 }
@@ -48,6 +77,14 @@ pub struct Ft8bDecodeResult {
     pub i3: i32,
     pub n3: i32,
     pub itone: [i32; 79],
+    pub source: DecodeSource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeSource {
+    Regular,
+    Ft8s,
+    Ft8sd,
 }
 
 #[derive(Clone, Debug)]
@@ -320,13 +357,31 @@ fn try_ft8b_decode_for_iqso(
     xdt0: f32,
     signal_memory: &mut SignalMemory,
 ) -> Option<(Ft8bDecodeResult, isize)> {
+    let tonesd_templates = if iqso == 4 {
+        context
+            .sd_msg
+            .as_ref()
+            .and_then(|msg| tonesd(msg.as_str(), context.sd_lcq))
+    } else {
+        None
+    };
+    let csynce_templates = if iqso == 2 || iqso == 3 {
+        normalized_config_call(config.mycall.as_deref()).and_then(|mycall| {
+            normalized_config_call(config.hiscall.as_deref())
+                .and_then(|hiscall| build_csynce(&mycall, &hiscall))
+        })
+    } else {
+        None
+    };
     let sync_context = Sync8dContext {
         ipass: context.ipass,
         lastsync: false,
         iqso,
-        lcq: false,
+        lcq: iqso == 4 && context.sd_lcq,
         lcallsstd: true,
         lcqcand: context.lcqcand,
+        tonesd: tonesd_templates.as_ref(),
+        csynce: csynce_templates.as_ref(),
     };
     let i0 = nint((xdt0 as f64 + 0.5) * FS2);
     let mut smax = 0.0;
@@ -402,6 +457,7 @@ fn qso_attempts(plan: QsoPlan) -> Vec<usize> {
     match plan.nqso {
         2 => vec![1, 2],
         3 => vec![1, 3],
+        4 => vec![1, 4],
         _ => vec![1],
     }
 }
@@ -474,6 +530,9 @@ fn jtdx_qso_plan(
     if !context.levenint && !context.loddint {
         plan.lvirtual2 = false;
         plan.lvirtual3 = false;
+    }
+    if context.sd_msg.is_some() && plan.nqso == 1 {
+        plan.nqso = 4;
     }
 
     plan
@@ -979,6 +1038,18 @@ fn regular_decode(
         return Some(result);
     }
 
+    if let Some(result) = try_ft8sd(
+        metrics,
+        refined_freq,
+        refined_dt,
+        config,
+        book,
+        context,
+        middle_sync_ratio(&metrics.s8),
+    ) {
+        return Some(result);
+    }
+
     None
 }
 
@@ -999,79 +1070,86 @@ fn try_ft8s(
     }
     let mycall = normalized_config_call(config.mycall.as_deref())?;
     let hiscall = normalized_config_call(config.hiscall.as_deref())?;
-    let candidates = build_ft8s_candidates(&mycall, &hiscall);
-    let demod = strongest_data_tones(&metrics.s8);
-    let mut best: Option<(usize, usize, String, [u8; 77], [i32; 79])> = None;
-    for msg in candidates {
-        let Some((msgsent, msgbits, itone)) = genft8sd(&msg) else {
-            continue;
-        };
-        let tones = data_tones_from_itone(&itone);
-        let mut nmatch = 0usize;
-        let mut ncrcpaty = 0usize;
-        for i in 0..58 {
-            if tones[i] == demod[i] {
-                nmatch += 1;
-                if i >= 25 {
-                    ncrcpaty += 1;
-                }
-            }
-        }
-        if best.as_ref().is_none_or(|(best_match, best_crc, _, _, _)| {
-            nmatch > *best_match || (nmatch == *best_match && ncrcpaty > *best_crc)
-        }) {
-            best = Some((nmatch, ncrcpaty, msgsent, msgbits, itone));
-        }
-    }
-
-    let (nmatch, ncrcpaty, msg, msgbits, itone) = best?;
-    let threshold = if classifier.lqsosig || classifier.lmycsignal {
-        26
+    let srr = if classifier.lqsosig || classifier.lmycsignal {
+        0.0
     } else {
-        29
+        middle_sync_ratio(&metrics.s8)
     };
-    if nmatch <= threshold || ncrcpaty <= 10 {
-        return None;
-    }
+    let result = ft8s(
+        &metrics.s8,
+        srr,
+        3,
+        context.stophint,
+        &mycall,
+        &hiscall,
+        context.nlasttx,
+        context.last_rx_msg.as_ref().map(LastRxMsgText::as_str),
+    )?;
     decoded_bits_to_result(
         metrics,
         refined_freq,
         refined_dt,
-        msg,
-        msgbits,
-        itone,
+        result.msg37,
+        result.msgbits,
+        result.itone,
         config,
         book,
+        DecodeSource::Ft8s,
     )
 }
 
-fn build_ft8s_candidates(mycall: &str, hiscall: &str) -> Vec<String> {
-    const RPT: [&str; 56] = [
-        "-01", "-02", "-03", "-04", "-05", "-06", "-07", "-08", "-09", "-10", "-11", "-12", "-13",
-        "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26",
-        "R-01", "R-02", "R-03", "R-04", "R-05", "R-06", "R-07", "R-08", "R-09", "R-10", "R-11",
-        "R-12", "R-13", "R-14", "R-15", "R-16", "R-17", "R-18", "R-19", "R-20", "R-21", "R-22",
-        "R-23", "R-24", "R-25", "R-26", "AA00", "RRR", "RR73", "73",
-    ];
-    RPT.iter()
-        .map(|rpt| format!("{mycall} {hiscall} {rpt}"))
-        .collect()
+fn try_ft8sd(
+    metrics: &SymbolMetrics,
+    refined_freq: f64,
+    refined_dt: f64,
+    config: &StreamDecodeConfig,
+    book: &HashCallBook,
+    context: Ft8bCandidateContext,
+    srr: f32,
+) -> Option<Ft8bDecodeResult> {
+    let msgd = context.sd_msg.as_ref()?.as_str();
+    let mycall = normalized_config_call(config.mycall.as_deref()).unwrap_or_default();
+    let result = ft8sd1(&metrics.s8, msgd, context.sd_lcq, &mycall)
+        .map(|result| (result.msg37, result.msgbits, result.itone))
+        .or_else(|| {
+            ft8sd(&metrics.s8, srr, msgd, context.sd_lcq, &mycall)
+                .map(|result| (result.msg37, result.msgbits, result.itone))
+        })
+        .or_else(|| {
+            if context.sd_lcq {
+                ft8mfcq(&metrics.s8, msgd)
+                    .map(|result| (result.msg37, result.msgbits, result.itone))
+            } else {
+                ft8mf1(&metrics.s8, msgd).map(|result| (result.msg37, result.msgbits, result.itone))
+            }
+        })?;
+    decoded_bits_to_result(
+        metrics,
+        refined_freq,
+        refined_dt,
+        result.0,
+        result.1,
+        result.2,
+        config,
+        book,
+        DecodeSource::Ft8sd,
+    )
 }
 
-fn strongest_data_tones(s8: &[[f32; 79]; 8]) -> [i32; 58] {
-    let mut out = [0i32; 58];
-    for i in 1..=58 {
-        let sym = if i <= 29 { i + 6 } else { i + 13 };
-        out[i - 1] = max_tone(s8, sym, None) as i32;
+fn middle_sync_ratio(s8: &[[f32; 79]; 8]) -> f32 {
+    let mut synclev = 0.0;
+    for k in 0..7 {
+        synclev += s8[ICOS7[k] as usize][k + 36];
     }
-    out
-}
-
-fn data_tones_from_itone(itone: &[i32; 79]) -> [i32; 58] {
-    let mut out = [0i32; 58];
-    out[..29].copy_from_slice(&itone[7..36]);
-    out[29..].copy_from_slice(&itone[43..72]);
-    out
+    let mut snoiselev = 0.0;
+    for k in 36..43 {
+        snoiselev += sum_tones(s8, k);
+    }
+    snoiselev = (snoiselev - synclev) / 7.0;
+    if snoiselev < 0.1 {
+        snoiselev = 1.0;
+    }
+    synclev / snoiselev
 }
 
 fn nsubpasses_with_csold(classifier: SignalClassifier, has_csold: bool) -> usize {
@@ -1866,6 +1944,7 @@ fn decoded_to_result(
         i3: i3 as i32,
         n3: n3 as i32,
         itone,
+        source: DecodeSource::Regular,
     })
 }
 
@@ -1878,6 +1957,7 @@ fn decoded_bits_to_result(
     itone: [i32; 79],
     config: &StreamDecodeConfig,
     _book: &HashCallBook,
+    source: DecodeSource,
 ) -> Option<Ft8bDecodeResult> {
     let (i3, n3) = i3_n3(&message77);
     if i3 > 4 || (i3 == 0 && n3 > 5) {
@@ -1898,9 +1978,11 @@ fn decoded_bits_to_result(
         xsnr,
         rxdt: refined_dt as f32 - 0.5,
     };
-    let lcall1hash = msg.starts_with('<');
-    if !accept_decoded_message(&msg, "", i3, n3, 0, lcall1hash, &filter_context) {
-        return None;
+    if source == DecodeSource::Regular {
+        let lcall1hash = msg.starts_with('<');
+        if !accept_decoded_message(&msg, "", i3, n3, 0, lcall1hash, &filter_context) {
+            return None;
+        }
     }
     if config.hide_hash && msg.find("<...>").is_some_and(|idx| idx >= 6) {
         return None;
@@ -1915,6 +1997,7 @@ fn decoded_bits_to_result(
         i3: i3 as i32,
         n3: n3 as i32,
         itone,
+        source,
     })
 }
 
