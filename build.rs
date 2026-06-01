@@ -1,8 +1,11 @@
 use std::env;
+use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
     link_fftw_when_enabled();
+    copy_allcall7_to_binary_dir();
 
     println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
     println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
@@ -10,6 +13,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=FT8RS_RELEASE_TAG");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_TYPE");
+    println!("cargo:rerun-if-changed=ALLCALL7.TXT");
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
     println!("cargo:rerun-if-changed=.git/packed-refs");
@@ -32,6 +36,42 @@ fn main() {
     };
 
     println!("cargo:rustc-env=FT8RS_VERSION={version}");
+}
+
+fn copy_allcall7_to_binary_dir() {
+    let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") else {
+        return;
+    };
+    let source = PathBuf::from(manifest_dir).join("ALLCALL7.TXT");
+    if !source.exists() {
+        return;
+    }
+    let Some(binary_dir) = cargo_binary_dir() else {
+        return;
+    };
+    if let Err(err) = fs::create_dir_all(&binary_dir) {
+        panic!(
+            "failed to create binary directory {} for ALLCALL7.TXT: {err}",
+            binary_dir.display()
+        );
+    }
+    let target = binary_dir.join("ALLCALL7.TXT");
+    if let Err(err) = fs::copy(&source, &target) {
+        panic!(
+            "failed to copy {} to {}: {err}",
+            source.display(),
+            target.display()
+        );
+    }
+}
+
+fn cargo_binary_dir() -> Option<PathBuf> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").ok()?);
+    out_dir
+        .parent()
+        .and_then(|path| path.parent())
+        .and_then(|path| path.parent())
+        .map(PathBuf::from)
 }
 
 fn link_fftw_when_enabled() {

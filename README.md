@@ -79,6 +79,11 @@ for example:
 ft8rs 0.0.0-dev+3ed8eaa
 ```
 
+Release packages include `ALLCALL7.TXT` next to the binary, and local
+`cargo build` copies the root `ALLCALL7.TXT` into the target binary directory.
+Keep that file in the same directory as `ft8rs` when using the JTDX profile; it
+can be updated in place when the callsign database changes.
+
 ## Decode A WAV File
 
 If the filename contains a WSJT-X timestamp, `ft8rs` infers the slot time:

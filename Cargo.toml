@@ -14,9 +14,11 @@ default = []
 # Compile-time: default rustfft@3840. Enable fftw for FFTW@3840 validation.
 fftw = []
 
+[profile.release]
+codegen-units = 16
+
 [dependencies]
 rustfft = "6"
-
 hound = "3"
 num-bigint = "0.4"
 clap = { version = "4", features = ["derive"] }

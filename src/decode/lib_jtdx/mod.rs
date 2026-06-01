@@ -24,6 +24,7 @@ pub mod ft8sd1;
 pub mod ft8v2;
 pub mod gen_ft8wave;
 pub mod partintft8;
+pub mod searchcalls;
 pub mod sync8;
 pub mod sync8d;
 pub mod syncdist;
@@ -65,6 +66,8 @@ impl JtdxStreamDecodeSession {
         if let Some(hisgrid) = &config.hisgrid {
             state.hisgrid4 = hisgrid.chars().take(4).collect();
         }
+        state.nfawide = config.nfa.round() as i32;
+        state.nfbwide = config.nfb.round() as i32;
         Self {
             _config: config,
             _state: state,

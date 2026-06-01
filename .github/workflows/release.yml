@@ -67,8 +67,9 @@ jobs:
           pkg="${{ matrix.package_name }}"
           mkdir -p "dist/$pkg"
           cp "target/release/${{ matrix.binary_name }}" "dist/$pkg/"
+          cp "ALLCALL7.TXT" "dist/$pkg/"
           chmod +x "dist/$pkg/${{ matrix.binary_name }}"
-          printf '%s\n' 'Run ./ft8rs from this directory. This build uses rustfft@3840 and has no FFTW runtime dependency.' > "dist/$pkg/README.txt"
+          printf '%s\n' 'Run ./ft8rs from this directory. Keep ALLCALL7.TXT next to the binary for JTDX callsign filtering. This build uses rustfft@3840 and has no FFTW runtime dependency.' > "dist/$pkg/README.txt"
           tar -czf "${{ matrix.artifact_name }}" -C dist "$pkg"
 
       - name: Package Windows release
@@ -78,7 +79,8 @@ jobs:
           $pkg = "${{ matrix.package_name }}"
           New-Item -ItemType Directory -Force -Path "dist\$pkg" | Out-Null
           Copy-Item "target\release\${{ matrix.binary_name }}" "dist\$pkg\"
-          "Run .\ft8rs.exe from this directory. This build uses rustfft@3840 and has no FFTW runtime dependency." |
+          Copy-Item "ALLCALL7.TXT" "dist\$pkg\"
+          "Run .\ft8rs.exe from this directory. Keep ALLCALL7.TXT next to the binary for JTDX callsign filtering. This build uses rustfft@3840 and has no FFTW runtime dependency." |
             Out-File -FilePath "dist\$pkg\README.txt" -Encoding utf8
           Compress-Archive -Path "dist\$pkg" -DestinationPath "${{ matrix.artifact_name }}" -Force
 
@@ -115,6 +117,9 @@ jobs:
             Assets use the default rustfft@3840 backend and have no FFTW runtime dependency:
             - `ft8rs-linux-x86_64.tar.gz`
             - `ft8rs-windows-x86_64.zip`
+
+            `ALLCALL7.TXT` is bundled next to the binary for JTDX profile
+            callsign filtering and can be updated in place.
 
             macOS release packaging is temporarily disabled while hosted runner
             queue times are high.

@@ -1,6 +1,6 @@
 //! Mirrors JTDX `lib/chkflscall.f90`.
 
-use super::callsign_q::callsign_q_reject;
+use super::searchcalls::searchcalls;
 
 pub(crate) fn chkflscall(call_a: &str, call_b: &str) -> bool {
     let call_a = call_a.trim();
@@ -9,10 +9,10 @@ pub(crate) fn chkflscall(call_a: &str, call_b: &str) -> bool {
         return false;
     }
     if call_a == "MYCALL" || call_a == "CQ" {
-        return callsign_q_reject(call_b);
+        return !searchcalls(call_b, "");
     }
     if call_b.starts_with('<') {
-        return callsign_q_reject(call_a);
+        return !searchcalls(call_a, "");
     }
-    callsign_q_reject(call_a) || callsign_q_reject(call_b)
+    !searchcalls(call_a, call_b)
 }
