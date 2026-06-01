@@ -9,6 +9,7 @@ use super::ft8v2::subtractft8::subtractft8;
 use super::gen_ft8wave::gen_ft8wave;
 use super::sync8::SyncCandidate;
 use super::sync8d::{build_ctwk, sync8d, Sync8dContext};
+use super::syncdist::sync_rank_distribution;
 use super::tone8::Tone8Tables;
 use super::tonesd::tonesd;
 use super::twkfreq1::twkfreq1;
@@ -567,32 +568,6 @@ fn cq_shape_score(s8: &[[f32; 79]; 8]) -> f32 {
         }
     }
     rscq
-}
-
-fn sync_rank_distribution(s8: &[[f32; 79]; 8]) -> [usize; 8] {
-    let mut nsmax = [0usize; 8];
-    for k in 0..7 {
-        for sym in [k, k + 36, k + 72] {
-            let target = ICOS7[k] as usize;
-            let mut used = [false; 8];
-            for rank in 0..8 {
-                let mut best = 0usize;
-                let mut best_value = f32::NEG_INFINITY;
-                for tone in 0..8 {
-                    if !used[tone] && s8[tone][sym] > best_value {
-                        best_value = s8[tone][sym];
-                        best = tone;
-                    }
-                }
-                used[best] = true;
-                if best == target {
-                    nsmax[rank] += 1;
-                    break;
-                }
-            }
-        }
-    }
-    nsmax
 }
 
 fn jtdx_soft_sync_gate(s8: &[[f32; 79]; 8], refined_dt: f64) -> bool {

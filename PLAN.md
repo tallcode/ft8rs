@@ -264,13 +264,37 @@ Initial status:
   `ft8s.f90` candidate table, iterative demod passes, threshold ladder, and
   post-match sync/parity ratio guards for configured `mycall/hiscall` QSO
   messages near the QSO frequency after regular/AP BP+OSD paths fail;
+- JTDX `ft8s.rs` pass 5 and pass 6 acceptance has been re-aligned with the
+  source: pass 5 preserves the previous-pass `nmatch` ladder, pass 6 keeps the
+  separate source branches 61/62/63, and the suspected `lr73` off-by-one items
+  were confirmed as false positives;
+- JTDX `syncdist.rs` is no longer an empty mirror: the hard-sync rank
+  distribution used by `lskipnotap` now lives in the source-aligned helper
+  file and is called from `ft8b`;
+- JTDX `partintft8.rs` now has the delayed-buffer/noise-fill helper body, but
+  it remains outside the normal decode path until ft8rs models the JTDX outer
+  partial-data-loss mode;
+- JTDX `ft8apset.rs` type 31 AP mask construction now distinguishes standard
+  and nonstandard DX calls the same way as the source, avoiding the previous
+  grid-form mask for nonstandard CQ DXCall searches;
+- JTDX `ft8apset.rs` type 35/36 AP mask construction now distinguishes
+  standard DX-call and nonstandard DX-call masks, including the source
+  `14:77` type-4 range for nonstandard calls;
+- JTDX `chkgrid.rs` now has the source-shaped grid-area prefilter and corrected
+  `lchkcall` meaning. The complete callsign-prefix geography table remains a
+  future incremental port, so `lgvalid` is intentionally optimistic for valid
+  four-character locators until that table exists;
+- JTDX `filtersfree.rs` now preserves the source-unreachable
+  `decoded(12:12)` mixed letter/digit branch instead of applying a
+  typo-corrected extra rejection;
 - JTDX `ft8sd1.rs` and `ft8sd.rs` now mirror the previous-slot superdeep
   message recovery branches for `msgd/lcq`, including direct CQ/grid/73
   matching, four-message QSO-end alternatives, iterative demod passes, and the
   source threshold ladders;
 - JTDX `ft8mf1.rs` and `ft8mfcq.rs` now mirror the memory-filter superdeep
-  scoring branches. They generate the source `tonesd` report/grid candidate
-  sets locally and apply the `u1/u2/qual/thresh` acceptance and message-shape
+  scoring branches. `ft8mf1` now consumes the 76-entry report/grid candidate
+  table centralized in `tonesd.rs`, then applies the `u1/u2/qual/thresh`
+  acceptance and message-shape
   rejection rules before handing the selected FT8S message back to `ft8b`;
 - Source-audit false positives closed in this slice: `ft8mfcq.rs` does have a
   JTDX `ft8mfcq.f90` counterpart; the `ft8mf1` acknowledgement index mapping
@@ -278,7 +302,9 @@ Initial status:
   `ft8sd1` do retain the selected tone sequence functionally through their
   candidate records;
 - JTDX `tonesd.rs` now mirrors the superdeep sync-template construction used
-  by `tonesd.f90`. `ft8b` promotes previous-slot `msgd/lcq` candidates to the
+  by `tonesd.f90`, and owns the `itone76` / `idtone76` / `msgsd76`-shaped
+  report/grid candidate table consumed by `ft8mf1`. `ft8b` promotes
+  previous-slot `msgd/lcq` candidates to the
   source-shaped `iqso=4` attempt, and `sync8d` can add the `csyncsd` /
   `csyncsdcq` virtual-candidate sync contribution during that attempt;
 - JTDX `tone8.rs` now supplies the `csynce` template family used by

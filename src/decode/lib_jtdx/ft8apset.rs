@@ -58,6 +58,10 @@ fn ap_types_for_config(config: &StreamDecodeConfig) -> Vec<i32> {
 fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan> {
     let mycall = normalized_call(config.mycall.as_deref());
     let hiscall = normalized_call(config.hiscall.as_deref());
+    let mycall_raw = config.mycall.as_deref().unwrap_or("");
+    let hiscall_raw = config.hiscall.as_deref().unwrap_or("");
+    let lmycallstd = !is_nonstandard_call(mycall_raw);
+    let lhiscallstd = !is_nonstandard_call(hiscall_raw);
     let grid = config
         .hisgrid
         .as_deref()
@@ -133,26 +137,60 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
             0,
         ),
         31 => {
-            if let Some(grid) = grid {
-                (format!("CQ {} {grid}", hiscall.as_deref()?), &[(0, 77)], 1)
+            if lhiscallstd {
+                if let Some(grid) = grid {
+                    (format!("CQ {} {grid}", hiscall.as_deref()?), &[(0, 77)], 1)
+                } else {
+                    (
+                        format!("CQ {} AA00", hiscall.as_deref()?),
+                        &[(0, 58), (74, 77)],
+                        1,
+                    )
+                }
+            } else {
+                (format!("CQ {}", hiscall.as_deref()?), &[(0, 77)], 4)
+            }
+        }
+        35 => {
+            if lhiscallstd {
+                let first = if lmycallstd {
+                    mycall.as_deref()?
+                } else {
+                    hiscall.as_deref()?
+                };
+                (
+                    format!("{} {} 73", first, hiscall.as_deref()?),
+                    &[(29, 77)],
+                    1,
+                )
             } else {
                 (
-                    format!("CQ {} AA00", hiscall.as_deref()?),
-                    &[(0, 58), (74, 77)],
-                    1,
+                    format!("<{}> {} 73", mycall.as_deref()?, hiscall.as_deref()?),
+                    &[(13, 77)],
+                    4,
                 )
             }
         }
-        35 => (
-            format!("{} {} 73", mycall.as_deref()?, hiscall.as_deref()?),
-            &[(29, 77)],
-            1,
-        ),
-        36 => (
-            format!("{} {} RR73", mycall.as_deref()?, hiscall.as_deref()?),
-            &[(29, 77)],
-            1,
-        ),
+        36 => {
+            if lhiscallstd {
+                let first = if lmycallstd {
+                    mycall.as_deref()?
+                } else {
+                    hiscall.as_deref()?
+                };
+                (
+                    format!("{} {} RR73", first, hiscall.as_deref()?),
+                    &[(29, 77)],
+                    1,
+                )
+            } else {
+                (
+                    format!("<{}> {} RR73", mycall.as_deref()?, hiscall.as_deref()?),
+                    &[(13, 77)],
+                    4,
+                )
+            }
+        }
         40 => (
             format!("<{}> {} +00", mycall.as_deref()?, hiscall.as_deref()?),
             &[(0, 29), (74, 77)],
