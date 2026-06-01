@@ -1,5 +1,5 @@
 use super::super::ft8_downsample::{DownsampleOutput, DownsampleWorkspace};
-use super::super::ft8_mod1::{NUM_CQ_SIG, NUM_MYC_SIG};
+use super::super::ft8_mod1::{NUM_CQ_SIG, NUM_DEC_CQ, NUM_DEC_MYC, NUM_MYC_SIG};
 use super::super::ft8v2::bpdecode174_91::N;
 
 #[derive(Clone, Copy, Debug)]
@@ -47,6 +47,8 @@ pub struct Ft8bCandidateContext {
 pub struct Ft8bDecodeResult {
     pub msg37: String,
     pub msg37_2: String,
+    pub l_free_text: bool,
+    pub l_special: bool,
     pub snr: f32,
     pub freq: f32,
     pub dt: f32,
@@ -149,8 +151,16 @@ struct SignalEntry {
     cs: CsMatrix,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DecodedSignalEntry {
+    freq: f32,
+    xdt: f32,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct SignalMemory {
+    tmpcqdec: Vec<DecodedSignalEntry>,
+    tmpmyc: Vec<DecodedSignalEntry>,
     evencq: Vec<SignalEntry>,
     oddcq: Vec<SignalEntry>,
     evenmyc: Vec<SignalEntry>,
@@ -197,6 +207,8 @@ impl Ft8bWorkspace {
         self.signal_memory.tmpcqsig.clear();
         self.signal_memory.tmpmycsig.clear();
         self.signal_memory.tmpqsosig = None;
+        self.signal_memory.tmpcqdec.clear();
+        self.signal_memory.tmpmyc.clear();
     }
 
     pub fn finish_slot(&mut self, levenint: bool, loddint: bool) {
@@ -205,6 +217,17 @@ impl Ft8bWorkspace {
 
     pub fn new_pass(&mut self) {
         self.npos = 0;
+    }
+
+    pub(crate) fn remember_decoded_message(
+        &mut self,
+        msg37: &str,
+        freq: f32,
+        xdt: f32,
+        mycall: &str,
+    ) {
+        self.signal_memory
+            .remember_decoded_message(msg37, freq, xdt, mycall);
     }
 }
 
@@ -246,6 +269,34 @@ impl SignalMemory {
                 (entry.freq as f64 - freq).abs() < 2.0 && (entry.xdt as f64 - xdt).abs() < 0.05
             })
             .map(|entry| entry.cs.clone())
+    }
+
+    pub(super) fn has_decoded_tmp(&self, kind: SignalKind, freq: f64, xdt: f64) -> bool {
+        let entries = match kind {
+            SignalKind::Cq => &self.tmpcqdec,
+            SignalKind::MyCall => &self.tmpmyc,
+            SignalKind::Qso => return false,
+        };
+        entries.iter().any(|entry| {
+            (entry.freq as f64 - freq).abs() < 5.0 && (entry.xdt as f64 - xdt).abs() < 0.05
+        })
+    }
+
+    fn remember_decoded_message(&mut self, msg37: &str, freq: f32, xdt: f32, mycall: &str) {
+        let msg37 = msg37.trim();
+        if msg37.starts_with("CQ ") && self.tmpcqdec.len() < NUM_DEC_CQ {
+            self.tmpcqdec.push(DecodedSignalEntry { freq, xdt });
+        }
+
+        if !mycall.trim().is_empty()
+            && msg37
+                .split_whitespace()
+                .next()
+                .is_some_and(|call| call == mycall.trim())
+            && self.tmpmyc.len() < NUM_DEC_MYC
+        {
+            self.tmpmyc.push(DecodedSignalEntry { freq, xdt });
+        }
     }
 
     fn match_one(&self, entry: &Option<SignalEntry>, freq: f64, xdt: f64) -> Option<CsMatrix> {

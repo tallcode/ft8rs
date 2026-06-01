@@ -1,46 +1,23 @@
-use super::decode_helpers::{
-    base_config_call, build_idtone56, is_nonstandard_call, normalized_config_call,
-    tones58_from_message, tones58_from_sd_message,
-};
+use super::decode_helpers::{is_nonstandard_call, normalized_config_call};
 use super::state::{
     CsMatrix, Ft8bCandidateContext, SignalClassifier, SignalKind, SignalMemory, SymbolMetrics,
     ToneHints,
 };
 use super::{max_tone, maxloc_1based};
+use crate::decode::lib_jtdx::tone8::Tone8Tables;
 use crate::stream::session::StreamDecodeConfig;
 
 impl ToneHints {
-    pub(super) fn from_config(config: &StreamDecodeConfig) -> Self {
-        let mut hints = Self::default();
-        hints.idtone25_2 = tones58_from_sd_message("CQ 2E0DLA IO92");
-        let Some(mycall) = normalized_config_call(config.mycall.as_deref()) else {
-            return hints;
-        };
-
-        hints.idtonemyc = tones58_from_message(&format!("{mycall} AA1AAA FN25"));
-        if let Some(hiscall) = normalized_config_call(config.hiscall.as_deref()) {
-            if config.lhound {
-                if let (Some(mybcall), Some(hisbcall)) =
-                    (base_config_call(&mycall), base_config_call(&hiscall))
-                {
-                    hints.idtonefox73 = tones58_from_message(&format!("{mybcall} {hisbcall} RR73"));
-                    hints.idtonespec =
-                        tones58_from_message(&format!("{mybcall} RR73; {mybcall} <{hiscall}> -12"));
-                }
-            }
-            hints.idtone56 = build_idtone56(&mycall, &hiscall);
-            if is_nonstandard_call(config.hiscall.as_deref().unwrap_or("")) {
-                let hiscall_raw = config
-                    .hiscall
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim()
-                    .to_ascii_uppercase();
-                hints.idtonecqdxcns = tones58_from_message(&format!("CQ {hiscall_raw}"));
-                hints.idtonedxcns73 = tones58_from_message(&format!("<AA1AAA> {hiscall_raw} 73"));
-            }
+    pub(super) fn from_tables(tables: &Tone8Tables) -> Self {
+        Self {
+            idtone25_2: tables.idtone25_2,
+            idtonemyc: tables.idtonemyc,
+            idtone56: tables.idtone56.clone(),
+            idtonecqdxcns: tables.idtonecqdxcns,
+            idtonedxcns73: tables.idtonedxcns73,
+            idtonefox73: tables.idtonefox73,
+            idtonespec: tables.idtonespec,
         }
-        hints
     }
 }
 
@@ -55,10 +32,14 @@ pub(super) fn remember_candidate_signal(
         re: metrics.cs_re,
         im: metrics.cs_im,
     };
-    if classifier.lcqsignal {
+    if classifier.lcqsignal
+        && !signal_memory.has_decoded_tmp(SignalKind::Cq, refined_freq, refined_dt)
+    {
         signal_memory.remember_tmp(SignalKind::Cq, refined_freq, refined_dt, cs.clone());
     }
-    if classifier.lmycsignal {
+    if classifier.lmycsignal
+        && !signal_memory.has_decoded_tmp(SignalKind::MyCall, refined_freq, refined_dt)
+    {
         signal_memory.remember_tmp(SignalKind::MyCall, refined_freq, refined_dt, cs.clone());
     }
     if classifier.lqsocandave {

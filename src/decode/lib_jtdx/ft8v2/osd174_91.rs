@@ -2,6 +2,7 @@
 
 use super::bpdecode174_91::{BpDecodeResult, K, N};
 use super::chkcrc14a::chkcrc14a;
+use crate::decode::lib_jtdx::indexx::indexx_ascending;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -12,13 +13,9 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
     let gen = get_generator();
     let absllr: Vec<f32> = llr.iter().map(|&x| x.abs()).collect();
 
-    let mut indices: Vec<usize> = (0..n).collect();
-    indices.sort_by(|&a, &b| {
-        absllr[b]
-            .partial_cmp(&absllr[a])
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.cmp(&b))
-    });
+    let absllr_for_index: Vec<f64> = absllr.iter().map(|&x| x as f64).collect();
+    let indx = indexx_ascending(&absllr_for_index);
+    let mut indices: Vec<usize> = indx.into_iter().rev().collect();
 
     // Reorder generator matrix columns
     let mut genmrb = vec![0u8; k * n];

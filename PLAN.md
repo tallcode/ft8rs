@@ -231,6 +231,31 @@ Initial status:
   `lmycsignal`, `lqsosig`, `lqsosigtype3`, standard-DX
   `ldxcsig/lcqdxcsig`, nonstandard-DX `ldxcsig/lcqdxcnssig`, QSO end-message,
   and `lqsocandave` classifiers;
+- JTDX `tone8` is now session-precomputed rather than rebuilt piecemeal in
+  the classifier/deep-decode path. The precomputed table carries `csynce`,
+  MyCall/CQ/nonstandard-DX/Hound tone hints, and the 56-report FT8S message
+  table used by `ft8s`;
+- JTDX `ft8apset` is now session-precomputed for the active AP table, and
+  `ft8b` consumes the resulting plans instead of constructing each AP mask
+  inside the candidate loop;
+- JTDX `osd174_91` now uses the local `indexx` mirror for reliability
+  ordering, matching the source `indexx(absrx,N,indx)` flow more closely;
+- JTDX `ft8b` soft-sync handling now preserves the source `scoreratio2`
+  accumulation behavior rather than normalizing that one ratio with the other
+  sync ratios;
+- JTDX high-sensitivity profile now exposes the source-level
+  `lenabledxcsearch` / `lwidedxcsearch` state to the decoder and applies those
+  gates to DXCall-search AP types;
+- JTDX type 0.1 special-message parsing is represented by `msgparser.rs`, and
+  regular/AP results now carry `l_free_text`, `l_special`, and `msg37_2`
+  fields for source-shaped filtering;
+- JTDX `tmpcqdec` / `tmpmyc` decoded-memory behavior is represented in the
+  `ft8b` workspace. Accepted CQ/MyCall decodes are stored by frequency and
+  raw `xdt`, and later CQ/MyCall signal-memory saves skip already-decoded
+  positions;
+- JTDX `chkfalse8` filtering now has local `chklong8` and deterministic
+  `filtersfree` mirrors, plus the simple source guards for `CQ_` / `^`,
+  `TU;` call pairs, and `iaptype=3/11/21/41` focused-QSO grid validation;
 - JTDX `ft8b` now computes the 256-point `s256` CQ classifier branch from
   `cd0(ibest+224:ibest+479)*ctwk256`, matching the normal FT8 high-sensitivity
   source path used to raise `lcqsignal` beyond the basic `rscq` check;
@@ -247,6 +272,11 @@ Initial status:
   scoring branches. They generate the source `tonesd` report/grid candidate
   sets locally and apply the `u1/u2/qual/thresh` acceptance and message-shape
   rejection rules before handing the selected FT8S message back to `ft8b`;
+- Source-audit false positives closed in this slice: `ft8mfcq.rs` does have a
+  JTDX `ft8mfcq.f90` counterpart; the `ft8mf1` acknowledgement index mapping
+  is the expected 0-based translation of Fortran rows; and `ft8sd` /
+  `ft8sd1` do retain the selected tone sequence functionally through their
+  candidate records;
 - JTDX `tonesd.rs` now mirrors the superdeep sync-template construction used
   by `tonesd.f90`. `ft8b` promotes previous-slot `msgd/lcq` candidates to the
   source-shaped `iqso=4` attempt, and `sync8d` can add the `csyncsd` /
@@ -415,6 +445,13 @@ Current JTDX checkpoint:
 - remaining short miss is `CQ DX DL8YHR JO41` at about 2606 Hz, now classified
   as a regular BP/OSD/numerical-equivalence issue rather than sync8 candidate
   loss;
+- the latest source-shape pass added local `indexx`, session-level `tone8`
+  precompute, session-level `ft8apset` precompute, `ft8s` consumption of the
+  precomputed 56-report table, and the JTDX `scoreratio2` soft-sync detail.
+  A follow-up pass added DXCall-search flags/gates, special-message parser
+  state, decoded CQ/MyCall memory, and additional JTDX false-decode filters.
+  The short smoke test remains 20/21, so these slices improve auditability and
+  state fidelity but do not yet recover the final short-fixture row;
 - temporary trace and experiments must stay out of commits.
 
 ### Step 6: Enable JTDX Reporting
