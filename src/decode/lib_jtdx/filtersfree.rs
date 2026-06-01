@@ -142,13 +142,10 @@ pub(crate) fn filtersfree(decoded: &str) -> bool {
     if (b'1'..=b'9').contains(&ch(&decoded, 1)) && slice(&decoded, 2, 3) != "EL" {
         return true;
     }
-    if ch(&decoded, 10) != b'/'
-        && ch(&decoded, 11) != b'/'
-        && ch(&decoded, 12).is_ascii_uppercase()
-        && ch(&decoded, 13).is_ascii_digit()
-    {
-        return true;
-    }
+    // JTDX source checks `decoded(12:12).ge.'A'` and later
+    // `decoded(12:12).le.'9'` in the same branch, making this filter
+    // unreachable. Keep that source behavior instead of applying the likely
+    // typo-corrected `decoded(13:13).le.'9'` interpretation.
 
     // JTDX then calls datacor(datapwr, datacorr) and rejects when datacorr < 1.55.
     // `datapwr` is not represented in the current Rust JTDX filter boundary, so

@@ -243,12 +243,19 @@ pub(crate) fn ft8s(
     }
 
     if nmatchditer1 >= 16 {
+        let mut nmatch_by_pass = [0usize; 7];
+        let mut ncrcpaty_by_pass = [0usize; 7];
+        nmatch_by_pass[1] = nmatch1;
+        ncrcpaty_by_pass[1] = ncrcpaty1;
+
         for pass in 2..=6 {
             demod_pass(&mut s8_1, &mut itonedem, Some(&lmatched), true);
             let (nmatch, ncrcpaty) =
                 extend_matches(&idtone, &itonedem, &mut lmatched, nmatch1, ncrcpaty1);
             nmatch1 = nmatch;
             ncrcpaty1 = ncrcpaty;
+            nmatch_by_pass[pass] = nmatch1;
+            ncrcpaty_by_pass[pass] = ncrcpaty1;
 
             let accept = match pass {
                 2 => nmatch1 > ntresh2 && ncrcpaty1 > 19,
@@ -263,9 +270,38 @@ pub(crate) fn ft8s(
                         || (nft8rxfslow == 1 && thresh > 3.4)
                         || (nft8rxfslow == 2 && thresh > 3.25))
                         && nmatch1 > 50
+                        && (nmatch_by_pass[1] > 21
+                            || nmatch_by_pass[2] > 31
+                            || nmatch_by_pass[3] > 38
+                            || nmatch_by_pass[4] > 46)
                         && ncrcpaty1 > 25
                 }
-                6 => ncrcpaty1 > 26 && imax == ipk && nft8rxfslow >= 2 && thresh > 2.22,
+                6 => {
+                    let branch61 = ((nft8rxfslow == 2 && thresh > 2.6)
+                        || (nft8rxfslow == 3 && thresh > 2.22))
+                        && imax == ipk
+                        && ncrcpaty1 > 26;
+                    let branch62 = nft8rxfslow == 1
+                        && nmatch1 > 54
+                        && (nmatch_by_pass[1] > 22
+                            || nmatch_by_pass[2] > 27
+                            || nmatch_by_pass[3] > 35
+                            || nmatch_by_pass[2].saturating_sub(nmatch_by_pass[1]) > 9
+                            || nmatch_by_pass[3].saturating_sub(nmatch_by_pass[2]) > 10)
+                        && ncrcpaty1 > 29
+                        && thresh > 3.15;
+                    let branch63_sensitivity =
+                        nft8rxfslow == 3 || (nft8rxfslow == 3 && thresh > 1.94);
+                    let branch63 = ncrcpaty1 > 29
+                        && branch63_sensitivity
+                        && imax == ipk
+                        && ncrcpaty_by_pass[2].saturating_sub(ncrcpaty_by_pass[1]) > 3
+                        && ncrcpaty_by_pass[3].saturating_sub(ncrcpaty_by_pass[2]) > 3
+                        && ncrcpaty_by_pass[4].saturating_sub(ncrcpaty_by_pass[3]) > 3
+                        && ncrcpaty_by_pass[6].saturating_sub(ncrcpaty_by_pass[5]) < 6;
+
+                    branch61 || branch62 || branch63
+                }
                 _ => false,
             };
             if accept {
