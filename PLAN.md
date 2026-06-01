@@ -372,6 +372,16 @@ Current closure status:
   symbol-bin mapping are represented. Native `profile=jtdx` now emits rows on
   the short fixture, but this is still an initial closure checkpoint rather
   than a promoted sensitivity baseline.
+- The first compile-structure pass is complete: all `src/decode/lib_jtdx/**/*.rs`
+  files are under 1000 lines. Large source mirrors now use directory modules:
+  `ft8b.f90` maps to `ft8b/`, and `packjt77.f90` maps to
+  `ft8v2/packjt77/`.
+- The JTDX module-boundary gap around FFT helpers is closed at the decoder
+  level: `lib_jtdx` now has a profile-local `four2a` module and no longer
+  imports the shared top-level FFT wrappers from decode files.
+- Remaining JTDX FFT follow-up is configuration polish, not decoder coupling:
+  the profile-local FFTW backend should get local thread/patience wiring if
+  JTDX FFTW tuning becomes a target.
 - `profile=hybrid` currently runs both workers and can gain JTDX rows now that
   the native path emits accepted messages; full hybrid measurement remains a
   later checkpoint.
@@ -396,6 +406,16 @@ Initial status:
 - WSJT-X-side progressive `nzhsym=41/47` output now streams immediately in
   hybrid while the JTDX worker runs in parallel; JTDX-only results are emitted
   after the JTDX worker finishes and dedupe is applied.
+
+Current JTDX checkpoint:
+
+- native `profile=jtdx` short fixture is 20/21 on `210703_133430.wav`;
+- recovered `K1JT HA5WA 73` by enabling JTDX sensitivity level 2 subpass
+  semantics in the high-sensitivity profile;
+- remaining short miss is `CQ DX DL8YHR JO41` at about 2606 Hz, now classified
+  as a regular BP/OSD/numerical-equivalence issue rather than sync8 candidate
+  loss;
+- temporary trace and experiments must stay out of commits.
 
 ### Step 6: Enable JTDX Reporting
 

@@ -3,9 +3,9 @@
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
+use crate::decode::lib_jtdx::four2a::four2a_c2c;
 use crate::decode::lib_jtdx::ft8_mod1::{NFILT1, NFILT2};
 use crate::decode::lib_jtdx::gen_ft8wave::{gen_ft8wave, NFRAME};
-use crate::util::four2a_c2c;
 
 const NFFT: usize = 180_000;
 const NMAX: usize = 180_000;

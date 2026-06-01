@@ -2,7 +2,7 @@
 
 use std::f64::consts::PI;
 
-use crate::util::{four2a_c2c, four2a_r2c};
+use crate::decode::lib_jtdx::four2a::{four2a_c2c, four2a_r2c};
 
 use super::ft8_params::{NFFT1_LONG, NFFT2};
 
