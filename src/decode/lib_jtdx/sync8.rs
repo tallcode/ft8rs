@@ -1,7 +1,7 @@
 //! Mirrors JTDX `lib/sync8.f90`.
 
+use crate::decode::lib_jtdx::four2a::four2a_r2c;
 use crate::stream::session::StreamDecodeConfig;
-use crate::util::four2a_r2c;
 
 use super::ft8_mod1::ICOS7;
 use super::ft8_params::{NFFT1, NH1, NHSYM, NSPS, NSTEP};

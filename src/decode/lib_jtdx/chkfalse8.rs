@@ -95,12 +95,6 @@ pub(crate) fn chkfalse8(
         if msg.contains(" R ") && words.len() >= 4 && words[2] == "R" && !is_grid4(words[3]) {
             return false;
         }
-        if words.len() >= 3 && is_grid4(words[2]) {
-            let check = chkgrid(words[0], words[2]);
-            if check.lwrongcall || !check.lgvalid {
-                return false;
-            }
-        }
     }
 
     if iaptype == 0 && i3 == 1 && n3 == 0 && msg.contains("/R ") {
@@ -114,6 +108,16 @@ pub(crate) fn chkfalse8(
         && n3 == 1
         && (context.xsnr < -18.0 || context.rxdt < -0.5 || context.rxdt > 1.0)
         && rejects_hash_call_grid_message(&words)
+    {
+        return false;
+    }
+
+    if iaptype != 2
+        && (((i3 == 1 || i3 == 3) && !msg.contains(" R ") && !msg.contains('/'))
+            || (i3 == 0 && n3 == 3))
+        && words.len() >= 2
+        && words[0] != context.mycall
+        && chkflscall(words[0], words[1])
     {
         return false;
     }

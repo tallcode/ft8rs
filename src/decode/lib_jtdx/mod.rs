@@ -10,6 +10,7 @@ pub mod chkfalse8;
 pub mod chkflscall;
 pub mod chkgrid;
 pub mod chkspecial8;
+pub mod four2a;
 pub mod ft8_decode;
 pub mod ft8_downsample;
 pub mod ft8_mod1;
@@ -42,7 +43,8 @@ use self::ft8v2::packjt77::HashCallBook;
 /// JTDX decoder state placeholder.
 ///
 /// The implementation must stay independent from the WSJT-X decoder state. In
-/// particular, hash/AP/odd-even memory should not be shared with `lib_wsjtx`.
+/// particular, hash/AP/odd-even memory should not be shared with another
+/// decoder profile.
 pub struct JtdxStreamDecodeSession {
     _config: StreamDecodeConfig,
     _state: ft8_mod1::Ft8Mod1,

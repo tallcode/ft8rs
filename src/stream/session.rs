@@ -155,6 +155,7 @@ pub struct StreamDecodeConfig {
     pub nft8cycles: usize,
     pub nft8swlcycles: usize,
     pub lft8lowth: bool,
+    pub lft8subpass: bool,
     pub nagcc: bool,
     pub lforcesync: bool,
     pub lhound: bool,
@@ -189,6 +190,7 @@ impl Default for StreamDecodeConfig {
             nft8cycles: 1,
             nft8swlcycles: 1,
             lft8lowth: false,
+            lft8subpass: false,
             nagcc: false,
             lforcesync: false,
             lhound: false,
@@ -222,6 +224,7 @@ impl StreamDecodeConfig {
         config.nft8cycles = 3;
         config.nft8swlcycles = 3;
         config.lft8lowth = true;
+        config.lft8subpass = true;
         config.nagcc = true;
         config.ncandthin = 100;
         config.filter = false;

@@ -63,6 +63,7 @@ The first ft8rs `jtdx` profile should use high-sensitivity JTDX-style settings:
 nft8cycles = 3
 nft8swlcycles = 3
 lft8lowth = true
+lft8subpass = true
 ncandthin = 100
 ndtcenter = 0
 filter = false
@@ -117,7 +118,7 @@ Initial file mapping target:
 
 ```text
 src/decode/lib_jtdx/ft8_decode.rs
-src/decode/lib_jtdx/ft8b.rs
+src/decode/lib_jtdx/ft8b/
 src/decode/lib_jtdx/ft8s.rs
 src/decode/lib_jtdx/ft8sd.rs
 src/decode/lib_jtdx/ft8sd1.rs
@@ -140,7 +141,7 @@ src/decode/lib_jtdx/ft8v2/encode174_91.rs
 src/decode/lib_jtdx/ft8v2/ldpc_174_91_c_generator.rs
 src/decode/lib_jtdx/ft8v2/ldpc_174_91_c_reordered_parity.rs
 src/decode/lib_jtdx/ft8v2/osd174_91.rs
-src/decode/lib_jtdx/ft8v2/packjt77.rs
+src/decode/lib_jtdx/ft8v2/packjt77/
 src/decode/lib_jtdx/ft8v2/packjt77sd.rs
 src/decode/lib_jtdx/ft8v2/subtractft8.rs
 
@@ -496,7 +497,8 @@ JTDX base behavior:
 - pass 2/5/8 can use `1.5`
 - pass 3/6/9 can use `1.1`
 
-For high sensitivity, use `lft8lowth = true`.
+For high sensitivity, use JTDX sensitivity level 2 semantics:
+`lft8lowth = true` and `lft8subpass = true`.
 
 ### Sync Candidate Generation
 
@@ -661,13 +663,33 @@ Initial JTDX tests are informational:
 
 Current closure note:
 
-- `profile=jtdx` currently runs only the native JTDX path. If the native path
-  emits zero rows, the profile emits zero rows.
-- The native JTDX blocker remains in the `ft8b` chain after sync candidate
-  generation. The latest source-level repairs cover GFSK sync templates,
-  virtual-QSO FT8S/FT8SD gate ordering, and symbol/metric control flow, but
-  accepted native rows still need to be verified after the full planned slices
-  are closed.
+- `profile=jtdx` currently runs only the native JTDX path. The short fixture
+  now emits accepted native rows, so JTDX can be measured independently from
+  the protected WSJT-X path. The current short-fixture checkpoint is 20/21 on
+  `210703_133430.wav`; `K1JT HA5WA 73` was recovered by matching JTDX
+  sensitivity level 2 semantics (`lft8lowth=true`, `lft8subpass=true`).
+- The remaining short-fixture miss is `CQ DX DL8YHR JO41` near 2606 Hz.
+  It reaches `ft8b` with a strong Costas gate (`nsync=14`) but regular
+  BP/OSD does not recover a valid codeword. Temporary diagnostics showed that
+  disabling JTDX subtract reduced the short result to 19, and raising regular
+  OSD depth from 3 to 4 did not recover the message. Keep investigating regular
+  metric/LDPC numerical equivalence rather than treating it as a candidate
+  search problem.
+- Large JTDX source mirrors are directory modules when a direct `.rs` mirror
+  would exceed the 1000-line maintenance limit. `ft8b.f90` maps to
+  `ft8b/`, and `packjt77.f90` maps to `ft8v2/packjt77/`; each child file must
+  stay under the line limit while preserving source-shaped names and flow.
+- `lib_jtdx` now owns its `four2a` FFT wrapper module and the JTDX decode
+  files no longer call the shared top-level FFT wrappers. This keeps the
+  decoder dependency boundary cleaner for profile-level review and later
+  hybrid execution.
+- JTDX `ft8b.f90` resets `syncavemax=3.` inside the outer regular/AP subpass
+  loop. The Rust JTDX path now mirrors that behavior so the later
+  `syncavemax < 1.8/1.9` guards do not use the earlier measured value.
+- Remaining FFT follow-up: the local JTDX FFTW backend currently uses the
+  default planning flag internally. If JTDX FFTW tuning becomes a target, wire
+  profile-local thread/patience configuration into `lib_jtdx::four2a` without
+  reintroducing shared decoder internals.
 
 ## Implementation Order
 

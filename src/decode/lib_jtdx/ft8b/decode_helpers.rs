@@ -318,7 +318,8 @@ pub(super) fn decoded_to_result(
         return None;
     }
     let quality = 1.0 - (decoded.nharderror as f32 + decoded.dmin) / 60.0;
-    let itone = tones_from_codeword(&decoded.cw);
+    let codeword = encode174_91(&decoded.message77);
+    let itone = tones_from_codeword(&codeword);
     let xsnr = estimate_snr(metrics, &itone, iaptype);
     let filter_context = FilterContext {
         mycall: config.mycall.clone().unwrap_or_default(),

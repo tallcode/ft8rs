@@ -1,6 +1,6 @@
 //! Mirrors JTDX `lib/agccft8.f90`.
 
-use crate::util::four2a_r2c;
+use crate::decode::lib_jtdx::four2a::four2a_r2c;
 
 const NFFT: usize = 1024;
 const NHSYM: usize = 178;
