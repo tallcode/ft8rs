@@ -207,6 +207,22 @@ Implemented or scaffolded:
   `23`, `24`, and fixed-bit type `111` are wired. Types `22` and `24` use the
   JTDX type-0.1 special-message template that feeds `apsymsp` in the Fortran
   source;
+- `twkfreq1.rs` mirrors JTDX `lib/twkfreq1.f90`. The native JTDX `ft8b`
+  branch now applies the `-delfbest` frequency tweak to the downsampled complex
+  buffer before symbol extraction, matching the source order after the fine
+  frequency search;
+- JTDX symbol extraction now has the source-shaped second symbol pass: it
+  computes the reverse-conjugate 32-sample vector, applies the weak-signal
+  first/last-sample scaling when `syncav < 2.5`, supports the source
+  `lreverse` pass selection, and stores both forward `cs` and reversed `csr`
+  matrices for later metric retries;
+- the symbol-metric path now applies the JTDX tone-spectrum normalization after
+  extraction: `sp` is built from the Costas-prefix and data/tail ranges, the
+  weakest tone row is used as reference, and rows above the `spr > 1.5`
+  threshold scale `s8`, `cs`, and `csr` by the source factors;
+- regular decode now recomputes bit metrics for `isubp1=1` from `cs` and
+  `isubp1=2` from `csr`, so the second regular subpass is no longer only an
+  LLR-source re-selection over the same forward-symbol data;
 - regular decode unpacks 77-bit payloads through the JTDX-owned unpack context
   with `mycall` / `hiscall` available for hash-style call presentation;
 - the JTDX session now owns its own JTDX `HashCallBook`; decoded calls are
@@ -250,6 +266,9 @@ Implemented or scaffolded:
 
 Not complete yet:
 
+- higher JTDX regular `nsubpasses` metric variants beyond the current
+  forward/reverse `cs`/`csr` pair, especially `csold` and combined
+  `cscs/csr` paths;
 - full JTDX FT8v2 source-level refinement;
 - deeper AGC state integration with the JTDX-owned slot buffer;
 - source-level validation of the newly wired `lforcesync` / forced-DT /
@@ -435,9 +454,10 @@ Current AP boundary:
 - AP LLR source selection follows the JTDX `isubp2` table, including the
   repeated `llrb` selections for subpasses `10`, `13`, and `16`;
 - regular LLR source selection now follows the source `isubp1=1..2` and
-  `isubp2=1..4` control flow for the currently available metric arrays. The
-  later `csr` / `csold` metric variants used by higher `nsubpasses` still need
-  their own source-level port before that loop is complete;
+  `isubp2=1..4` control flow for the currently available forward `cs` and
+  reverse `csr` metric arrays. The higher `nsubpasses` variants that depend on
+  `csold` and combined `cscs/csr` metrics still need their own source-level
+  port before that loop is complete;
 - AP mask strength uses `max(abs(bmeta))*2.83*1.01`, matching the source
   expression `maxval(abs(llra))*1.01` after `llra=2.83*bmeta`;
 - AP OSD fallback depth follows the source default branch: `ndeep=3` unless

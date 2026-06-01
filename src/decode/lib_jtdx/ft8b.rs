@@ -14,6 +14,7 @@ use super::ft8v2::subtractft8::subtractft8;
 use super::gen_ft8wave::gen_ft8wave;
 use super::sync8::SyncCandidate;
 use super::sync8d::{build_ctwk, sync8d, Sync8dContext};
+use super::twkfreq1::twkfreq1;
 use crate::stream::session::StreamDecodeConfig;
 use crate::util::four2a_c2c;
 
@@ -53,9 +54,19 @@ struct SymbolMetrics {
     s8: [[f32; 79]; 8],
     cs_re: [[f32; 79]; 8],
     cs_im: [[f32; 79]; 8],
+    csr_re: [[f32; 79]; 8],
+    csr_im: [[f32; 79]; 8],
     syncav: f32,
     nsync: usize,
     nsync2: usize,
+}
+
+#[derive(Clone, Debug)]
+struct BitMetrics {
+    bmeta: [f32; N],
+    bmetb: [f32; N],
+    bmetc: [f32; N],
+    bmetd: [f32; N],
 }
 
 #[derive(Debug)]
@@ -186,9 +197,10 @@ fn try_ft8b_decode_for_iqso(
         }
     }
 
-    let _refined_freq = candidate.freq as f64 + delfbest;
-    let _refined_dt = xdt2;
-    let metrics = extract_symbol_metrics(cd0, ibest);
+    let cd0 = twkfreq1(cd0, 3199, FS2, -delfbest);
+    let refined_freq = candidate.freq as f64 + delfbest;
+    let refined_dt = xdt2;
+    let metrics = extract_symbol_metrics(&cd0, ibest, config, context);
     if !passes_jtdx_regular_sync_gate(&metrics, context) {
         return None;
     }
@@ -196,8 +208,8 @@ fn try_ft8b_decode_for_iqso(
     regular_decode(
         &metrics,
         candidate,
-        _refined_freq,
-        _refined_dt,
+        refined_freq,
+        refined_dt,
         config,
         book,
         context,
@@ -313,13 +325,22 @@ fn nint(x: f64) -> isize {
     (x as f32).round() as isize
 }
 
-fn extract_symbol_metrics(cd0: &super::ft8_downsample::ComplexC, ibest: isize) -> SymbolMetrics {
+fn extract_symbol_metrics(
+    cd0: &super::ft8_downsample::ComplexC,
+    ibest: isize,
+    config: &StreamDecodeConfig,
+    context: Ft8bCandidateContext,
+) -> SymbolMetrics {
     let mut s8 = [[0.0f32; 79]; 8];
     let mut cs_re = [[0.0f32; 79]; 8];
     let mut cs_im = [[0.0f32; 79]; 8];
+    let mut csr_re = [[0.0f32; 79]; 8];
+    let mut csr_im = [[0.0f32; 79]; 8];
     let mut snrsync = [0.0f32; 21];
     let mut re = [0.0f64; 32];
     let mut im = [0.0f64; 32];
+    let mut rr_re = [0.0f64; 32];
+    let mut rr_im = [0.0f64; 32];
 
     for k in 0..79 {
         let i1 = ibest + k as isize * 32;
@@ -383,13 +404,138 @@ fn extract_symbol_metrics(cd0: &super::ft8_downsample::ComplexC, ibest: isize) -
         }
     }
 
+    let lreverse = if !config.swl {
+        if config.nft8cycles < 2 {
+            context.ipass == 2
+        } else {
+            context.ipass == 5 || context.ipass == 7
+        }
+    } else if config.nft8swlcycles < 2 {
+        context.ipass == 2
+    } else {
+        context.ipass == 5 || context.ipass == 7
+    };
+
+    for k in 0..79 {
+        let i1 = ibest + k as isize * 32;
+        for i in 0..32 {
+            let src = i1 + i as isize;
+            if (super::ft8_downsample::C_LOW..=super::ft8_downsample::C_HIGH).contains(&src) {
+                let idx = super::ft8_downsample::ComplexC::idx(src);
+                re[i] = cd0.re[idx];
+                im[i] = cd0.im[idx];
+            } else {
+                re[i] = 0.0;
+                im[i] = 0.0;
+            }
+        }
+
+        if syncav < 2.5 {
+            scale_weak_symbol_edges(&mut re, &mut im);
+        }
+
+        for i in 0..32 {
+            rr_re[i] = re[31 - i];
+            rr_im[i] = -im[31 - i];
+        }
+
+        if lreverse {
+            four2a_c2c(&mut rr_re, &mut rr_im, -1);
+            for tone in 0..8 {
+                cs_re[tone][k] = (rr_re[tone + 1] / 1000.0) as f32;
+                cs_im[tone][k] = (rr_im[tone + 1] / 1000.0) as f32;
+                csr_re[tone][k] = cs_re[tone][k];
+                csr_im[tone][k] = cs_im[tone][k];
+                s8[tone][k] = (rr_re[tone + 1] * rr_re[tone + 1]
+                    + rr_im[tone + 1] * rr_im[tone + 1])
+                    .sqrt() as f32;
+            }
+        } else {
+            four2a_c2c(&mut re, &mut im, -1);
+            for tone in 0..8 {
+                cs_re[tone][k] = (re[tone + 1] / 1000.0) as f32;
+                cs_im[tone][k] = (im[tone + 1] / 1000.0) as f32;
+                s8[tone][k] =
+                    (re[tone + 1] * re[tone + 1] + im[tone + 1] * im[tone + 1]).sqrt() as f32;
+            }
+            four2a_c2c(&mut rr_re, &mut rr_im, -1);
+            for tone in 0..8 {
+                csr_re[tone][k] = (rr_re[tone + 1] / 1000.0) as f32;
+                csr_im[tone][k] = (rr_im[tone + 1] / 1000.0) as f32;
+            }
+        }
+    }
+
+    normalize_tone_spectra(&mut s8, &mut cs_re, &mut cs_im, &mut csr_re, &mut csr_im);
+
     SymbolMetrics {
         s8,
         cs_re,
         cs_im,
+        csr_re,
+        csr_im,
         syncav,
         nsync,
         nsync2,
+    }
+}
+
+fn normalize_tone_spectra(
+    s8: &mut [[f32; 79]; 8],
+    cs_re: &mut [[f32; 79]; 8],
+    cs_im: &mut [[f32; 79]; 8],
+    csr_re: &mut [[f32; 79]; 8],
+    csr_im: &mut [[f32; 79]; 8],
+) {
+    let mut sp = [0.0f32; 8];
+    for tone in 0..8 {
+        sp[tone] = s8[tone][0..7].iter().sum::<f32>() + s8[tone][17..79].iter().sum::<f32>();
+    }
+    let Some((ka, &spmin)) = sp
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+    else {
+        return;
+    };
+    if spmin <= 0.0 {
+        return;
+    }
+    for tone in 0..8 {
+        if tone == ka {
+            continue;
+        }
+        let spr = sp[tone] / spmin;
+        if spr > 1.5 {
+            let sprsqr = spr.sqrt();
+            for k in 0..79 {
+                s8[tone][k] /= spr;
+                cs_re[tone][k] /= sprsqr;
+                cs_im[tone][k] /= sprsqr;
+                csr_re[tone][k] /= sprsqr;
+                csr_im[tone][k] /= sprsqr;
+            }
+        }
+    }
+}
+
+fn scale_weak_symbol_edges(re: &mut [f64; 32], im: &mut [f64; 32]) {
+    re[0] *= 1.9;
+    im[0] *= 1.9;
+    re[31] *= 1.9;
+    im[31] *= 1.9;
+    let a0 = (re[0] * re[0] + im[0] * im[0]).sqrt();
+    let a31 = (re[31] * re[31] + im[31] * im[31]).sqrt();
+    if a31 <= 0.0 {
+        return;
+    }
+    let scr = a0.sqrt() / a31.sqrt();
+    if scr > 1.0 {
+        re[31] *= scr;
+        im[31] *= scr;
+    } else if scr > 1.0e-16 {
+        re[0] /= scr;
+        im[0] /= scr;
     }
 }
 
@@ -480,107 +626,54 @@ fn regular_decode(
     context: Ft8bCandidateContext,
 ) -> Option<Ft8bDecodeResult> {
     let _ap_subpasses = plan_ap_subpasses(config);
-    let mut bmeta = [0.0f32; N];
-    let mut bmetb = [0.0f32; N];
-    let mut bmetc = [0.0f32; N];
-    let mut bmetd = [0.0f32; N];
-
-    let srr = sync_snr_ratio(metrics);
-    for nsym in 1..=3 {
-        let nt = (1usize << (3 * nsym)) - 1;
-        for ihalf in 1..=2 {
-            let mut k = 1usize;
-            while k <= 29 {
-                let ks = if ihalf == 1 { k + 7 } else { k + 43 };
-                let i32 = 1 + (k - 1) * 3 + (ihalf - 1) * 87;
-                let ibmax = match nsym {
-                    1 => 2,
-                    2 => 5,
-                    _ => 8,
-                };
-                let mut s2 = vec![0.0f32; nt + 1];
-                for (i, slot) in s2.iter_mut().enumerate() {
-                    let i1 = i / 64;
-                    let i2 = (i & 63) / 8;
-                    let i33 = i & 7;
-                    let value = match nsym {
-                        1 => complex_abs(metrics, GRAYMAP[i33] as usize, ks),
-                        2 => complex_abs_sum(
-                            metrics,
-                            &[(GRAYMAP[i2] as usize, ks), (GRAYMAP[i33] as usize, ks + 1)],
-                        ),
-                        _ => complex_abs_sum(
-                            metrics,
-                            &[
-                                (GRAYMAP[i1] as usize, ks),
-                                (GRAYMAP[i2] as usize, ks + 1),
-                                (GRAYMAP[i33] as usize, ks + 2),
-                            ],
-                        ),
-                    };
-                    *slot = if srr < 2.5 {
-                        if srr > 2.3 {
-                            value * value
-                        } else if value < 5.77 {
-                            1.0 + 8.0 * value.powi(2) - 0.12 * value.powi(4)
-                        } else {
-                            (value + 5.82).powi(2)
-                        }
-                    } else {
-                        value
-                    };
-                }
-
-                for ib in 0..=ibmax {
-                    let bit = ibmax - ib;
-                    let bm = max_by_bit(&s2, bit, true) - max_by_bit(&s2, bit, false);
-                    let idx = i32 + ib - 1;
-                    if idx >= N {
-                        continue;
-                    }
-                    match nsym {
-                        1 => {
-                            bmeta[idx] = bm;
-                            let den = max_by_bit(&s2, bit, true).max(max_by_bit(&s2, bit, false));
-                            bmetd[idx] = if den > 0.0 { bm / den } else { 0.0 };
-                        }
-                        2 => bmetb[idx] = bm,
-                        _ => bmetc[idx] = bm,
-                    }
-                }
-                k += nsym;
-            }
-        }
-    }
-
-    normalizebmet(&mut bmeta);
-    normalizebmet(&mut bmetb);
-    normalizebmet(&mut bmetc);
-    normalizebmet(&mut bmetd);
+    let primary_metrics = build_bit_metrics(metrics, false);
 
     let apmask = [0i8; N];
-    for llr_source in regular_llr_sources(config, context, &bmeta, &bmetb, &bmetc, &bmetd) {
-        let mut llrz = [0.0f32; N];
-        for i in 0..N {
-            llrz[i] = 2.83 * llr_source[i];
-        }
-        if let Some(decoded) =
-            bpdecode174_91(&llrz, &apmask, 30).or_else(|| osd174_91(&llrz, &apmask, 3))
-        {
-            if let Some(result) =
-                decoded_to_result(metrics, refined_freq, refined_dt, decoded, config, book, 0)
+    for isubp1 in 1..=2 {
+        let bit_metrics = if isubp1 == 1 {
+            primary_metrics.clone()
+        } else {
+            build_bit_metrics(metrics, true)
+        };
+
+        for isubp2 in 1..=4 {
+            if !config.swl && isubp2 == 4 {
+                continue;
+            }
+            let llr_source = regular_llr_source(config, context, isubp1, isubp2, &bit_metrics);
+            let mut llrz = [0.0f32; N];
+            for i in 0..N {
+                llrz[i] = 2.83 * llr_source[i];
+            }
+            if let Some(decoded) =
+                bpdecode174_91(&llrz, &apmask, 30).or_else(|| osd174_91(&llrz, &apmask, 3))
             {
-                return Some(result);
+                if let Some(result) =
+                    decoded_to_result(metrics, refined_freq, refined_dt, decoded, config, book, 0)
+                {
+                    return Some(result);
+                }
             }
         }
     }
 
-    let apmag = bmeta.iter().map(|value| value.abs()).fold(0.0f32, f32::max) * 2.83 * 1.01;
+    let apmag = primary_metrics
+        .bmeta
+        .iter()
+        .map(|value| value.abs())
+        .fold(0.0f32, f32::max)
+        * 2.83
+        * 1.01;
     for (isubp2, iaptype) in plan_ap_subpasses(config) {
         let Some(ap) = build_ap_mask(config, iaptype) else {
             continue;
         };
-        let llr_source = ap_llr_source(isubp2, &bmeta, &bmetb, &bmetc);
+        let llr_source = ap_llr_source(
+            isubp2,
+            &primary_metrics.bmeta,
+            &primary_metrics.bmetb,
+            &primary_metrics.bmetc,
+        );
         let mut llrz = [0.0f32; N];
         for i in 0..N {
             llrz[i] = 2.83 * llr_source[i];
@@ -611,43 +704,116 @@ fn regular_decode(
     None
 }
 
-fn regular_llr_sources<'a>(
-    config: &StreamDecodeConfig,
-    context: Ft8bCandidateContext,
-    bmeta: &'a [f32; N],
-    bmetb: &'a [f32; N],
-    bmetc: &'a [f32; N],
-    bmetd: &'a [f32; N],
-) -> Vec<&'a [f32; N]> {
-    let mut sources = Vec::with_capacity(if config.swl { 8 } else { 6 });
-    for isubp1 in 1..=2 {
-        for isubp2 in 1..=4 {
-            if !config.swl && isubp2 == 4 {
-                continue;
+fn build_bit_metrics(metrics: &SymbolMetrics, reverse: bool) -> BitMetrics {
+    let mut out = BitMetrics {
+        bmeta: [0.0f32; N],
+        bmetb: [0.0f32; N],
+        bmetc: [0.0f32; N],
+        bmetd: [0.0f32; N],
+    };
+    let srr = sync_snr_ratio(metrics);
+    for nsym in 1..=3 {
+        let nt = (1usize << (3 * nsym)) - 1;
+        for ihalf in 1..=2 {
+            let mut k = 1usize;
+            while k <= 29 {
+                let ks = if ihalf == 1 { k + 7 } else { k + 43 };
+                let i32 = 1 + (k - 1) * 3 + (ihalf - 1) * 87;
+                let ibmax = match nsym {
+                    1 => 2,
+                    2 => 5,
+                    _ => 8,
+                };
+                let mut s2 = vec![0.0f32; nt + 1];
+                for (i, slot) in s2.iter_mut().enumerate() {
+                    let i1 = i / 64;
+                    let i2 = (i & 63) / 8;
+                    let i33 = i & 7;
+                    let value = match nsym {
+                        1 => complex_abs(metrics, reverse, GRAYMAP[i33] as usize, ks),
+                        2 => complex_abs_sum(
+                            metrics,
+                            reverse,
+                            &[(GRAYMAP[i2] as usize, ks), (GRAYMAP[i33] as usize, ks + 1)],
+                        ),
+                        _ => complex_abs_sum(
+                            metrics,
+                            reverse,
+                            &[
+                                (GRAYMAP[i1] as usize, ks),
+                                (GRAYMAP[i2] as usize, ks + 1),
+                                (GRAYMAP[i33] as usize, ks + 2),
+                            ],
+                        ),
+                    };
+                    *slot = if srr < 2.5 {
+                        if srr > 2.3 {
+                            value * value
+                        } else if value < 5.77 {
+                            1.0 + 8.0 * value.powi(2) - 0.12 * value.powi(4)
+                        } else {
+                            (value + 5.82).powi(2)
+                        }
+                    } else {
+                        value
+                    };
+                }
+
+                for ib in 0..=ibmax {
+                    let bit = ibmax - ib;
+                    let bm = max_by_bit(&s2, bit, true) - max_by_bit(&s2, bit, false);
+                    let idx = i32 + ib - 1;
+                    if idx >= N {
+                        continue;
+                    }
+                    match nsym {
+                        1 => {
+                            out.bmeta[idx] = bm;
+                            let den = max_by_bit(&s2, bit, true).max(max_by_bit(&s2, bit, false));
+                            out.bmetd[idx] = if den > 0.0 { bm / den } else { 0.0 };
+                        }
+                        2 => out.bmetb[idx] = bm,
+                        _ => out.bmetc[idx] = bm,
+                    }
+                }
+                k += nsym;
             }
-            let source = match isubp2 {
-                1 => {
-                    if (!config.swl && context.ipass == 1) || (isubp1 > 1 && context.ipass > 1) {
-                        bmetd
-                    } else {
-                        bmeta
-                    }
-                }
-                2 => {
-                    if isubp1 > 1 {
-                        bmeta
-                    } else {
-                        bmetb
-                    }
-                }
-                3 => bmetc,
-                4 => bmetd,
-                _ => unreachable!(),
-            };
-            sources.push(source);
         }
     }
-    sources
+
+    normalizebmet(&mut out.bmeta);
+    normalizebmet(&mut out.bmetb);
+    normalizebmet(&mut out.bmetc);
+    normalizebmet(&mut out.bmetd);
+    out
+}
+
+fn regular_llr_source<'a>(
+    config: &StreamDecodeConfig,
+    context: Ft8bCandidateContext,
+    isubp1: usize,
+    isubp2: usize,
+    metrics: &'a BitMetrics,
+) -> &'a [f32; N] {
+    match isubp2 {
+        1 => {
+            if (!config.swl && context.ipass == 1) || (isubp1 > 1 && context.ipass > 1) {
+                &metrics.bmetd
+            } else {
+                &metrics.bmeta
+            }
+        }
+        2 => {
+            if isubp1 > 1 {
+                &metrics.bmeta
+            } else {
+                &metrics.bmetb
+            }
+        }
+        3 => &metrics.bmetc,
+        4 => &metrics.bmetd,
+        _ => unreachable!(),
+    }
 }
 
 fn ap_llr_source<'a>(
@@ -821,16 +987,25 @@ fn sync_snr_ratio(metrics: &SymbolMetrics) -> f32 {
     synclev / snoiselev
 }
 
-fn complex_abs(metrics: &SymbolMetrics, tone: usize, k: usize) -> f32 {
-    (metrics.cs_re[tone][k].powi(2) + metrics.cs_im[tone][k].powi(2)).sqrt()
+fn complex_abs(metrics: &SymbolMetrics, reverse: bool, tone: usize, k: usize) -> f32 {
+    if reverse {
+        (metrics.csr_re[tone][k].powi(2) + metrics.csr_im[tone][k].powi(2)).sqrt()
+    } else {
+        (metrics.cs_re[tone][k].powi(2) + metrics.cs_im[tone][k].powi(2)).sqrt()
+    }
 }
 
-fn complex_abs_sum(metrics: &SymbolMetrics, pairs: &[(usize, usize)]) -> f32 {
+fn complex_abs_sum(metrics: &SymbolMetrics, reverse: bool, pairs: &[(usize, usize)]) -> f32 {
     let mut re = 0.0f32;
     let mut im = 0.0f32;
     for &(tone, k) in pairs {
-        re += metrics.cs_re[tone][k];
-        im += metrics.cs_im[tone][k];
+        if reverse {
+            re += metrics.csr_re[tone][k];
+            im += metrics.csr_im[tone][k];
+        } else {
+            re += metrics.cs_re[tone][k];
+            im += metrics.cs_im[tone][k];
+        }
     }
     (re * re + im * im).sqrt()
 }

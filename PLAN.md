@@ -201,6 +201,15 @@ Initial status:
 - JTDX Hound AP table selection is exposed through `--hound`; hound special
   message AP types `22/24` are built from the JTDX type-0.1 special-message
   template;
+- JTDX `ft8b` now applies the source-shaped `twkfreq1` constant-frequency
+  correction after `delfbest` refinement and before extracting symbols;
+- JTDX symbol extraction now keeps both forward `cs` and reversed `csr`
+  symbol matrices, applies the source weak-symbol edge scaling when
+  `syncav < 2.5`, and uses `csr` for the regular `isubp1=2` bit-metric
+  retry instead of only reusing the forward `cs` metrics;
+- JTDX symbol metrics now also apply the source tone-spectrum normalization
+  after symbol extraction, scaling `s8`, `cs`, and `csr` when a tone row is
+  more than `1.5x` above the minimum row energy;
 - item 10 has an initial regular-output filter layer;
 - item 9 has AP type tables, a subpass planner, and BP/OSD AP execution for
   template-safe mask families, but not every AP/deep/special mask family;
@@ -210,8 +219,8 @@ Initial status:
 Remaining implementation order:
 
 1. complete JTDX regular `nsubpasses` metric variants beyond the currently
-   wired `isubp1=1..2` LLR-source loop. The missing source pieces are the
-   `csr`, `csold`, and combined `cscs/csr` metric paths used by higher
+   wired `isubp1=1..2` forward/reverse metric loop. The remaining source
+   pieces are `csold` and the combined `cscs/csr` metric paths used by higher
    `nsubpasses`;
 2. complete JTDX-owned FT8v2 source-level refinement, especially any remaining
    differences in OSD/BP acceptance thresholds and packed-message handling;
@@ -241,8 +250,9 @@ Current closure status:
   sensitivity result.
 - The native JTDX `ft8b` path still needs repair before JTDX reporting can be
   promoted. The current native blocker is after sync candidate generation:
-  candidates are present, but regular BP/OSD converges to rejected all-zero
-  codewords or otherwise fails to produce accepted messages.
+  candidates are present, but regular BP/OSD has not yet been verified to
+  produce accepted native JTDX messages after the latest `twkfreq1` and `csr`
+  metric alignment work.
 - `profile=hybrid` currently runs both workers. Until native JTDX emits rows,
   the JTDX side may provide only fallback-equivalent rows that dedupe away
   against the WSJT-X worker.
