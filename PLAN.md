@@ -232,9 +232,31 @@ Initial status:
   `cd0(ibest+224:ibest+479)*ctwk256`, matching the normal FT8 high-sensitivity
   source path used to raise `lcqsignal` beyond the basic `rscq` check;
 - JTDX-owned `packjt77sd` and `genft8sd` now exist for FT8S/superdeep message
-  tone generation. The native `ft8b` path has an initial conservative FT8S
-  fallback that tries configured `mycall/hiscall` message candidates after
-  regular/AP BP+OSD paths fail near the QSO frequency;
+  tone generation. `src/decode/lib_jtdx/ft8s.rs` now mirrors the main
+  `ft8s.f90` candidate table, iterative demod passes, threshold ladder, and
+  post-match sync/parity ratio guards for configured `mycall/hiscall` QSO
+  messages near the QSO frequency after regular/AP BP+OSD paths fail;
+- JTDX `ft8sd1.rs` and `ft8sd.rs` now mirror the previous-slot superdeep
+  message recovery branches for `msgd/lcq`, including direct CQ/grid/73
+  matching, four-message QSO-end alternatives, iterative demod passes, and the
+  source threshold ladders;
+- JTDX `ft8mf1.rs` and `ft8mfcq.rs` now mirror the memory-filter superdeep
+  scoring branches. They generate the source `tonesd` report/grid candidate
+  sets locally and apply the `u1/u2/qual/thresh` acceptance and message-shape
+  rejection rules before handing the selected FT8S message back to `ft8b`;
+- JTDX `tonesd.rs` now mirrors the superdeep sync-template construction used
+  by `tonesd.f90`. `ft8b` promotes previous-slot `msgd/lcq` candidates to the
+  source-shaped `iqso=4` attempt, and `sync8d` can add the `csyncsd` /
+  `csyncsdcq` virtual-candidate sync contribution during that attempt;
+- JTDX `tone8.rs` now supplies the `csynce` template family used by
+  `sync8d` for focused-QSO virtual attempts `iqso=2/3`, and `sync8d` also adds
+  the `csynccq` CQ extension generated from the same source message as
+  JTDX `cwfilter.f90`;
+- FT8S / FT8SD accepted messages now carry a source tag through `ft8b`. The
+  native JTDX session applies the source-specific false-decode guards
+  (`lrepliedother`, second-position `mycall`, and FT8SD base-message duplicate
+  rejection) while bypassing the broad regular/AP `chkfalse8` path, matching
+  the JTDX `lft8s/lft8sd` control-flow boundary;
 - JTDX `ft8b` now has a private even/odd signal-history cache for CQ,
   MyCall, and QSO candidate symbol matrices. Slot-local temporary signal
   matrices are promoted at slot end, and later candidates can recover `csold`
@@ -275,9 +297,13 @@ Remaining implementation order:
 7. decide how to handle JTDX `searchcalls` / `ALLCALL7.TXT` backed filters.
    They are not currently modeled and should not be silently approximated;
 8. complete the remaining FT8S / superdeep branches that are part of JTDX's
-   normal FT8 high-sensitivity path. The initial FT8S candidate matcher exists,
-   but source-complete `ft8s`, `ft8sd`, `ft8sd1`, `ft8mf1`, `ft8mfcq`, and
-   `tonesd` behavior is not fully ported yet. SWL-specific behavior remains
+   normal FT8 high-sensitivity path. The main `ft8s.f90` matcher,
+   previous-slot `ft8sd1` / `ft8sd` recovery branches, `ft8mf1` / `ft8mfcq`
+   memory-filter branches, and `tonesd` superdeep sync templates now exist.
+   The `sync8d` extra template families `csynce`, `csynccq`, `csyncsd`, and
+   `csyncsdcq` are represented, and the FT8S/FT8SD-specific false-decode
+   boundary is represented. Remaining work is source audit of the combined
+   virtual-QSO and superdeep control flow. SWL-specific behavior remains
    deferred.
 
 Next checkpoint:
@@ -285,6 +311,12 @@ Next checkpoint:
 - source-audit and tighten the remaining AP/deep per-`iaptype` gates against
   JTDX `ft8b.f90`, especially Hound fox-report/RR73 branches and other
   source-specific pruning gates that still need source-complete classifiers;
+- source-audit the FT8S/FT8SD false-decode state (`lrepliedother`,
+  `msgsrcvd`, and source `stophint` boundaries) against JTDX before using the
+  native profile for sensitivity comparisons;
+- source-audit the now-wired `sync8d` template families (`csynce`,
+  `csynccq`, `csyncsd`, `csyncsdcq`) against JTDX output before decode
+  baseline testing;
 - after that, run only compile checks first, then re-enable profile-level short
   decode smoke tests once native JTDX emits stable rows;
 - keep any new temporary instrumentation out of committed code. If a diagnostic

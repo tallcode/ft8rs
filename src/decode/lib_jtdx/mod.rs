@@ -16,18 +16,26 @@ pub mod ft8_mod1;
 pub mod ft8_params;
 pub mod ft8apset;
 pub mod ft8b;
+pub mod ft8mf1;
+pub mod ft8mfcq;
+pub mod ft8s;
+pub mod ft8sd;
+pub mod ft8sd1;
 pub mod ft8v2;
 pub mod gen_ft8wave;
 pub mod partintft8;
 pub mod sync8;
 pub mod sync8d;
 pub mod syncdist;
+pub mod tone8;
+pub mod tonesd;
 pub mod twkfreq1;
 
 use crate::stream::session::{StreamDecodeConfig, StreamDecodedMessage};
 use crate::stream::time::SlotTimestamp;
 
 use self::agccft8::agccft8;
+use self::ft8b::DecodeSource;
 use self::ft8v2::packjt77::HashCallBook;
 
 /// JTDX decoder state placeholder.
@@ -103,6 +111,8 @@ impl JtdxStreamDecodeSession {
             let candidates = sync8::sync8(&self._state.dd8, sync8_config);
             let mut newdat1 = true;
             for candidate in candidates {
+                let sd_candidate =
+                    find_sd_candidate(&self._state, interval, candidate.freq, candidate.dt);
                 let context = ft8b::Ft8bCandidateContext {
                     ipass: pass.ipass,
                     npass,
@@ -117,6 +127,13 @@ impl JtdxStreamDecodeSession {
                     stophint: false,
                     nlasttx: self._config.nQSOProgress,
                     call_dt_xdt: call_dt_xdt(&self._state, &self._config, interval),
+                    sd_msg: sd_candidate.map(|entry| ft8b::LastRxMsgText::from_str(&entry.msg)),
+                    sd_lcq: sd_candidate.is_some_and(|entry| is_cq_like(&entry.msg)),
+                    last_rx_msg: self
+                        ._state
+                        .lastrxmsg
+                        .lstate
+                        .then(|| ft8b::LastRxMsgText::from_str(&self._state.lastrxmsg.lastmsg)),
                     last_rx_xdt: self
                         ._state
                         .lastrxmsg
@@ -133,19 +150,24 @@ impl JtdxStreamDecodeSession {
                     candidate,
                     context,
                 ) {
+                    if rejects_special_deep_decode(&self._config, &self._state, &result) {
+                        newdat1 = false;
+                        continue;
+                    }
                     if !is_duplicate_decode(&self._state, &self._config, &result) {
                         save_decode_state(&mut self._state, &result);
                         let message = StreamDecodedMessage {
                             freq: result.freq as f64,
                             dt: result.dt as f64,
                             snr: result.snr as f64,
-                            msg: result.msg37,
+                            msg: result.msg37.clone(),
                             sync: candidate.sync as f64,
                             itone: result.itone,
                         };
                         collect_book(&self.book, &message.msg);
                         on_decode(&message)?;
                         update_qso_memory(&self._config, &mut self._state, &message, interval);
+                        update_deep_false_state(&self._config, &mut self._state, &result);
                         decoded.push(message);
                     }
                 }
@@ -256,6 +278,94 @@ fn update_qso_memory(
     }
 }
 
+fn rejects_special_deep_decode(
+    config: &StreamDecodeConfig,
+    state: &ft8_mod1::Ft8Mod1,
+    result: &ft8b::Ft8bDecodeResult,
+) -> bool {
+    match result.source {
+        DecodeSource::Ft8s => {
+            if state.lrepliedother {
+                return true;
+            }
+            deep_message_mentions_mycall_late(config, &result.msg37)
+        }
+        DecodeSource::Ft8sd => {
+            if deep_message_mentions_mycall_late(config, &result.msg37) {
+                return true;
+            }
+            let Some(base) = message_base_two_calls(&result.msg37) else {
+                return false;
+            };
+            state
+                .msgsrcvd
+                .iter()
+                .take_while(|msg| !msg.trim().is_empty())
+                .any(|msg| msg.trim() == base)
+        }
+        DecodeSource::Regular => false,
+    }
+}
+
+fn update_deep_false_state(
+    config: &StreamDecodeConfig,
+    state: &mut ft8_mod1::Ft8Mod1,
+    result: &ft8b::Ft8bDecodeResult,
+) {
+    let dfqso = (result.freq as f64 - config.nfqso).abs();
+    let mycall = config.mycall.as_deref().unwrap_or("").trim();
+    let hiscall = config.hiscall.as_deref().unwrap_or("").trim();
+    let dupe = state
+        .allmessages
+        .iter()
+        .zip(state.allfreq.iter())
+        .any(|(msg, freq)| msg == &result.msg37 && (*freq - result.freq).abs() < 45.0);
+
+    if !dupe
+        && dfqso < 2.0
+        && result.source != DecodeSource::Ft8s
+        && mycall.len() > 2
+        && !result.msg37.starts_with(&format!("{mycall} "))
+        && result.msg37.contains(&format!(" {hiscall} "))
+    {
+        state.lrepliedother = true;
+    }
+    if !dupe
+        && dfqso < 2.0
+        && (1..6).contains(&config.nQSOProgress)
+        && result.msg37.starts_with("CQ ")
+        && hiscall.len() > 2
+        && (result.msg37.starts_with(&format!("CQ {hiscall} "))
+            || result.msg37.starts_with(&format!("CQ DX {hiscall} ")))
+    {
+        state.lrepliedother = true;
+    }
+    if !dupe
+        && result.i3 == 1
+        && result.source == DecodeSource::Regular
+        && !result.msg37.starts_with("CQ ")
+    {
+        if let Some(base) = message_base_two_calls(&result.msg37) {
+            if let Some(slot) = state.msgsrcvd.iter_mut().find(|msg| msg.trim().is_empty()) {
+                *slot = base.to_string();
+            }
+        }
+    }
+}
+
+fn deep_message_mentions_mycall_late(config: &StreamDecodeConfig, msg: &str) -> bool {
+    let mycall = config.mycall.as_deref().unwrap_or("").trim();
+    mycall.len() > 3 && msg.find(&format!(" {mycall} ")).is_some_and(|idx| idx > 0)
+}
+
+fn message_base_two_calls(msg: &str) -> Option<&str> {
+    let first = msg.find(' ')?;
+    let rest = &msg[first + 1..];
+    let second_rel = rest.find(' ')?;
+    let end = first + 1 + second_rel;
+    Some(msg[..end].trim())
+}
+
 fn is_focused_qso_decode(config: &StreamDecodeConfig, message: &StreamDecodedMessage) -> bool {
     is_qso_thread(config) && (message.freq - config.nfqso).abs() < 2.0
 }
@@ -327,6 +437,26 @@ fn restore_lastrx_from_odd_even_copy(
             return;
         }
     }
+}
+
+fn find_sd_candidate(
+    state: &ft8_mod1::Ft8Mod1,
+    interval: IntervalKind,
+    freq: f32,
+    dt: f32,
+) -> Option<&ft8_mod1::OddEvenMessage> {
+    let entries = match interval {
+        IntervalKind::Even => &state.evencopy,
+        IntervalKind::Odd => &state.oddcopy,
+        IntervalKind::Other => return None,
+    };
+    entries.iter().find(|entry| {
+        entry.lstate && (entry.freq - freq).abs() < 3.0 && (entry.dt - dt).abs() < 0.19
+    })
+}
+
+fn is_cq_like(msg: &str) -> bool {
+    msg.starts_with("CQ ") || msg.starts_with("DE ") || msg.starts_with("QRZ ")
 }
 
 fn save_call_dt(
@@ -425,6 +555,10 @@ fn reset_decode_arrays(state: &mut ft8_mod1::Ft8Mod1) {
     }
     state.allsnrs.fill(0);
     state.allfreq.fill(0.0);
+    state.lrepliedother = false;
+    for msg in &mut state.msgsrcvd {
+        msg.clear();
+    }
 }
 
 fn apply_agc_state(config: &StreamDecodeConfig, state: &mut ft8_mod1::Ft8Mod1) {
