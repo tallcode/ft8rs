@@ -48,6 +48,10 @@ pub(crate) fn chkfalse8(
         return false;
     }
 
+    if iaptype == 1 && msg.starts_with("CQ DE AA00") {
+        return false;
+    }
+
     let primary_false_check = context.quality < 0.39
         || context.xsnr < -20.5
         || context.rxdt < -0.5
@@ -61,6 +65,14 @@ pub(crate) fn chkfalse8(
 
     if iaptype == 2 || iaptype == 40 {
         return accept_second_call_and_optional_grid(&words);
+    }
+
+    if (35..40).contains(&iaptype)
+        && words.first().is_some_and(|call| {
+            call.ends_with("/R") && chkflscall("CQ", strip_portable_suffix(call))
+        })
+    {
+        return false;
     }
 
     if (35..40).contains(&iaptype)

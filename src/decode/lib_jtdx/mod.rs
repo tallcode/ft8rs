@@ -124,6 +124,7 @@ impl JtdxStreamDecodeSession {
                     levenint: interval == IntervalKind::Even,
                     loddint: interval == IntervalKind::Odd,
                     lqsomsgdcd: self._state.lqsomsgdcd,
+                    lft8sdec: self._state.lft8sdec,
                     stophint: false,
                     nlasttx: self._config.nQSOProgress,
                     call_dt_xdt: call_dt_xdt(&self._state, &self._config, interval),
@@ -153,6 +154,9 @@ impl JtdxStreamDecodeSession {
                     if rejects_special_deep_decode(&self._config, &self._state, &result) {
                         newdat1 = false;
                         continue;
+                    }
+                    if result.source == DecodeSource::Ft8s {
+                        self._state.lft8sdec = true;
                     }
                     if !is_duplicate_decode(&self._state, &self._config, &result) {
                         save_decode_state(&mut self._state, &result);
@@ -550,6 +554,7 @@ fn reset_decode_arrays(state: &mut ft8_mod1::Ft8Mod1) {
     state.ndecodes = 0;
     state.nmsg = 0;
     state.lqsomsgdcd = false;
+    state.lft8sdec = false;
     for msg in &mut state.allmessages {
         msg.clear();
     }

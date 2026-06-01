@@ -99,6 +99,9 @@ Implemented or scaffolded:
   while the JTDX worker runs in parallel;
 - after JTDX finishes, hybrid emits only JTDX-unique rows that were not already
   streamed by the WSJT-X side;
+- dedupe tracks all rows for a normalized message within the slot, not just the
+  most recent row, so repeated identical message text at different frequency/DT
+  positions does not hide a true same-signal duplicate;
 - monitor mode can use `profile=hybrid` at the full-slot boundary.
 
 State boundary:
