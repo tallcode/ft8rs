@@ -42,6 +42,13 @@ mod tests {
     }
 
     #[test]
+    fn directed_cq_dx_round_trips() {
+        let bits = super::pack77("CQ DX DL8YHR JO41");
+        let msg = super::unpack77(&bits, None).unwrap();
+        assert_eq!(msg, "CQ DX DL8YHR JO41");
+    }
+
+    #[test]
     fn type01_dxpedition_round_trips_with_hash10_book() {
         let book = HashCallBook::new();
         book.save("R5AF/O");

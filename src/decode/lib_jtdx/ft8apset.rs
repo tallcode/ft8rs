@@ -2,15 +2,60 @@
 
 use crate::stream::session::StreamDecodeConfig;
 
+use super::ft8_mod1::{NAPTYPES, NDXNSAPTYPES, NHAPTYPES, NMYCNSAPTYPES};
 use super::ft8v2::bpdecode174_91::N;
 use super::ft8v2::packjt77::pack77;
 
+#[derive(Clone)]
 pub(crate) struct ApMaskPlan {
     pub(crate) message77: [u8; 77],
     pub(crate) apmask: [i8; N],
 }
 
-pub(crate) fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan> {
+#[derive(Clone, Default)]
+pub(crate) struct Ft8ApSet {
+    plans: Vec<(i32, Option<ApMaskPlan>)>,
+}
+
+impl Ft8ApSet {
+    pub(crate) fn get(&self, iaptype: i32) -> Option<ApMaskPlan> {
+        self.plans
+            .iter()
+            .find_map(|(key, plan)| (*key == iaptype).then(|| plan.clone()))
+            .flatten()
+    }
+}
+
+pub(crate) fn ft8apset(config: &StreamDecodeConfig) -> Ft8ApSet {
+    let mut plans = Vec::new();
+    for iaptype in ap_types_for_config(config) {
+        if !plans.iter().any(|(key, _)| *key == iaptype) {
+            plans.push((iaptype, build_ap_mask(config, iaptype)));
+        }
+    }
+    Ft8ApSet { plans }
+}
+
+fn ap_types_for_config(config: &StreamDecodeConfig) -> Vec<i32> {
+    let mycall = config.mycall.as_deref().unwrap_or("");
+    let hiscall = config.hiscall.as_deref().unwrap_or("");
+    let table = if config.lhound {
+        &NHAPTYPES
+    } else if is_nonstandard_call(mycall) {
+        &NMYCNSAPTYPES
+    } else if is_nonstandard_call(hiscall) {
+        &NDXNSAPTYPES
+    } else {
+        &NAPTYPES
+    };
+    table
+        .iter()
+        .flat_map(|row| row.iter().copied())
+        .filter(|&iaptype| iaptype != 0)
+        .collect()
+}
+
+fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan> {
     let mycall = normalized_call(config.mycall.as_deref());
     let hiscall = normalized_call(config.hiscall.as_deref());
     let grid = config
@@ -172,6 +217,21 @@ fn normalized_call(call: Option<&str>) -> Option<String> {
         return None;
     }
     Some(call.to_ascii_uppercase())
+}
+
+fn is_nonstandard_call(call: &str) -> bool {
+    let call = call.trim();
+    if call.is_empty() {
+        return false;
+    }
+    call.starts_with('<')
+        || call.ends_with('>')
+        || call.contains('/')
+        || call.len() > 6
+        || !call
+            .as_bytes()
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
 }
 
 fn bits_to_usize(bits: &[u8]) -> usize {

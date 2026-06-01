@@ -9,7 +9,9 @@ pub mod callsign_q;
 pub mod chkfalse8;
 pub mod chkflscall;
 pub mod chkgrid;
+pub mod chklong8;
 pub mod chkspecial8;
+pub mod filtersfree;
 pub mod four2a;
 pub mod ft8_decode;
 pub mod ft8_downsample;
@@ -24,6 +26,8 @@ pub mod ft8sd;
 pub mod ft8sd1;
 pub mod ft8v2;
 pub mod gen_ft8wave;
+pub mod indexx;
+pub mod msgparser;
 pub mod partintft8;
 pub mod searchcalls;
 pub mod sync8;
@@ -37,8 +41,10 @@ use crate::stream::session::{StreamDecodeConfig, StreamDecodedMessage};
 use crate::stream::time::SlotTimestamp;
 
 use self::agccft8::agccft8;
+use self::ft8apset::{ft8apset, Ft8ApSet};
 use self::ft8b::DecodeSource;
 use self::ft8v2::packjt77::HashCallBook;
+use self::tone8::{tone8, Tone8Tables};
 
 /// JTDX decoder state placeholder.
 ///
@@ -50,6 +56,8 @@ pub struct JtdxStreamDecodeSession {
     _state: ft8_mod1::Ft8Mod1,
     book: HashCallBook,
     ft8b_workspace: ft8b::Ft8bWorkspace,
+    tone8_tables: Tone8Tables,
+    ft8apset: Ft8ApSet,
 }
 
 impl JtdxStreamDecodeSession {
@@ -71,6 +79,8 @@ impl JtdxStreamDecodeSession {
         state.nfawide = config.nfa.round() as i32;
         state.nfbwide = config.nfb.round() as i32;
         Self {
+            tone8_tables: tone8(&config),
+            ft8apset: ft8apset(&config),
             _config: config,
             _state: state,
             book: HashCallBook::new(),
@@ -151,6 +161,8 @@ impl JtdxStreamDecodeSession {
                     &mut self.ft8b_workspace,
                     &self._config,
                     &self.book,
+                    &self.tone8_tables,
+                    &self.ft8apset,
                     &mut self._state.dd8,
                     newdat1,
                     candidate,
@@ -165,6 +177,12 @@ impl JtdxStreamDecodeSession {
                     }
                     if !is_duplicate_decode(&self._state, &self._config, &result) {
                         save_decode_state(&mut self._state, &result);
+                        self.ft8b_workspace.remember_decoded_message(
+                            &result.msg37,
+                            result.freq,
+                            result.dt + 0.5,
+                            self._config.mycall.as_deref().unwrap_or(""),
+                        );
                         let message = StreamDecodedMessage {
                             freq: result.freq as f64,
                             dt: result.dt as f64,

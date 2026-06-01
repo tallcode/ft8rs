@@ -3,7 +3,9 @@
 use super::callsign_q::callsign_q_reject;
 use super::chkflscall::chkflscall;
 use super::chkgrid::{chkgrid, is_grid4};
+use super::chklong8::chklong8;
 use super::chkspecial8::chkspecial8;
+use super::filtersfree::filtersfree;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FilterContext {
@@ -48,6 +50,10 @@ pub(crate) fn chkfalse8(
         return false;
     }
 
+    if i3 == 0 && (msg.starts_with("CQ_") || msg.contains('^')) {
+        return false;
+    }
+
     if iaptype == 1 && msg.starts_with("CQ DE AA00") {
         return false;
     }
@@ -86,6 +92,9 @@ pub(crate) fn chkfalse8(
 
     if primary_false_check && matches!(iaptype, 3 | 11 | 21 | 41) {
         if iaptype == 21 && msg.contains(" R ") {
+            return false;
+        }
+        if rejects_ap_qso_grid_message(&words, iaptype, context) {
             return false;
         }
         return accept_optional_report_grid(&words);
@@ -129,10 +138,20 @@ pub(crate) fn chkfalse8(
     if i3 == 4 && words.len() >= 2 {
         let first_call = words[0].trim_matches(['<', '>']);
         let second_call = words[1].trim_matches(['<', '>']);
-        if !lcall1hash && callsign_q_reject(first_call) {
+        if !lcall1hash && (callsign_q_reject(first_call) || chklong8(first_call)) {
             return false;
         }
-        if callsign_q_reject(second_call) {
+        if callsign_q_reject(second_call) || chklong8(second_call) {
+            return false;
+        }
+    }
+
+    if i3 == 3 && msg.starts_with("TU;") && rejects_tu_message(&words) {
+        return false;
+    }
+
+    if i3 == 0 && n3 == 0 {
+        if msg.contains("/.") || filtersfree(&msg[..msg.len().min(22)]) {
             return false;
         }
     }
@@ -202,6 +221,12 @@ fn accept_cq(msg: &str, words: &[&str], i3: usize, n3: usize, iaptype: i32) -> b
         if callsign.is_empty() || callsign_q_reject(callsign) {
             return false;
         }
+        if callsign.len() >= 10 && chklong8(callsign) {
+            return false;
+        }
+        if rejects_single_slash_11_call(callsign) {
+            return false;
+        }
         if words.len() == 2 && looks_like_standard_6_call(callsign) {
             return false;
         }
@@ -242,6 +267,73 @@ fn accept_cq(msg: &str, words: &[&str], i3: usize, n3: usize, iaptype: i32) -> b
     }
 
     true
+}
+
+fn rejects_ap_qso_grid_message(words: &[&str], iaptype: i32, context: &FilterContext) -> bool {
+    if words.len() < 3 {
+        return false;
+    }
+    let mycall = context.mycall.trim();
+    let hiscall = context.hiscall.trim();
+    if mycall.is_empty() || hiscall.is_empty() || words[0] != mycall || words[1] != hiscall {
+        return false;
+    }
+
+    let grid = if words.get(2) == Some(&"R") {
+        words.get(3).copied().unwrap_or("")
+    } else {
+        words[2]
+    };
+    if !is_grid4(grid) || grid == context.hisgrid4 {
+        return false;
+    }
+    if iaptype == 21 {
+        return grid != "RR73";
+    }
+    !chkgrid(hiscall, grid).lgvalid
+}
+
+fn rejects_tu_message(words: &[&str]) -> bool {
+    if words.len() < 3 {
+        return false;
+    }
+    let call_a = words[1];
+    let call_b = words[2];
+    (callsign_q_reject(call_a) || callsign_q_reject(call_b)) || chkflscall(call_a, call_b)
+}
+
+fn rejects_single_slash_11_call(callsign: &str) -> bool {
+    let Some(islash) = callsign.find('/') else {
+        return false;
+    };
+    if callsign[islash + 1..].contains('/') || callsign.len() != 11 {
+        return false;
+    }
+    let bytes = callsign.as_bytes();
+    if islash < 6
+        && ((bytes.get(islash + 1).is_some_and(u8::is_ascii_digit)
+            && bytes.get(islash + 2).is_some_and(u8::is_ascii_digit))
+            || bytes.get(islash + 1) == Some(&b'Q')
+            || bytes.last().is_some_and(u8::is_ascii_digit))
+    {
+        return true;
+    }
+    if islash > 4
+        && (bytes
+            .get(islash.saturating_sub(1))
+            .is_some_and(u8::is_ascii_digit)
+            || (bytes.first().is_some_and(u8::is_ascii_digit)
+                && bytes.get(1).is_some_and(u8::is_ascii_digit))
+            || bytes.first() == Some(&b'Q'))
+    {
+        return true;
+    }
+    if (4..8).contains(&islash) {
+        let call_a = &callsign[..islash];
+        let call_b = &callsign[islash + 1..];
+        return chkflscall(call_a, call_b);
+    }
+    false
 }
 
 fn accept_second_call_and_optional_grid(words: &[&str]) -> bool {

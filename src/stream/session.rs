@@ -159,6 +159,8 @@ pub struct StreamDecodeConfig {
     pub nagcc: bool,
     pub lforcesync: bool,
     pub lhound: bool,
+    pub lenabledxcsearch: bool,
+    pub lwidedxcsearch: bool,
     pub ncandthin: usize,
     pub filter: bool,
     pub hide_dupes: bool,
@@ -194,6 +196,8 @@ impl Default for StreamDecodeConfig {
             nagcc: false,
             lforcesync: false,
             lhound: false,
+            lenabledxcsearch: false,
+            lwidedxcsearch: false,
             ncandthin: 100,
             filter: false,
             hide_dupes: false,
@@ -226,6 +230,8 @@ impl StreamDecodeConfig {
         config.lft8lowth = true;
         config.lft8subpass = true;
         config.nagcc = true;
+        config.lenabledxcsearch = true;
+        config.lwidedxcsearch = true;
         config.ncandthin = 100;
         config.filter = false;
         config.hide_dupes = false;

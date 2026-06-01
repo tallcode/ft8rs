@@ -3,12 +3,13 @@
 use super::ft8_downsample::ft8_downsample;
 use super::ft8_mod1::ICOS7;
 use super::ft8_params::{DT2, FS2, TWO_PI};
+use super::ft8apset::Ft8ApSet;
 use super::ft8v2::packjt77::HashCallBook;
 use super::ft8v2::subtractft8::subtractft8;
 use super::gen_ft8wave::gen_ft8wave;
 use super::sync8::SyncCandidate;
 use super::sync8d::{build_ctwk, sync8d, Sync8dContext};
-use super::tone8::build_csynce;
+use super::tone8::Tone8Tables;
 use super::tonesd::tonesd;
 use super::twkfreq1::twkfreq1;
 use crate::decode::lib_jtdx::four2a::four2a_c2c;
@@ -27,10 +28,12 @@ pub use state::{
 };
 use state::{SignalMemory, SymbolMetrics, SyncGate};
 
-pub fn ft8b(
+pub(crate) fn ft8b(
     workspace: &mut Ft8bWorkspace,
     config: &StreamDecodeConfig,
     book: &HashCallBook,
+    tone8_tables: &Tone8Tables,
+    ft8apset: &Ft8ApSet,
     dd8: &mut [f32],
     newdat1: bool,
     candidate: SyncCandidate,
@@ -61,6 +64,8 @@ pub fn ft8b(
             &cd0,
             config,
             book,
+            tone8_tables,
+            ft8apset,
             candidate,
             context,
             iqso,
@@ -88,6 +93,8 @@ fn try_ft8b_decode_for_iqso(
     cd0: &super::ft8_downsample::ComplexC,
     config: &StreamDecodeConfig,
     book: &HashCallBook,
+    tone8_tables: &Tone8Tables,
+    ft8apset: &Ft8ApSet,
     candidate: SyncCandidate,
     context: Ft8bCandidateContext,
     iqso: usize,
@@ -104,10 +111,7 @@ fn try_ft8b_decode_for_iqso(
         None
     };
     let csynce_templates = if iqso == 2 || iqso == 3 {
-        normalized_config_call(config.mycall.as_deref()).and_then(|mycall| {
-            normalized_config_call(config.hiscall.as_deref())
-                .and_then(|hiscall| build_csynce(&mycall, &hiscall))
-        })
+        tone8_tables.csynce.clone()
     } else {
         None
     };
@@ -173,6 +177,7 @@ fn try_ft8b_decode_for_iqso(
             book,
             context,
             lvirtual,
+            tone8_tables,
         )
         .map(|result| (result, ibest));
     }
@@ -202,6 +207,8 @@ fn try_ft8b_decode_for_iqso(
         refined_dt,
         config,
         book,
+        tone8_tables,
+        ft8apset,
         context,
         sync_gate,
         signal_memory,
@@ -669,11 +676,8 @@ fn jtdx_soft_sync_gate(s8: &[[f32; 79]; 8], refined_dt: f64) -> bool {
     } else {
         scoreratio1 = 0.0;
     }
-    if nsyncscore2 > 0 {
-        scoreratio2 /= nsyncscore2 as f32;
-    } else {
-        scoreratio2 = 0.0;
-    }
+    // JTDX ft8b.f90 normalizes scoreratio, scoreratio1, and scoreratio3 here,
+    // but leaves scoreratio2 as the accumulated middle-sync ratio.
     if nsyncscore3 > 0 {
         scoreratio3 /= nsyncscore3 as f32;
     } else {

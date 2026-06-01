@@ -1,6 +1,7 @@
 //! Mirrors JTDX `lib/ft8s.f90`.
 
 use super::ft8v2::packjt77sd::genft8sd;
+use super::tone8::Tone8Tables;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Ft8sResult {
@@ -26,6 +27,7 @@ pub(crate) fn ft8s(
     hiscall: &str,
     nlasttx: usize,
     lastrxmsg: Option<&str>,
+    tone8_tables: Option<&Tone8Tables>,
 ) -> Option<Ft8sResult> {
     if stophint || hiscall.trim().len() < 3 || nlasttx == 6 || nlasttx == 0 {
         return None;
@@ -64,7 +66,8 @@ pub(crate) fn ft8s(
         lcallingrprt = true;
     }
 
-    let mut messages = build_ft8s_messages(mycall, hiscall)?;
+    let mut messages =
+        ft8s_messages_from_tone8(tone8_tables).or_else(|| build_ft8s_messages(mycall, hiscall))?;
     if lgrid {
         let base = format!("{} {} AA00", mycall.trim(), hiscall.trim());
         if messages[52].msg37.trim() == base {
@@ -275,6 +278,27 @@ pub(crate) fn ft8s(
     }
 
     None
+}
+
+fn ft8s_messages_from_tone8(tables: Option<&Tone8Tables>) -> Option<Vec<Ft8sMessage>> {
+    let tables = tables?;
+    if tables.msg56.len() != 56
+        || tables.msgbits56.len() != 56
+        || tables.itone56.len() != 56
+        || tables.idtone56.len() != 56
+    {
+        return None;
+    }
+    let mut out = Vec::with_capacity(56);
+    for i in 0..56 {
+        out.push(Ft8sMessage {
+            msg37: tables.msg56[i].clone(),
+            msgbits: tables.msgbits56[i],
+            itone: tables.itone56[i],
+            idtone: tables.idtone56[i],
+        });
+    }
+    Some(out)
 }
 
 fn build_ft8s_messages(mycall: &str, hiscall: &str) -> Option<Vec<Ft8sMessage>> {

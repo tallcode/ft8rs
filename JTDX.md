@@ -125,6 +125,7 @@ src/decode/lib_jtdx/ft8sd1.rs
 src/decode/lib_jtdx/ft8apset.rs
 src/decode/lib_jtdx/sync8.rs
 src/decode/lib_jtdx/sync8d.rs
+src/decode/lib_jtdx/indexx.rs
 src/decode/lib_jtdx/tone8.rs
 src/decode/lib_jtdx/tonesd.rs
 src/decode/lib_jtdx/ft8_downsample.rs
@@ -307,15 +308,41 @@ Implemented or scaffolded:
   locally, score them against the ranked data-symbol powers, apply the
   source-shaped message-state rejections, and return only messages that pass
   the `u1/u2/qual/thresh` gates;
+- `ft8mfcq.rs` has a direct JTDX source counterpart (`lib/ft8mfcq.f90`).
+  Earlier review notes that treated it as an ft8rs-only matcher were a false
+  positive;
+- `ft8mf1.rs` was re-audited for the 0-based/1-based report index mapping.
+  The Rust `ipk` range checks intentionally map the JTDX Fortran `ipk=55..57`
+  acknowledgement rows to Rust `54..56`; the `73` row is not being rejected by
+  an off-by-one bug;
 - `tonesd.rs` now mirrors the JTDX `tonesd.f90` superdeep sync-template
   construction. When a previous-slot `msgd/lcq` candidate is available, `ft8b`
   promotes the source-shaped `iqso=4` attempt and passes the generated
   `csyncsd` / `csyncsdcq` templates into `sync8d` so virtual-candidate
   superdeep sync contributes to the DT/frequency search;
-- `tone8.rs` now supplies the JTDX `csynce` sync-template family for focused
-  QSO virtual attempts `iqso=2/3`, and `sync8d` also builds the `csynccq`
-  extension from the JTDX `cwfilter.f90` seed message. This closes the known
-  sync-template family gap in the native JTDX path at the source-shape level;
+- `tone8.rs` now mirrors the JTDX `tone8.f90` table-building role more
+  closely. A slot session precomputes `csynce`, MyCall/CQ/nonstandard-DX/Hound
+  tone hints, and the 56-report QSO table once, then `ft8b` / `ft8s` consume
+  those tables rather than rebuilding isolated templates on demand. `sync8d`
+  also builds the `csynccq` extension from the JTDX `cwfilter.f90` seed
+  message. This closes the known "single-template tone8" structural gap at the
+  source-shape level;
+- `ft8s.rs` now consumes the `tone8` precomputed 56-report table before
+  falling back to local construction. This keeps the FT8S matcher closer to
+  the JTDX precompute-and-reuse model and reduces duplicated message
+  generation in the decode loop;
+- `ft8apset.rs` now precomputes AP mask plans for the active AP table when a
+  JTDX session is created, instead of constructing every mask directly inside
+  `ft8b`. The current representation uses `Option<ApMaskPlan>` for
+  buildable/not-buildable entries; it still does not preserve the exact JTDX
+  sentinel-array surface (`99` values) for failed templates;
+- `osd174_91.rs` now uses a local JTDX `indexx` mirror for reliability
+  ordering. This removes an avoidable Rust `sort_by` shape difference in the
+  ordered-statistics path;
+- `ft8b` soft-sync gating was re-audited against JTDX `ft8b.f90`; the Rust
+  path now preserves the source behavior where `scoreratio2` remains the
+  accumulated middle-sync ratio while `scoreratio`, `scoreratio1`, and
+  `scoreratio3` are normalized;
 - focused-QSO virtual attempts now follow more of the source control flow:
   `nqso=3` visits `iqso=1/2/3`, `iqso=3` applies the source `ibest+1`
   adjustment, `iqso=4` uses the wider 0.5 Hz frequency retry step, and
@@ -645,6 +672,56 @@ Remaining filter caveats:
   control flow before profile measurement;
 - ARRL RTTY contest rewrite handling is not promoted as a target behavior in
   ft8rs yet, because this project remains focused on FT8 decode behavior.
+
+Current source-audit triage notes:
+
+- Valid gaps: `ft8b.f90` still has source branches around free-text,
+  special-message presentation, enabled-DX-call search, and wide-DX-call search
+  controls that are not fully represented in the Rust JTDX path. These are
+  decoder-surface gaps, not short-fixture candidate-search explanations yet.
+- Closed or false-positive items: `ft8mf1` acknowledgement row indexing,
+  `ft8sd` / `ft8sd1` selected-tone storage, and the existence of
+  `ft8mfcq.f90` have been checked against the JTDX source and should not be
+  treated as active bugs.
+- Partially closed structural items: `tone8`, `ft8apset`, and `ft8s` now use
+  session-level precomputed tables. A later pass can still refine exact JTDX
+  global/sentinel behavior if an observed miss points there.
+
+Current follow-up closure:
+
+- JTDX high-sensitivity config now carries explicit `lenabledxcsearch` and
+  `lwidedxcsearch` flags. They default on for `profile=jtdx`, and AP/deep
+  gate branches now check them around `iaptype > 30` DXCall-search paths
+  instead of relying only on frequency-window side effects.
+- Type 0.1 special-message handling now has a local `msgparser.rs` mirror.
+  Regular/AP decoded results record `l_free_text`, `l_special`, and
+  `msg37_2`; `chkfalse8` / `chkspecial8` receives the parsed secondary message
+  when filtering special messages. The CLI still emits the primary row only;
+  matching JTDX's two-row callback behavior for special messages remains a
+  separate output-layer task.
+- `ft8b` workspace now carries slot-local decoded CQ/MyCall memory matching
+  the role of JTDX `tmpcqdec` / `tmpmyc`: accepted CQ/MyCall decodes are saved
+  with frequency and raw `xdt`, and later CQ/MyCall signal-memory candidates at
+  the same position are not added again. This closes the main cache-separation
+  gap without yet rewriting the whole JTDX late-pass signal-save control flow.
+- JTDX false-decode filtering now includes local mirrors for `chklong8.f90`
+  and the deterministic text-shape portion of `filtersfree.f90`. `chkfalse8`
+  now applies long-callsign rejection, free-text shape rejection, `CQ_` / `^`
+  rejection, `TU;` call-pair validation, and the source-shaped
+  `iaptype=3/11/21/41` focused-QSO grid check.
+- `filtersfree.rs` intentionally does not yet apply the final
+  `datacor(datapwr)` correlation gate because the current Rust filter boundary
+  does not carry JTDX's `datapwr` state. That is a remaining source-fidelity
+  item for the free-text path.
+- `chkgrid.rs` remains the largest false-positive filter simplification:
+  current Rust has basic grid format and a small set of obvious call/grid
+  checks, while JTDX `chkgrid.f90` is a large geographic rule table. This
+  should be migrated mechanically or table-driven rather than rewritten by
+  hand.
+- `tonesd.rs` still generates only the superdeep sync templates. The 76-entry
+  `itone76` / `idtone76` / `msgsd76` table is generated locally by the
+  consumers today; later source-shape work should centralize it in `tonesd.rs`
+  the same way `tone8.rs` now owns the 56-entry FT8S table.
 
 ## Baseline Rule
 

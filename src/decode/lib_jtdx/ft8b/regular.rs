@@ -1,5 +1,5 @@
 use super::super::ft8_mod1::ICOS7;
-use super::super::ft8apset::build_ap_mask;
+use super::super::ft8apset::Ft8ApSet;
 use super::super::ft8mf1::ft8mf1;
 use super::super::ft8mfcq::ft8mfcq;
 use super::super::ft8s::ft8s;
@@ -9,6 +9,7 @@ use super::super::ft8v2::bpdecode174_91::{bpdecode174_91, N};
 use super::super::ft8v2::osd174_91::osd174_91;
 use super::super::ft8v2::packjt77::HashCallBook;
 use super::super::sync8::SyncCandidate;
+use super::super::tone8::Tone8Tables;
 use super::classify::{classify_signal, remember_candidate_signal, select_csold};
 use super::decode_helpers::*;
 use super::state::{
@@ -25,11 +26,13 @@ pub(super) fn regular_decode(
     refined_dt: f64,
     config: &StreamDecodeConfig,
     book: &HashCallBook,
+    tone8_tables: &Tone8Tables,
+    ft8apset: &Ft8ApSet,
     context: Ft8bCandidateContext,
     sync_gate: SyncGate,
     signal_memory: &mut SignalMemory,
 ) -> Option<Ft8bDecodeResult> {
-    let tone_hints = ToneHints::from_config(config);
+    let tone_hints = ToneHints::from_tables(tone8_tables);
     let classifier = classify_signal(metrics, config, refined_freq, context, &tone_hints);
     remember_candidate_signal(signal_memory, metrics, classifier, refined_freq, refined_dt);
     let csold = select_csold(signal_memory, classifier, context, refined_freq, refined_dt);
@@ -114,7 +117,7 @@ pub(super) fn regular_decode(
                 ) {
                     continue;
                 }
-                let Some(ap) = build_ap_mask(config, iaptype) else {
+                let Some(ap) = ft8apset.get(iaptype) else {
                     continue;
                 };
                 let llr_source = ap_llr_source(
@@ -166,6 +169,7 @@ pub(super) fn regular_decode(
         book,
         context,
         classifier,
+        tone8_tables,
     ) {
         return Some(result);
     }
@@ -193,6 +197,7 @@ fn try_ft8s(
     book: &HashCallBook,
     context: Ft8bCandidateContext,
     classifier: SignalClassifier,
+    tone8_tables: &Tone8Tables,
 ) -> Option<Ft8bDecodeResult> {
     if context.lqsomsgdcd || context.stophint || context.lft8sdec {
         return None;
@@ -218,6 +223,7 @@ fn try_ft8s(
         &mycall,
         &hiscall,
         srr,
+        tone8_tables,
     )
 }
 
@@ -229,6 +235,7 @@ pub(super) fn try_ft8s_virtual(
     book: &HashCallBook,
     context: Ft8bCandidateContext,
     lvirtual: bool,
+    tone8_tables: &Tone8Tables,
 ) -> Option<Ft8bDecodeResult> {
     if context.lqsomsgdcd || context.lft8sdec {
         return None;
@@ -258,6 +265,7 @@ pub(super) fn try_ft8s_virtual(
         &mycall,
         &hiscall,
         srr,
+        tone8_tables,
     )
 }
 
@@ -273,6 +281,7 @@ fn try_ft8s_with_s8(
     mycall: &str,
     hiscall: &str,
     srr: f32,
+    tone8_tables: &Tone8Tables,
 ) -> Option<Ft8bDecodeResult> {
     let result = ft8s(
         s8,
@@ -283,6 +292,7 @@ fn try_ft8s_with_s8(
         &hiscall,
         context.nlasttx,
         context.last_rx_msg.as_ref().map(LastRxMsgText::as_str),
+        Some(tone8_tables),
     )?;
     decoded_bits_to_result(
         metrics,
@@ -528,6 +538,12 @@ fn jtdx_ap_subpass_allowed(
         if iaptype == 6 && !classifier.lqsorr73 {
             return false;
         }
+        if iaptype > 30 && !config.lenabledxcsearch {
+            return false;
+        }
+        if iaptype > 30 && !config.lwidedxcsearch && loutapwid {
+            return false;
+        }
         if iaptype == 31 && !classifier.lcqdxcsig {
             return false;
         }
@@ -565,6 +581,12 @@ fn jtdx_ap_subpass_allowed(
         if iaptype == 14 && !classifier.lqsorr73 {
             return false;
         }
+        if iaptype > 30 && !config.lenabledxcsearch {
+            return false;
+        }
+        if iaptype > 30 && !config.lwidedxcsearch && loutapwid {
+            return false;
+        }
         if iaptype > 30 && lapcqonly {
             return false;
         }
@@ -588,6 +610,9 @@ fn jtdx_ap_subpass_allowed(
             return false;
         }
         if iaptype > 34 && !classifier.ldxcsig {
+            return false;
+        }
+        if iaptype > 30 && iaptype < 40 && !config.lwidedxcsearch && loutapwid {
             return false;
         }
         return true;
@@ -633,7 +658,7 @@ fn jtdx_ap_subpass_allowed(
         if iaptype > 34 && iaptype < 37 && (!classifier.ldxcsig || lapcqonly) {
             return false;
         }
-        if iaptype > 30 && iaptype < 40 && loutapwid {
+        if iaptype > 30 && iaptype < 40 && !config.lwidedxcsearch && loutapwid {
             return false;
         }
         return true;

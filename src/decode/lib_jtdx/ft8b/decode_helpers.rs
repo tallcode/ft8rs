@@ -4,8 +4,8 @@ use super::super::ft8_mod1::{
 };
 use super::super::ft8v2::bpdecode174_91::{BpDecodeResult, N};
 use super::super::ft8v2::encode174_91::encode174_91;
-use super::super::ft8v2::packjt77::{pack77, unpack77_with_context, HashCallBook, UnpackContext};
-use super::super::ft8v2::packjt77sd::genft8sd;
+use super::super::ft8v2::packjt77::{unpack77_with_context, HashCallBook, UnpackContext};
+use super::super::msgparser::msgparser;
 use super::state::{
     BitMetrics, CsMatrix, DecodeSource, Ft8bCandidateContext, Ft8bDecodeResult, MetricSource,
     SignalClassifier, SymbolMetrics,
@@ -236,15 +236,6 @@ pub(super) fn normalized_config_call(call: Option<&str>) -> Option<String> {
     Some(call.to_ascii_uppercase())
 }
 
-pub(super) fn base_config_call(call: &str) -> Option<String> {
-    let call = call.trim().trim_start_matches('<').trim_end_matches('>');
-    let base = call
-        .split('/')
-        .filter(|part| part.len() >= 3)
-        .max_by_key(|part| (part.as_bytes().iter().any(u8::is_ascii_digit), part.len()))?;
-    Some(base.to_ascii_uppercase())
-}
-
 pub(super) fn is_nonstandard_call(call: &str) -> bool {
     let call = call.trim();
     if call.is_empty() {
@@ -258,41 +249,6 @@ pub(super) fn is_nonstandard_call(call: &str) -> bool {
             .as_bytes()
             .iter()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
-}
-
-pub(super) fn build_idtone56(mycall: &str, hiscall: &str) -> Vec<[i32; 58]> {
-    const RPT: [&str; 56] = [
-        "-01", "-02", "-03", "-04", "-05", "-06", "-07", "-08", "-09", "-10", "-11", "-12", "-13",
-        "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26",
-        "R-01", "R-02", "R-03", "R-04", "R-05", "R-06", "R-07", "R-08", "R-09", "R-10", "R-11",
-        "R-12", "R-13", "R-14", "R-15", "R-16", "R-17", "R-18", "R-19", "R-20", "R-21", "R-22",
-        "R-23", "R-24", "R-25", "R-26", "AA00", "RRR", "RR73", "73",
-    ];
-
-    RPT.iter()
-        .filter_map(|rpt| tones58_from_message(&format!("{mycall} {hiscall} {rpt}")))
-        .collect()
-}
-
-pub(super) fn tones58_from_message(msg: &str) -> Option<[i32; 58]> {
-    let packed = pack77(msg);
-    if packed.len() < 77 {
-        return None;
-    }
-    let codeword = encode174_91(&packed[..77]);
-    let itone = tones_from_codeword(&codeword);
-    let mut out = [0i32; 58];
-    out[..29].copy_from_slice(&itone[7..36]);
-    out[29..].copy_from_slice(&itone[43..72]);
-    Some(out)
-}
-
-pub(super) fn tones58_from_sd_message(msg: &str) -> Option<[i32; 58]> {
-    let (_, _, itone) = genft8sd(msg)?;
-    let mut out = [0i32; 58];
-    out[..29].copy_from_slice(&itone[7..36]);
-    out[29..].copy_from_slice(&itone[43..72]);
-    Some(out)
 }
 
 pub(super) fn decoded_to_result(
@@ -312,10 +268,19 @@ pub(super) fn decoded_to_result(
         config.mycall.as_deref(),
         config.hiscall.as_deref(),
     );
-    let msg = unpack77_with_context(&decoded.message77, unpack_context)?;
+    let mut msg = unpack77_with_context(&decoded.message77, unpack_context)?;
     let (i3, n3) = i3_n3(&decoded.message77);
     if i3 > 4 || (i3 == 0 && n3 > 5) {
         return None;
+    }
+    let l_free_text = i3 == 0 && n3 == 0;
+    let mut msg37_2 = String::new();
+    let l_special = i3 == 0 && n3 == 1;
+    if l_special {
+        if let Some((parsed_msg, parsed_msg2)) = msgparser(&msg) {
+            msg = parsed_msg;
+            msg37_2 = parsed_msg2;
+        }
     }
     let quality = 1.0 - (decoded.nharderror as f32 + decoded.dmin) / 60.0;
     let codeword = encode174_91(&decoded.message77);
@@ -336,7 +301,7 @@ pub(super) fn decoded_to_result(
         rxdt: refined_dt as f32 - 0.5,
     };
     let lcall1hash = msg.starts_with('<');
-    if !accept_decoded_message(&msg, "", i3, n3, iaptype, lcall1hash, &filter_context) {
+    if !accept_decoded_message(&msg, &msg37_2, i3, n3, iaptype, lcall1hash, &filter_context) {
         return None;
     }
     if config.hide_hash && msg.find("<...>").is_some_and(|idx| idx >= 6) {
@@ -344,7 +309,9 @@ pub(super) fn decoded_to_result(
     }
     Some(Ft8bDecodeResult {
         msg37: msg,
-        msg37_2: String::new(),
+        msg37_2,
+        l_free_text,
+        l_special,
         snr: xsnr,
         freq: refined_freq as f32,
         dt: (refined_dt - 0.5) as f32,
@@ -371,6 +338,8 @@ pub(super) fn decoded_bits_to_result(
     if i3 > 4 || (i3 == 0 && n3 > 5) {
         return None;
     }
+    let l_free_text = i3 == 0 && n3 == 0;
+    let l_special = i3 == 0 && n3 == 1;
     let xsnr = estimate_snr(metrics, &itone, 0);
     let filter_context = FilterContext {
         mycall: config.mycall.clone().unwrap_or_default(),
@@ -398,6 +367,8 @@ pub(super) fn decoded_bits_to_result(
     Some(Ft8bDecodeResult {
         msg37: msg,
         msg37_2: String::new(),
+        l_free_text,
+        l_special,
         snr: xsnr,
         freq: refined_freq as f32,
         dt: (refined_dt - 0.5) as f32,
