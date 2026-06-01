@@ -22,6 +22,7 @@ pub mod partintft8;
 pub mod sync8;
 pub mod sync8d;
 pub mod syncdist;
+pub mod twkfreq1;
 
 use crate::stream::session::{StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage};
 use crate::stream::time::SlotTimestamp;
