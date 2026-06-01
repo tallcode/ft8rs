@@ -2,9 +2,9 @@
 
 use std::sync::OnceLock;
 
-use super::ft8_downsample::ComplexC;
+use super::ft8_downsample::{ComplexC, C_HIGH, C_LOW};
 use super::ft8_mod1::ICOS7;
-use super::ft8_params::{DT2, NP2, TWO_PI};
+use super::ft8_params::{DT2, TWO_PI};
 use super::tone8::CsyncE;
 use super::tonesd::TonesdTemplates;
 
@@ -23,16 +23,6 @@ pub fn build_csync() -> &'static SyncTemplates {
     T.get_or_init(|| {
         let mut csync_re = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
         let mut csync_im = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
-        for i in 0..COSTAS_BLOCKS {
-            let mut phi = 0.0f64;
-            let dphi = TWO_PI * ICOS7[i] as f64 / COSTAS_SYMBOL_LEN as f64;
-            for j in 0..COSTAS_SYMBOL_LEN {
-                let idx = i * COSTAS_SYMBOL_LEN + j;
-                csync_re[idx] = phi.cos();
-                csync_im[idx] = phi.sin();
-                phi = (phi + dphi) % TWO_PI;
-            }
-        }
         let mut csynccq_re = [[0.0; 32]; 8];
         let mut csynccq_im = [[0.0; 32]; 8];
         if let Some((_, _, itone)) = super::ft8v2::packjt77sd::genft8sd("CQ 2E0DLA IO92") {
@@ -43,6 +33,26 @@ pub fn build_csync() -> &'static SyncTemplates {
                     csynccq_re[i][j] = wave_re[m];
                     csynccq_im[i][j] = wave_im[m];
                     m += 60;
+                }
+            }
+            m = 0;
+            for i in 0..COSTAS_BLOCKS {
+                for j in 0..COSTAS_SYMBOL_LEN {
+                    let idx = i * COSTAS_SYMBOL_LEN + j;
+                    csync_re[idx] = wave_re[m];
+                    csync_im[idx] = wave_im[m];
+                    m += 60;
+                }
+            }
+        } else {
+            for i in 0..COSTAS_BLOCKS {
+                let mut phi = 0.0f64;
+                let dphi = TWO_PI * ICOS7[i] as f64 / COSTAS_SYMBOL_LEN as f64;
+                for j in 0..COSTAS_SYMBOL_LEN {
+                    let idx = i * COSTAS_SYMBOL_LEN + j;
+                    csync_re[idx] = phi.cos();
+                    csync_im[idx] = phi.sin();
+                    phi = (phi + dphi) % TWO_PI;
                 }
             }
         }
@@ -321,7 +331,7 @@ fn sync_sum(
     ctwk_re: Option<&[f64; 32]>,
     ctwk_im: Option<&[f64; 32]>,
 ) -> (f64, f64) {
-    if i0 < 0 || i0 + 31 > NP2 as isize {
+    if i0 < C_LOW || i0 + 31 > C_HIGH {
         return (0.0, 0.0);
     }
     let mut out_re = 0.0;
@@ -351,7 +361,7 @@ fn sync_sum_explicit(
     ctwk_re: Option<&[f64; 32]>,
     ctwk_im: Option<&[f64; 32]>,
 ) -> (f64, f64) {
-    if i0 < 0 || i0 + 31 > NP2 as isize {
+    if i0 < C_LOW || i0 + 31 > C_HIGH {
         return (0.0, 0.0);
     }
     let mut out_re = 0.0;

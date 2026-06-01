@@ -150,6 +150,8 @@ src/decode/lib_jtdx/chkfalse8.rs
 src/decode/lib_jtdx/chkspecial8.rs
 src/decode/lib_jtdx/chkgrid.rs
 src/decode/lib_jtdx/chkflscall.rs
+src/decode/lib_jtdx/searchcalls.rs
+ALLCALL7.TXT
 ```
 
 Additional hint/CQ/call support files should be added to `lib_jtdx` as soon as
@@ -188,6 +190,11 @@ Implemented or scaffolded:
 - JTDX-owned initial false-positive filter modules exist for regular decode
   output (`chkfalse8`, `chkspecial8`, `chkgrid`, `chkflscall`,
   `callsign_q`);
+- JTDX-owned `searchcalls.rs` now mirrors `searchcalls.f90` over
+  `ALLCALL7.TXT`, so `chkflscall` uses the same database-backed accept/reject
+  shape instead of the earlier callsign-quality heuristic. At runtime ft8rs
+  looks for `ALLCALL7.TXT` next to the executable first, then falls back to the
+  working directory and repository root for development builds;
 - JTDX AP type tables from `ft8_mod1.f90` are present and the regular `ft8b`
   path now plans AP subpasses from those tables by `nQSOProgress` and
   standard/nonstandard call shape;
@@ -219,10 +226,19 @@ Implemented or scaffolded:
   `23`, `24`, and fixed-bit type `111` are wired. Types `22` and `24` use the
   JTDX type-0.1 special-message template that feeds `apsymsp` in the Fortran
   source;
+- Hound fox-report/RR73 classification now has the source-shaped
+  `idtonefox73` / `idtonespec` tone hints, derived base-call handling, the
+  `lfoxspecrpt` / `lfoxstdr73` ratios, and the corresponding AP skip gates for
+  progress states 1 and 3;
 - `twkfreq1.rs` mirrors JTDX `lib/twkfreq1.f90`. The native JTDX `ft8b`
   branch now applies the `-delfbest` frequency tweak to the downsampled complex
   buffer before symbol extraction, matching the source order after the fine
   frequency search;
+- `sync8d.rs` now builds the main `csync` Costas templates from the same
+  `gen_ft8wave("CQ 2E0DLA IO92")` waveform seed used by JTDX `cwfilter.f90`,
+  rather than a pure 32-point tone approximation. The sync correlation helpers
+  also use the source `cd0(-800:4000)` bounds, so virtual and edge candidates
+  are not clipped to the ordinary data-symbol window;
 - JTDX symbol extraction now has the source-shaped second symbol pass: it
   computes the reverse-conjugate 32-sample vector, applies the weak-signal
   first/last-sample scaling when `syncav < 2.5`, supports the source
@@ -243,6 +259,15 @@ Implemented or scaffolded:
   symbol columns to Rust 0-based columns. The JTDX source data halves use
   `ks=8..36` and `ks=44..72`; Rust must consume columns `7..35` and `43..71`
   from the 79-symbol arrays;
+- JTDX `ft8b.f90` symbol FFT bins need the same 1-based to 0-based treatment:
+  source `csymb(1:8)` maps to Rust FFT buffer indexes `[0..7]`, not `[1..8]`.
+  The same correction applies to the `csymb256` CQ classifier bins. Using
+  `[1..8]` shifted every tone row and drove `nsync` too low for all native JTDX
+  candidates;
+- JTDX session setup must initialize `ft8_mod1.nfawide/nfbwide` from the active
+  decode frequency range. Leaving the Fortran-module defaults as zero collapses
+  `sync8` wide search to the first FFT bin and makes the native profile appear
+  to have no viable candidates;
 - `ft8b` now builds initial `tone8myc` / `tone8`-style reference tone hints
   with the JTDX-owned pack/encode path. Those hints drive first-pass
   `lmycsignal`, `lqsosig`, `lqsosigtype3`, and `lqsocandave` classifiers used
@@ -290,6 +315,12 @@ Implemented or scaffolded:
   QSO virtual attempts `iqso=2/3`, and `sync8d` also builds the `csynccq`
   extension from the JTDX `cwfilter.f90` seed message. This closes the known
   sync-template family gap in the native JTDX path at the source-shape level;
+- focused-QSO virtual attempts now follow more of the source control flow:
+  `nqso=3` visits `iqso=1/2/3`, `iqso=3` applies the source `ibest+1`
+  adjustment, `iqso=4` uses the wider 0.5 Hz frequency retry step, and
+  `iqso=2/3/4` FT8S/FT8SD attempts run before the ordinary hard-sync and
+  BP/OSD gates. The `iqso=2/3` FT8S matcher receives the source `sqrt(s8)`
+  symbol powers;
 - FT8S and FT8SD decode results are now tagged separately from regular BP/OSD
   results. The JTDX session applies the source-specific false-decode guards
   from `ft8b.f90`: `lft8s` is rejected after `lrepliedother`, FT8S/FT8SD is
@@ -349,9 +380,10 @@ Not complete yet:
 - the remaining JTDX AP/deep skip/gating matrix. AP/deep now runs inside the
   source-shaped nested `isubp1/isubp2` loop and can consume `csr`,
   `cscs/csr`, and `cs/csold` metric variants, but the Rust gate set is still
-  missing source-complete nonstandard-DX search classifiers, the JTDX `s256`
-  CQ classifier branch, Hound fox-report/RR73 classifiers, and several
-  source-specific CPU-pruning gates;
+  missing source-complete nonstandard-DX search classifiers and several
+  source-specific CPU-pruning gates. The JTDX `s256` CQ branch and the first
+  Hound fox-report/RR73 classifiers are represented, but still need validation
+  against real JTDX output;
 - full JTDX FT8v2 source-level refinement;
 - deeper AGC state integration with the JTDX-owned slot buffer;
 - source-level validation of the newly wired `lforcesync` / forced-DT /
@@ -557,10 +589,9 @@ Current AP boundary:
   represented in Rust;
 - AP mask strength uses `max(abs(bmeta))*2.83*1.01`, matching the source
   expression `maxval(abs(llra))*1.01` after `llra=2.83*bmeta`;
-- AP OSD fallback depth follows the source default branch: `ndeep=3` unless
-  `nagain` filtering requests the source's `ndeep=5` path. Signal-classified
-  raises to `ndeep=4` for QSO/MyCall/DXCall signal groups still require the
-  corresponding JTDX signal classifiers before they can be enabled safely;
+- AP OSD fallback depth follows the source branch: default `ndeep=3`, selected
+  QSO/MyCall/DXCall signal groups can raise to `ndeep=4`, Hound keeps
+  `ndeep=3`, and `nagain` requests the source's `ndeep=5` path;
 - the AP executor then runs BP and OSD with the AP mask and passes `iaptype`
   into the JTDX false-positive filters;
 - OSD returns `dmin` with the decoded codeword so downstream JTDX-style quality
@@ -596,16 +627,20 @@ Current false-positive boundary:
 
 Remaining filter caveats:
 
-- JTDX `searchcalls` / `ALLCALL7.TXT` backed filters are not fully modeled yet;
+- JTDX `searchcalls` / `ALLCALL7.TXT` backed lookup is wired into
+  `chkflscall`. Remaining filter work is source-auditing every AP/deep
+  `chkflscall` call site and its surrounding classifier gates, not replacing
+  the database lookup itself;
 - FT8S / superdeep-specific bypass and rejection branches are part of the
   current normal-FT8 high-sensitivity milestone. The main `ft8s.f90` matcher is
   now represented as `ft8s.rs`, and `ft8sd1` / `ft8sd` previous-slot recovery
   branches plus `ft8mf1` / `ft8mfcq` memory-filter branches are present.
   `tonesd` virtual-candidate sync waveform support is wired for `iqso=4`, and
   `sync8d` now has the `csynce`, `csynccq`, `csyncsd`, and `csyncsdcq`
-  template families. FT8S/FT8SD-specific false-decode gates are represented.
-  Remaining work is source audit of the combined superdeep control flow before
-  profile measurement;
+  template families. The main `csync` Costas template now also comes from the
+  JTDX GFSK waveform seed. FT8S/FT8SD-specific false-decode gates are
+  represented. Remaining work is source audit of the combined superdeep
+  control flow before profile measurement;
 - ARRL RTTY contest rewrite handling is not promoted as a target behavior in
   ft8rs yet, because this project remains focused on FT8 decode behavior.
 
@@ -628,9 +663,11 @@ Current closure note:
 
 - `profile=jtdx` currently runs only the native JTDX path. If the native path
   emits zero rows, the profile emits zero rows.
-- The native JTDX blocker is in `ft8b` after sync candidate generation:
-  candidates are present, and accepted native rows still need to be verified
-  after the latest symbol-index and metric-source repairs.
+- The native JTDX blocker remains in the `ft8b` chain after sync candidate
+  generation. The latest source-level repairs cover GFSK sync templates,
+  virtual-QSO FT8S/FT8SD gate ordering, and symbol/metric control flow, but
+  accepted native rows still need to be verified after the full planned slices
+  are closed.
 
 ## Implementation Order
 
