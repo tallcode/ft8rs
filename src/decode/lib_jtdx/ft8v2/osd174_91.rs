@@ -13,8 +13,7 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
     let gen = get_generator();
     let absllr: Vec<f32> = llr.iter().map(|&x| x.abs()).collect();
 
-    let absllr_for_index: Vec<f64> = absllr.iter().map(|&x| x as f64).collect();
-    let indx = indexx_ascending(&absllr_for_index);
+    let indx = indexx_ascending(&absllr);
     let mut indices: Vec<usize> = indx.into_iter().rev().collect();
 
     // Reorder generator matrix columns

@@ -202,7 +202,18 @@ Initial status:
   `1.0-(nharderrors+dmin)/60.0`;
 - JTDX false-positive filtering now includes additional source-shaped regular
   FT8 guards for `/R` standard messages and weak/out-of-window
-  `<...> CALL GRID` hash-call messages;
+  `<...> CALL GRID` hash-call messages, plus `i3=1/2` ` R ` grid/callsign
+  validation with second-call hash handling;
+- JTDX AP false-positive filtering now keeps the `iaptype=2` and `iaptype=40`
+  branches separate, including the source difference around invalid
+  four-character grid rejection;
+- JTDX regular false-positive filtering now includes the `call_q.f90` guard
+  before `chkflscall` for `i3=1..3` messages involving ` R `, `/R `, or
+  `/P `;
+- JTDX `lcall1hash && i3=1` false-check filtering now validates
+  second-callsign/grid pairs through `callsign_q` and `chkgrid`;
+- JTDX `i3=4` hash/nonstandard-call false-positive checks now cover the
+  source-shaped `<...>` placement and callsign-shape rejection cases;
 - JTDX AP/deep OSD depth now follows the source default branch more closely:
   AP fallback uses `ndeep=3` by default and `ndeep=5` for `nagain` filtering;
 - JTDX Hound AP table selection is exposed through `--hound`; hound special
@@ -234,12 +245,14 @@ Initial status:
 - JTDX `tone8` is now session-precomputed rather than rebuilt piecemeal in
   the classifier/deep-decode path. The precomputed table carries `csynce`,
   MyCall/CQ/nonstandard-DX/Hound tone hints, and the 56-report FT8S message
-  table used by `ft8s`;
+  table used by `ft8s`, including the source `<...>` wrapping branches for
+  one-sided nonstandard calls;
 - JTDX `ft8apset` is now session-precomputed for the active AP table, and
   `ft8b` consumes the resulting plans instead of constructing each AP mask
   inside the candidate loop;
 - JTDX `osd174_91` now uses the local `indexx` mirror for reliability
-  ordering, matching the source `indexx(absrx,N,indx)` flow more closely;
+  ordering over `f32`, matching the source `indexx(absrx,N,indx)` flow more
+  closely;
 - JTDX `ft8b` soft-sync handling now preserves the source `scoreratio2`
   accumulation behavior rather than normalizing that one ratio with the other
   sync ratios;
@@ -273,7 +286,7 @@ Initial status:
   file and is called from `ft8b`;
 - JTDX `partintft8.rs` now has the delayed-buffer/noise-fill helper body, but
   it remains outside the normal decode path until ft8rs models the JTDX outer
-  partial-data-loss mode;
+  partial-data-loss mode. Its shift uses the source `ndelay * 1200` unit;
 - JTDX `ft8apset.rs` type 31 AP mask construction now distinguishes standard
   and nonstandard DX calls the same way as the source, avoiding the previous
   grid-form mask for nonstandard CQ DXCall searches;
@@ -468,14 +481,18 @@ Current JTDX checkpoint:
 - native `profile=jtdx` short fixture is 20/21 on `210703_133430.wav`;
 - recovered `K1JT HA5WA 73` by enabling JTDX sensitivity level 2 subpass
   semantics in the high-sensitivity profile;
-- remaining short miss is `CQ DX DL8YHR JO41` at about 2606 Hz, now classified
-  as a regular BP/OSD/numerical-equivalence issue rather than sync8 candidate
-  loss;
-- the latest source-shape pass added local `indexx`, session-level `tone8`
-  precompute, session-level `ft8apset` precompute, `ft8s` consumption of the
-  precomputed 56-report table, and the JTDX `scoreratio2` soft-sync detail.
-  A follow-up pass added DXCall-search flags/gates, special-message parser
-  state, decoded CQ/MyCall memory, and additional JTDX false-decode filters.
+- remaining short miss is `CQ DX DL8YHR JO41` at about 2606 Hz. Temporary
+  tracing showed the candidate reaches `ft8b` and passes hard sync
+  (`nsync=14`), but regular BP/OSD does not produce a CRC-valid codeword. It
+  is not a plain `CQ ??? ???` AP case: the packed first 29 bits differ from
+  JTDX `mcq` by six bits because the message is `CQ DX ...`, so `iaptype=1`
+  CQ AP is not the correct template for this row;
+- the latest source-shape passes added local `indexx` over `f32`,
+  session-level `tone8` precompute with nonstandard-call table branches,
+  session-level `ft8apset` precompute, `ft8s` consumption of the precomputed
+  56-report table, the JTDX `scoreratio2` soft-sync detail, DXCall-search
+  flags/gates, special-message parser state, decoded CQ/MyCall memory, and
+  additional JTDX false-decode filters.
   The short smoke test remains 20/21, so these slices improve auditability and
   state fidelity but do not yet recover the final short-fixture row;
 - temporary trace and experiments must stay out of commits.

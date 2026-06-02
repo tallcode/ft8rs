@@ -327,8 +327,9 @@ Implemented or scaffolded:
   tone hints, and the 56-report QSO table once, then `ft8b` / `ft8s` consume
   those tables rather than rebuilding isolated templates on demand. `sync8d`
   also builds the `csynccq` extension from the JTDX `cwfilter.f90` seed
-  message. This closes the known "single-template tone8" structural gap at the
-  source-shape level;
+  message. The 56-row table now follows the JTDX standard/nonstandard
+  callsign split, including the `<...>` wrapping used when only one side is
+  nonstandard, and `csynce` is generated from the first source-shaped row;
 - `ft8s.rs` now consumes the `tone8` precomputed 56-report table before
   falling back to local construction. This keeps the FT8S matcher closer to
   the JTDX precompute-and-reuse model and reduces duplicated message
@@ -343,9 +344,9 @@ Implemented or scaffolded:
   `ft8b` path; moving it back into the mirror file closes the empty-stub
   source-layout gap;
 - `partintft8.rs` now contains the delayed-buffer/noise-fill helper shape from
-  `partintft8.f90`. It is intentionally not wired into the normal file/monitor
-  decode path because ft8rs does not yet model JTDX's outer partial-data-loss
-  decoder mode;
+  `partintft8.f90`, including the source `ndelay * 1200` sample shift. It is
+  intentionally not wired into the normal file/monitor decode path because
+  ft8rs does not yet model JTDX's outer partial-data-loss decoder mode;
 - `ft8apset.rs` now precomputes AP mask plans for the active AP table when a
   JTDX session is created, instead of constructing every mask directly inside
   `ft8b`. The current representation uses `Option<ApMaskPlan>` for
@@ -367,8 +368,13 @@ Implemented or scaffolded:
   previous narrow `obviously_wrong_call_grid` shortcut was removed because it
   rejected valid remote locator areas;
 - `osd174_91.rs` now uses a local JTDX `indexx` mirror for reliability
-  ordering. This removes an avoidable Rust `sort_by` shape difference in the
-  ordered-statistics path;
+  ordering over `f32` values. This removes an avoidable Rust `sort_by` shape
+  difference without widening the source `real` reliability vector to `f64`;
+- The current short-test miss, `CQ DX DL8YHR JO41`, has been traced through
+  sync and `ft8b`: the candidate is present and passes hard sync, but regular
+  BP/OSD does not return a CRC-valid codeword. Its packed first 29 bits differ
+  from JTDX `mcq` by six bits, so the normal `iaptype=1` CQ AP mask is not a
+  valid shortcut for this `CQ DX` form;
 - `ft8b` soft-sync gating was re-audited against JTDX `ft8b.f90`; the Rust
   path now preserves the source behavior where `scoreratio2` remains the
   accumulated middle-sync ratio while `scoreratio`, `scoreratio1`, and
@@ -421,7 +427,8 @@ Implemented or scaffolded:
 - regular-output false-positive filtering now includes additional
   source-level protocol-shape guards from JTDX `ft8b.f90`: type-2 `/P`
   enforcement, invalid `<...>` terminal acknowledgements, AP type-2 hash/grid
-  rejection, type-4 `/R` plus grid rejection, and ARRL Field Day region/DX
+  rejection, type-4 `/R` plus grid rejection, `i3=1/2` ` R ` grid/callsign
+  validation with second-call hash handling, and ARRL Field Day region/DX
   checks;
 - AP false-positive filtering now receives the decoded row's estimated SNR and
   DT offset, allowing the JTDX `iaptype=35/36` weak/out-of-window DXCall-search
@@ -680,6 +687,26 @@ Current false-positive boundary:
 - regular FT8 false-positive filtering includes the JTDX-style `/R` standard
   message double-callsign check and the weak/out-of-window
   `<...> CALL GRID` hash-call grid/callsign check;
+- `i3=1/2` messages containing ` R ` now follow the JTDX source split: when
+  the second callsign is hash-presented, validate the first callsign through
+  `chkflscall`; otherwise validate the second callsign and grid through
+  `chkgrid`;
+- AP false-positive filtering now separates the JTDX `iaptype=2` and
+  `iaptype=40` branches instead of sharing one simplified checker:
+  `iaptype=2` rejects syntactically four-character but invalid grids, while
+  `iaptype=40` only validates a grid when the source branch recognizes one;
+- regular `i3=1..3` messages containing ` R `, `/R `, or `/P ` now include
+  the JTDX `call_q.f90` first-character/two-digit guard before the
+  `chkflscall` database-backed pair check, with the same `mycall` /
+  `hiscall` exemptions used by the source branch;
+- the `lcall1hash && i3=1` branch from `chkfalse8.f90` is now represented for
+  primary false-check cases: if the second callsign is not the configured
+  `hiscall` and is followed by a syntactically valid grid, the JTDX
+  `callsign_q` and `chkgrid` checks can reject the row;
+- `i3=4` nonstandard/hash-call false-positive filtering now mirrors the JTDX
+  source checks for `<...>` placement: hash-adjacent callsigns with embedded
+  spaces, no-slash trailing digits, trailing slash, bad single-slash
+  eleven-character shapes, `callsign_q`, or `chklong8` are rejected;
 - AP/deep-specific rejection coverage has started with the JTDX `iaptype=35/36`
   DXCall-search weak/out-of-window first-callsign gate; remaining AP/deep
   rejection rules still need source audit.

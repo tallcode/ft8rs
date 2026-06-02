@@ -1,6 +1,6 @@
 //! Mirrors JTDX `lib/indexx.f90`.
 
-pub(crate) fn indexx_ascending(arr: &[f64]) -> Vec<usize> {
+pub(crate) fn indexx_ascending(arr: &[f32]) -> Vec<usize> {
     const M: usize = 7;
     const NSTACK: usize = 50;
 
