@@ -315,10 +315,36 @@ Initial status:
 - JTDX `ft8apset.rs` type 35/36 AP mask construction now distinguishes
   standard DX-call and nonstandard DX-call masks, including the source
   `14:77` type-4 range for nonstandard calls;
+- JTDX AP table selection now follows the source missing-call state:
+  empty `MyCall` / `DXCall` no longer falls through as a standard-call
+  `naptypes` case, and the active table is chosen from the same
+  `naptypes` / `ndxnsaptypes` / `nmycnsaptypes` split used by `ft8b.f90`;
+- JTDX Hound `iaptype=36` AP construction now follows the source
+  compound-DXCall branch: nonstandard `DXCall` values containing `/` use the
+  Fox/Hound base-call `RR73` mask instead of the generic type-4 nonstandard
+  template;
+- JTDX nonstandard-`MyCall` AP gating now keeps the source `lcqsignal .and.
+  iaptype.eq.1` guard for `CQ ??? ???`, so that AP mask is not attempted on
+  candidates outside the CQ classifier path;
+- JTDX `maxloc_1based` now keeps the first maximum like Fortran `maxloc`,
+  avoiding last-index drift in tied `s256` CQ-classifier inputs;
+- JTDX QSO-ending classifier selection for `73` / `RR73` / `RRR` now keeps
+  the first tied maximum like `maxloc(nqsoend)` in `ft8b.f90`;
+- JTDX false-decode filtering now preserves the source label-`4` split:
+  post-label protocol checks remain global, while pre-label hash/grid checks
+  are skipped for AP types that `ft8b.f90` jumps directly to label `4`
+  (`2/3/11/21/40/41`, and primary-check `4/5/6`);
+- JTDX decoded-message memory updates now run before saving the row to
+  `allmessages`, preserving the source `ldupemsg` timing for
+  `lrepliedother`, `msgsrcvd`, and focused-QSO state;
+- JTDX focused-QSO memory now follows the source `((i3.eq.1 .and. .not.lft8s)
+  .or. lft8s)` gate for `lastrxmsg/lqsomsgdcd`, with the later source
+  `msgroot` branch still able to mark `lqsomsgdcd`;
 - JTDX `chkgrid.rs` now has the source-shaped grid-area prefilter and corrected
   `lchkcall` meaning. The complete callsign-prefix geography table remains a
-  future incremental port, so `lgvalid` is intentionally optimistic for valid
-  four-character locators until that table exists;
+  future incremental port; grid areas that require that table now retain the
+  source's initial `lgvalid=false` state instead of being accepted by syntax
+  alone;
 - JTDX `filtersfree.rs` now preserves the source-unreachable
   `decoded(12:12)` mixed letter/digit branch instead of applying a
   typo-corrected extra rejection;
@@ -528,7 +554,12 @@ Current JTDX checkpoint:
   narrowing from `decoder.f90` is now represented in the JTDX `sync8` config
   while preserving the original wide band for AGC normalization. The focused QSO
   `iqso=3` path now reuses the preceding `iqso=2` refined state before the
-  source `ibest+1` adjustment instead of rerunning the sync search.
+  source `ibest+1` adjustment instead of rerunning the sync search. The outer
+  post-decode memory update now uses the source duplicate/update ordering and
+  narrower call-DT, odd/even-message, decoded-CQ/MyCall, and QSO signal-memory
+  gates. The same layer now also expands `lspecial` results into the source
+  two-message loop so `msg37_2` is no longer dropped; this includes the JTDX
+  `TU; ...` special rendering after the false-decode guard.
   The short smoke test remains 20/21, so these slices improve auditability and
   state fidelity but do not yet recover the final short-fixture row;
 - temporary trace and experiments must stay out of commits.

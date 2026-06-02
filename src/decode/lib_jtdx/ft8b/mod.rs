@@ -906,10 +906,13 @@ pub(super) fn max_tone(s8: &[[f32; 79]; 8], k: usize, skip: Option<usize>) -> us
 }
 
 pub(super) fn maxloc_1based(values: &[f32]) -> usize {
-    values
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.total_cmp(b))
-        .map(|(idx, _)| idx + 1)
-        .unwrap_or(0)
+    let mut best_idx = 0usize;
+    let mut best_value = f32::NEG_INFINITY;
+    for (idx, &value) in values.iter().enumerate() {
+        if value > best_value {
+            best_value = value;
+            best_idx = idx + 1;
+        }
+    }
+    best_idx
 }

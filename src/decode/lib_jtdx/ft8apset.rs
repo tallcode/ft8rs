@@ -37,16 +37,22 @@ pub(crate) fn ft8apset(config: &StreamDecodeConfig) -> Ft8ApSet {
 }
 
 fn ap_types_for_config(config: &StreamDecodeConfig) -> Vec<i32> {
-    let mycall = config.mycall.as_deref().unwrap_or("");
-    let hiscall = config.hiscall.as_deref().unwrap_or("");
+    let mycall = normalized_call(config.mycall.as_deref());
+    let hiscall = normalized_call(config.hiscall.as_deref());
+    let lnohiscall = hiscall.is_none();
+    let lmycallstd =
+        mycall.is_some() && !is_nonstandard_call(config.mycall.as_deref().unwrap_or(""));
+    let lhiscallstd = !lnohiscall && !is_nonstandard_call(config.hiscall.as_deref().unwrap_or(""));
     let table = if config.lhound {
         &NHAPTYPES
-    } else if is_nonstandard_call(mycall) {
-        &NMYCNSAPTYPES
-    } else if is_nonstandard_call(hiscall) {
+    } else if lmycallstd && (lhiscallstd || lnohiscall) {
+        &NAPTYPES
+    } else if lmycallstd && !lhiscallstd && !lnohiscall {
+        &NDXNSAPTYPES
+    } else if !lmycallstd && !lhiscallstd && !lnohiscall {
         &NDXNSAPTYPES
     } else {
-        &NAPTYPES
+        &NMYCNSAPTYPES
     };
     table
         .iter()
@@ -62,8 +68,8 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
     let hisbcall = base_call(config.hiscall.as_deref());
     let mycall_raw = config.mycall.as_deref().unwrap_or("");
     let hiscall_raw = config.hiscall.as_deref().unwrap_or("");
-    let lmycallstd = !is_nonstandard_call(mycall_raw);
-    let lhiscallstd = !is_nonstandard_call(hiscall_raw);
+    let lmycallstd = mycall.is_some() && !is_nonstandard_call(mycall_raw);
+    let lhiscallstd = hiscall.is_some() && !is_nonstandard_call(hiscall_raw);
     let grid = config
         .hisgrid
         .as_deref()
@@ -179,7 +185,10 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
             }
         }
         36 => {
-            if config.lhound && lhiscallstd {
+            if config.lhound
+                && (lhiscallstd
+                    || (!lhiscallstd && hiscall_raw.trim().len() > 2 && hiscall_raw.contains('/')))
+            {
                 (
                     format!("{} {} RR73", mybcall.as_deref()?, hisbcall.as_deref()?),
                     &[(29, 77)],

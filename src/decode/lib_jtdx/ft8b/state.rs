@@ -213,8 +213,9 @@ impl Ft8bWorkspace {
         self.signal_memory.tmpmyc.clear();
     }
 
-    pub fn finish_slot(&mut self, levenint: bool, loddint: bool) {
-        self.signal_memory.finish_slot(levenint, loddint);
+    pub fn finish_slot(&mut self, levenint: bool, loddint: bool, lapmyc: bool, lqsomsgdcd: bool) {
+        self.signal_memory
+            .finish_slot(levenint, loddint, lapmyc, lqsomsgdcd);
     }
 
     pub fn new_pass(&mut self) {
@@ -227,22 +228,37 @@ impl Ft8bWorkspace {
         freq: f32,
         xdt: f32,
         mycall: &str,
+        lmycallstd: bool,
     ) {
         self.signal_memory
-            .remember_decoded_message(msg37, freq, xdt, mycall);
+            .remember_decoded_message(msg37, freq, xdt, mycall, lmycallstd);
     }
 }
 
 impl SignalMemory {
-    pub(super) fn finish_slot(&mut self, levenint: bool, loddint: bool) {
+    pub(super) fn finish_slot(
+        &mut self,
+        levenint: bool,
+        loddint: bool,
+        lapmyc: bool,
+        lqsomsgdcd: bool,
+    ) {
         if levenint {
             self.evencq = self.tmpcqsig.clone();
-            self.evenmyc = self.tmpmycsig.clone();
-            self.evenqso = self.tmpqsosig.clone();
+            if lapmyc {
+                self.evenmyc = self.tmpmycsig.clone();
+                if !lqsomsgdcd {
+                    self.evenqso = self.tmpqsosig.clone();
+                }
+            }
         } else if loddint {
             self.oddcq = self.tmpcqsig.clone();
-            self.oddmyc = self.tmpmycsig.clone();
-            self.oddqso = self.tmpqsosig.clone();
+            if lapmyc {
+                self.oddmyc = self.tmpmycsig.clone();
+                if !lqsomsgdcd {
+                    self.oddqso = self.tmpqsosig.clone();
+                }
+            }
         }
         self.tmpcqsig.clear();
         self.tmpmycsig.clear();
@@ -284,13 +300,21 @@ impl SignalMemory {
         })
     }
 
-    fn remember_decoded_message(&mut self, msg37: &str, freq: f32, xdt: f32, mycall: &str) {
+    fn remember_decoded_message(
+        &mut self,
+        msg37: &str,
+        freq: f32,
+        xdt: f32,
+        mycall: &str,
+        lmycallstd: bool,
+    ) {
         let msg37 = msg37.trim();
         if msg37.starts_with("CQ ") && self.tmpcqdec.len() < NUM_DEC_CQ {
             self.tmpcqdec.push(DecodedSignalEntry { freq, xdt });
         }
 
-        if !mycall.trim().is_empty()
+        if lmycallstd
+            && !mycall.trim().is_empty()
             && msg37
                 .split_whitespace()
                 .next()

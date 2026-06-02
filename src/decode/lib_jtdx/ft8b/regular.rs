@@ -657,6 +657,9 @@ fn jtdx_ap_subpass_allowed(
         if lnohiscall && iaptype != 1 && iaptype != 40 {
             return false;
         }
+        if iaptype == 1 && !classifier.lcqsignal {
+            return false;
+        }
         if iaptype > 30 && iaptype < 40 && !context.stophint {
             return false;
         }

@@ -172,16 +172,19 @@ impl JtdxStreamDecodeSession {
                         newdat1 = false;
                         continue;
                     }
-                    if result.source == DecodeSource::Ft8s {
-                        self._state.lft8sdec = true;
-                    }
-                    if !is_duplicate_decode(&self._state, &self._config, &result) {
-                        save_decode_state(&mut self._state, &result);
+                    for result in result_variants(result) {
+                        if result.source == DecodeSource::Ft8s {
+                            self._state.lft8sdec = true;
+                        }
+                        if is_duplicate_decode(&self._state, &self._config, &result) {
+                            continue;
+                        }
                         self.ft8b_workspace.remember_decoded_message(
                             &result.msg37,
                             result.freq,
                             result.dt + 0.5,
                             self._config.mycall.as_deref().unwrap_or(""),
+                            is_standard_context_call(self._config.mycall.as_deref()),
                         );
                         let message = StreamDecodedMessage {
                             freq: result.freq as f64,
@@ -193,8 +196,15 @@ impl JtdxStreamDecodeSession {
                         };
                         collect_book(&self.book, &message.msg);
                         on_decode(&message)?;
-                        update_qso_memory(&self._config, &mut self._state, &message, interval);
+                        update_qso_memory(
+                            &self._config,
+                            &mut self._state,
+                            &message,
+                            interval,
+                            &result,
+                        );
                         update_deep_false_state(&self._config, &mut self._state, &result);
+                        save_decode_state(&mut self._state, &result);
                         decoded.push(message);
                     }
                 }
@@ -204,6 +214,8 @@ impl JtdxStreamDecodeSession {
         self.ft8b_workspace.finish_slot(
             interval == IntervalKind::Even,
             interval == IntervalKind::Odd,
+            normalized_context_call(self._config.mycall.as_deref()).is_some(),
+            self._state.lqsomsgdcd,
         );
         update_avexdt_after_slot(&self._config, &mut self._state, &decoded);
         Ok(decoded)
@@ -285,9 +297,10 @@ fn update_qso_memory(
     state: &mut ft8_mod1::Ft8Mod1,
     message: &StreamDecodedMessage,
     interval: IntervalKind,
+    result: &ft8b::Ft8bDecodeResult,
 ) {
-    save_call_dt(state, message, interval);
-    save_odd_even_message(state, message, interval);
+    save_call_dt(state, message, interval, result);
+    save_odd_even_message(config, state, message, interval, result);
     save_incall(config, state, message);
 
     if !is_focused_qso_decode(config, message) {
@@ -296,11 +309,17 @@ fn update_qso_memory(
     let Some(msgroot) = msgroot(config) else {
         return;
     };
-    if message.msg.starts_with(&msgroot) {
+    let ft8s = result.source == DecodeSource::Ft8s;
+    if ((result.i3 == 1 && !ft8s) || ft8s) && message.msg.starts_with(&msgroot) {
         state.lasthcall = config.hiscall.clone().unwrap_or_default();
         state.lastrxmsg.lastmsg = message.msg.clone();
         state.lastrxmsg.xdt = message.dt as f32;
         state.lastrxmsg.lstate = true;
+        state.lqsomsgdcd = true;
+    } else if config.hiscall.as_deref().unwrap_or("").trim().len() > 3
+        && !state.lqsomsgdcd
+        && message.msg.starts_with(&msgroot)
+    {
         state.lqsomsgdcd = true;
     }
 }
@@ -334,6 +353,15 @@ fn rejects_special_deep_decode(
     }
 }
 
+fn result_variants(result: ft8b::Ft8bDecodeResult) -> Vec<ft8b::Ft8bDecodeResult> {
+    if !result.l_special || result.msg37_2.trim().is_empty() {
+        return vec![result];
+    }
+    let mut second = result.clone();
+    second.msg37 = second.msg37_2.clone();
+    vec![result, second]
+}
+
 fn update_deep_false_state(
     config: &StreamDecodeConfig,
     state: &mut ft8_mod1::Ft8Mod1,
@@ -350,8 +378,9 @@ fn update_deep_false_state(
 
     if !dupe
         && dfqso < 2.0
-        && result.source != DecodeSource::Ft8s
+        && result.i3 == 1
         && mycall.len() > 2
+        && result.source != DecodeSource::Ft8s
         && !result.msg37.starts_with(&format!("{mycall} "))
         && result.msg37.contains(&format!(" {hiscall} "))
     {
@@ -490,7 +519,11 @@ fn save_call_dt(
     state: &mut ft8_mod1::Ft8Mod1,
     message: &StreamDecodedMessage,
     interval: IntervalKind,
+    result: &ft8b::Ft8bDecodeResult,
 ) {
+    if result.l_free_text {
+        return;
+    }
     let Some(call2) = extract_call2(&message.msg) else {
         return;
     };
@@ -508,10 +541,15 @@ fn save_call_dt(
 }
 
 fn save_odd_even_message(
+    config: &StreamDecodeConfig,
     state: &mut ft8_mod1::Ft8Mod1,
     message: &StreamDecodedMessage,
     interval: IntervalKind,
+    result: &ft8b::Ft8bDecodeResult,
 ) {
+    if !should_save_odd_even_message(config, message, result) {
+        return;
+    }
     let target = match interval {
         IntervalKind::Even => &mut state.even,
         IntervalKind::Odd => &mut state.odd,
@@ -523,6 +561,28 @@ fn save_odd_even_message(
         slot.dt = message.dt as f32;
         slot.lstate = true;
     }
+}
+
+fn should_save_odd_even_message(
+    config: &StreamDecodeConfig,
+    message: &StreamDecodedMessage,
+    result: &ft8b::Ft8bDecodeResult,
+) -> bool {
+    if result.i3 == 4 && message.msg.starts_with("CQ ") {
+        return true;
+    }
+    if result.l_free_text || result.msg37_2.contains('<') || message.msg.contains('<') {
+        return false;
+    }
+    let ft8sd = result.source == DecodeSource::Ft8sd;
+    if !((result.i3 == 1 && !ft8sd) || ft8sd) {
+        return false;
+    }
+    let first = message.msg.split_whitespace().next().unwrap_or("");
+    if first == config.mycall.as_deref().unwrap_or("").trim() {
+        return false;
+    }
+    !(message.msg.contains('/') && !message.msg.starts_with("CQ "))
 }
 
 fn save_incall(
@@ -571,6 +631,25 @@ fn extract_call2(msg: &str) -> Option<String> {
     } else {
         Some(call2.trim_matches(|c| c == '<' || c == '>').to_string())
     }
+}
+
+fn normalized_context_call(call: Option<&str>) -> Option<String> {
+    let call = call?.trim().trim_start_matches('<').trim_end_matches('>');
+    if call.len() < 3 {
+        return None;
+    }
+    Some(call.to_ascii_uppercase())
+}
+
+fn is_standard_context_call(call: Option<&str>) -> bool {
+    normalized_context_call(call).is_some_and(|call| {
+        !call.contains('/')
+            && call.len() <= 6
+            && call
+                .as_bytes()
+                .iter()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    })
 }
 
 fn reset_decode_arrays(state: &mut ft8_mod1::Ft8Mod1) {

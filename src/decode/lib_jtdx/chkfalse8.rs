@@ -48,16 +48,22 @@ pub(crate) fn chkfalse8(
         return false;
     }
 
-    if violates_protocol_shape(msg, &words, i3, n3, iaptype) {
-        return false;
-    }
-
     let primary_false_check = context.quality < 0.39
         || context.xsnr < -20.5
         || context.rxdt < -0.5
         || context.rxdt > 1.9
         || (1..4).contains(&iaptype)
         || matches!(iaptype, 11 | 21 | 40 | 41);
+
+    if rejects_post_label_protocol_shape(msg, &words, i3, n3, iaptype) {
+        return false;
+    }
+
+    let source_skips_pre_label_filters = matches!(iaptype, 2 | 3 | 11 | 21 | 40 | 41)
+        || (primary_false_check && matches!(iaptype, 4..=6));
+    if !source_skips_pre_label_filters && rejects_pre_label_protocol_shape(msg, &words, i3, n3) {
+        return false;
+    }
 
     if primary_false_check && i3 == 0 && (msg.starts_with("CQ_") || msg.contains('^')) {
         return false;
@@ -184,16 +190,14 @@ pub(crate) fn chkfalse8(
     true
 }
 
-fn violates_protocol_shape(msg: &str, words: &[&str], i3: usize, n3: usize, iaptype: i32) -> bool {
+fn rejects_post_label_protocol_shape(
+    msg: &str,
+    words: &[&str],
+    i3: usize,
+    n3: usize,
+    iaptype: i32,
+) -> bool {
     if i3 == 2 && !msg.contains("/P ") {
-        return true;
-    }
-
-    if msg.starts_with("<...>")
-        && words
-            .get(3)
-            .is_some_and(|word| matches!(*word, "RRR" | "RR73" | "73"))
-    {
         return true;
     }
 
@@ -209,6 +213,18 @@ fn violates_protocol_shape(msg: &str, words: &[&str], i3: usize, n3: usize, iapt
         if words.iter().any(|word| is_grid4(word)) {
             return true;
         }
+    }
+
+    false
+}
+
+fn rejects_pre_label_protocol_shape(msg: &str, words: &[&str], i3: usize, _n3: usize) -> bool {
+    if msg.starts_with("<...>")
+        && words
+            .get(3)
+            .is_some_and(|word| matches!(*word, "RRR" | "RR73" | "73"))
+    {
+        return true;
     }
 
     if i3 == 1 && words.len() >= 3 && words[1] == "<...>" && is_grid4(words[2]) {
