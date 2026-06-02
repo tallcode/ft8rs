@@ -24,12 +24,13 @@ pub(crate) fn accept_decoded_message(
     n3: usize,
     iaptype: i32,
     lcall1hash: bool,
+    lcall2hash: bool,
     context: &FilterContext,
 ) -> bool {
     if i3 == 0 && n3 == 1 {
         return chkspecial8(msg37, msg37_2, &context.mycall, &context.hiscall);
     }
-    chkfalse8(msg37, i3, n3, iaptype, lcall1hash, context)
+    chkfalse8(msg37, i3, n3, iaptype, lcall1hash, lcall2hash, context)
 }
 
 pub(crate) fn chkfalse8(
@@ -38,6 +39,7 @@ pub(crate) fn chkfalse8(
     n3: usize,
     iaptype: i32,
     lcall1hash: bool,
+    lcall2hash: bool,
     context: &FilterContext,
 ) -> bool {
     let msg = msg37.trim();
@@ -69,8 +71,12 @@ pub(crate) fn chkfalse8(
         return accept_cq(msg, &words, i3, n3, iaptype);
     }
 
-    if iaptype == 2 || iaptype == 40 {
-        return accept_second_call_and_optional_grid(&words);
+    if iaptype == 2 {
+        return accept_ap_type2_message(&words);
+    }
+
+    if iaptype == 40 {
+        return accept_ap_type40_message(&words);
     }
 
     if (35..40).contains(&iaptype)
@@ -100,16 +106,22 @@ pub(crate) fn chkfalse8(
         return accept_optional_report_grid(&words);
     }
 
-    if i3 == 1 || i3 == 2 {
-        if msg.contains(" R ") && words.len() >= 4 && words[2] == "R" && !is_grid4(words[3]) {
-            return false;
-        }
+    if rejects_r_grid_message(&words, i3, lcall2hash) {
+        return false;
     }
 
     if iaptype == 0 && i3 == 1 && n3 == 0 && msg.contains("/R ") {
         if rejects_standard_r_portable_message(&words) {
             return false;
         }
+    }
+
+    if rejects_r_or_portable_call_pair(msg, &words, i3, context) {
+        return false;
+    }
+
+    if primary_false_check && rejects_first_hash_grid_message(&words, i3, lcall1hash, context) {
+        return false;
     }
 
     if msg.starts_with("<...>")
@@ -136,6 +148,9 @@ pub(crate) fn chkfalse8(
     }
 
     if i3 == 4 && words.len() >= 2 {
+        if rejects_i3_4_hash_call_shape(msg) {
+            return false;
+        }
         let first_call = words[0].trim_matches(['<', '>']);
         let second_call = words[1].trim_matches(['<', '>']);
         if !lcall1hash && (callsign_q_reject(first_call) || chklong8(first_call)) {
@@ -293,6 +308,29 @@ fn rejects_ap_qso_grid_message(words: &[&str], iaptype: i32, context: &FilterCon
     !chkgrid(hiscall, grid).lgvalid
 }
 
+fn rejects_r_grid_message(words: &[&str], i3: usize, lcall2hash: bool) -> bool {
+    if !(i3 == 1 || i3 == 2) || words.len() < 4 || words[2] != "R" {
+        return false;
+    }
+
+    let grid = words[3];
+    if !is_grid4(grid) {
+        return false;
+    }
+
+    if lcall2hash {
+        let call_a = strip_portable_suffix(words[0].trim_matches(['<', '>']));
+        return call_a.len() > 2 && chkflscall("CQ", call_a);
+    }
+
+    let call_b = strip_portable_suffix(words[1].trim_matches(['<', '>']));
+    if call_b.len() <= 2 {
+        return false;
+    }
+    let check = chkgrid(call_b, grid);
+    check.lwrongcall || !check.lgvalid
+}
+
 fn rejects_tu_message(words: &[&str]) -> bool {
     if words.len() < 3 {
         return false;
@@ -300,6 +338,69 @@ fn rejects_tu_message(words: &[&str]) -> bool {
     let call_a = words[1];
     let call_b = words[2];
     (callsign_q_reject(call_a) || callsign_q_reject(call_b)) || chkflscall(call_a, call_b)
+}
+
+fn rejects_i3_4_hash_call_shape(msg: &str) -> bool {
+    if let Some(hash_pos) = msg.find("<.") {
+        if hash_pos > 3 {
+            let callsign = msg[..hash_pos].trim_end();
+            if callsign.is_empty() {
+                return false;
+            }
+            if callsign.contains(' ')
+                || (!callsign.contains('/')
+                    && callsign.as_bytes().last().is_some_and(u8::is_ascii_digit))
+            {
+                return true;
+            }
+            if callsign_q_reject(callsign) || chklong8(callsign) {
+                return true;
+            }
+        }
+    }
+
+    if msg.starts_with("<.") || msg.find(".>").is_some_and(|pos| pos > 3) {
+        let callsign = if msg.starts_with("<.") {
+            strip_hash_leading_call(msg)
+        } else if let Some(hash_pos) = msg.find("<.") {
+            msg[..hash_pos].trim_end()
+        } else {
+            ""
+        };
+        if callsign.is_empty() {
+            return false;
+        }
+        if callsign.contains(' ') {
+            return true;
+        }
+        let islash = callsign.find('/');
+        if (islash.is_none() && callsign.as_bytes().last().is_some_and(u8::is_ascii_digit))
+            || islash == Some(callsign.len().saturating_sub(1))
+        {
+            return true;
+        }
+        if callsign.len() == 11
+            && islash.is_some()
+            && !callsign[islash.unwrap() + 1..].contains('/')
+        {
+            if rejects_single_slash_11_call(callsign) {
+                return true;
+            }
+        }
+        return callsign_q_reject(callsign) || chklong8(callsign);
+    }
+
+    false
+}
+
+fn strip_hash_leading_call(msg: &str) -> &str {
+    let rest = msg.trim_start_matches("<...>").trim_start();
+    for suffix in [" RR73", " RRR", " 73"] {
+        if let Some(stripped) = rest.strip_suffix(suffix) {
+            return stripped.trim_end();
+        }
+    }
+    rest.trim_end()
 }
 
 fn rejects_single_slash_11_call(callsign: &str) -> bool {
@@ -336,7 +437,7 @@ fn rejects_single_slash_11_call(callsign: &str) -> bool {
     false
 }
 
-fn accept_second_call_and_optional_grid(words: &[&str]) -> bool {
+fn accept_ap_type2_message(words: &[&str]) -> bool {
     if words.len() < 2 {
         return false;
     }
@@ -344,10 +445,54 @@ fn accept_second_call_and_optional_grid(words: &[&str]) -> bool {
     if callsign_q_reject(call) {
         return false;
     }
-    if words.len() >= 3 && is_grid4(words[2]) {
-        let check = chkgrid(call, words[2]);
-        if check.lwrongcall || !check.lgvalid {
+
+    if let Some(r_pos) = words.iter().position(|word| *word == "R") {
+        if let Some(grid) = words.get(r_pos + 1) {
+            if grid.len() == 4 && !is_grid4(grid) {
+                return false;
+            }
+            if is_grid4(grid) {
+                let check = chkgrid(call, grid);
+                if check.lwrongcall || !check.lgvalid {
+                    return false;
+                }
+            }
+        }
+    } else if let Some(grid) = words.get(2) {
+        if grid.len() == 4 && !is_grid4(grid) {
             return false;
+        }
+        if is_grid4(grid) {
+            let check = chkgrid(call, grid);
+            if check.lwrongcall || !check.lgvalid {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn accept_ap_type40_message(words: &[&str]) -> bool {
+    if words.len() < 2 {
+        return false;
+    }
+    let call = words[1];
+    if callsign_q_reject(call) {
+        return false;
+    }
+
+    let grid = words
+        .iter()
+        .position(|word| *word == "R")
+        .and_then(|r_pos| words.get(r_pos + 1))
+        .or_else(|| words.get(2));
+    if let Some(grid) = grid {
+        if is_grid4(grid) {
+            let check = chkgrid(call, grid);
+            if check.lwrongcall || !check.lgvalid {
+                return false;
+            }
         }
     }
     true
@@ -397,6 +542,46 @@ fn rejects_standard_r_portable_message(words: &[&str]) -> bool {
     call_a.len() > 2 && call_b.len() > 2 && chkflscall(call_a, call_b)
 }
 
+fn rejects_r_or_portable_call_pair(
+    msg: &str,
+    words: &[&str],
+    i3: usize,
+    context: &FilterContext,
+) -> bool {
+    if !(1..=3).contains(&i3)
+        || words.len() < 2
+        || !(msg.contains(" R ") || msg.contains("/R ") || msg.contains("/P "))
+    {
+        return false;
+    }
+
+    let first = words[0];
+    let second = words[1];
+    if !msg.contains('/') {
+        if second == context.hiscall.trim() {
+            return false;
+        }
+        return call_q_pair_reject(first, second) || chkflscall(first, second);
+    }
+
+    let first_slash = first.find('/');
+    let second_slash = second.find('/');
+    let (call_a, call_b) = if first_slash.is_none() {
+        (first, second_slash.map_or(second, |idx| &second[..idx]))
+    } else {
+        (
+            first_slash.map_or(first, |idx| &first[..idx]),
+            second_slash.map_or(second, |idx| &second[..idx]),
+        )
+    };
+
+    if call_a == context.mycall.trim() || call_b == context.hiscall.trim() {
+        return false;
+    }
+
+    call_q_pair_reject(call_a, call_b) || chkflscall(call_a, call_b)
+}
+
 fn rejects_hash_call_grid_message(words: &[&str]) -> bool {
     if words.len() < 3 || words[0] != "<...>" || !is_grid4(words[2]) {
         return false;
@@ -407,6 +592,32 @@ fn rejects_hash_call_grid_message(words: &[&str]) -> bool {
         return true;
     }
     (check.lchkcall || !check.lgvalid) && chkflscall("CQ", callsign)
+}
+
+fn rejects_first_hash_grid_message(
+    words: &[&str],
+    i3: usize,
+    lcall1hash: bool,
+    context: &FilterContext,
+) -> bool {
+    if !lcall1hash || i3 != 1 || words.len() < 3 || words[0] == context.mycall.trim() {
+        return false;
+    }
+
+    let callsign = words[1];
+    if callsign.contains('/') || callsign == context.hiscall.trim() {
+        return false;
+    }
+    if callsign_q_reject(callsign) {
+        return true;
+    }
+
+    let grid = words[2];
+    if !is_grid4(grid) {
+        return false;
+    }
+    let check = chkgrid(callsign, grid);
+    check.lwrongcall || !check.lgvalid
 }
 
 fn field_day_call_region_can_use_section(call: &str) -> bool {
@@ -429,6 +640,19 @@ fn strip_portable_suffix(call: &str) -> &str {
     call.strip_suffix("/R")
         .or_else(|| call.strip_suffix("/P"))
         .unwrap_or(call)
+}
+
+fn call_q_pair_reject(call_a: &str, call_b: &str) -> bool {
+    call_q_reject(call_a) || call_q_reject(call_b)
+}
+
+fn call_q_reject(call: &str) -> bool {
+    let bytes = call.trim().as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    matches!(bytes[0], b'Q' | b'0')
+        || (bytes.len() >= 2 && bytes[0].is_ascii_digit() && bytes[1].is_ascii_digit())
 }
 
 fn looks_like_standard_6_call(call: &str) -> bool {

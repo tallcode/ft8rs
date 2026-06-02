@@ -48,6 +48,10 @@ pub(crate) fn tone8(config: &StreamDecodeConfig) -> Tone8Tables {
     let Some(hiscall) = normalized_call(config.hiscall.as_deref()) else {
         return tables;
     };
+    let mycall_raw = raw_call(config.mycall.as_deref());
+    let hiscall_raw = raw_call(config.hiscall.as_deref());
+    let lmycallstd = !is_nonstandard_call(&mycall_raw);
+    let lhiscallstd = !is_nonstandard_call(&hiscall_raw);
 
     if config.lhound {
         if let (Some(mybcall), Some(hisbcall)) = (base_call(&mycall), base_call(&hiscall)) {
@@ -57,27 +61,28 @@ pub(crate) fn tone8(config: &StreamDecodeConfig) -> Tone8Tables {
         }
     }
 
-    if is_nonstandard_call(&hiscall) {
-        let hiscall_raw = config
-            .hiscall
-            .as_deref()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_uppercase();
-        tables.idtonecqdxcns = tones58_from_sd_message(&format!("CQ {hiscall_raw}"));
-        tables.idtonedxcns73 = tones58_from_sd_message(&format!("<AA1AAA> {hiscall_raw} 73"));
+    if !lhiscallstd {
+        tables.idtonecqdxcns = tones58_from_sd_message(&format!("CQ {hiscall}"));
+        tables.idtonedxcns73 = tones58_from_sd_message(&format!("<AA1AAA> {hiscall} 73"));
     }
 
-    if is_nonstandard_call(&mycall) && is_nonstandard_call(&hiscall) {
+    if !lhiscallstd && !lmycallstd {
         return tables;
     }
 
-    fill_idtone56(&mut tables, &mycall, &hiscall);
-    tables.csynce = build_csynce(&mycall, &hiscall);
+    if let Some(itone1) = fill_idtone56(&mut tables, &mycall, &hiscall, lmycallstd, lhiscallstd) {
+        tables.csynce = build_csynce(&itone1);
+    }
     tables
 }
 
-fn fill_idtone56(tables: &mut Tone8Tables, mycall: &str, hiscall: &str) {
+fn fill_idtone56(
+    tables: &mut Tone8Tables,
+    mycall: &str,
+    hiscall: &str,
+    lmycallstd: bool,
+    lhiscallstd: bool,
+) -> Option<[i32; 79]> {
     const RPT: [&str; 56] = [
         "-01", "-02", "-03", "-04", "-05", "-06", "-07", "-08", "-09", "-10", "-11", "-12", "-13",
         "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26",
@@ -91,21 +96,52 @@ fn fill_idtone56(tables: &mut Tone8Tables, mycall: &str, hiscall: &str) {
     tables.msgbits56.clear();
     tables.itone56.clear();
 
-    for rpt in RPT {
-        let msg = format!("{} {} {}", mycall.trim(), hiscall.trim(), rpt);
-        let Some((msg37, msgbits, itone)) = genft8sd(&msg) else {
-            continue;
+    let mycall14 = format!("<{}>", mycall.trim());
+    let hiscall14 = format!("<{}>", hiscall.trim());
+    let mut itone1 = None;
+
+    for (idx, rpt) in RPT.iter().enumerate() {
+        let display = format!("{} {} {}", mycall.trim(), hiscall.trim(), rpt);
+        let encoded = if lmycallstd && lhiscallstd {
+            display.clone()
+        } else if !lhiscallstd && lmycallstd {
+            if idx < 52 {
+                format!("{} {} {}", mycall.trim(), hiscall14, rpt)
+            } else if idx == 52 {
+                format!("{} {}", mycall14, hiscall.trim())
+            } else {
+                format!("{} {} {}", mycall14, hiscall.trim(), rpt)
+            }
+        } else if lhiscallstd && !lmycallstd {
+            if idx < 52 {
+                format!("{} {} {}", mycall14, hiscall.trim(), rpt)
+            } else if idx == 52 {
+                format!("{} {}", mycall14, hiscall.trim())
+            } else {
+                format!("{} {} {}", mycall.trim(), hiscall14, rpt)
+            }
+        } else {
+            return None;
         };
+
+        let display = if idx == 52 && (!lhiscallstd || !lmycallstd) {
+            encoded.clone()
+        } else {
+            display
+        };
+        let (_, msgbits, itone) = genft8sd(&encoded)?;
+        if idx == 0 {
+            itone1 = Some(itone);
+        }
         tables.idtone56.push(tones58_from_itone(&itone));
-        tables.msg56.push(msg37);
+        tables.msg56.push(display);
         tables.msgbits56.push(msgbits);
         tables.itone56.push(itone);
     }
+    itone1
 }
 
-fn build_csynce(mycall: &str, hiscall: &str) -> Option<CsyncE> {
-    let msg = format!("{} {} -01", mycall.trim(), hiscall.trim());
-    let (_, _, itone) = genft8sd(&msg)?;
+fn build_csynce(itone: &[i32; 79]) -> Option<CsyncE> {
     let (wave_re, wave_im) = gen_ft8wave(&itone, 0.0);
     let mut out = CsyncE::default();
     let mut m = 7 * 1920;
@@ -137,6 +173,10 @@ fn normalized_call(call: Option<&str>) -> Option<String> {
         return None;
     }
     Some(call.to_ascii_uppercase())
+}
+
+fn raw_call(call: Option<&str>) -> String {
+    call.unwrap_or("").trim().to_ascii_uppercase()
 }
 
 fn base_call(call: &str) -> Option<String> {

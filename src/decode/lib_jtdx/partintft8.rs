@@ -1,13 +1,13 @@
 //! Mirrors JTDX `lib/partintft8.f90`.
 #![allow(dead_code)]
 
-const SAMPLE_RATE: usize = 12_000;
 const MAX_DELAY_SECONDS: usize = 120;
+const SAMPLES_PER_DELAY_UNIT: usize = 1_200;
 const DD8_LEN: usize = 180_000;
 
 pub(crate) fn partintft8(dd8: &mut [f32], ndelay: usize) -> usize {
     let ndelay = ndelay.min(MAX_DELAY_SECONDS);
-    let numsamp = ndelay * SAMPLE_RATE;
+    let numsamp = ndelay * SAMPLES_PER_DELAY_UNIT;
     if numsamp == 0 || dd8.is_empty() {
         return 0;
     }

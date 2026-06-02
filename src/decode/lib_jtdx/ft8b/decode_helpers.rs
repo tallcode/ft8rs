@@ -301,7 +301,17 @@ pub(super) fn decoded_to_result(
         rxdt: refined_dt as f32 - 0.5,
     };
     let lcall1hash = msg.starts_with('<');
-    if !accept_decoded_message(&msg, &msg37_2, i3, n3, iaptype, lcall1hash, &filter_context) {
+    let lcall2hash = msg.find('<').is_some_and(|idx| idx > 3);
+    if !accept_decoded_message(
+        &msg,
+        &msg37_2,
+        i3,
+        n3,
+        iaptype,
+        lcall1hash,
+        lcall2hash,
+        &filter_context,
+    ) {
         return None;
     }
     if config.hide_hash && msg.find("<...>").is_some_and(|idx| idx >= 6) {
@@ -357,7 +367,8 @@ pub(super) fn decoded_bits_to_result(
     };
     if source == DecodeSource::Regular {
         let lcall1hash = msg.starts_with('<');
-        if !accept_decoded_message(&msg, "", i3, n3, 0, lcall1hash, &filter_context) {
+        let lcall2hash = msg.find('<').is_some_and(|idx| idx > 3);
+        if !accept_decoded_message(&msg, "", i3, n3, 0, lcall1hash, lcall2hash, &filter_context) {
             return None;
         }
     }
