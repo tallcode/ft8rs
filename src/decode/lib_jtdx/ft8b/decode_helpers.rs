@@ -214,17 +214,21 @@ pub(super) fn plan_ap_subpasses(config: &StreamDecodeConfig) -> Vec<(usize, i32)
 }
 
 pub(super) fn ap_type_table(config: &StreamDecodeConfig) -> &'static [[i32; 27]; 6] {
-    let mycall = config.mycall.as_deref().unwrap_or("");
-    let hiscall = config.hiscall.as_deref().unwrap_or("");
+    let lapmyc = normalized_config_call(config.mycall.as_deref()).is_some();
+    let lnohiscall = normalized_config_call(config.hiscall.as_deref()).is_none();
+    let lmycallstd = lapmyc && !is_nonstandard_call(config.mycall.as_deref().unwrap_or(""));
+    let lhiscallstd = !lnohiscall && !is_nonstandard_call(config.hiscall.as_deref().unwrap_or(""));
 
     if config.lhound {
         &NHAPTYPES
-    } else if is_nonstandard_call(mycall) {
-        &NMYCNSAPTYPES
-    } else if is_nonstandard_call(hiscall) {
+    } else if lmycallstd && (lhiscallstd || lnohiscall) {
+        &NAPTYPES
+    } else if lmycallstd && !lhiscallstd && !lnohiscall {
+        &NDXNSAPTYPES
+    } else if !lmycallstd && !lhiscallstd && !lnohiscall {
         &NDXNSAPTYPES
     } else {
-        &NAPTYPES
+        &NMYCNSAPTYPES
     }
 }
 
@@ -275,11 +279,12 @@ pub(super) fn decoded_to_result(
     }
     let l_free_text = i3 == 0 && n3 == 0;
     let mut msg37_2 = String::new();
-    let l_special = i3 == 0 && n3 == 1;
-    if l_special {
+    let mut l_special = false;
+    if i3 == 0 && n3 == 1 {
         if let Some((parsed_msg, parsed_msg2)) = msgparser(&msg) {
             msg = parsed_msg;
             msg37_2 = parsed_msg2;
+            l_special = true;
         }
     }
     let quality = 1.0 - (decoded.nharderror as f32 + decoded.dmin) / 60.0;
@@ -316,6 +321,12 @@ pub(super) fn decoded_to_result(
     }
     if config.hide_hash && msg.find("<...>").is_some_and(|idx| idx >= 6) {
         return None;
+    }
+    if i3 == 3 && msg.starts_with("TU;") {
+        let (parsed_msg, parsed_msg2, parsed_special) = split_tu_message(msg);
+        msg = parsed_msg;
+        msg37_2 = parsed_msg2;
+        l_special = parsed_special;
     }
     Some(Ft8bDecodeResult {
         msg37: msg,
@@ -410,6 +421,15 @@ pub(super) fn tones_from_codeword(codeword: &[u8; N]) -> [i32; 79] {
         k += 1;
     }
     itone
+}
+
+fn split_tu_message(msg: String) -> (String, String, bool) {
+    let words: Vec<&str> = msg.split_whitespace().collect();
+    if words.len() >= 3 {
+        let msg37_2 = msg.get(4..).unwrap_or("").trim().to_string();
+        return (format!("DE {} TU", words[2]), msg37_2, true);
+    }
+    (msg, String::new(), false)
 }
 
 pub(super) fn sync_snr_ratio(metrics: &SymbolMetrics) -> f32 {

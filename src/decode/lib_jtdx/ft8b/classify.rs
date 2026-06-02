@@ -162,18 +162,19 @@ pub(super) fn classify_signal(
                     nqsoend[2] += 1;
                 }
             }
-            if let Some((idx, count)) = nqsoend
-                .iter()
-                .copied()
-                .enumerate()
-                .max_by_key(|&(_, count)| count)
-            {
-                if count > 6 {
-                    match idx {
-                        0 => lqso73 = true,
-                        1 => lqsorr73 = true,
-                        _ => lqsorrr = true,
-                    }
+            let mut best_idx = 0usize;
+            let mut best_count = 0usize;
+            for (idx, &count) in nqsoend.iter().enumerate() {
+                if count > best_count {
+                    best_count = count;
+                    best_idx = idx;
+                }
+            }
+            if best_count > 6 {
+                match best_idx {
+                    0 => lqso73 = true,
+                    1 => lqsorr73 = true,
+                    _ => lqsorrr = true,
                 }
             }
         }

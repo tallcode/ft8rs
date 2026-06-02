@@ -16,7 +16,10 @@ pub(crate) fn chkgrid(callsign: &str, grid: &str) -> GridCheck {
     let grid = grid.trim().to_ascii_uppercase();
     let grid4 = is_grid4(&grid);
     let lchkcall = grid4 && grid_requires_call_check(&grid);
-    let lgvalid = grid4;
+    // JTDX starts with `lgvalid=.false.`. If the leading grid-area block sets
+    // `lchkcall`, the subroutine returns without entering the callsign-specific
+    // validation table, so `lgvalid` remains false.
+    let lgvalid = grid4 && !lchkcall;
     let lwrongcall = false;
     GridCheck {
         lchkcall,

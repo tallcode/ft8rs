@@ -746,6 +746,38 @@ Current false-positive boundary:
   `chkfalse8.f90` CQ branch runs only under the primary false-check condition,
   while high-quality rows keep only the later directed-CQ/grid validation from
   `ft8b.f90`;
+- `chkgrid` now preserves the source initial-state behavior for
+  `lchkcall`: grid areas that trigger the early `lchkcall=.true.` path keep
+  `lgvalid=false` unless the source callsign-specific table is entered. This
+  avoids treating every syntactically valid four-character locator as a valid
+  callsign/grid pairing;
+- AP table selection now treats missing `MyCall` / `DXCall` as its own source
+  state instead of classifying empty strings as standard calls. The active
+  `naptypes` / `ndxnsaptypes` / `nmycnsaptypes` choice follows the same branch
+  split as `ft8b.f90`;
+- Hound `iaptype=36` mask construction now keeps the source's compound-DXCall
+  branch: a nonstandard `DXCall` containing `/` still uses the Fox/Hound
+  base-call `RR73` mask instead of the generic nonstandard DX-call template;
+- nonstandard-`MyCall` AP gating now preserves the source `lcqsignal .and.
+  iaptype.eq.1` guard before constructing the `CQ ??? ???` mask, preventing
+  that AP mask from running on non-CQ-classified candidates;
+- `maxloc_1based` now follows Fortran `maxloc` tie handling by keeping the
+  first maximum value. This matters for low-energy `s256` CQ classification
+  where an all-equal vector should not drift to the last index;
+- QSO-ending classifier selection for `73` / `RR73` / `RRR` now also keeps the
+  first tied maximum, matching the `maxloc(nqsoend)` behavior in `ft8b.f90`;
+- false-decode filtering now separates the source's label-`4` boundary:
+  protocol checks that run after label `4` remain global, while pre-label
+  hash/grid filters are skipped for AP types that `ft8b.f90` routes directly
+  to label `4` (`2/3/11/21/40/41`, plus primary-check `4/5/6`);
+- decoded-message state updates now happen before appending the row to
+  `allmessages`, matching the source `ldupemsg` timing. This lets
+  `lrepliedother`, `msgsrcvd`, and focused-QSO state see the current decode as
+  non-duplicate instead of being masked by the just-saved result;
+- focused-QSO memory update now follows the source `((i3.eq.1 .and.
+  .not.lft8s) .or. lft8s)` guard for the `lastrxmsg/lqsomsgdcd` update, while
+  retaining the later source branch that can set `lqsomsgdcd` from a matching
+  message root;
 - AP/deep-specific rejection coverage has started with the JTDX `iaptype=35/36`
   DXCall-search weak/out-of-window first-callsign gate; remaining AP/deep
   rejection rules still need source audit.
@@ -756,6 +788,9 @@ Remaining filter caveats:
   `chkflscall`. Remaining filter work is source-auditing every AP/deep
   `chkflscall` call site and its surrounding classifier gates, not replacing
   the database lookup itself;
+- `chkgrid.f90` is still only partially mirrored. The Rust path now handles
+  syntax and the early `lchkcall`/`lgvalid` state correctly, but the complete
+  callsign-prefix-to-grid validation table remains a large source-layout gap;
 - FT8S / superdeep-specific bypass and rejection branches are part of the
   current normal-FT8 high-sensitivity milestone. The main `ft8s.f90` matcher is
   now represented as `ft8s.rs`, and `ft8sd1` / `ft8sd` previous-slot recovery
@@ -911,6 +946,19 @@ Current closure note:
   it reuses the refined `cd0/ibest/f1/xdt` state from the preceding
   `iqso=2` attempt and applies only the source `ibest=ibest+1` adjustment,
   instead of independently rerunning the time/frequency sync search.
+- The outer `ft8_decode` state update now keeps the source ordering and guards
+  for post-decode memory: duplicate checks happen before updating decode
+  arrays, `lastrxmsg/lqsomsgdcd` follows the `i3/source` gates, call-DT memory
+  skips free text, odd/even message memory only records the source-eligible
+  CQ/regular/superdeep rows, decoded-MyCall signal memory requires a standard
+  `mycall`, and QSO signal memory is not overwritten after the current slot has
+  already decoded the focused QSO.
+- `lspecial` rows now follow the source `k=1..nspecial` loop at the outer
+  decode layer. When `ft8b` returns both `msg37` and `msg37_2`, each message
+  gets its own duplicate check, callback/output, hash collection, and memory
+  update instead of silently dropping the second special-message rendering.
+  The source's `TU; ...` FT8 contest rendering is also split into `DE ... TU`
+  plus the original reply fragment after it passes the JTDX false-decode guard.
 - Remaining FFT follow-up: the local JTDX FFTW backend currently uses the
   default planning flag internally. If JTDX FFTW tuning becomes a target, wire
   profile-local thread/patience configuration into `lib_jtdx::four2a` without
