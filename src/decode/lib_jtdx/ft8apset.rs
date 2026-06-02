@@ -58,6 +58,8 @@ fn ap_types_for_config(config: &StreamDecodeConfig) -> Vec<i32> {
 fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan> {
     let mycall = normalized_call(config.mycall.as_deref());
     let hiscall = normalized_call(config.hiscall.as_deref());
+    let mybcall = base_call(config.mycall.as_deref());
+    let hisbcall = base_call(config.hiscall.as_deref());
     let mycall_raw = config.mycall.as_deref().unwrap_or("");
     let hiscall_raw = config.hiscall.as_deref().unwrap_or("");
     let lmycallstd = !is_nonstandard_call(mycall_raw);
@@ -96,8 +98,13 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
             &[(0, 77)],
             1,
         ),
-        11 | 41 => (
+        11 => (
             format!("{} <{}> +00", mycall.as_deref()?, hiscall.as_deref()?),
+            &[(0, 58), (74, 77)],
+            1,
+        ),
+        41 => (
+            format!("<{}> {} +00", mycall.as_deref()?, hiscall.as_deref()?),
             &[(0, 58), (74, 77)],
             1,
         ),
@@ -117,7 +124,7 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
             4,
         ),
         21 => (
-            format!("{} {} +00", mycall.as_deref()?, hiscall.as_deref()?),
+            format!("{} {} -15", mybcall.as_deref()?, hisbcall.as_deref()?),
             &[(0, 58), (74, 77)],
             1,
         ),
@@ -127,7 +134,7 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
             0,
         ),
         23 => (
-            format!("{} {} RR73", mycall.as_deref()?, hiscall.as_deref()?),
+            format!("{} {} RR73", mybcall.as_deref()?, hisbcall.as_deref()?),
             &[(0, 77)],
             1,
         ),
@@ -165,14 +172,20 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
                 )
             } else {
                 (
-                    format!("<{}> {} 73", mycall.as_deref()?, hiscall.as_deref()?),
+                    format!("<W9XYZ> {} 73", hiscall.as_deref()?),
                     &[(13, 77)],
                     4,
                 )
             }
         }
         36 => {
-            if lhiscallstd {
+            if config.lhound && lhiscallstd {
+                (
+                    format!("{} {} RR73", mybcall.as_deref()?, hisbcall.as_deref()?),
+                    &[(29, 77)],
+                    1,
+                )
+            } else if lhiscallstd {
                 let first = if lmycallstd {
                     mycall.as_deref()?
                 } else {
@@ -185,14 +198,18 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
                 )
             } else {
                 (
-                    format!("<{}> {} RR73", mycall.as_deref()?, hiscall.as_deref()?),
+                    format!("<W9XYZ> {} RR73", hiscall.as_deref()?),
                     &[(13, 77)],
                     4,
                 )
             }
         }
         40 => (
-            format!("<{}> {} +00", mycall.as_deref()?, hiscall.as_deref()?),
+            format!(
+                "<{}> {} -15",
+                mycall.as_deref()?,
+                hiscall.as_deref().unwrap_or("ZZ1ZZZ")
+            ),
             &[(0, 29), (74, 77)],
             1,
         ),
@@ -255,6 +272,23 @@ fn normalized_call(call: Option<&str>) -> Option<String> {
         return None;
     }
     Some(call.to_ascii_uppercase())
+}
+
+fn base_call(call: Option<&str>) -> Option<String> {
+    let call = call?.trim().trim_start_matches('<').trim_end_matches('>');
+    let base = if let Some((left, right)) = call.split_once('/') {
+        if left.len() >= right.len() {
+            left
+        } else {
+            right
+        }
+    } else {
+        call
+    };
+    if base.len() < 3 {
+        return None;
+    }
+    Some(base.to_ascii_uppercase())
 }
 
 fn is_nonstandard_call(call: &str) -> bool {

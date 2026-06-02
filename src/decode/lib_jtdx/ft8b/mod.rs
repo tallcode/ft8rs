@@ -29,6 +29,20 @@ pub use state::{
 };
 use state::{SignalMemory, SymbolMetrics, SyncGate};
 
+#[derive(Clone, Debug)]
+struct QsoRefinementState {
+    cd0: super::ft8_downsample::ComplexC,
+    ibest: isize,
+    refined_freq: f64,
+    refined_dt: f64,
+}
+
+#[derive(Clone, Debug)]
+struct QsoAttemptOutcome {
+    decoded: Option<Ft8bDecodeResult>,
+    state: QsoRefinementState,
+}
+
 pub(crate) fn ft8b(
     workspace: &mut Ft8bWorkspace,
     config: &StreamDecodeConfig,
@@ -55,13 +69,17 @@ pub(crate) fn ft8b(
     );
 
     let attempts = qso_attempts(qso_plan);
+    let mut previous_qso_state: Option<QsoRefinementState> = None;
     for iqso in attempts {
+        if qso_plan.xdt0 < -4.9 || qso_plan.xdt0 > 4.9 {
+            continue;
+        }
         let cd0 = match (qso_plan.lvirtual3, iqso) {
             (true, 2 | 3) => workspace.downsample_out.c3.clone(),
             (_, 2 | 3) => workspace.downsample_out.c2.clone(),
             _ => workspace.downsample_out.c0.clone(),
         };
-        if let Some((result, ibest)) = try_ft8b_decode_for_iqso(
+        let Some(outcome) = try_ft8b_decode_for_iqso(
             &cd0,
             config,
             book,
@@ -72,10 +90,15 @@ pub(crate) fn ft8b(
             iqso,
             qso_plan.xdt0,
             qso_plan.lvirtual2 || qso_plan.lvirtual3,
+            previous_qso_state.as_ref(),
             &mut workspace.signal_memory,
-        ) {
+        ) else {
+            continue;
+        };
+        previous_qso_state = Some(outcome.state.clone());
+        if let Some(result) = outcome.decoded {
             if context.lsubtract {
-                let xdt3 = refined_subtract_dt(&cd0, &result.itone, ibest);
+                let xdt3 = refined_subtract_dt(&cd0, &result.itone, outcome.state.ibest);
                 subtractft8(dd8, &result.itone, result.freq, xdt3 as f32, config.swl);
                 workspace.lsubtracted = true;
                 if workspace.npos < workspace.freqsub.len() {
@@ -101,8 +124,9 @@ fn try_ft8b_decode_for_iqso(
     iqso: usize,
     xdt0: f32,
     lvirtual: bool,
+    previous_qso_state: Option<&QsoRefinementState>,
     signal_memory: &mut SignalMemory,
-) -> Option<(Ft8bDecodeResult, isize)> {
+) -> Option<QsoAttemptOutcome> {
     let tonesd_templates = if iqso == 4 {
         context
             .sd_msg
@@ -126,6 +150,77 @@ fn try_ft8b_decode_for_iqso(
         tonesd: tonesd_templates.as_ref(),
         csynce: csynce_templates.as_ref(),
     };
+    let state = if iqso == 3 {
+        if let Some(previous) = previous_qso_state {
+            QsoRefinementState {
+                cd0: previous.cd0.clone(),
+                ibest: previous.ibest + 1,
+                refined_freq: previous.refined_freq,
+                refined_dt: previous.refined_dt,
+            }
+        } else {
+            refine_qso_sync(cd0, candidate, iqso, xdt0, sync_context)
+        }
+    } else {
+        refine_qso_sync(cd0, candidate, iqso, xdt0, sync_context)
+    };
+    let metrics = extract_symbol_metrics(&state.cd0, state.ibest, config, context);
+
+    let decoded = if iqso > 1 && iqso < 4 {
+        try_ft8s_virtual(
+            &metrics,
+            state.refined_freq,
+            state.refined_dt,
+            config,
+            book,
+            context,
+            lvirtual,
+            tone8_tables,
+        )
+    } else if iqso == 4 {
+        try_ft8sd(
+            &metrics,
+            state.refined_freq,
+            state.refined_dt,
+            config,
+            book,
+            context,
+            middle_sync_ratio(&metrics.s8),
+        )
+    } else if let Some(sync_gate) = jtdx_sync_gate(
+        &metrics,
+        config,
+        context,
+        state.refined_freq,
+        state.refined_dt,
+    ) {
+        regular_decode(
+            &metrics,
+            candidate,
+            state.refined_freq,
+            state.refined_dt,
+            config,
+            book,
+            tone8_tables,
+            ft8apset,
+            context,
+            sync_gate,
+            signal_memory,
+        )
+    } else {
+        None
+    };
+
+    Some(QsoAttemptOutcome { decoded, state })
+}
+
+fn refine_qso_sync(
+    cd0: &super::ft8_downsample::ComplexC,
+    candidate: SyncCandidate,
+    iqso: usize,
+    xdt0: f32,
+    sync_context: Sync8dContext,
+) -> QsoRefinementState {
     let i0 = nint((xdt0 as f64 + 0.5) * FS2);
     let mut smax = 0.0;
     let mut ibest = i0;
@@ -161,60 +256,12 @@ fn try_ft8b_decode_for_iqso(
         }
     }
 
-    let cd0 = twkfreq1(cd0, 3199, FS2, -delfbest);
-    if iqso == 3 {
-        ibest += 1;
+    QsoRefinementState {
+        cd0: twkfreq1(cd0, 3199, FS2, -delfbest),
+        ibest,
+        refined_freq: candidate.freq as f64 + delfbest,
+        refined_dt: xdt2,
     }
-    let refined_freq = candidate.freq as f64 + delfbest;
-    let refined_dt = xdt2;
-    let metrics = extract_symbol_metrics(&cd0, ibest, config, context);
-
-    if iqso > 1 && iqso < 4 {
-        return try_ft8s_virtual(
-            &metrics,
-            refined_freq,
-            refined_dt,
-            config,
-            book,
-            context,
-            lvirtual,
-            tone8_tables,
-        )
-        .map(|result| (result, ibest));
-    }
-
-    if iqso == 4 {
-        return try_ft8sd(
-            &metrics,
-            refined_freq,
-            refined_dt,
-            config,
-            book,
-            context,
-            middle_sync_ratio(&metrics.s8),
-        )
-        .map(|result| (result, ibest));
-    }
-
-    let Some(sync_gate) = jtdx_sync_gate(&metrics, config, context, refined_freq, refined_dt)
-    else {
-        return None;
-    };
-
-    regular_decode(
-        &metrics,
-        candidate,
-        refined_freq,
-        refined_dt,
-        config,
-        book,
-        tone8_tables,
-        ft8apset,
-        context,
-        sync_gate,
-        signal_memory,
-    )
-    .map(|result| (result, ibest))
 }
 
 fn jtdx_config_calls_standard(config: &StreamDecodeConfig) -> bool {

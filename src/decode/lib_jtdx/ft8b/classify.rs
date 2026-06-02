@@ -74,6 +74,12 @@ pub(super) fn classify_signal(
     hints: &ToneHints,
 ) -> SignalClassifier {
     let lapmyc = normalized_config_call(config.mycall.as_deref()).is_some();
+    let mycall_raw = config.mycall.as_deref().unwrap_or("");
+    let hiscall_raw = config.hiscall.as_deref().unwrap_or("");
+    let lmycallstd = normalized_config_call(config.mycall.as_deref()).is_some()
+        && !is_nonstandard_call(mycall_raw);
+    let lhiscallstd = normalized_config_call(config.hiscall.as_deref()).is_some()
+        && !is_nonstandard_call(hiscall_raw);
     let mut nmic = 0usize;
     if let Some(idtonemyc) = &hints.idtonemyc {
         for k11 in 8..=16 {
@@ -117,7 +123,6 @@ pub(super) fn classify_signal(
     let mut lqso73 = false;
     let mut lqsorr73 = false;
     let mut lqsorrr = false;
-    let mut ndxt = 0usize;
     if !context.lqsomsgdcd
         && (dfqso < config.napwid || (config.nftx - refined_freq).abs() < config.napwid)
         && lapmyc
@@ -138,12 +143,6 @@ pub(super) fn classify_signal(
             }
         }
         lqsosigtype3 = nqsot > 3;
-
-        for k11 in 17..=26 {
-            if max_tone(&metrics.s8, k11 - 1, None) as i32 == qso_tones[k11 - 8] {
-                ndxt += 1;
-            }
-        }
 
         if dfqso < config.napwid
             && matches!(config.nQSOProgress, 3 | 4)
@@ -180,11 +179,20 @@ pub(super) fn classify_signal(
         }
     }
 
-    let hiscall_is_nonstandard = is_nonstandard_call(config.hiscall.as_deref().unwrap_or(""));
-    let mut ldxcsig = !hiscall_is_nonstandard && ndxt > 3;
+    let mut ndxt = 0usize;
+    let mut ldxcsig = false;
+    if lhiscallstd && !hints.idtone56.is_empty() {
+        let qso_tones = &hints.idtone56[0];
+        for k11 in 17..=26 {
+            if max_tone(&metrics.s8, k11 - 1, None) as i32 == qso_tones[k11 - 8] {
+                ndxt += 1;
+            }
+        }
+        ldxcsig = ndxt > 3;
+    }
     let lcqdxcsig = lcqsignal && ldxcsig;
     let mut lcqdxcnssig = false;
-    if hiscall_is_nonstandard && normalized_config_call(config.hiscall.as_deref()).is_some() {
+    if !lhiscallstd && normalized_config_call(config.hiscall.as_deref()).is_some() {
         let mut ncqdxcnst = 0usize;
         if let Some(idtonecqdxcns) = &hints.idtonecqdxcns {
             for i in 1..=4 {
@@ -220,8 +228,10 @@ pub(super) fn classify_signal(
     let lsubptxfreq = lapmyc
         && (refined_freq - config.nftx).abs() < 2.0
         && !config.lhound
+        && !context.lft8sdec
         && !context.lqsomsgdcd
-        && (context.nlasttx == 1 || context.nlasttx == 2);
+        && ((!config.lskiptx1 && context.nlasttx == 1)
+            || (config.lskiptx1 && context.nlasttx == 2));
     let nweak = if config.lft8subpass || config.swl || dfqso < 2.0 || lsubptxfreq {
         2
     } else {
@@ -231,15 +241,15 @@ pub(super) fn classify_signal(
     if lcqsignal {
         nsubpasses = 3;
     }
-    if lmycsignal && !is_nonstandard_call(config.mycall.as_deref().unwrap_or("")) {
+    if lmycsignal && lmycallstd {
         nsubpasses = 6;
     }
     let lqsocandave = lapmyc
         && ndxt > 2
         && nmic > 2
         && !context.lqsomsgdcd
-        && !is_nonstandard_call(config.mycall.as_deref().unwrap_or(""))
-        && !is_nonstandard_call(config.hiscall.as_deref().unwrap_or(""))
+        && lmycallstd
+        && lhiscallstd
         && dfqso < config.napwid / 2.0;
     if lqsocandave {
         nsubpasses = 9;

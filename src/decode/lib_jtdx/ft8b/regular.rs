@@ -37,8 +37,7 @@ pub(super) fn regular_decode(
     remember_candidate_signal(signal_memory, metrics, classifier, refined_freq, refined_dt);
     let csold = select_csold(signal_memory, classifier, context, refined_freq, refined_dt);
     let nsubpasses = nsubpasses_with_csold(classifier, csold.is_some());
-    let primary_metrics = build_bit_metrics(metrics, MetricSource::Cs);
-    let syncavemax = metrics.syncavemax;
+    let syncavemax = 3.0f32;
     let lmycallstd = normalized_config_call(config.mycall.as_deref())
         .is_some_and(|call| !is_nonstandard_call(&call));
 
@@ -54,7 +53,7 @@ pub(super) fn regular_decode(
             continue;
         }
         let bit_metrics = if isubp1 == 1 {
-            primary_metrics.clone()
+            build_bit_metrics(metrics, MetricSource::Cs)
         } else if isubp1 == 2 {
             build_bit_metrics(metrics, MetricSource::Csr)
         } else if matches!(isubp1, 3 | 6 | 9) {

@@ -193,9 +193,10 @@ Initial status:
   selection for `llra` / `llrb` / `llrc` / `llrd`, including the JTDX
   non-SWL regular skip of `isubp2=4` and the regular `isubp1=1..2`
   pass-dependent `llrd` retries;
-- JTDX regular/AP subpass pruning now uses measured `syncavemax`, skips the
-  whole loop for already-decoded QSO candidates, and applies the MyCall
-  extra-subpass skip only for standard `mycall`;
+- JTDX regular/AP subpass pruning mirrors the source `syncavemax=3.` reset
+  inside the outer subpass loop, skips the whole loop for already-decoded QSO
+  candidates, and applies the MyCall extra-subpass skip only for standard
+  `mycall`;
 - JTDX `sync8` candidate storage now separates the CQ marker from the thinning
   sort metric, matching the source `candidate(4)` / `candidate0(5)` split;
 - JTDX AP mask magnitude now follows `maxval(abs(llra))*1.01`, including the
@@ -458,10 +459,14 @@ Current closure status:
   gating, slot-local `lft8sdec`, `searchcalls` / `ALLCALL7.TXT` backed
   `chkflscall`, GFSK-derived `sync8d` templates, virtual-QSO FT8S/FT8SD gate
   ordering, first `scqnr` / `smycnr` AP-pruning checks, source-width
-  `nfawide/nfbwide` initialization, and the `csymb(1:8)` to Rust `[0..7]`
-  symbol-bin mapping are represented. Native `profile=jtdx` now emits rows on
-  the short fixture, but this is still an initial closure checkpoint rather
-  than a promoted sensitivity baseline.
+  `nfawide/nfbwide` initialization, focused-QSO `xdt0` bounds, the
+  `lsubptxfreq` `lft8sdec` / `lskiptx1` gates, `chkspecial8`'s narrower
+  source-local call guard, source-ordered `tone8` hint initialization,
+  `sync8d` final-average hold semantics, source-shaped nonstandard-call AP
+  templates in `ft8apset`, and the `csymb(1:8)` to Rust `[0..7]` symbol-bin
+  mapping are represented. Native `profile=jtdx` now emits rows on the short
+  fixture, but this is still an initial closure checkpoint rather than a
+  promoted sensitivity baseline.
 - The first compile-structure pass is complete: all `src/decode/lib_jtdx/**/*.rs`
   files are under 1000 lines. Large source mirrors now use directory modules:
   `ft8b.f90` maps to `ft8b/`, and `packjt77.f90` maps to
@@ -513,7 +518,17 @@ Current JTDX checkpoint:
   session-level `ft8apset` precompute, `ft8s` consumption of the precomputed
   56-report table, the JTDX `scoreratio2` soft-sync detail, DXCall-search
   flags/gates, special-message parser state, decoded CQ/MyCall memory, and
-  additional JTDX false-decode filters.
+  additional JTDX false-decode filters. The AP mask audit also corrected
+  nonstandard-call and Hound/base-call template construction so the Rust masks
+  are closer to `ft8apset.f90`. The outer decode audit also restored the
+  `stophint` argument as profile state rather than a hard-coded internal
+  false, and added the JTDX `nintcount` / `avexdt` fast-track state used after
+  forced sync or mode-change windows, including the no-decode forced-sync reset
+  that keeps next-slot `avexdt` at zero. The `filter` / `nagainfil` active-band
+  narrowing from `decoder.f90` is now represented in the JTDX `sync8` config
+  while preserving the original wide band for AGC normalization. The focused QSO
+  `iqso=3` path now reuses the preceding `iqso=2` refined state before the
+  source `ibest+1` adjustment instead of rerunning the sync search.
   The short smoke test remains 20/21, so these slices improve auditability and
   state fidelity but do not yet recover the final short-fixture row;
 - temporary trace and experiments must stay out of commits.

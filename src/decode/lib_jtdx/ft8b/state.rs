@@ -77,6 +77,7 @@ pub(super) struct SymbolMetrics {
     pub(super) cscs_re: [[f32; 79]; 8],
     pub(super) cscs_im: [[f32; 79]; 8],
     pub(super) s256: [f32; 27],
+    #[allow(dead_code)]
     pub(super) syncavemax: f32,
     pub(super) nsync: usize,
     pub(super) nsync2: usize,
