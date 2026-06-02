@@ -46,7 +46,7 @@ use self::ft8b::DecodeSource;
 use self::ft8v2::packjt77::HashCallBook;
 use self::tone8::{tone8, Tone8Tables};
 
-/// JTDX decoder state placeholder.
+/// JTDX decoder state.
 ///
 /// The implementation must stay independent from the WSJT-X decoder state. In
 /// particular, hash/AP/odd-even memory should not be shared with another
@@ -140,7 +140,7 @@ impl JtdxStreamDecodeSession {
                     loddint: interval == IntervalKind::Odd,
                     lqsomsgdcd: self._state.lqsomsgdcd,
                     lft8sdec: self._state.lft8sdec,
-                    stophint: false,
+                    stophint: self._config.stophint,
                     nlasttx: self._config.nQSOProgress,
                     call_dt_xdt: call_dt_xdt(&self._state, &self._config, interval),
                     sd_msg: sd_candidate.map(|entry| ft8b::LastRxMsgText::from_str(&entry.msg)),
@@ -272,7 +272,7 @@ fn prepare_qso_memory(
         state.lastrxmsg = ft8_mod1::LastRxMsg::default();
     }
 
-    if is_qso_thread(config) && !state.lastrxmsg.lstate && !hiscall.is_empty() {
+    if is_qso_thread(config) && !state.lastrxmsg.lstate && !config.stophint && !hiscall.is_empty() {
         if restore_lastrx_from_incall(config, state) {
             return;
         }
@@ -614,8 +614,14 @@ fn update_avexdt_after_slot(
     decoded: &[StreamDecodedMessage],
 ) {
     let n_ft8_decd = decoded.len();
+    if config.lforcesync {
+        state.nintcount = 3;
+    } else if state.nintcount > 0 {
+        state.nintcount -= 1;
+    }
+
     if config.lforcesync && n_ft8_decd == 0 {
-        state.avexdt = state.forcedt;
+        state.avexdt = 0.0;
         return;
     }
 
@@ -633,6 +639,9 @@ fn update_avexdt_after_slot(
         5 => (1.1 * state.avexdt + 0.9 * mean) / 2.0,
         _ => (state.avexdt + mean) / 2.0,
     };
+    if n_ft8_decd > 10 && state.nintcount == 1 {
+        state.avexdt = mean;
+    }
 }
 
 fn jtdx_sumxdt(decoded: &[StreamDecodedMessage]) -> f32 {

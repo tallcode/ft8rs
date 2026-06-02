@@ -153,6 +153,7 @@ pub struct Ft8Mod1 {
     pub msgsrcvd: Vec<String>,
     pub lrepliedother: bool,
     pub first_osd: bool,
+    pub nintcount: i32,
     pub gen: Vec<i8>,
 }
 
@@ -191,6 +192,7 @@ impl Default for Ft8Mod1 {
             msgsrcvd: vec![String::new(); 130],
             lrepliedother: false,
             first_osd: true,
+            nintcount: 0,
             gen: vec![0; KK * N_LDPC],
         }
     }

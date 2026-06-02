@@ -34,7 +34,7 @@ pub fn npass(config: &StreamDecodeConfig) -> usize {
 
 pub fn syncmin(config: &StreamDecodeConfig, ipass: usize) -> f32 {
     let mut syncmin = 1.5f32;
-    if config.lft8lowth || config.lft8subpass || config.swl {
+    if config.lft8lowth || config.swl {
         match ipass {
             1 | 4 | 7 => syncmin = 1.225,
             2 | 5 | 8 => syncmin = 1.5,

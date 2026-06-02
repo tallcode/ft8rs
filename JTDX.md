@@ -864,6 +864,53 @@ Current closure note:
 - JTDX `ft8b.f90` resets `syncavemax=3.` inside the outer regular/AP subpass
   loop. The Rust JTDX path now mirrors that behavior so the later
   `syncavemax < 1.8/1.9` guards do not use the earlier measured value.
+- JTDX `sync8.f90` computes `red/base` over the wide AGC frequency range
+  (`nfawide:nfbwide`) and only then emits candidates from the active decode
+  range (`nfa:nfb`). The Rust JTDX path now keeps that range split and also
+  counts the two QSO-frequency virtual candidates in `ncandfqso`, matching the
+  source thinning boundary.
+- JTDX `ft8b.f90` skips focused-QSO `iqso` attempts when the current `xdt0`
+  remains outside `[-4.9, 4.9]`. The Rust JTDX path now keeps that guard, so
+  only virtual attempts backed by a valid remembered DT proceed into `sync8d`.
+- The JTDX `lsubptxfreq` weak-subpass trigger now includes the source
+  `lft8sdec` and `lskiptx1` gates. `lskiptx1` is represented in the stream
+  config and defaults to false, matching the normal JTDX setting.
+- `chkspecial8` now uses its own source-local call rejection guard instead of
+  the broader `callsign_q` include rules. This matters because JTDX
+  `chkspecial8.f90` only rejects `Q*`, `0*`, and two-leading-digit calls in
+  that special-message path.
+- `tone8` initialization no longer returns immediately when `mycall` is empty.
+  It now follows the source ordering: generate available Hound/nonstandard
+  DXCall hint tones first, then return only when the standard/nonstandard call
+  combination cannot build the 56 focused-QSO report templates.
+- `sync8d` now preserves the source loop behavior where the final averaged
+  sync item reuses the previous `(i,i+1)` average instead of switching to the
+  final raw item. This applies to the pass 3/4/8 Costas/CQ sync paths and the
+  pass 2/6/7 focused-QSO / superdeep 19-symbol paths.
+- `ft8apset` AP template construction is closer to the source for
+  nonstandard-call masks: `iaptype=41` now uses `<MyCall> DxCall`, nonstandard
+  DX `35/36` use the source dummy `<W9XYZ>` first call, and `iaptype=40` can be
+  built with the source dummy `ZZ1ZZZ` when `hiscall` is empty.
+- `ft8apset` Hound AP masks now follow the source `mybcall/hisbcall` split for
+  `iaptype=21`, `23`, and standard-DX `36` instead of packing the full
+  configured callsigns into those masks.
+- The JTDX session now carries the source `stophint` decode argument through
+  `StreamDecodeConfig` into `ft8b` candidate context instead of forcing it to
+  false internally. The same flag now also guards the outer `lastrxmsg`
+  restoration path, matching `ft8_decode.f90`. The default remains false.
+- The JTDX stream state now keeps `nintcount` and applies the source
+  `decoder.f90` fast-track update for `avexdt` after forced sync / mode-change
+  windows when a crowded slot has more than ten decodes. Forced-sync slots
+  with no FT8 decode now leave the next-slot runtime `avexdt` at zero, matching
+  the source reset after its `<DecodeFinished>` report.
+- `sync8` now receives the source-shaped active decode band when JTDX
+  `filter` or `nagainfil` behavior is enabled: `nfa/nfb` are narrowed around
+  `nfqso`, while `nfawide/nfbwide` still preserve the original band for
+  AGC/wide-range normalization.
+- `ft8b` focused-QSO `iqso=3` now follows the source control flow more closely:
+  it reuses the refined `cd0/ibest/f1/xdt` state from the preceding
+  `iqso=2` attempt and applies only the source `ibest=ibest+1` adjustment,
+  instead of independently rerunning the time/frequency sync search.
 - Remaining FFT follow-up: the local JTDX FFTW backend currently uses the
   default planning flag internally. If JTDX FFTW tuning becomes a target, wire
   profile-local thread/patience configuration into `lib_jtdx::four2a` without

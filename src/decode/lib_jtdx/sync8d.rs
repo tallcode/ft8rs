@@ -151,21 +151,9 @@ pub fn sync8d(
         3 | 4 | 8 if !context.lastsync => {
             let mut sum = 0.0;
             for i in 0..7 {
-                let z1 = if i < 6 {
-                    avg(zt1[i], zt1[i + 1])
-                } else {
-                    zt1[i]
-                };
-                let z2 = if i < 6 {
-                    avg(zt2[i], zt2[i + 1])
-                } else {
-                    zt2[i]
-                };
-                let z3 = if i < 6 {
-                    avg(zt3[i], zt3[i + 1])
-                } else {
-                    zt3[i]
-                };
+                let z1 = avg_hold_last(&zt1, i);
+                let z2 = avg_hold_last(&zt2, i);
+                let z3 = avg_hold_last(&zt3, i);
                 sum += z1.0.abs() + z1.1.abs() + z2.0.abs() + z2.1.abs() + z3.0.abs() + z3.1.abs();
             }
             sum
@@ -192,8 +180,8 @@ pub fn sync8d(
             );
         }
         for i in 0..8 {
-            let z = if matches!(context.ipass, 3 | 4 | 8) && i < 7 {
-                avg(zt4[i], zt4[i + 1])
+            let z = if matches!(context.ipass, 3 | 4 | 8) {
+                avg_hold_last(&zt4, i)
             } else {
                 zt4[i]
             };
@@ -246,8 +234,8 @@ fn sync_csynce(
     }
     let mut sync = 0.0;
     for i in 0..19 {
-        let z = if matches!(context.ipass, 2 | 6 | 7) && i < 18 {
-            avg(zt5[i], zt5[i + 1])
+        let z = if matches!(context.ipass, 2 | 6 | 7) {
+            avg_hold_last(&zt5, i)
         } else {
             zt5[i]
         };
@@ -278,8 +266,8 @@ fn sync_superdeep_qso(
     }
     let mut sync = 0.0;
     for i in 0..19 {
-        let z = if matches!(context.ipass, 2 | 6 | 7) && i < 18 {
-            avg(zt5[i], zt5[i + 1])
+        let z = if matches!(context.ipass, 2 | 6 | 7) {
+            avg_hold_last(&zt5, i)
         } else {
             zt5[i]
         };
@@ -392,4 +380,14 @@ fn power(z: (f64, f64)) -> f64 {
 
 fn avg(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5)
+}
+
+fn avg_hold_last(values: &[(f64, f64)], i: usize) -> (f64, f64) {
+    if i + 1 < values.len() {
+        avg(values[i], values[i + 1])
+    } else if values.len() >= 2 {
+        avg(values[values.len() - 2], values[values.len() - 1])
+    } else {
+        values.get(i).copied().unwrap_or((0.0, 0.0))
+    }
 }

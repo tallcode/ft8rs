@@ -40,28 +40,29 @@ pub(crate) fn tone8(config: &StreamDecodeConfig) -> Tone8Tables {
         ..Tone8Tables::default()
     };
 
-    let Some(mycall) = normalized_call(config.mycall.as_deref()) else {
-        return tables;
-    };
-    tables.idtonemyc = tones58_from_sd_message(&format!("{mycall} AA1AAA FN25"));
-
-    let Some(hiscall) = normalized_call(config.hiscall.as_deref()) else {
-        return tables;
-    };
+    let mycall = normalized_call(config.mycall.as_deref());
+    let hiscall = normalized_call(config.hiscall.as_deref());
     let mycall_raw = raw_call(config.mycall.as_deref());
     let hiscall_raw = raw_call(config.hiscall.as_deref());
-    let lmycallstd = !is_nonstandard_call(&mycall_raw);
-    let lhiscallstd = !is_nonstandard_call(&hiscall_raw);
+    let lmycallstd = mycall.is_some() && !is_nonstandard_call(&mycall_raw);
+    let lhiscallstd = hiscall.is_some() && !is_nonstandard_call(&hiscall_raw);
+
+    if let Some(mycall) = &mycall {
+        tables.idtonemyc = tones58_from_sd_message(&format!("{mycall} AA1AAA FN25"));
+    }
 
     if config.lhound {
-        if let (Some(mybcall), Some(hisbcall)) = (base_call(&mycall), base_call(&hiscall)) {
-            tables.idtonefox73 = tones58_from_sd_message(&format!("{mybcall} {hisbcall} RR73"));
-            tables.idtonespec =
-                tones58_from_sd_message(&format!("{mybcall} RR73; {mybcall} <{hiscall}> -12"));
+        if let (Some(mycall), Some(hiscall)) = (&mycall, &hiscall) {
+            if let (Some(mybcall), Some(hisbcall)) = (base_call(mycall), base_call(hiscall)) {
+                tables.idtonefox73 = tones58_from_sd_message(&format!("{mybcall} {hisbcall} RR73"));
+                tables.idtonespec =
+                    tones58_from_sd_message(&format!("{mybcall} RR73; {mybcall} <{hiscall}> -12"));
+            }
         }
     }
 
-    if !lhiscallstd {
+    if !lhiscallstd && hiscall.as_ref().is_some_and(|call| call.len() > 2) {
+        let hiscall = hiscall.as_ref().expect("checked above");
         tables.idtonecqdxcns = tones58_from_sd_message(&format!("CQ {hiscall}"));
         tables.idtonedxcns73 = tones58_from_sd_message(&format!("<AA1AAA> {hiscall} 73"));
     }
@@ -70,7 +71,10 @@ pub(crate) fn tone8(config: &StreamDecodeConfig) -> Tone8Tables {
         return tables;
     }
 
-    if let Some(itone1) = fill_idtone56(&mut tables, &mycall, &hiscall, lmycallstd, lhiscallstd) {
+    let (Some(mycall), Some(hiscall)) = (mycall.as_deref(), hiscall.as_deref()) else {
+        return tables;
+    };
+    if let Some(itone1) = fill_idtone56(&mut tables, mycall, hiscall, lmycallstd, lhiscallstd) {
         tables.csynce = build_csynce(&itone1);
     }
     tables

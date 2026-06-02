@@ -129,7 +129,8 @@ fn median_symbol_level(
         sa33.push((x_re[i] * x_re[i] + x_im[i] * x_im[i]).sqrt().sqrt() as f32);
     }
     sa33.sort_by(|a, b| a.total_cmp(b));
-    let smed = sa33[nmed.min(sa33.len().saturating_sub(1))];
+    let smed_idx = nmed.saturating_sub(1).min(sa33.len().saturating_sub(1));
+    let smed = sa33[smed_idx];
     if smed > 1e-6 {
         smed
     } else {

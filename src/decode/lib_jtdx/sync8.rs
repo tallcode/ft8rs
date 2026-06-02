@@ -78,16 +78,18 @@ impl Sync8Config {
             )
         };
 
+        let (nfa, nfb) = active_decode_band(config);
+
         Self {
-            nfa: config.nfa.round() as i32,
-            nfb: config.nfb.round() as i32,
+            nfa,
+            nfb,
             syncmin,
             nfqso: config.nfqso.round() as i32,
             jzb,
             jzt,
             swl: config.swl,
             ipass,
-            lqsothread: config.nfqso >= config.nfa && config.nfqso <= config.nfb,
+            lqsothread: config.nfqso >= nfa as f64 && config.nfqso <= nfb as f64,
             ncandthin: config.ncandthin,
             filter: config.filter,
             ndtcenter: 0,
@@ -110,6 +112,24 @@ impl Sync8Config {
             rcandthin
         }
     }
+}
+
+fn active_decode_band(config: &StreamDecodeConfig) -> (i32, i32) {
+    let mut nfa = config.nfa.round() as i32;
+    let mut nfb = config.nfb.round() as i32;
+    let nfqso = config.nfqso.round() as i32;
+
+    if config.filter && nfqso >= nfa && nfqso <= nfb {
+        let half_width = if config.lhound { 290 } else { 60 };
+        nfa = nfa.max(nfqso - half_width);
+        nfb = nfb.min(nfqso + half_width);
+    }
+    if config.nagain && nfqso >= nfa && nfqso <= nfb {
+        nfa = nfa.max(nfqso - 25);
+        nfb = nfb.min(nfqso + 25);
+    }
+
+    (nfa, nfb)
 }
 
 pub fn candidate_sort_metric(candidate: &SyncCandidate, config: Sync8Config) -> f32 {
@@ -385,10 +405,15 @@ impl Sync8Workspace {
             .round()
             .max(1.0)
             .min((NH1 - 16) as f32) as usize;
+        let iaw = (config.nfawide as f32 / df).round().max(1.0) as usize;
+        let ibw = (config.nfbwide as f32 / df)
+            .round()
+            .max(1.0)
+            .min((NH1 - 16) as f32) as usize;
 
         self.red.fill(0.0);
         self.redcq.fill(false);
-        for i in ia..=ib {
+        for i in iaw..=ibw {
             let mut best = -1.0f32;
             let mut best_j = config.jzb;
             let mut best_cq = false;
@@ -406,12 +431,12 @@ impl Sync8Workspace {
             self.redcq[i] = best_cq;
         }
 
-        let mut base_values: Vec<f32> = self.red[ia..=ib].to_vec();
+        let mut base_values: Vec<f32> = self.red[iaw..=ibw].to_vec();
         base_values.sort_by(|a, b| a.total_cmp(b));
-        let iz = ib - ia + 1;
+        let iz = ibw - iaw + 1;
         let base_idx = ((0.40 * iz as f32).round() as usize).max(1) - 1;
         let base = base_values[base_idx].max(1e-8);
-        for i in ia..=ib {
+        for i in iaw..=ibw {
             self.red[i] /= base;
         }
 
@@ -495,7 +520,7 @@ fn order_candidates(mut candidate0: Vec<SyncCandidate>, config: Sync8Config) -> 
             fprev = candidate.freq;
         }
     }
-    let ncandfqso = out.len();
+    let mut ncandfqso = out.len();
     if config.lqsothread {
         out.push(SyncCandidate {
             freq: config.nfqso as f32,
@@ -504,6 +529,7 @@ fn order_candidates(mut candidate0: Vec<SyncCandidate>, config: Sync8Config) -> 
             lcq: false,
             sort_metric: 0.0,
         });
+        ncandfqso += 1;
         out.push(SyncCandidate {
             freq: config.nfqso as f32,
             dt: -5.0,
@@ -511,6 +537,7 @@ fn order_candidates(mut candidate0: Vec<SyncCandidate>, config: Sync8Config) -> 
             lcq: false,
             sort_metric: 0.0,
         });
+        ncandfqso += 1;
     }
 
     for candidate in &candidate0 {
