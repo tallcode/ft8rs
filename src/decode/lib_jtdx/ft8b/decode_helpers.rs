@@ -285,7 +285,7 @@ pub(super) fn decoded_to_result(
     let quality = 1.0 - (decoded.nharderror as f32 + decoded.dmin) / 60.0;
     let codeword = encode174_91(&decoded.message77);
     let itone = tones_from_codeword(&codeword);
-    let xsnr = estimate_snr(metrics, &itone, iaptype);
+    let xsnr = estimate_snr(metrics, &itone, iaptype, false);
     let filter_context = FilterContext {
         mycall: config.mycall.clone().unwrap_or_default(),
         hiscall: config.hiscall.clone().unwrap_or_default(),
@@ -350,7 +350,7 @@ pub(super) fn decoded_bits_to_result(
     }
     let l_free_text = i3 == 0 && n3 == 0;
     let l_special = i3 == 0 && n3 == 1;
-    let xsnr = estimate_snr(metrics, &itone, 0);
+    let xsnr = estimate_snr(metrics, &itone, 0, source != DecodeSource::Regular);
     let filter_context = FilterContext {
         mycall: config.mycall.clone().unwrap_or_default(),
         hiscall: config.hiscall.clone().unwrap_or_default(),
@@ -506,7 +506,12 @@ pub(super) fn bits_to_usize(bits: &[u8]) -> usize {
     value
 }
 
-pub(super) fn estimate_snr(metrics: &SymbolMetrics, itone: &[i32; 79], iaptype: i32) -> f32 {
+pub(super) fn estimate_snr(
+    metrics: &SymbolMetrics,
+    itone: &[i32; 79],
+    iaptype: i32,
+    lft8s_or_sd: bool,
+) -> f32 {
     let mut xsnrtmp = 0.001f32;
     for (i, &tone) in itone.iter().enumerate() {
         let tone = tone.clamp(0, 7) as usize;
@@ -549,7 +554,7 @@ pub(super) fn estimate_snr(metrics: &SymbolMetrics, itone: &[i32; 79], iaptype: 
     } else {
         xsnr.max(-24.0)
     };
-    if iaptype > 4 {
+    if lft8s_or_sd {
         if xsnr < -22.0 {
             xsnr = xsnrs - 1.0;
         }
