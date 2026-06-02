@@ -250,6 +250,9 @@ fn extract_symbol_metrics(
     let mut rr_im = [0.0f64; 32];
 
     for k in 0..79 {
+        let Some(costas_idx) = costas_index(k) else {
+            continue;
+        };
         let i1 = ibest + k as isize * 32;
         for i in 0..32 {
             let src = i1 + i as isize;
@@ -263,38 +266,27 @@ fn extract_symbol_metrics(
             }
         }
         four2a_c2c(&mut re, &mut im, -1);
+        let mut s81 = [0.0f32; 8];
         for tone in 0..8 {
-            cs_re[tone][k] = (re[tone] / 1000.0) as f32;
-            cs_im[tone][k] = (im[tone] / 1000.0) as f32;
-            s8[tone][k] = (re[tone] * re[tone] + im[tone] * im[tone]).sqrt() as f32;
+            s81[tone] = (re[tone] * re[tone] + im[tone] * im[tone]).sqrt() as f32;
         }
-
-        if (0..=6).contains(&k) || (36..=42).contains(&k) || (72..=78).contains(&k) {
-            let costas_idx = if k <= 6 {
+        let tone = ICOS7[costas_idx] as usize;
+        let synclev = s81[tone];
+        let snoiselev = (s81.iter().sum::<f32>() - synclev) / 7.0;
+        if snoiselev > 1e-16 {
+            let out_idx = if k <= 6 {
                 k
             } else if k <= 42 {
-                k - 36
+                k - 29
             } else {
-                k - 72
+                k - 58
             };
-            let tone = ICOS7[costas_idx] as usize;
-            let synclev = s8[tone][k];
-            let snoiselev = (sum_tones(&s8, k) - synclev) / 7.0;
-            if snoiselev > 1e-16 {
-                let out_idx = if k <= 6 {
-                    k
-                } else if k <= 42 {
-                    k - 29
-                } else {
-                    k - 58
-                };
-                snrsync[out_idx] = synclev / snoiselev;
-            }
+            snrsync[out_idx] = synclev / snoiselev;
         }
     }
 
     let syncav = snrsync.iter().sum::<f32>() / 21.0;
-    let _syncavemax = snrsync[0..7]
+    let syncavemax = snrsync[0..7]
         .iter()
         .sum::<f32>()
         .max(snrsync[7..14].iter().sum::<f32>())
@@ -384,8 +376,21 @@ fn extract_symbol_metrics(
         cscs_re,
         cscs_im,
         s256,
+        syncavemax,
         nsync,
         nsync2,
+    }
+}
+
+fn costas_index(k: usize) -> Option<usize> {
+    if k <= 6 {
+        Some(k)
+    } else if (36..=42).contains(&k) {
+        Some(k - 36)
+    } else if (72..=78).contains(&k) {
+        Some(k - 72)
+    } else {
+        None
     }
 }
 

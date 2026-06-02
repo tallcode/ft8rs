@@ -52,14 +52,6 @@ pub(crate) fn chkfalse8(
         return false;
     }
 
-    if i3 == 0 && (msg.starts_with("CQ_") || msg.contains('^')) {
-        return false;
-    }
-
-    if iaptype == 1 && msg.starts_with("CQ DE AA00") {
-        return false;
-    }
-
     let primary_false_check = context.quality < 0.39
         || context.xsnr < -20.5
         || context.rxdt < -0.5
@@ -67,8 +59,20 @@ pub(crate) fn chkfalse8(
         || (1..4).contains(&iaptype)
         || matches!(iaptype, 11 | 21 | 40 | 41);
 
+    if primary_false_check && i3 == 0 && (msg.starts_with("CQ_") || msg.contains('^')) {
+        return false;
+    }
+
+    if iaptype == 1 && msg.starts_with("CQ DE AA00") {
+        return false;
+    }
+
     if words[0] == "CQ" {
-        return accept_cq(msg, &words, i3, n3, iaptype);
+        return if primary_false_check {
+            accept_cq(msg, &words, i3, n3, iaptype)
+        } else {
+            accept_late_cq_grid_check(&words, i3, iaptype)
+        };
     }
 
     if iaptype == 2 {
@@ -136,18 +140,20 @@ pub(crate) fn chkfalse8(
     if iaptype != 2
         && (((i3 == 1 || i3 == 3) && !msg.contains(" R ") && !msg.contains('/'))
             || (i3 == 0 && n3 == 3))
+        && primary_false_check
         && words.len() >= 2
         && words[0] != context.mycall
-        && chkflscall(words[0], words[1])
+        && !words[0].starts_with("<.")
+        && (call_q_pair_reject(words[0], words[1]) || chkflscall(words[0], words[1]))
     {
         return false;
     }
 
-    if i3 == 0 && (3..5).contains(&n3) && !accept_arrl_field_day_shape(msg, &words) {
+    if i3 == 0 && (3..5).contains(&n3) && !accept_arrl_field_day_shape(msg, &words, context) {
         return false;
     }
 
-    if i3 == 4 && words.len() >= 2 {
+    if primary_false_check && i3 == 4 && words.len() >= 2 {
         if rejects_i3_4_hash_call_shape(msg) {
             return false;
         }
@@ -161,11 +167,11 @@ pub(crate) fn chkfalse8(
         }
     }
 
-    if i3 == 3 && msg.starts_with("TU;") && rejects_tu_message(&words) {
+    if primary_false_check && i3 == 3 && msg.starts_with("TU;") && rejects_tu_message(&words) {
         return false;
     }
 
-    if i3 == 0 && n3 == 0 {
+    if primary_false_check && i3 == 0 && n3 == 0 {
         if msg.contains("/.") || filtersfree(&msg[..msg.len().min(22)]) {
             return false;
         }
@@ -221,17 +227,30 @@ fn accept_cq(msg: &str, words: &[&str], i3: usize, n3: usize, iaptype: i32) -> b
     }
 
     if i3 == 4 {
-        let callsign = if let Some(pos) = msg.find('/') {
-            let compact = msg[3..].trim();
-            let (left, right) = compact.split_at(pos.saturating_sub(3));
-            let right = right.trim_start_matches('/');
-            if left.len() <= right.len() {
-                right.split_whitespace().next().unwrap_or("")
+        let cq_body = msg.strip_prefix("CQ ").unwrap_or("").trim();
+        let slash = msg.find('/');
+        let callsign = if let Some(pos) = slash {
+            if pos > 3 && words.get(1).is_some_and(|word| pos < 3 + word.len()) {
+                let compact = cq_body;
+                let rel_slash = pos.saturating_sub(3);
+                let (left, right) = compact.split_at(rel_slash);
+                let right = right.trim_start_matches('/');
+                if left.len() <= right.len() {
+                    right.split_whitespace().next().unwrap_or("")
+                } else {
+                    left.trim()
+                }
             } else {
-                left.trim()
+                ""
             }
         } else {
-            words[1]
+            if cq_body.is_empty()
+                || cq_body.contains(' ')
+                || cq_body.as_bytes().last().is_some_and(u8::is_ascii_digit)
+            {
+                return false;
+            }
+            cq_body
         };
         if callsign.is_empty() || callsign_q_reject(callsign) {
             return false;
@@ -281,6 +300,21 @@ fn accept_cq(msg: &str, words: &[&str], i3: usize, n3: usize, iaptype: i32) -> b
         }
     }
 
+    true
+}
+
+fn accept_late_cq_grid_check(words: &[&str], i3: usize, iaptype: i32) -> bool {
+    if iaptype != 0 || i3 != 1 || words.len() < 4 {
+        return true;
+    }
+    if !(words[1].len() == 3 || words[1].len() == 4) || words[2].len() <= 3 {
+        return true;
+    }
+    let grid = words[3];
+    if is_grid4(grid) {
+        let check = chkgrid(words[2], grid);
+        return check.lgvalid && !check.lwrongcall;
+    }
     true
 }
 
@@ -337,7 +371,7 @@ fn rejects_tu_message(words: &[&str]) -> bool {
     }
     let call_a = words[1];
     let call_b = words[2];
-    (callsign_q_reject(call_a) || callsign_q_reject(call_b)) || chkflscall(call_a, call_b)
+    call_q_pair_reject(call_a, call_b) || chkflscall(call_a, call_b)
 }
 
 fn rejects_i3_4_hash_call_shape(msg: &str) -> bool {
@@ -515,7 +549,7 @@ fn accept_optional_report_grid(words: &[&str]) -> bool {
     true
 }
 
-fn accept_arrl_field_day_shape(msg: &str, words: &[&str]) -> bool {
+fn accept_arrl_field_day_shape(msg: &str, words: &[&str], context: &FilterContext) -> bool {
     if words.len() < 4 {
         return true;
     }
@@ -530,7 +564,11 @@ fn accept_arrl_field_day_shape(msg: &str, words: &[&str]) -> bool {
         return false;
     }
 
-    !chkflscall(call_a, call_b)
+    if context.xsnr < -19.0 || context.rxdt < -0.5 || context.rxdt > 1.0 {
+        return !(call_q_pair_reject(call_a, call_b) || chkflscall(call_a, call_b));
+    }
+
+    true
 }
 
 fn rejects_standard_r_portable_message(words: &[&str]) -> bool {

@@ -193,11 +193,18 @@ Initial status:
   selection for `llra` / `llrb` / `llrc` / `llrd`, including the JTDX
   non-SWL regular skip of `isubp2=4` and the regular `isubp1=1..2`
   pass-dependent `llrd` retries;
+- JTDX regular/AP subpass pruning now uses measured `syncavemax`, skips the
+  whole loop for already-decoded QSO candidates, and applies the MyCall
+  extra-subpass skip only for standard `mycall`;
+- JTDX `sync8` candidate storage now separates the CQ marker from the thinning
+  sort metric, matching the source `candidate(4)` / `candidate0(5)` split;
 - JTDX AP mask magnitude now follows `maxval(abs(llra))*1.01`, including the
   source `2.83` LLR scale factor in `llra`;
 - JTDX decoded-row SNR now follows the source `ft8b.f90` 79-symbol
   signal/noise accumulation and nonlinear correction path, with different
   regular/AP lower clamps;
+- JTDX FT8S/FT8SD-specific low-SNR post-correction is now keyed by decode
+  source instead of AP type number;
 - JTDX false-positive filter quality now carries the OSD `dmin` term and uses
   `1.0-(nharderrors+dmin)/60.0`;
 - JTDX false-positive filtering now includes additional source-shaped regular
@@ -210,6 +217,20 @@ Initial status:
 - JTDX regular false-positive filtering now includes the `call_q.f90` guard
   before `chkflscall` for `i3=1..3` messages involving ` R `, `/R `, or
   `/P `;
+- JTDX regular pair filtering and `TU;` false-positive handling now use the
+  source-shaped lightweight `call_q.f90` guard before `chkflscall`;
+- JTDX ARRL Field Day false-positive pair rejection now follows the source
+  `xsnr` / `rxdt` gate instead of running unconditionally;
+- JTDX `CQ` `i3=4` nonstandard-call filtering now rejects full-suffix embedded
+  spaces and trailing digits, matching the source branch;
+- JTDX `chkfalse8.f90`-local filters are now gated by the primary false-check
+  condition, keeping high-quality rows closer to the source control flow;
+- JTDX AP hound gates now split the `31` / `36` / `111` `lapcqonly` checks and
+  wide-search frequency restrictions according to the source, and the
+  both-nonstandard-call DX-call search branch no longer carries the unrelated
+  standard-call wideband limit;
+- JTDX `CQ` filtering is split between primary `chkfalse8.f90` checks and the
+  later `ft8b.f90` directed-CQ/grid check;
 - JTDX `lcall1hash && i3=1` false-check filtering now validates
   second-callsign/grid pairs through `callsign_q` and `chkgrid`;
 - JTDX `i3=4` hash/nonstandard-call false-positive checks now cover the

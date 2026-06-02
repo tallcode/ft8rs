@@ -29,12 +29,13 @@ pub struct SyncCandidate {
     pub freq: f32,
     pub dt: f32,
     pub sync: f32,
-    pub candidate_metric: f32,
+    pub lcq: bool,
+    pub sort_metric: f32,
 }
 
 impl SyncCandidate {
     pub fn lcq(self) -> bool {
-        self.candidate_metric > 1.0
+        self.lcq
     }
 }
 
@@ -443,13 +444,11 @@ impl Sync8Workspace {
                 freq,
                 dt: (jpeak - 1) as f32 * 0.04,
                 sync: red,
-                candidate_metric: 0.0,
+                lcq: self.redcq[n],
+                sort_metric: 0.0,
             };
-            if self.redcq[n] {
-                candidate.candidate_metric = 2.0;
-            }
             if config.rcandthin() < 0.99 {
-                candidate.candidate_metric = candidate_sort_metric(&candidate, config);
+                candidate.sort_metric = candidate_sort_metric(&candidate, config);
             }
             candidate0.push(candidate);
         }
@@ -482,7 +481,7 @@ fn order_candidates(mut candidate0: Vec<SyncCandidate>, config: Sync8Config) -> 
     if config.rcandthin() > 0.99 {
         candidate0.sort_by(|a, b| b.sync.total_cmp(&a.sync));
     } else {
-        candidate0.sort_by(|a, b| b.candidate_metric.total_cmp(&a.candidate_metric));
+        candidate0.sort_by(|a, b| b.sort_metric.total_cmp(&a.sort_metric));
     }
 
     let mut out = Vec::new();
@@ -502,13 +501,15 @@ fn order_candidates(mut candidate0: Vec<SyncCandidate>, config: Sync8Config) -> 
             freq: config.nfqso as f32,
             dt: 5.0,
             sync: 0.0,
-            candidate_metric: 0.0,
+            lcq: false,
+            sort_metric: 0.0,
         });
         out.push(SyncCandidate {
             freq: config.nfqso as f32,
             dt: -5.0,
             sync: 0.0,
-            candidate_metric: 0.0,
+            lcq: false,
+            sort_metric: 0.0,
         });
     }
 

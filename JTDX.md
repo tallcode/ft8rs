@@ -213,6 +213,24 @@ Implemented or scaffolded:
   same pass-dependent rules as `ft8b.f90`, SWL can use the regular `isubp2=4`
   `llrd` path, and AP subpasses select `llra` / `llrb` / `llrc` according to
   the explicit JTDX table rather than a simple modulo cycle;
+- regular/AP subpass gating now uses the measured `syncavemax` from the
+  Costas-symbol pre-scan instead of a constant placeholder, and the pre-scan is
+  source-shaped as a Costas-only pass rather than mutating the later symbol
+  metric matrices;
+- `sync8` candidates now keep the source `candidate(4)` CQ marker separate
+  from the `candidate0(5)` thinning sort metric, preventing candidate thinning
+  or filtering from corrupting the CQ-only/AP path marker;
+- QSO-candidate and MyCall-signal subpass pruning now follows the source
+  control flow more closely: decoded QSO candidates skip the whole subpass
+  loop, and the MyCall extra-subpass skip is only applied when `mycall` is a
+  standard callsign;
+- JTDX AP subpass gates now keep the hound `31` / `36` / `111` `lapcqonly`
+  checks split the same way as the source, and the hound `31` / `36` Fox
+  frequency limit is only applied when wide DX search is disabled;
+- JTDX AP subpass gates for the both-nonstandard-call DX-call search branch no
+  longer apply the standard-call wideband `loutapwid` restriction, matching the
+  source branch where wideband search is used by default for that monitoring
+  path;
 - AP mask magnitude follows `ft8b.f90`: `apmag` is derived from
   `maxval(abs(llra))*1.01`, where `llra` already includes the source `2.83`
   LLR scale factor;
@@ -220,8 +238,9 @@ Implemented or scaffolded:
   accepted `itone` sequence to accumulate signal/noise ratios over all 79
   symbols, applies the high-SNR and low-SNR nonlinear corrections, then clamps
   regular decodes at `-23 dB` and AP/deep decodes at `-24 dB`;
-- AP/deep SNR estimation also keeps the source `iaptype>4` post-correction:
-  very weak AP/deep rows fall back to `xsnrs-1.0` and clamp at `-26 dB`;
+- FT8S/FT8SD SNR estimation keeps the source post-correction: very weak
+  FT8S/FT8SD rows fall back to `xsnrs-1.0` and clamp at `-26 dB`; this is not
+  applied to AP/deep rows because the source condition is `lft8s .or. lft8sd`;
 - false-positive filter quality now keeps the OSD `dmin` contribution and uses
   the source expression `qual=1.0-(nharderrors+dmin)/60.0`;
 - `--hound` selects the JTDX `nhaptypes` AP table; hound AP types `21`, `22`,
@@ -699,6 +718,12 @@ Current false-positive boundary:
   the JTDX `call_q.f90` first-character/two-digit guard before the
   `chkflscall` database-backed pair check, with the same `mycall` /
   `hiscall` exemptions used by the source branch;
+- regular non-`R` `i3=1/3` and Field Day-style pair filtering now also runs
+  the source `call_q.f90` guard before `chkflscall`, while skipping first-call
+  hash messages the same way as the Fortran `go to 2` branch;
+- ARRL Field Day false-positive filtering now matches the JTDX SNR/DT gate:
+  geographic section validation always runs, but the `call_q`/`chkflscall`
+  pair rejection only runs for `xsnr < -19` or `rxdt` outside `[-0.5, 1.0]`;
 - the `lcall1hash && i3=1` branch from `chkfalse8.f90` is now represented for
   primary false-check cases: if the second callsign is not the configured
   `hiscall` and is followed by a syntactically valid grid, the JTDX
@@ -707,6 +732,20 @@ Current false-positive boundary:
   source checks for `<...>` placement: hash-adjacent callsigns with embedded
   spaces, no-slash trailing digits, trailing slash, bad single-slash
   eleven-character shapes, `callsign_q`, or `chklong8` are rejected;
+- `TU;` RTTY-shaped messages stay FT8 false-positive filters only, but their
+  callsign precheck now uses the same lightweight `call_q.f90` rules as JTDX
+  instead of the stricter `callsign_q` rules;
+- `CQ` `i3=4` nonstandard-call filtering now uses the full `CQ ` suffix for
+  no-slash messages, rejecting embedded spaces and trailing digits like the
+  JTDX source instead of checking only the second whitespace token;
+- `chkfalse8.f90`-local filters for ordinary pair checks, `i3=4`
+  hash/nonstandard calls, `TU;`, free text, and `CQ_` / `^` now run only under
+  the JTDX primary false-check condition (`qual`, `xsnr`, `rxdt`, or AP type),
+  reducing cases where ft8rs was stricter than the source on high-quality rows;
+- `CQ` filtering is now split by source control flow: the full
+  `chkfalse8.f90` CQ branch runs only under the primary false-check condition,
+  while high-quality rows keep only the later directed-CQ/grid validation from
+  `ft8b.f90`;
 - AP/deep-specific rejection coverage has started with the JTDX `iaptype=35/36`
   DXCall-search weak/out-of-window first-callsign gate; remaining AP/deep
   rejection rules still need source audit.

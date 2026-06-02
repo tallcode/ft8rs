@@ -38,14 +38,19 @@ pub(super) fn regular_decode(
     let csold = select_csold(signal_memory, classifier, context, refined_freq, refined_dt);
     let nsubpasses = nsubpasses_with_csold(classifier, csold.is_some());
     let primary_metrics = build_bit_metrics(metrics, MetricSource::Cs);
-    let syncavemax = 3.0f32;
+    let syncavemax = metrics.syncavemax;
+    let lmycallstd = normalized_config_call(config.mycall.as_deref())
+        .is_some_and(|call| !is_nonstandard_call(&call));
 
     let apmask = [0i8; N];
     for isubp1 in 1..=nsubpasses {
+        if classifier.lqsocandave && context.lqsomsgdcd {
+            continue;
+        }
         if classifier.nweak == 1 && isubp1 == 2 {
             continue;
         }
-        if isubp1 > 2 && isubp1 < 6 && classifier.lmycsignal {
+        if isubp1 > 2 && isubp1 < 6 && classifier.lmycsignal && lmycallstd {
             continue;
         }
         let bit_metrics = if isubp1 == 1 {
@@ -490,10 +495,17 @@ fn jtdx_ap_subpass_allowed(
         if config.nQSOProgress > 0 && iaptype < 31 && (fdelta > 245.0 || fdeltam > 3.0) {
             return false;
         }
-        if matches!(iaptype, 31 | 36) && (fdelta > 245.0 || fdeltam > 3.0) {
+        if matches!(iaptype, 31 | 36) && !config.lwidedxcsearch && (fdelta > 245.0 || fdeltam > 3.0)
+        {
             return false;
         }
-        if lapcqonly && matches!(iaptype, 31 | 36 | 111) {
+        if iaptype == 31 && !lhiscallstd && lapcqonly {
+            return false;
+        }
+        if iaptype == 36 && config.lwidedxcsearch && lapcqonly {
+            return false;
+        }
+        if iaptype == 111 && lapcqonly {
             return false;
         }
         return true;
@@ -610,9 +622,6 @@ fn jtdx_ap_subpass_allowed(
             return false;
         }
         if iaptype > 34 && !classifier.ldxcsig {
-            return false;
-        }
-        if iaptype > 30 && iaptype < 40 && !config.lwidedxcsearch && loutapwid {
             return false;
         }
         return true;
