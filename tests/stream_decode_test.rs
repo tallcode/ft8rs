@@ -1,8 +1,7 @@
 use ft8rs::fft_engine_name;
 use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
 use ft8rs::stream::{SlotTimestamp, StreamDecodeConfig, StreamDecodeSession};
-use std::collections::HashSet;
-
+const SHORT_TARGET_ACCEPTED_FLOOR: usize = 19;
 const LONG_TARGET_ACCEPTED_FLOOR: usize = 425;
 
 #[derive(Clone, Debug)]
@@ -107,10 +106,10 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 fn segment_from_timestamp(ts: &str) -> usize {
     if ts.len() >= 13 {
         let t = &ts[ts.len() - 6..];
-        let h: usize = t[0..2].parse().unwrap_or(0);
-        let m: usize = t[2..4].parse().unwrap_or(0);
-        let s: usize = t[4..6].parse().unwrap_or(0);
-        (h * 3600 + m * 60 + s - (14 * 3600 + 3 * 60)) / 15
+        let h: i64 = t[0..2].parse().unwrap_or(0);
+        let m: i64 = t[2..4].parse().unwrap_or(0);
+        let s: i64 = t[4..6].parse().unwrap_or(0);
+        ((h * 3600 + m * 60 + s - (14 * 3600 + 3 * 60)) / 15).max(0) as usize
     } else {
         0
     }
@@ -230,29 +229,46 @@ fn test_stream_decode_short_audio() {
         elapsed.as_secs_f64()
     );
 
-    let mut seen = HashSet::new();
-    let mut unique_msgs: Vec<String> = Vec::new();
-    for r in &results {
-        let n = norm(&r.msg);
-        if !seen.contains(&n) {
-            seen.insert(n);
-            unique_msgs.push(r.msg.clone());
+    let baseline = parse_baseline("tests/ft8/210703_133430.csv");
+    let target: Vec<_> = baseline.iter().filter(|row| !row.ignored).collect();
+    let mut used_results = vec![false; results.len()];
+    let mut matched = 0;
+    let mut misses = Vec::new();
+    for row in &target {
+        if let Some((idx, _)) = results
+            .iter()
+            .enumerate()
+            .find(|(idx, d)| !used_results[*idx] && norm(&d.msg) == row.norm_msg)
+        {
+            used_results[idx] = true;
+            matched += 1;
+        } else {
+            misses.push(row.msg.clone());
         }
     }
+    let plus_count = used_results.iter().filter(|used| !**used).count();
 
     println!(
-        "\n[ENGINE={}] [STREAM SHORT DECODE] {} unique messages in {:.1}s",
+        "\n[ENGINE={}] [STREAM SHORT DECODE] decoded {} | matched {}/{} | plus {} | {:.1}s",
         fft_engine_name(),
-        unique_msgs.len(),
+        results.len(),
+        matched,
+        target.len(),
+        plus_count,
         elapsed.as_secs_f64()
     );
-    for m in &unique_msgs {
-        println!("  {}", m);
+    if !misses.is_empty() {
+        println!("  Misses:");
+        for msg in &misses {
+            println!("    {}", msg);
+        }
     }
     assert!(
-        unique_msgs.len() >= 19,
-        "STREAM SHORT: {} < 19",
-        unique_msgs.len()
+        matched >= SHORT_TARGET_ACCEPTED_FLOOR,
+        "STREAM SHORT: matched {}/{} < {}",
+        matched,
+        target.len(),
+        SHORT_TARGET_ACCEPTED_FLOOR
     );
 }
 
