@@ -174,21 +174,30 @@ Testing rules remain:
 Current observed checkpoint:
 
 ```text
-short fixture: 210703_133430.wav -> 20/21
-long fixture:  230208_140300.wav -> last known checkpoint 428/437
+short fixture: 210703_133430.wav -> 20/20
+long fixture:  230208_140300.wav -> 428/432
 ```
 
-The remaining short-fixture miss is:
+Current marker counts:
 
 ```text
-CQ DX DL8YHR JO41
+210703_133430.csv: blank 20, W 1
+230208_140300.csv: blank 412, J 20, W 13, E 13
 ```
 
-It reaches `ft8b` and passes hard sync. Earlier diagnostics showed this is not
-a simple candidate-search or CQ-DX AP shortcut issue. This row is no longer a
-milestone blocker: JTDX itself may not recover it under the selected native
-profile settings, so the next milestone should focus on long-fixture structure
-and broad source-alignment gaps instead of this single short-fixture row.
+The short fixture contains one `W` row, `CQ DX DL8YHR JO41`, which is excluded
+from the JTDX target. Earlier diagnostics showed this row is not a simple
+candidate-search or CQ-DX AP shortcut issue. It is no longer a milestone
+blocker for `profile=jtdx`.
+
+Current long-fixture misses are:
+
+```text
+230208_140545,-14,2,1496,IU2QDB RA3ABG 73,
+230208_140700,-16,0.6,1620,4S6NCH KK1F FN31,
+230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,J
+230208_140715,-23,0.5,1502,OH5NBJ SV1MRW KM17,
+```
 
 ## Known Gaps
 

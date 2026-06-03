@@ -255,8 +255,13 @@ cargo test --release --features fftw test_stream_decode_long_audio -- --nocaptur
 
 Current expected release summaries:
 
-- short fixture: `21` unique messages;
-- long fixture: `425/425` WSJT-X target rows, every slot under `15s`.
+- short fixture, default `wsjtx` profile: `21/21` target rows;
+- long fixture, default `wsjtx` profile: `425/425` target rows, every slot
+  under `15s`.
+
+The fixture CSV files include an `Extra` marker column. For the default WSJT-X
+profile, rows with an empty marker or `W` are target rows; `J` and `E` rows are
+ignored by the WSJT-X acceptance test.
 
 To write a long-test diff CSV for investigation:
 
