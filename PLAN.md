@@ -120,6 +120,13 @@ Profile target rows:
 - `jtdx`: empty or `J`
 - `hybrid`: empty, `W`, or `J`
 
+Current measured profile targets after the CSV marker refresh:
+
+- short `wsjtx`: `21/21`;
+- short `jtdx`: `20/20`;
+- long `wsjtx`: `425/425`;
+- long `jtdx`: `428/432`.
+
 The existing WSJT-X baseline remains a hard gate. JTDX and hybrid are
 informational until their implementations are complete enough to establish
 stable baselines.

@@ -261,11 +261,25 @@ pub struct StreamDecodedMessage {
 
 pub struct StreamSlotDecodeState {
     dd0: Vec<f64>,
+    dd0_samples_ptr: usize,
+    dd0_sample_len: usize,
     seen: HashSet<String>,
     merged: Vec<StreamDecodedMessage>,
     early_results: Vec<DecodedMessage>,
     dd1: Vec<f64>,
+    work: Vec<f64>,
     early_subtracted: Vec<bool>,
+}
+
+impl StreamSlotDecodeState {
+    fn reset_for_slot(&mut self) {
+        self.dd0_samples_ptr = 0;
+        self.dd0_sample_len = usize::MAX;
+        self.seen.clear();
+        self.merged.clear();
+        self.early_results.clear();
+        self.early_subtracted.clear();
+    }
 }
 
 pub struct StreamDecodeSession {
@@ -276,6 +290,7 @@ pub struct StreamDecodeSession {
     a7: [[Vec<A7SaveEntry>; 2]; 2],
     /// Current sequence parity: 0=even, 1=odd.
     jseq: usize,
+    slot_state: Option<StreamSlotDecodeState>,
 }
 
 impl StreamDecodeSession {
@@ -285,6 +300,7 @@ impl StreamDecodeSession {
             book: HashCallBook::new(),
             a7: [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]],
             jseq: 0,
+            slot_state: None,
         }
     }
 
@@ -334,10 +350,13 @@ impl StreamDecodeSession {
     pub fn start_slot_decode(&self) -> StreamSlotDecodeState {
         StreamSlotDecodeState {
             dd0: vec![0.0; NMAX],
+            dd0_samples_ptr: 0,
+            dd0_sample_len: usize::MAX,
             seen: HashSet::new(),
             merged: Vec::new(),
             early_results: Vec::new(),
             dd1: vec![0.0; NMAX],
+            work: vec![0.0; NMAX],
             early_subtracted: Vec::new(),
         }
     }
@@ -366,12 +385,12 @@ impl StreamDecodeSession {
     {
         self.ft8_a7_new_slot(timestamp);
 
-        state.dd0 = dd0_from_samples(samples);
-        let early_dd = dd0_partial_nzhsym(&state.dd0, 41);
+        fill_dd0_from_samples_if_needed(state, samples);
+        dd0_partial_nzhsym_into(&state.dd0, 41, &mut state.work);
         let (early_results, _) = if self.params.ndepth == 1 {
             (Vec::new(), Vec::new())
         } else {
-            decode_f64_with_sbase(&early_dd, self.ft8_decode_options(41))
+            decode_f64_with_sbase(&state.work, self.ft8_decode_options(41))
         };
         state.early_results = early_results;
         for d in &state.early_results {
@@ -387,9 +406,12 @@ impl StreamDecodeSession {
     }
 
     pub fn subtract_slot_nzhsym47(&self, state: &mut StreamSlotDecodeState, samples: &[f32]) {
-        state.dd0 = dd0_from_samples(samples);
-        state.dd1 = dd0_partial_nzhsym(&state.dd0, 47);
-        state.early_subtracted = vec![false; state.early_results.len()];
+        fill_dd0_from_samples_if_needed(state, samples);
+        dd0_partial_nzhsym_into(&state.dd0, 47, &mut state.dd1);
+        state.early_subtracted.clear();
+        state
+            .early_subtracted
+            .resize(state.early_results.len(), false);
         let lrefinedt = self.params.ndepth > 2;
         for (idx, d) in state.early_results.iter().enumerate() {
             if d.dt < 0.396 {
@@ -405,22 +427,33 @@ impl StreamDecodeSession {
         &mut self,
         mut state: StreamSlotDecodeState,
         samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
+    }
+
+    fn decode_slot_nzhsym50_and_finish_state<F>(
+        &mut self,
+        state: &mut StreamSlotDecodeState,
+        samples: &[f32],
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        state.dd0 = dd0_from_samples(samples);
-        let mut full_dd = state.dd0.clone();
-        full_dd[50 * NZHSYM_STRIDE..].fill(0.0);
+        fill_dd0_from_samples_if_needed(state, samples);
+        dd0_partial_nzhsym_into(&state.dd0, 50, &mut state.work);
         if !self.params.nagain {
             let clean_prefix = (47 * NZHSYM_STRIDE).min(NMAX);
-            full_dd[..clean_prefix].copy_from_slice(&state.dd1[..clean_prefix]);
+            state.work[..clean_prefix].copy_from_slice(&state.dd1[..clean_prefix]);
             for (idx, d) in state.early_results.iter().enumerate() {
                 if !state.early_subtracted.get(idx).copied().unwrap_or(false) {
                     let mut itone = [0i32; 79];
                     itone.copy_from_slice(&d.itone[..79]);
-                    subtract_ft8_refined(&mut full_dd, &itone, d.freq, d.dt + 0.5, true);
+                    subtract_ft8_refined(&mut state.work, &itone, d.freq, d.dt + 0.5, true);
                 }
             }
         }
@@ -428,7 +461,7 @@ impl StreamDecodeSession {
         let mut full_options = self.ft8_decode_options(50);
         full_options.initial_messages = state.early_results.iter().map(|d| d.msg.clone()).collect();
         let (full_results, sbase, full_residual) =
-            decode_f64_with_sbase_and_residual(&full_dd, full_options);
+            decode_f64_with_sbase_and_residual(&state.work, full_options);
 
         // Build current a7 table entries before AP. Current entries suppress
         // previous entries already accounted for by a regular decode in this
@@ -503,7 +536,7 @@ impl StreamDecodeSession {
         self.a7[self.jseq][1] = entries_to_save;
         self.jseq = 1 - self.jseq;
 
-        Ok(state.merged)
+        Ok(std::mem::take(&mut state.merged))
     }
 
     fn ft8_a7_new_slot(&mut self, timestamp: Option<&SlotTimestamp>) {
@@ -539,10 +572,18 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        let mut state = self.start_slot_decode();
-        self.decode_slot_nzhsym41_at(timestamp, &mut state, samples, &mut on_decode)?;
-        self.subtract_slot_nzhsym47(&mut state, samples);
-        self.decode_slot_nzhsym50_and_finish(state, samples, on_decode)
+        let mut state = self
+            .slot_state
+            .take()
+            .unwrap_or_else(|| self.start_slot_decode());
+        state.reset_for_slot();
+        let result = (|| {
+            self.decode_slot_nzhsym41_at(timestamp, &mut state, samples, &mut on_decode)?;
+            self.subtract_slot_nzhsym47(&mut state, samples);
+            self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
+        })();
+        self.slot_state = Some(state);
+        result
     }
 
     fn ft8_decode_options(&self, nzhsym: usize) -> DecodeOptions {
@@ -600,20 +641,29 @@ fn decode_a7_from_saved_entry_with_adapter_retries(
     None
 }
 
-fn dd0_from_samples(samples: &[f32]) -> Vec<f64> {
-    let mut out = vec![0.0; NMAX];
+fn fill_dd0_from_samples_if_needed(state: &mut StreamSlotDecodeState, samples: &[f32]) {
+    let ptr = samples.as_ptr() as usize;
+    let len = samples.len().min(NMAX);
+    if state.dd0_samples_ptr == ptr && state.dd0_sample_len == len {
+        return;
+    }
+    fill_dd0_from_samples(samples, &mut state.dd0);
+    state.dd0_samples_ptr = ptr;
+    state.dd0_sample_len = len;
+}
+
+fn fill_dd0_from_samples(samples: &[f32], out: &mut [f64]) {
+    out.fill(0.0);
     let len = samples.len().min(NMAX);
     for i in 0..len {
         out[i] = samples[i] as f64;
     }
-    out
 }
 
-fn dd0_partial_nzhsym(samples: &[f64], nzhsym: usize) -> Vec<f64> {
-    let mut out = vec![0.0; NMAX];
+fn dd0_partial_nzhsym_into(samples: &[f64], nzhsym: usize, out: &mut [f64]) {
     let n = (nzhsym * NZHSYM_STRIDE).min(NMAX).min(samples.len());
     out[..n].copy_from_slice(&samples[..n]);
-    out
+    out[n..].fill(0.0);
 }
 
 fn ft8_a7_save_entry(d: &DecodedMessage) -> Option<A7SaveEntry> {

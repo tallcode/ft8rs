@@ -41,15 +41,21 @@ Release tests protect the active alignment baseline.
 
 | Fixture | Active target |
 |---|---:|
-| `tests/ft8/210703_133430.wav` | `21` unique messages, minimum accepted `19/20` |
+| `tests/ft8/210703_133430.wav` | `21/21` WSJT-X target rows, minimum accepted `19` |
 | `tests/ft8/230208_140300.wav` | `425/425` WSJT-X target rows |
 
-Long-test CSV semantics:
+CSV `Extra` semantics:
 
 - blank `Extra`: verified target row;
 - `W`: WSJT-X extra row, included in the WSJT-X target;
 - `J`: JTDX extra row, ignored for WSJT-X miss/diff;
 - `E`: other/problem row, ignored for WSJT-X miss/diff.
+
+The short fixture now uses the same `Extra` column as the long fixture. Current
+marker counts are:
+
+- `210703_133430.csv`: blank `20`, `W` `1`;
+- `230208_140300.csv`: blank `412`, `W` `13`, `J` `20`, `E` `13`.
 
 The active long WAV is normalized to `12 kHz / mono / 16-bit`, and sample 0 is
 aligned with the filename timestamp. Older offset-related diagnostics are kept

@@ -209,12 +209,20 @@ fn assert_release_mode() {
     );
 }
 
+fn samples_12k_from_wav(path: &str) -> Vec<f32> {
+    let audio = read_wav_mono_f32(path).unwrap();
+    if audio.sample_rate == 12000 {
+        audio.samples
+    } else {
+        resample_linear(&audio.samples, audio.sample_rate, 12000)
+    }
+}
+
 #[test]
 fn test_stream_decode_short_audio() {
     assert_release_mode();
     let t0 = std::time::Instant::now();
-    let audio = read_wav_mono_f32("tests/ft8/210703_133430.wav").unwrap();
-    let samples = resample_linear(&audio.samples, audio.sample_rate, 12000);
+    let samples = samples_12k_from_wav("tests/ft8/210703_133430.wav");
 
     let mut decoder = StreamDecodeSession::new(StreamDecodeConfig {
         nfa: 100.0,
@@ -275,8 +283,7 @@ fn test_stream_decode_short_audio() {
 #[test]
 fn test_stream_decode_long_audio() {
     assert_release_mode();
-    let audio = read_wav_mono_f32("tests/ft8/230208_140300.wav").unwrap();
-    let s12k = resample_linear(&audio.samples, audio.sample_rate, 12000);
+    let s12k = samples_12k_from_wav("tests/ft8/230208_140300.wav");
     let sps = 15 * 12000;
     let dur_12k = s12k.len() as f64 / 12000.0;
     let nseg = (dur_12k / 15.0).ceil() as usize;

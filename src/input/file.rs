@@ -73,6 +73,9 @@ pub fn infer_start_time_from_path(path: impl AsRef<Path>) -> Option<SlotTimestam
 
 fn read_wav_12k(path: impl AsRef<Path>) -> Result<Vec<f32>, String> {
     let audio = read_wav_mono_f32(path)?;
+    if audio.sample_rate == SAMPLE_RATE {
+        return Ok(audio.samples);
+    }
     Ok(resample_linear(
         &audio.samples,
         audio.sample_rate,
