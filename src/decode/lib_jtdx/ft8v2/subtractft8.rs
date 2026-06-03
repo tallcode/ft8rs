@@ -81,7 +81,8 @@ fn build_lpf_data(nfilt: usize) -> LpfData {
     let mut window = vec![0.0f64; nfilt + 1];
     for (j, value) in window.iter_mut().enumerate() {
         let j_signed = j as isize - half_filt as isize;
-        *value = (PI * j_signed as f64 / nfilt as f64).cos().powi(2);
+        let cosv = (PI * j_signed as f64 / nfilt as f64).cos();
+        *value = if nfilt == NFILT2 { cosv } else { cosv * cosv };
         sumw += *value;
     }
 

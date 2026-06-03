@@ -11,6 +11,7 @@ pub mod chkflscall;
 pub mod chkgrid;
 pub mod chklong8;
 pub mod chkspecial8;
+pub mod delbraces;
 pub mod filtersfree;
 pub mod four2a;
 pub mod ft8_decode;
@@ -143,8 +144,10 @@ impl JtdxStreamDecodeSession {
                     stophint: self._config.stophint,
                     nlasttx: self._config.nQSOProgress,
                     call_dt_xdt: call_dt_xdt(&self._state, &self._config, interval),
-                    sd_msg: sd_candidate.map(|entry| ft8b::LastRxMsgText::from_str(&entry.msg)),
-                    sd_lcq: sd_candidate.is_some_and(|entry| is_cq_like(&entry.msg)),
+                    sd_msg: sd_candidate
+                        .map(|(_, entry)| ft8b::LastRxMsgText::from_str(&entry.msg)),
+                    sd_lcq: sd_candidate.is_some_and(|(_, entry)| is_cq_like(&entry.msg)),
+                    sd_index: sd_candidate.map(|(index, _)| index),
                     last_rx_msg: self
                         ._state
                         .lastrxmsg
@@ -175,6 +178,9 @@ impl JtdxStreamDecodeSession {
                     for result in result_variants(result) {
                         if result.source == DecodeSource::Ft8s {
                             self._state.lft8sdec = true;
+                        }
+                        if result.source == DecodeSource::Ft8sd {
+                            clear_sd_candidate(&mut self._state, interval, context.sd_index);
                         }
                         if is_duplicate_decode(&self._state, &self._config, &result) {
                             continue;
@@ -500,15 +506,29 @@ fn find_sd_candidate(
     interval: IntervalKind,
     freq: f32,
     dt: f32,
-) -> Option<&ft8_mod1::OddEvenMessage> {
+) -> Option<(usize, &ft8_mod1::OddEvenMessage)> {
     let entries = match interval {
         IntervalKind::Even => &state.evencopy,
         IntervalKind::Odd => &state.oddcopy,
         IntervalKind::Other => return None,
     };
-    entries.iter().find(|entry| {
+    entries.iter().enumerate().find(|(_, entry)| {
         entry.lstate && (entry.freq - freq).abs() < 3.0 && (entry.dt - dt).abs() < 0.19
     })
+}
+
+fn clear_sd_candidate(state: &mut ft8_mod1::Ft8Mod1, interval: IntervalKind, index: Option<usize>) {
+    let Some(index) = index else {
+        return;
+    };
+    let entries = match interval {
+        IntervalKind::Even => &mut state.evencopy,
+        IntervalKind::Odd => &mut state.oddcopy,
+        IntervalKind::Other => return,
+    };
+    if let Some(entry) = entries.get_mut(index) {
+        entry.lstate = false;
+    }
 }
 
 fn is_cq_like(msg: &str) -> bool {
@@ -699,12 +719,10 @@ fn update_avexdt_after_slot(
         state.nintcount -= 1;
     }
 
-    if config.lforcesync && n_ft8_decd == 0 {
-        state.avexdt = 0.0;
-        return;
-    }
-
     if n_ft8_decd == 0 {
+        if config.lforcesync {
+            state.avexdt = 0.0;
+        }
         return;
     }
 

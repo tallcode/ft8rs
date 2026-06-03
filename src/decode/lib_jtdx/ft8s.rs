@@ -179,9 +179,9 @@ pub(crate) fn ft8s(
             ref0oth,
             Some(RefPart::Other),
         );
-        let p = psum / refv.max(1.0e-6);
-        let ppaty = psumpaty / refpaty.max(1.0e-6);
-        let poth = psumoth / refoth.max(1.0e-6);
+        let p = psum / refv;
+        let ppaty = psumpaty / refpaty;
+        let poth = psumoth / refoth;
         if p > u1 {
             u2 = u1;
             u1 = p;
@@ -215,15 +215,20 @@ pub(crate) fn ft8s(
     let threshp = (qualp + 10.0) * (u1paty - 0.6);
     let thresho = (qualo + 10.0) * (u1oth - 0.6);
 
-    if thresh >= 1.5
-        && (!(lcallingrprt || nlasttx == 1) || thresho >= 3.43)
-        && thresho >= 2.63
-        && threshp >= 2.45
-        && (((nft8rxfslow == 1 && thresh > 4.0)
-            || (nft8rxfslow == 2 && thresh > 3.55)
-            || (nft8rxfslow == 3 && thresh > 3.0))
-            && qual > 2.6
-            && u1 > 0.77)
+    if thresh < 1.5 {
+        return None;
+    }
+    if (lcallingrprt || nlasttx == 1) && thresho < 3.43 {
+        return None;
+    }
+    if thresho < 2.63 || threshp < 2.45 {
+        return None;
+    }
+    if ((nft8rxfslow == 1 && thresh > 4.0)
+        || (nft8rxfslow == 2 && thresh > 3.55)
+        || (nft8rxfslow == 3 && thresh > 3.0))
+        && qual > 2.6
+        && u1 > 0.77
     {
         return validate_ft8s(s8, lcallingrprt, nlasttx, &messages[ipk]);
     }
@@ -566,12 +571,12 @@ fn validate_ft8s(
     let snrother = (snrmycall + snrpaty) / 48.0;
     let snrpaty = snrpaty / 32.0;
     if lcallingrprt || nlasttx == 1 {
-        let soratio = snrsync / snrother.max(1.0e-6);
+        let soratio = snrsync / snrother;
         if soratio > 1.29 {
             return None;
         }
     }
-    let spratio = snrsync / snrpaty.max(1.0e-6);
+    let spratio = snrsync / snrpaty;
     if !(0.6..=1.25).contains(&spratio) {
         return None;
     }

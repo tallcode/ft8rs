@@ -21,28 +21,48 @@ impl ToneHints {
     }
 }
 
-pub(super) fn remember_candidate_signal(
+pub(super) fn remember_failed_candidate_signal(
     signal_memory: &mut SignalMemory,
     metrics: &SymbolMetrics,
     classifier: SignalClassifier,
     refined_freq: f64,
     refined_dt: f64,
+    context: Ft8bCandidateContext,
+    isubp1: usize,
+    isubp2: usize,
+    iaptype: i32,
 ) {
+    if !((classifier.nweak == 1 && isubp1 == 1) || (classifier.nweak == 2 && isubp1 == 2)) {
+        return;
+    }
+
     let cs = CsMatrix {
-        re: metrics.cs_re,
-        im: metrics.cs_im,
+        re: if isubp1 == 2 {
+            metrics.csr_re
+        } else {
+            metrics.cs_re
+        },
+        im: if isubp1 == 2 {
+            metrics.csr_im
+        } else {
+            metrics.cs_im
+        },
     };
-    if classifier.lcqsignal
+    if context.ipass == context.npass.saturating_sub(1)
+        && classifier.lcqsignal
+        && isubp2 == 22
         && !signal_memory.has_decoded_tmp(SignalKind::Cq, refined_freq, refined_dt)
     {
         signal_memory.remember_tmp(SignalKind::Cq, refined_freq, refined_dt, cs.clone());
     }
-    if classifier.lmycsignal
+    if context.ipass == context.npass.saturating_sub(1)
+        && classifier.lmycsignal
+        && isubp2 == 19
         && !signal_memory.has_decoded_tmp(SignalKind::MyCall, refined_freq, refined_dt)
     {
         signal_memory.remember_tmp(SignalKind::MyCall, refined_freq, refined_dt, cs.clone());
     }
-    if classifier.lqsocandave {
+    if context.ipass == context.npass && classifier.lqsocandave && matches!(iaptype, 3 | 6) {
         signal_memory.remember_tmp(SignalKind::Qso, refined_freq, refined_dt, cs);
     }
 }

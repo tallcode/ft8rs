@@ -10,7 +10,7 @@ use super::super::ft8v2::osd174_91::osd174_91;
 use super::super::ft8v2::packjt77::HashCallBook;
 use super::super::sync8::SyncCandidate;
 use super::super::tone8::Tone8Tables;
-use super::classify::{classify_signal, remember_candidate_signal, select_csold};
+use super::classify::{classify_signal, remember_failed_candidate_signal, select_csold};
 use super::decode_helpers::*;
 use super::state::{
     DecodeSource, Ft8bCandidateContext, Ft8bDecodeResult, LastRxMsgText, MetricSource,
@@ -34,13 +34,9 @@ pub(super) fn regular_decode(
 ) -> Option<Ft8bDecodeResult> {
     let tone_hints = ToneHints::from_tables(tone8_tables);
     let classifier = classify_signal(metrics, config, refined_freq, context, &tone_hints);
-    remember_candidate_signal(signal_memory, metrics, classifier, refined_freq, refined_dt);
     let csold = select_csold(signal_memory, classifier, context, refined_freq, refined_dt);
     let nsubpasses = nsubpasses_with_csold(classifier, csold.is_some());
-    let syncavemax = 3.0f32;
-    let lmycallstd = normalized_config_call(config.mycall.as_deref())
-        .is_some_and(|call| !is_nonstandard_call(&call));
-
+    let syncavemax = metrics.syncavemax;
     let apmask = [0i8; N];
     for isubp1 in 1..=nsubpasses {
         if classifier.lqsocandave && context.lqsomsgdcd {
@@ -49,7 +45,7 @@ pub(super) fn regular_decode(
         if classifier.nweak == 1 && isubp1 == 2 {
             continue;
         }
-        if isubp1 > 2 && isubp1 < 6 && classifier.lmycsignal && lmycallstd {
+        if isubp1 > 2 && isubp1 < 6 && classifier.lmycsignal {
             continue;
         }
         let bit_metrics = if isubp1 == 1 {
@@ -93,9 +89,16 @@ pub(super) fn regular_decode(
             if let Some(decoded) =
                 bpdecode174_91(&llrz, &apmask, 30).or_else(|| osd174_91(&llrz, &apmask, 3))
             {
-                if let Some(result) =
-                    decoded_to_result(metrics, refined_freq, refined_dt, decoded, config, book, 0)
-                {
+                if let Some(result) = decoded_to_result(
+                    metrics,
+                    refined_freq,
+                    refined_dt,
+                    decoded,
+                    config,
+                    book,
+                    0,
+                    isubp2,
+                ) {
                     return Some(result);
                 }
             }
@@ -126,6 +129,7 @@ pub(super) fn regular_decode(
                 };
                 let llr_source = ap_llr_source(
                     isubp2,
+                    iaptype,
                     &bit_metrics.bmeta,
                     &bit_metrics.bmetb,
                     &bit_metrics.bmetc,
@@ -136,29 +140,57 @@ pub(super) fn regular_decode(
                 }
                 for i in 0..77 {
                     if ap.apmask[i] == 1 {
-                        llrz[i] = apmag * if ap.message77[i] == 1 { 1.0 } else { -1.0 };
+                        llrz[i] = apmag * ap.apsym[i] as f32;
                     }
                 }
-                if let Some(result) = bpdecode174_91(&llrz, &ap.apmask, 30)
-                    .or_else(|| {
-                        osd174_91(
-                            &llrz,
-                            &ap.apmask,
-                            ap_ndeep(config, context, classifier, refined_freq, iaptype),
-                        )
-                    })
-                    .and_then(|decoded| {
-                        decoded_to_result(
-                            metrics,
-                            refined_freq,
-                            refined_dt,
-                            decoded,
-                            config,
-                            book,
-                            iaptype,
-                        )
-                    })
-                {
+                let decoded = bpdecode174_91(&llrz, &ap.apmask, 30).or_else(|| {
+                    osd174_91(
+                        &llrz,
+                        &ap.apmask,
+                        ap_ndeep(config, context, classifier, refined_freq, iaptype),
+                    )
+                });
+                let Some(decoded) = decoded else {
+                    remember_failed_candidate_signal(
+                        signal_memory,
+                        metrics,
+                        classifier,
+                        refined_freq,
+                        refined_dt,
+                        context,
+                        isubp1,
+                        isubp2,
+                        iaptype,
+                    );
+                    continue;
+                };
+                if decoded_all_zero(&decoded) {
+                    continue;
+                }
+                if decoded_quality_rejected(&decoded, isubp2) {
+                    remember_failed_candidate_signal(
+                        signal_memory,
+                        metrics,
+                        classifier,
+                        refined_freq,
+                        refined_dt,
+                        context,
+                        isubp1,
+                        isubp2,
+                        iaptype,
+                    );
+                    continue;
+                }
+                if let Some(result) = decoded_to_result(
+                    metrics,
+                    refined_freq,
+                    refined_dt,
+                    decoded,
+                    config,
+                    book,
+                    iaptype,
+                    isubp2,
+                ) {
                     return Some(result);
                 }
             }
@@ -389,7 +421,7 @@ fn nsubpasses_with_csold(classifier: SignalClassifier, has_csold: bool) -> usize
     }
     if classifier.lqsocandave {
         11
-    } else if classifier.lmycsignal {
+    } else if classifier.lmycsignal && classifier.nsubpasses >= 6 {
         8
     } else if classifier.lcqsignal {
         5

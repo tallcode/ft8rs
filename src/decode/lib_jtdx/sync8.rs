@@ -66,16 +66,11 @@ impl Sync8Config {
         syncmin: f32,
         avexdt: f32,
     ) -> Self {
+        let avexdt_bins = (avexdt * 25.0) as i32;
         let (jzb, jzt) = if config.swl {
-            (
-                -86 + (avexdt * 25.0).round() as i32,
-                86 + (avexdt * 25.0).round() as i32,
-            )
+            (-86 + avexdt_bins, 86 + avexdt_bins)
         } else {
-            (
-                -62 + (avexdt * 25.0).round() as i32,
-                62 + (avexdt * 25.0).round() as i32,
-            )
+            (-62 + avexdt_bins, 62 + avexdt_bins)
         };
 
         let (nfa, nfb) = active_decode_band(config);
@@ -331,9 +326,8 @@ impl Sync8Workspace {
                     if k > 0 && k <= NHSYM as isize {
                         let k = k as usize;
                         let ta = self.s[s_idx(i_costas, k)];
-                        let den = sum_s_stride(&self.s, i, i + nfos6, nfos, k) - ta;
-                        tall[n] = if ta > 1e-9 && den > 1e-9 {
-                            ta * 6.0 / den
+                        tall[n] = if ta > 1e-9 {
+                            ta * 6.0 / (sum_s_stride(&self.s, i, i + nfos6, nfos, k) - ta)
                         } else {
                             0.0
                         };
@@ -342,9 +336,8 @@ impl Sync8Workspace {
                     if k36 > 0 && k36 <= NHSYM as isize {
                         let k36 = k36 as usize;
                         let tb = self.s[s_idx(i_costas, k36)];
-                        let den = sum_s_stride(&self.s, i, i + nfos6, nfos, k36) - tb;
-                        tall[n + 16] = if tb > 1e-9 && den > 1e-9 {
-                            tb * 6.0 / den
+                        tall[n + 16] = if tb > 1e-9 {
+                            tb * 6.0 / (sum_s_stride(&self.s, i, i + nfos6, nfos, k36) - tb)
                         } else {
                             0.0
                         };
@@ -353,9 +346,8 @@ impl Sync8Workspace {
                     if k72 > 0 && k72 <= NHSYM as isize {
                         let k72 = k72 as usize;
                         let tc = self.s[s_idx(i_costas, k72)];
-                        let den = sum_s_stride(&self.s, i, i + nfos6, nfos, k72) - tc;
-                        tall[n + 23] = if tc > 1e-9 && den > 1e-9 {
-                            tc * 6.0 / den
+                        tall[n + 23] = if tc > 1e-9 {
+                            tc * 6.0 / (sum_s_stride(&self.s, i, i + nfos6, nfos, k72) - tc)
                         } else {
                             0.0
                         };
@@ -370,8 +362,8 @@ impl Sync8Workspace {
                             let k = k as usize;
                             let tone_i = if n < 15 { i } else { i + 2 };
                             let sig = self.s[s_idx(tone_i, k)];
-                            let den = sum_s_stride(&self.s, i, i + nfos6, nfos, k) - sig;
-                            tall[n] = if den > 1e-9 { sig * 6.0 / den } else { 0.0 };
+                            tall[n] =
+                                sig * 6.0 / (sum_s_stride(&self.s, i, i + nfos6, nfos, k) - sig);
                         }
                     }
                     let sya: f32 = tall[0..7].iter().sum();
@@ -435,7 +427,10 @@ impl Sync8Workspace {
         base_values.sort_by(|a, b| a.total_cmp(b));
         let iz = ibw - iaw + 1;
         let base_idx = ((0.40 * iz as f32).round() as usize).max(1) - 1;
-        let base = base_values[base_idx].max(1e-8);
+        let mut base = base_values[base_idx];
+        if base < 1e-8 {
+            base = 1.0;
+        }
         for i in iaw..=ibw {
             self.red[i] /= base;
         }
