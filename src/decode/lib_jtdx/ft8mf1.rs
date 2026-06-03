@@ -31,7 +31,7 @@ pub(crate) fn ft8mf1(s8: &[[f32; 79]; 8], msgd: &str) -> Option<Ft8mf1Result> {
     let mut u2 = 0.0f32;
     for (k, message) in messages.iter().enumerate() {
         let (psum, refv) = score_message(&s8d, &ranks, &message.idtone, ref0);
-        let p = psum / refv.max(1.0e-6);
+        let p = psum / refv;
         if p > u1 {
             u2 = u1;
             u1 = p;

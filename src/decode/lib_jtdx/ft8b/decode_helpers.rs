@@ -1,4 +1,5 @@
 use super::super::chkfalse8::{accept_decoded_message, FilterContext};
+use super::super::delbraces::delbraces;
 use super::super::ft8_mod1::{
     GRAYMAP, ICOS7, NAPPASSES, NAPTYPES, NDXNSAPTYPES, NHAPTYPES, NMYCNSAPTYPES,
 };
@@ -145,14 +146,17 @@ pub(super) fn regular_llr_source<'a>(
 
 pub(super) fn ap_llr_source<'a>(
     isubp2: usize,
+    iaptype: i32,
     bmeta: &'a [f32; N],
     bmetb: &'a [f32; N],
     bmetc: &'a [f32; N],
 ) -> &'a [f32; N] {
-    match isubp2 {
-        5 | 8 | 11 | 14 | 17 | 20 | 23 | 26 | 29 => bmetc,
-        6 | 9 | 10 | 12 | 13 | 15 | 16 | 18 | 21 | 24 | 27 | 30 => bmetb,
-        7 | 19 | 22 | 25 | 28 | 31 => bmeta,
+    if matches!(iaptype, 4..=6) && matches!(isubp2, 10 | 13 | 16) {
+        return bmetb;
+    }
+    match (isubp2 - 5) % 3 {
+        0 => bmetc,
+        1 => bmetb,
         _ => bmeta,
     }
 }
@@ -263,8 +267,12 @@ pub(super) fn decoded_to_result(
     config: &StreamDecodeConfig,
     book: &HashCallBook,
     iaptype: i32,
+    isubp2: usize,
 ) -> Option<Ft8bDecodeResult> {
-    if decoded.cw.iter().all(|&bit| bit == 0) {
+    if decoded_all_zero(&decoded) {
+        return None;
+    }
+    if decoded_quality_rejected(&decoded, isubp2) {
         return None;
     }
     let unpack_context = UnpackContext::with_calls(
@@ -288,8 +296,7 @@ pub(super) fn decoded_to_result(
         }
     }
     let quality = 1.0 - (decoded.nharderror as f32 + decoded.dmin) / 60.0;
-    let codeword = encode174_91(&decoded.message77);
-    let itone = tones_from_codeword(&codeword);
+    let itone = get_tones_from_77bits(&decoded.message77);
     let xsnr = estimate_snr(metrics, &itone, iaptype, false);
     let filter_context = FilterContext {
         mycall: config.mycall.clone().unwrap_or_default(),
@@ -307,6 +314,9 @@ pub(super) fn decoded_to_result(
     };
     let lcall1hash = msg.starts_with('<');
     let lcall2hash = msg.find('<').is_some_and(|idx| idx > 3);
+    if !l_free_text && !l_special && msg.contains('<') {
+        msg = delbraces(&msg);
+    }
     if !accept_decoded_message(
         &msg,
         &msg37_2,
@@ -344,11 +354,19 @@ pub(super) fn decoded_to_result(
     })
 }
 
+pub(super) fn decoded_all_zero(decoded: &BpDecodeResult) -> bool {
+    decoded.cw.iter().all(|&bit| bit == 0)
+}
+
+pub(super) fn decoded_quality_rejected(decoded: &BpDecodeResult, isubp2: usize) -> bool {
+    decoded.nharderror as f32 + decoded.dmin >= 60.0 || (isubp2 > 2 && decoded.nharderror > 39)
+}
+
 pub(super) fn decoded_bits_to_result(
     metrics: &SymbolMetrics,
     refined_freq: f64,
     refined_dt: f64,
-    msg: String,
+    mut msg: String,
     message77: [u8; 77],
     itone: [i32; 79],
     config: &StreamDecodeConfig,
@@ -361,6 +379,9 @@ pub(super) fn decoded_bits_to_result(
     }
     let l_free_text = i3 == 0 && n3 == 0;
     let l_special = i3 == 0 && n3 == 1;
+    if (!l_free_text && !l_special || source != DecodeSource::Regular) && msg.contains('<') {
+        msg = delbraces(&msg);
+    }
     let xsnr = estimate_snr(metrics, &itone, 0, source != DecodeSource::Regular);
     let filter_context = FilterContext {
         mycall: config.mycall.clone().unwrap_or_default(),
@@ -402,7 +423,12 @@ pub(super) fn decoded_bits_to_result(
     })
 }
 
-pub(super) fn tones_from_codeword(codeword: &[u8; N]) -> [i32; 79] {
+pub(super) fn get_tones_from_77bits(message77: &[u8; 77]) -> [i32; 79] {
+    let codeword = encode174_91(message77);
+    tones_from_codeword(&codeword)
+}
+
+fn tones_from_codeword(codeword: &[u8; N]) -> [i32; 79] {
     let mut itone = [0i32; 79];
     for i in 0..7 {
         itone[i] = ICOS7[i];
@@ -540,10 +566,7 @@ pub(super) fn estimate_snr(
         for itone in 0..8 {
             total += metrics.s8[itone][i] * metrics.s8[itone][i];
         }
-        let mut xnoi = (total - xsig) / 7.0;
-        if xnoi < 0.01 {
-            xnoi = 0.01;
-        }
+        let xnoi = (total - xsig) / 7.0;
         let xsnr = if xnoi < xsig { xsig / xnoi } else { 1.01 };
         xsnrtmp += xsnr;
     }

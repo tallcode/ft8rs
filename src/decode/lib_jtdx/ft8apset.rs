@@ -8,7 +8,7 @@ use super::ft8v2::packjt77::pack77;
 
 #[derive(Clone)]
 pub(crate) struct ApMaskPlan {
-    pub(crate) message77: [u8; 77],
+    pub(crate) apsym: [i16; 77],
     pub(crate) apmask: [i8; N],
 }
 
@@ -241,33 +241,44 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
         _ => return None,
     };
 
-    let packed = pack77(&template);
-    if packed.len() != 77 {
-        return None;
+    Some(plan_from_template(&template, ranges, expected_i3))
+}
+
+fn hound_cq_type4_mask() -> ApMaskPlan {
+    let mut apsym = [-1i16; 77];
+    let mut apmask = [0i8; N];
+    for i in 71..77 {
+        apmask[i] = 1;
     }
-    if bits_to_usize(&packed[74..77]) != expected_i3 {
-        return None;
-    }
-    let mut message77 = [0u8; 77];
-    message77.copy_from_slice(&packed[..77]);
+    apsym[73] = 1;
+    ApMaskPlan { apsym, apmask }
+}
+
+fn plan_from_template(template: &str, ranges: &[(usize, usize)], expected_i3: usize) -> ApMaskPlan {
     let mut apmask = [0i8; N];
     for &(start, end) in ranges {
         for i in start..end.min(77) {
             apmask[i] = 1;
         }
     }
-    Some(ApMaskPlan { message77, apmask })
+
+    let packed = pack77(template);
+    if packed.len() != 77 || bits_to_usize(&packed[74..77]) != expected_i3 {
+        return sentinel_plan(apmask);
+    }
+
+    let mut apsym = [0i16; 77];
+    for i in 0..77 {
+        apsym[i] = if packed[i] == 1 { 1 } else { -1 };
+    }
+    ApMaskPlan { apsym, apmask }
 }
 
-fn hound_cq_type4_mask() -> ApMaskPlan {
-    let mut message77 = [0u8; 77];
-    let mut apmask = [0i8; N];
-    for i in 71..77 {
-        apmask[i] = 1;
-    }
-    message77[73] = 1;
-    message77[74] = 1;
-    ApMaskPlan { message77, apmask }
+fn sentinel_plan(apmask: [i8; N]) -> ApMaskPlan {
+    let mut apsym = [0i16; 77];
+    apsym[0] = 99;
+    apsym[29] = 99;
+    ApMaskPlan { apsym, apmask }
 }
 
 fn hound_special_template(mycall: &str, hiscall: Option<&str>) -> String {

@@ -27,14 +27,14 @@ pub(crate) fn accept_decoded_message(
     lcall2hash: bool,
     context: &FilterContext,
 ) -> bool {
-    if i3 == 0 && n3 == 1 {
-        return chkspecial8(msg37, msg37_2, &context.mycall, &context.hiscall);
-    }
-    chkfalse8(msg37, i3, n3, iaptype, lcall1hash, lcall2hash, context)
+    chkfalse8(
+        msg37, msg37_2, i3, n3, iaptype, lcall1hash, lcall2hash, context,
+    )
 }
 
 pub(crate) fn chkfalse8(
     msg37: &str,
+    msg37_2: &str,
     i3: usize,
     n3: usize,
     iaptype: i32,
@@ -71,6 +71,14 @@ pub(crate) fn chkfalse8(
 
     if iaptype == 1 && msg.starts_with("CQ DE AA00") {
         return false;
+    }
+
+    if primary_false_check && matches!(iaptype, 4..=6) {
+        return true;
+    }
+
+    if primary_false_check && i3 == 0 && n3 == 1 {
+        return chkspecial8(msg, msg37_2, &context.mycall, &context.hiscall);
     }
 
     if words[0] == "CQ" {

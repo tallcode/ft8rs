@@ -285,6 +285,7 @@ mod rustfft_backend {
         let n = re.len();
         debug_assert_eq!(im.len(), n);
         let nh = n / 2 + 1;
+        im.fill(0.0);
         c2c(re, im, -1);
         for i in nh..n {
             re[i] = 0.0;

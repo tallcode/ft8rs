@@ -38,6 +38,7 @@ pub struct Ft8bCandidateContext {
     pub call_dt_xdt: Option<f32>,
     pub sd_msg: Option<LastRxMsgText>,
     pub sd_lcq: bool,
+    pub sd_index: Option<usize>,
     pub last_rx_msg: Option<LastRxMsgText>,
     pub last_rx_xdt: Option<f32>,
     pub last_rx_is_rrr: bool,

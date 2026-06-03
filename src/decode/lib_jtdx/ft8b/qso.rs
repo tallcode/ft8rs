@@ -37,9 +37,9 @@ pub(super) fn jtdx_qso_plan(
         lvirtual3: false,
     };
     let lqsothread = config.nfqso >= config.nfa && config.nfqso <= config.nfb;
-    let qso_thread_active = lqsothread
-        && !context.lft8sdec
-        && config.hiscall.as_deref().unwrap_or("").trim().len() >= 3;
+    let qso_thread_active = lqsothread && !context.lft8sdec;
+    let qso_thread_has_hiscall =
+        qso_thread_active && config.hiscall.as_deref().unwrap_or("").trim().len() >= 3;
 
     let fdelta = (candidate.freq as f64 - config.nfqso).abs();
     if qso_thread_active {
@@ -57,7 +57,7 @@ pub(super) fn jtdx_qso_plan(
             }
         }
 
-        if context.lqsomsgdcd || context.stophint || fdelta >= 0.1 {
+        if !qso_thread_has_hiscall || context.lqsomsgdcd || context.stophint || fdelta >= 0.1 {
             if context.sd_msg.is_some() && plan.nqso == 1 {
                 plan.nqso = 4;
             }
