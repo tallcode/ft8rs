@@ -38,6 +38,8 @@ pub(super) fn regular_decode(
     let nsubpasses = nsubpasses_with_csold(classifier, csold.is_some());
     let apmask = [0i8; N];
     for isubp1 in 1..=nsubpasses {
+        // JTDX ft8b.f90 computes syncavemax earlier, then resets it to 3.0
+        // inside the regular/AP subpass loop before the isubp2 gates.
         let syncavemax = 3.0f32;
         if classifier.nweak == 1 && isubp1 == 2 {
             continue;

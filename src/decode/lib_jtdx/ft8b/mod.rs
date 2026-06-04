@@ -263,8 +263,10 @@ fn refine_qso_sync(
         }
     }
 
+    let mut a = [0.0f64; 5];
+    a[0] = -delfbest;
     QsoRefinementState {
-        cd0: twkfreq1(cd0, 3199, FS2, -delfbest),
+        cd0: twkfreq1(cd0, -800, 3199, 4000, FS2, &a),
         ibest,
         refined_freq: candidate.freq as f64 + delfbest,
         refined_dt: xdt2,
@@ -784,10 +786,12 @@ fn jtdx_soft_sync_gate(s8: &[[f32; 79]; 8], refined_dt: f64) -> bool {
                 || (nsyncscore3 > 5 && scoreratio3 > 13.8);
         }
         if nsyncscorew == 3 {
-            return scoreratio2 > 15.0;
+            // JTDX compares nsyncscore3 here, not scoreratio3.
+            return scoreratio2 > 15.0 || nsyncscore3 > 15;
         }
         if nsyncscorew == 4 {
-            return nsyncscore2 == 7 || nsyncscore3 == 7 || scoreratio2 > 10.0;
+            // JTDX compares nsyncscore3 here, not scoreratio3.
+            return nsyncscore2 == 7 || nsyncscore3 == 7 || scoreratio2 > 10.0 || nsyncscore3 > 10;
         }
         if nsyncscorew == 5 {
             return nsyncscore > 11
@@ -820,7 +824,8 @@ fn jtdx_soft_sync_gate(s8: &[[f32; 79]; 8], refined_dt: f64) -> bool {
             return scoreratio1 > 15.0 || scoreratio2 > 15.0;
         }
         if nsyncscorew == 4 {
-            return nsyncscore1 == 7 || nsyncscore2 == 7 || scoreratio1 > 10.0;
+            // JTDX compares nsyncscore2 here, not scoreratio2.
+            return nsyncscore1 == 7 || nsyncscore2 == 7 || scoreratio1 > 10.0 || nsyncscore2 > 10;
         }
         if nsyncscorew == 5 {
             return nsyncscore > 11

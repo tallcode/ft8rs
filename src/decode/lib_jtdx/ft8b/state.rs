@@ -245,18 +245,18 @@ impl SignalMemory {
         lqsomsgdcd: bool,
     ) {
         if levenint {
-            self.evencq = self.tmpcqsig.clone();
+            copy_signal_prefix(&mut self.evencq, &self.tmpcqsig);
             if lapmyc {
-                self.evenmyc = self.tmpmycsig.clone();
-                if !lqsomsgdcd {
+                copy_signal_prefix(&mut self.evenmyc, &self.tmpmycsig);
+                if !lqsomsgdcd && self.tmpqsosig.is_some() {
                     self.evenqso = self.tmpqsosig.clone();
                 }
             }
         } else if loddint {
-            self.oddcq = self.tmpcqsig.clone();
+            copy_signal_prefix(&mut self.oddcq, &self.tmpcqsig);
             if lapmyc {
-                self.oddmyc = self.tmpmycsig.clone();
-                if !lqsomsgdcd {
+                copy_signal_prefix(&mut self.oddmyc, &self.tmpmycsig);
+                if !lqsomsgdcd && self.tmpqsosig.is_some() {
                     self.oddqso = self.tmpqsosig.clone();
                 }
             }
@@ -355,6 +355,16 @@ impl SignalMemory {
             SignalKind::Qso => {
                 self.tmpqsosig = Some(entry);
             }
+        }
+    }
+}
+
+fn copy_signal_prefix(dst: &mut Vec<SignalEntry>, src: &[SignalEntry]) {
+    for (idx, entry) in src.iter().cloned().enumerate() {
+        if let Some(slot) = dst.get_mut(idx) {
+            *slot = entry;
+        } else {
+            dst.push(entry);
         }
     }
 }
