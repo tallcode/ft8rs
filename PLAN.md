@@ -125,7 +125,7 @@ Current measured profile targets after the CSV marker refresh:
 - short `wsjtx`: `21/21`;
 - short `jtdx`: `20/20`;
 - long `wsjtx`: `425/425`;
-- long `jtdx`: `428/432`.
+- long `jtdx`: `430/431`.
 
 The existing WSJT-X baseline remains a hard gate. JTDX and hybrid are
 informational until their implementations are complete enough to establish
@@ -222,9 +222,9 @@ Initial status:
 - JTDX AP false-positive filtering now keeps the `iaptype=2` and `iaptype=40`
   branches separate, including the source difference around invalid
   four-character grid rejection;
-- JTDX regular false-positive filtering now includes the `call_q.f90` guard
-  before `chkflscall` for `i3=1..3` messages involving ` R `, `/R `, or
-  `/P `;
+- JTDX regular false-positive filtering now uses an independent `call_q.f90`
+  mirror before `chkflscall` for `i3=1..3` messages involving ` R `, `/R `,
+  or `/P `;
 - JTDX regular pair filtering and `TU;` false-positive handling now use the
   source-shaped lightweight `call_q.f90` guard before `chkflscall`;
 - JTDX ARRL Field Day false-positive pair rejection now follows the source
@@ -537,15 +537,14 @@ Initial status:
 
 Current JTDX checkpoint:
 
-- native `profile=jtdx` short fixture is 20/21 on `210703_133430.wav`;
+- native `profile=jtdx` short fixture is 20/20 on `210703_133430.wav`;
 - recovered `K1JT HA5WA 73` by enabling JTDX sensitivity level 2 subpass
   semantics in the high-sensitivity profile;
-- remaining short miss is `CQ DX DL8YHR JO41` at about 2606 Hz. Temporary
-  tracing showed the candidate reaches `ft8b` and passes hard sync
-  (`nsync=14`), but regular BP/OSD does not produce a CRC-valid codeword. It
-  is not a plain `CQ ??? ???` AP case: the packed first 29 bits differ from
-  JTDX `mcq` by six bits because the message is `CQ DX ...`, so `iaptype=1`
-  CQ AP is not the correct template for this row;
+- native `profile=jtdx` long fixture is 430/431 on `230208_140300.wav`;
+- `CQ DX DL8YHR JO41` is a `W` row and no longer belongs to the JTDX target.
+  The current tracked long miss is
+  `140700 F1MLZ UA3QNA -04`, which enters `ft8b` with strong Costas sync but
+  does not produce a CRC-valid regular-path codeword;
 - the latest source-shape passes added local `indexx` over `f32`,
   session-level `tone8` precompute with nonstandard-call table branches,
   session-level `ft8apset` precompute, `ft8s` consumption of the precomputed
@@ -567,8 +566,21 @@ Current JTDX checkpoint:
   gates. The same layer now also expands `lspecial` results into the source
   two-message loop so `msg37_2` is no longer dropped; this includes the JTDX
   `TU; ...` special rendering after the false-decode guard.
-  The short smoke test remains 20/21, so these slices improve auditability and
-  state fidelity but do not yet recover the final short-fixture row;
+  Recent file-layout/source-path alignment added root mirrors for
+  `genft8.f90`, `genft8sd.f90`, and `tone8myc.f90`; `tone8.rs` now uses
+  ordinary `genft8` where JTDX `tone8.f90` does. Recent OSD/regular-path
+  alignment also keeps decoded bits on CRC failure with negative `nharderror`,
+  removes an early OSD pivot abort, checks `(i3,n3)` before `unpack77`, applies
+  the JTDX `xnoi >= 0.01` SNR floor, and passes measured `srr` into non-virtual
+  FT8S fallback calls. The `iqso=4` superdeep branch now separates the source
+  deep-sync `ft8sd1` path from the non-deep `ft8mf1` / `ft8mfcq` path and keeps
+  the ordinary regular-failure SD fallback constrained to `ft8sd` with
+  `srr < 7.0`. The latest AP/regular cleanup aligned the no-grid CQ-DX
+  `ft8apset` template with the source `CQ <hiscall>` text and moved the
+  outer-loop `lmycsignal`, `lqsocandave`, and `lmycsignal .and. lmycallstd`
+  pruning to the same layers as `ft8b.f90`; the
+  standard-MyCall/nonstandard-DXCall AP gate also now includes the source
+  `lcqdxcnssig`, `lqso73`, and `lqsorr73` checks for `iaptype` 31/35/36;
 - temporary trace and experiments must stay out of commits.
 
 ### Step 6: Enable JTDX Reporting

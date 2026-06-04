@@ -1,6 +1,6 @@
 //! Mirrors JTDX `lib/ft8sd.f90`.
 
-use super::ft8v2::packjt77sd::genft8sd;
+use super::genft8sd::genft8sd;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Ft8sdResult {

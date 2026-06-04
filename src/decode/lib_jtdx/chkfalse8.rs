@@ -1,5 +1,6 @@
 //! Mirrors JTDX `lib/chkfalse8.f90`.
 
+use super::call_q::call_q_pair_reject;
 use super::callsign_q::callsign_q_reject;
 use super::chkflscall::chkflscall;
 use super::chkgrid::{chkgrid, is_grid4};
@@ -702,19 +703,6 @@ fn strip_portable_suffix(call: &str) -> &str {
     call.strip_suffix("/R")
         .or_else(|| call.strip_suffix("/P"))
         .unwrap_or(call)
-}
-
-fn call_q_pair_reject(call_a: &str, call_b: &str) -> bool {
-    call_q_reject(call_a) || call_q_reject(call_b)
-}
-
-fn call_q_reject(call: &str) -> bool {
-    let bytes = call.trim().as_bytes();
-    if bytes.is_empty() {
-        return false;
-    }
-    matches!(bytes[0], b'Q' | b'0')
-        || (bytes.len() >= 2 && bytes[0].is_ascii_digit() && bytes[1].is_ascii_digit())
 }
 
 fn looks_like_standard_6_call(call: &str) -> bool {

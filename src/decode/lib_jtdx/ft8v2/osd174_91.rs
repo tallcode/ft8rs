@@ -28,7 +28,6 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
     // Gaussian elimination
     let max_pivot_col = (k + 20).min(n);
     for id in 0..k {
-        let mut found = false;
         let id_row = id * n;
         for icol in id..max_pivot_col {
             if genmrb[id_row + icol] == 1 {
@@ -50,12 +49,8 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
                         }
                     }
                 }
-                found = true;
                 break;
             }
-        }
-        if !found {
-            return None;
         }
     }
 
@@ -247,17 +242,17 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
         final_cw[indices[i]] = best_cw[i];
     }
 
-    let mut decoded91 = [0u8; K];
-    decoded91.copy_from_slice(&final_cw[..K]);
-    if !chkcrc14a(&decoded91) {
-        return None;
-    }
-
     let mut nharderror = 0isize;
     for i in 0..n {
         let hard = if llr[i] >= 0.0 { 1 } else { 0 };
         let x = final_cw[i] as i8 ^ hard;
         nharderror += x as isize;
+    }
+
+    let mut decoded91 = [0u8; K];
+    decoded91.copy_from_slice(&final_cw[..K]);
+    if !chkcrc14a(&decoded91) {
+        nharderror = -nharderror;
     }
 
     let mut message77 = [0u8; 77];

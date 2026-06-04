@@ -1,7 +1,7 @@
 //! Mirrors JTDX `lib/tonesd.f90`.
 
-use super::ft8v2::packjt77sd::genft8sd;
 use super::gen_ft8wave::gen_ft8wave;
+use super::genft8sd::genft8sd;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TonesdMessage {

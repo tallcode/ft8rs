@@ -23,7 +23,7 @@ mod state;
 
 use decode_helpers::*;
 use qso::{jtdx_qso_plan, qso_attempts};
-use regular::{middle_sync_ratio, regular_decode, try_ft8s_virtual, try_ft8sd};
+use regular::{regular_decode, try_ft8s_virtual, try_ft8sd_iqso4};
 pub use state::{
     DecodeSource, Ft8bCandidateContext, Ft8bDecodeResult, Ft8bWorkspace, LastRxMsgText,
 };
@@ -127,7 +127,8 @@ fn try_ft8b_decode_for_iqso(
     previous_qso_state: Option<&QsoRefinementState>,
     signal_memory: &mut SignalMemory,
 ) -> Option<QsoAttemptOutcome> {
-    let tonesd_templates = if iqso == 4 {
+    let ldeepsync = config.lft8lowth || config.lft8subpass || config.swl;
+    let tonesd_templates = if iqso == 4 && ldeepsync {
         context
             .sd_msg
             .as_ref()
@@ -150,7 +151,13 @@ fn try_ft8b_decode_for_iqso(
         tonesd: tonesd_templates.as_ref(),
         csynce: csynce_templates.as_ref(),
     };
-    let state = if iqso == 3 {
+    let state = if iqso == 4 && !ldeepsync {
+        if let Some(previous) = previous_qso_state {
+            previous.clone()
+        } else {
+            refine_qso_sync(cd0, candidate, iqso, xdt0, sync_context)
+        }
+    } else if iqso == 3 {
         if let Some(previous) = previous_qso_state {
             QsoRefinementState {
                 cd0: previous.cd0.clone(),
@@ -178,14 +185,14 @@ fn try_ft8b_decode_for_iqso(
             tone8_tables,
         )
     } else if iqso == 4 {
-        try_ft8sd(
+        try_ft8sd_iqso4(
             &metrics,
             state.refined_freq,
             state.refined_dt,
             config,
             book,
             context,
-            middle_sync_ratio(&metrics.s8),
+            ldeepsync,
         )
     } else if let Some(sync_gate) = jtdx_sync_gate(
         &metrics,

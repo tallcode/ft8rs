@@ -5,6 +5,7 @@
 //! from the corresponding JTDX source files.
 
 pub mod agccft8;
+pub mod call_q;
 pub mod callsign_q;
 pub mod chkfalse8;
 pub mod chkflscall;
@@ -27,6 +28,8 @@ pub mod ft8sd;
 pub mod ft8sd1;
 pub mod ft8v2;
 pub mod gen_ft8wave;
+pub mod genft8;
+pub mod genft8sd;
 pub mod indexx;
 pub mod msgparser;
 pub mod partintft8;
@@ -35,6 +38,7 @@ pub mod sync8;
 pub mod sync8d;
 pub mod syncdist;
 pub mod tone8;
+pub mod tone8myc;
 pub mod tonesd;
 pub mod twkfreq1;
 

@@ -155,7 +155,7 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
                     (format!("CQ {} {grid}", hiscall.as_deref()?), &[(0, 77)], 1)
                 } else {
                     (
-                        format!("CQ {} AA00", hiscall.as_deref()?),
+                        format!("CQ {}", hiscall.as_deref()?),
                         &[(0, 58), (74, 77)],
                         1,
                     )

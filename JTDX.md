@@ -87,6 +87,8 @@ twkfreq1.f90         -> twkfreq1.rs
 four2a.f90 wrapper   -> four2a.rs
 chkfalse8.f90        -> chkfalse8.rs
 chkspecial8.f90      -> chkspecial8.rs
+call_q.f90           -> call_q.rs
+callsign_q.f90       -> callsign_q.rs
 chkgrid.f90          -> chkgrid.rs
 chkflscall.f90       -> chkflscall.rs
 searchcalls.f90      -> searchcalls.rs
@@ -227,13 +229,43 @@ Frequency-band scheduling note:
   it by relaxing false-decode filters; the open gap is in bit metrics,
   candidate/refinement, OSD, or another regular-path numerical detail.
 
+Recent source-level alignment:
+
+- Added root-level Rust mirrors for JTDX `genft8.f90`, `genft8sd.f90`, and
+  `tone8myc.f90`. `tone8.rs` now calls ordinary `genft8` for the branches where
+  JTDX `tone8.f90` does so, while the SD decoders continue to call `genft8sd`.
+- `osd174_91` now keeps the decoded bits on CRC failure and returns a negative
+  `nharderror`, matching JTDX `osd174_91.f90`. The downstream false-decode gate
+  rejects negative hard-error counts in the same place as the source.
+- The OSD Gaussian-elimination loop no longer aborts if a pivot is not found in
+  the `id..K+20` window; the source continues the outer loop.
+- `ft8b` now checks `(i3,n3)` before `unpack77`, applies the JTDX `xnoi >= 0.01`
+  SNR floor, and passes measured `srr` into non-virtual FT8S fallback calls.
+- The `iqso=4` superdeep path now follows the source split more closely:
+  deep-sync slots use the `tonesd` sync-template refinement and may try
+  `ft8sd1`, while non-deep slots reuse the previous ordinary-symbol metrics and
+  go directly to `ft8mf1` / `ft8mfcq`. The ordinary regular-failure SD fallback
+  is limited to `ft8sd` with the source `srr < 7.0` guard.
+- `ft8apset` now keeps the JTDX no-grid CQ-DX AP template as `CQ <hiscall>`
+  instead of filling a dummy `AA00` grid. The mask still applies only the source
+  `1:58` and `75:77` bit ranges for this case.
+- The outer `ft8b` `isubp1` pruning now mirrors the source early
+  `lmycsignal` skip and the later `lqsocandave` / `lmycsignal .and.
+  lmycallstd` AP/regular subpass gates.
+- The AP gate for standard-MyCall/nonstandard-DXCall now includes the source
+  `lcqdxcnssig`, `lqso73`, and `lqsorr73` checks for `iaptype` 31/35/36.
+- `call_q.f90` is now an independent mirror and is shared by the JTDX
+  `chkfalse8` / `chkspecial8` paths, keeping it distinct from the stricter
+  `callsign_q.f90` rules as in the source tree.
+
 ## Known Gaps
 
 Highest-value unfinished alignment items:
 
 - finish file-by-file source audit of `lib_jtdx` against `jtdx/lib`;
 - complete the remaining AP/deep skip and CPU-pruning matrix from
-  `ft8b.f90`;
+  `ft8b.f90`; the highest-risk `iqso=4` SD entry split is now represented, but
+  AP `iaptype` pruning still needs periodic source audit;
 - validate newly wired forced-sync / `avexdt` / odd-even memory behavior
   against real JTDX output;
 - complete AP/deep-specific false-positive filter coverage;
@@ -241,6 +273,10 @@ Highest-value unfinished alignment items:
   callsign/grid rule table mostly reduces false positives and is not planned
   for this milestone. Maintain the current syntax/early-state behavior and
   only add small source rules when a real false positive points there;
+- JTDX `four2a.f90` calls single-precision `sfftw_*`, while the Rust profile
+  currently runs the local FFT abstraction with `f64` buffers. This is a known
+  numerical-path difference and should be changed only as a deliberate
+  full-chain FFT precision project, not as an isolated sensitivity tweak;
 - decide how to represent the `filtersfree.f90` `datapwr` correlation gate;
 - audit residual-aware downsample invalidation after subtract;
 - wire JTDX FFTW thread/patience settings into `lib_jtdx::four2a` only if

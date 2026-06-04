@@ -39,14 +39,19 @@ pub(super) fn regular_decode(
     let apmask = [0i8; N];
     for isubp1 in 1..=nsubpasses {
         let syncavemax = 3.0f32;
-        if classifier.lqsocandave && context.lqsomsgdcd {
-            continue;
-        }
         if classifier.nweak == 1 && isubp1 == 2 {
             continue;
         }
         if isubp1 > 2 && isubp1 < 6 && classifier.lmycsignal {
             continue;
+        }
+        if classifier.lqsocandave {
+            if isubp1 > 2 && isubp1 < 9 {
+                continue;
+            }
+            if context.lqsomsgdcd {
+                continue;
+            }
         }
         let bit_metrics = if isubp1 == 1 {
             build_bit_metrics(metrics, MetricSource::Cs)
@@ -204,13 +209,12 @@ pub(super) fn regular_decode(
         config,
         book,
         context,
-        classifier,
         tone8_tables,
     ) {
         return Some(result);
     }
 
-    if let Some(result) = try_ft8sd(
+    if let Some(result) = try_ft8sd_regular_failure(
         metrics,
         refined_freq,
         refined_dt,
@@ -232,7 +236,6 @@ fn try_ft8s(
     config: &StreamDecodeConfig,
     book: &HashCallBook,
     context: Ft8bCandidateContext,
-    classifier: SignalClassifier,
     tone8_tables: &Tone8Tables,
 ) -> Option<Ft8bDecodeResult> {
     if context.lqsomsgdcd || context.stophint || context.lft8sdec {
@@ -243,11 +246,7 @@ fn try_ft8s(
     }
     let mycall = normalized_config_call(config.mycall.as_deref())?;
     let hiscall = normalized_config_call(config.hiscall.as_deref())?;
-    let srr = if classifier.lqsosig || classifier.lmycsignal {
-        0.0
-    } else {
-        middle_sync_ratio(&metrics.s8)
-    };
+    let srr = middle_sync_ratio(&metrics.s8);
     try_ft8s_with_s8(
         &metrics.s8,
         metrics,
@@ -361,7 +360,44 @@ fn jtdx_both_config_calls_nonstandard(config: &StreamDecodeConfig) -> bool {
     !lmycallstd && !lhiscallstd
 }
 
-pub(super) fn try_ft8sd(
+pub(super) fn try_ft8sd_iqso4(
+    metrics: &SymbolMetrics,
+    refined_freq: f64,
+    refined_dt: f64,
+    config: &StreamDecodeConfig,
+    book: &HashCallBook,
+    context: Ft8bCandidateContext,
+    ldeepsync: bool,
+) -> Option<Ft8bDecodeResult> {
+    let msgd = context.sd_msg.as_ref()?.as_str();
+    let mycall = normalized_config_call(config.mycall.as_deref()).unwrap_or_default();
+    let result = if ldeepsync {
+        ft8sd1(&metrics.s8, msgd, context.sd_lcq, &mycall)
+            .map(|result| (result.msg37, result.msgbits, result.itone))
+    } else {
+        None
+    }
+    .or_else(|| {
+        if context.sd_lcq {
+            ft8mfcq(&metrics.s8, msgd).map(|result| (result.msg37, result.msgbits, result.itone))
+        } else {
+            ft8mf1(&metrics.s8, msgd).map(|result| (result.msg37, result.msgbits, result.itone))
+        }
+    })?;
+    decoded_bits_to_result(
+        metrics,
+        refined_freq,
+        refined_dt,
+        result.0,
+        result.1,
+        result.2,
+        config,
+        book,
+        DecodeSource::Ft8sd,
+    )
+}
+
+fn try_ft8sd_regular_failure(
     metrics: &SymbolMetrics,
     refined_freq: f64,
     refined_dt: f64,
@@ -370,22 +406,13 @@ pub(super) fn try_ft8sd(
     context: Ft8bCandidateContext,
     srr: f32,
 ) -> Option<Ft8bDecodeResult> {
+    if srr >= 7.0 {
+        return None;
+    }
     let msgd = context.sd_msg.as_ref()?.as_str();
     let mycall = normalized_config_call(config.mycall.as_deref()).unwrap_or_default();
-    let result = ft8sd1(&metrics.s8, msgd, context.sd_lcq, &mycall)
-        .map(|result| (result.msg37, result.msgbits, result.itone))
-        .or_else(|| {
-            ft8sd(&metrics.s8, srr, msgd, context.sd_lcq, &mycall)
-                .map(|result| (result.msg37, result.msgbits, result.itone))
-        })
-        .or_else(|| {
-            if context.sd_lcq {
-                ft8mfcq(&metrics.s8, msgd)
-                    .map(|result| (result.msg37, result.msgbits, result.itone))
-            } else {
-                ft8mf1(&metrics.s8, msgd).map(|result| (result.msg37, result.msgbits, result.itone))
-            }
-        })?;
+    let result = ft8sd(&metrics.s8, srr, msgd, context.sd_lcq, &mycall)
+        .map(|result| (result.msg37, result.msgbits, result.itone))?;
     decoded_bits_to_result(
         metrics,
         refined_freq,
@@ -465,9 +492,6 @@ fn jtdx_ap_subpass_allowed(
         }
     } else if classifier.lmycsignal && lmycallstd {
         if isubp1 > 2 && isubp1 < 6 {
-            return false;
-        }
-        if isubp1 > 5 && isubp1 < 9 && iaptype != 2 {
             return false;
         }
     }
@@ -602,6 +626,14 @@ fn jtdx_ap_subpass_allowed(
         if iaptype == 36 && !classifier.lqsorr73 {
             return false;
         }
+        if !classifier.lqsocandave
+            && classifier.lmycsignal
+            && isubp1 > 5
+            && isubp1 < 9
+            && iaptype != 2
+        {
+            return false;
+        }
         return true;
     }
 
@@ -631,6 +663,15 @@ fn jtdx_ap_subpass_allowed(
             return false;
         }
         if iaptype > 30 && lapcqonly {
+            return false;
+        }
+        if iaptype == 31 && !classifier.lcqdxcnssig {
+            return false;
+        }
+        if iaptype == 35 && !classifier.lqso73 {
+            return false;
+        }
+        if iaptype == 36 && !classifier.lqsorr73 {
             return false;
         }
         if iaptype > 2 && iaptype < 15 && loutapwid {

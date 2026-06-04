@@ -25,7 +25,7 @@ pub fn build_csync() -> &'static SyncTemplates {
         let mut csync_im = vec![0.0; COSTAS_BLOCKS * COSTAS_SYMBOL_LEN];
         let mut csynccq_re = [[0.0; 32]; 8];
         let mut csynccq_im = [[0.0; 32]; 8];
-        if let Some((_, _, itone)) = super::ft8v2::packjt77sd::genft8sd("CQ 2E0DLA IO92") {
+        if let Some((_, _, itone)) = super::genft8sd::genft8sd("CQ 2E0DLA IO92") {
             let (wave_re, wave_im) = super::gen_ft8wave::gen_ft8wave(&itone, 0.0);
             let mut m = 7 * 32 * 60;
             for i in 0..8 {

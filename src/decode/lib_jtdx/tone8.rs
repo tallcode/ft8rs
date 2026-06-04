@@ -1,7 +1,9 @@
 //! Mirrors JTDX `lib/tone8.f90`.
 
-use super::ft8v2::packjt77sd::genft8sd;
 use super::gen_ft8wave::gen_ft8wave;
+use super::genft8::genft8;
+use super::genft8sd::genft8sd;
+use super::tone8myc::tone8myc;
 use crate::stream::session::StreamDecodeConfig;
 
 #[derive(Clone, Debug)]
@@ -48,23 +50,24 @@ pub(crate) fn tone8(config: &StreamDecodeConfig) -> Tone8Tables {
     let lhiscallstd = hiscall.is_some() && !is_nonstandard_call(&hiscall_raw);
 
     if let Some(mycall) = &mycall {
-        tables.idtonemyc = tones58_from_sd_message(&format!("{mycall} AA1AAA FN25"));
+        tables.idtonemyc = tone8myc(mycall);
     }
 
     if config.lhound {
         if let (Some(mycall), Some(hiscall)) = (&mycall, &hiscall) {
             if let (Some(mybcall), Some(hisbcall)) = (base_call(mycall), base_call(hiscall)) {
-                tables.idtonefox73 = tones58_from_sd_message(&format!("{mybcall} {hisbcall} RR73"));
+                tables.idtonefox73 =
+                    tones58_from_ft8_message(&format!("{mybcall} {hisbcall} RR73"));
                 tables.idtonespec =
-                    tones58_from_sd_message(&format!("{mybcall} RR73; {mybcall} <{hiscall}> -12"));
+                    tones58_from_ft8_message(&format!("{mybcall} RR73; {mybcall} <{hiscall}> -12"));
             }
         }
     }
 
     if !lhiscallstd && hiscall.as_ref().is_some_and(|call| call.len() > 2) {
         let hiscall = hiscall.as_ref().expect("checked above");
-        tables.idtonecqdxcns = tones58_from_sd_message(&format!("CQ {hiscall}"));
-        tables.idtonedxcns73 = tones58_from_sd_message(&format!("<AA1AAA> {hiscall} 73"));
+        tables.idtonecqdxcns = tones58_from_ft8_message(&format!("CQ {hiscall}"));
+        tables.idtonedxcns73 = tones58_from_ft8_message(&format!("<AA1AAA> {hiscall} 73"));
     }
 
     if !lhiscallstd && !lmycallstd {
@@ -133,7 +136,7 @@ fn fill_idtone56(
         } else {
             display
         };
-        let (_, msgbits, itone) = genft8sd(&encoded)?;
+        let (_, msgbits, itone) = genft8(&encoded)?;
         if idx == 0 {
             itone1 = Some(itone);
         }
@@ -161,6 +164,11 @@ fn build_csynce(itone: &[i32; 79]) -> Option<CsyncE> {
 
 fn tones58_from_sd_message(msg: &str) -> Option<[i32; 58]> {
     let (_, _, itone) = genft8sd(msg)?;
+    Some(tones58_from_itone(&itone))
+}
+
+fn tones58_from_ft8_message(msg: &str) -> Option<[i32; 58]> {
+    let (_, _, itone) = genft8(msg)?;
     Some(tones58_from_itone(&itone))
 }
 
