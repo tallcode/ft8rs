@@ -220,6 +220,8 @@ impl Ft8bWorkspace {
     }
 
     pub fn new_pass(&mut self) {
+        // JTDX ft8_decode.f90 resets npos at each ipass, while lsubtracted
+        // is initialized once before the pass loop and then carried across it.
         self.npos = 0;
     }
 
