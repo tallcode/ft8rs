@@ -36,9 +36,9 @@ pub(super) fn regular_decode(
     let classifier = classify_signal(metrics, config, refined_freq, context, &tone_hints);
     let csold = select_csold(signal_memory, classifier, context, refined_freq, refined_dt);
     let nsubpasses = nsubpasses_with_csold(classifier, csold.is_some());
-    let syncavemax = metrics.syncavemax;
     let apmask = [0i8; N];
     for isubp1 in 1..=nsubpasses {
+        let syncavemax = 3.0f32;
         if classifier.lqsocandave && context.lqsomsgdcd {
             continue;
         }
@@ -86,9 +86,9 @@ pub(super) fn regular_decode(
             for i in 0..N {
                 llrz[i] = 2.83 * llr_source[i];
             }
-            if let Some(decoded) =
-                bpdecode174_91(&llrz, &apmask, 30).or_else(|| osd174_91(&llrz, &apmask, 3))
-            {
+            let decoded =
+                bpdecode174_91(&llrz, &apmask, 30).or_else(|| osd174_91(&llrz, &apmask, 3));
+            if let Some(decoded) = decoded {
                 if let Some(result) = decoded_to_result(
                     metrics,
                     refined_freq,

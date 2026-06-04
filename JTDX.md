@@ -95,8 +95,9 @@ filtersfree.f90      -> filtersfree.rs
 packjt77 / ft8v2     -> ft8v2/
 ```
 
-`ALLCALL7.TXT` is a runtime data file. ft8rs looks for it next to the
-executable first, then in development locations.
+`ALLCALL7.TXT` is a runtime data file used by JTDX-style false-decode
+filtering. ft8rs keeps the normal packaged lookup behavior: executable
+directory first, then development locations.
 
 ## State Model
 
@@ -174,38 +175,63 @@ Testing rules remain:
 Current observed checkpoint:
 
 ```text
-short fixture: 210703_133430.wav -> 20/20
-long fixture:  230208_140300.wav -> 428/432
+short fixture: 210703_133430.wav -> 20/20 target, 21 decoded total
+long fixture:  230208_140300.wav -> 430/431 target
 ```
 
 Current marker counts:
 
 ```text
 210703_133430.csv: blank 20, W 1
-230208_140300.csv: blank 412, J 20, W 13, E 13
+230208_140300.csv: blank 411, J 20, W 13, E 14
 ```
 
 The short fixture contains one `W` row, `CQ DX DL8YHR JO41`, which is excluded
-from the JTDX target. Earlier diagnostics showed this row is not a simple
-candidate-search or CQ-DX AP shortcut issue. It is no longer a milestone
-blocker for `profile=jtdx`.
+from the JTDX target. After mirroring JTDX's outer frequency-band scheduling
+more closely, this row is decoded by `profile=jtdx` too. It remains outside
+the JTDX target count because the CSV marker says it is WSJT-X-only reference
+data.
 
 Current long-fixture misses are:
 
 ```text
-230208_140545,-14,2,1496,IU2QDB RA3ABG 73,
-230208_140700,-16,0.6,1620,4S6NCH KK1F FN31,
 230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,J
-230208_140715,-23,0.5,1502,OH5NBJ SV1MRW KM17,
 ```
+
+Frequency-band scheduling note:
+
+- JTDX `decoder.f90` auto-selects a thread count from available cores, splits
+  `nfa..nfb` into `nthr` bands, and invokes `ft8_decode` once per band.
+- `--jtdx-threads` maps to JTDX `params%nmt`: `0` keeps source auto mode,
+  `1..24` requests a user thread count capped at available logical cores.
+- The Rust JTDX profile now mirrors that outer band split, keeps one
+  `Ft8bWorkspace` per band so `lsubtracted/npos/freqsub` are thread-local like
+  the source, and follows the source's center-out OpenMP section order for
+  `numthreads >= 4`.
+- This recovered the short-fixture `CQ DX DL8YHR JO41` row. On the current
+  8-core development machine,
+  `--jtdx-threads 0` and `--jtdx-threads 6` both produce the short extra row;
+  `1/2/4/8` do not. A narrower `1133..1600 Hz` run can find
+  `140715 OH5NBJ SV1MRW KM17`; later source-aligned SD candidate selection
+  also keeps it in the full-band run.
+- JTDX `ft8b.f90` scans all odd/even SD memory entries and lets the last
+  matching entry win. Mirroring that behavior recovered
+  `140700 4S6NCH KK1F FN31`; first-match selection can use an older nearby
+  message template and miss the correct decode.
+- `140545 IU2QDB RA3ABG 73` can be recovered if `RA3ABG` is present in the
+  runtime `ALLCALL7.TXT`, but this is a CallDB coverage difference rather than
+  a decoder-path alignment issue. The CSV marks this row as `Extra=E`, and the
+  root call database is not modified for this milestone.
+- The remaining `F1MLZ UA3QNA -04` row enters `ft8b` with strong Costas sync,
+  but regular BP/OSD subpasses do not produce a valid codeword. Do not recover
+  it by relaxing false-decode filters; the open gap is in bit metrics,
+  candidate/refinement, OSD, or another regular-path numerical detail.
 
 ## Known Gaps
 
 Highest-value unfinished alignment items:
 
 - finish file-by-file source audit of `lib_jtdx` against `jtdx/lib`;
-- validate regular metric construction and LDPC/OSD numerical equivalence for
-  the remaining short-fixture miss;
 - complete the remaining AP/deep skip and CPU-pruning matrix from
   `ft8b.f90`;
 - validate newly wired forced-sync / `avexdt` / odd-even memory behavior

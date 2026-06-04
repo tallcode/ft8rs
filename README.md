@@ -200,6 +200,7 @@ Short aliases:
 | `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
 | `--force-sync` | | enable JTDX forced sync time-window tracking |
 | `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid` |
+| `--jtdx-threads` | | JTDX FT8 band-decode threads, `0=auto`, `1..=24` |
 | `--my-call` | `-c` | local callsign context |
 | `--my-grid` | `-G` | local grid context |
 | `--his-call` | `-x` | DX callsign context |
