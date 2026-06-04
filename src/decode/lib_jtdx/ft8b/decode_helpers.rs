@@ -4,8 +4,8 @@ use super::super::ft8_mod1::{
     GRAYMAP, ICOS7, NAPPASSES, NAPTYPES, NDXNSAPTYPES, NHAPTYPES, NMYCNSAPTYPES,
 };
 use super::super::ft8v2::bpdecode174_91::{BpDecodeResult, N};
-use super::super::ft8v2::encode174_91::encode174_91;
 use super::super::ft8v2::packjt77::{unpack77_with_context, HashCallBook, UnpackContext};
+use super::super::genft8::get_tones_from_77bits;
 use super::super::msgparser::msgparser;
 use super::state::{
     BitMetrics, CsMatrix, DecodeSource, Ft8bCandidateContext, Ft8bDecodeResult, MetricSource,
@@ -275,16 +275,16 @@ pub(super) fn decoded_to_result(
     if decoded_quality_rejected(&decoded, isubp2) {
         return None;
     }
+    let (i3, n3) = i3_n3(&decoded.message77);
+    if i3 > 4 || (i3 == 0 && n3 > 5) {
+        return None;
+    }
     let unpack_context = UnpackContext::with_calls(
         Some(book),
         config.mycall.as_deref(),
         config.hiscall.as_deref(),
     );
     let mut msg = unpack77_with_context(&decoded.message77, unpack_context)?;
-    let (i3, n3) = i3_n3(&decoded.message77);
-    if i3 > 4 || (i3 == 0 && n3 > 5) {
-        return None;
-    }
     let l_free_text = i3 == 0 && n3 == 0;
     let mut msg37_2 = String::new();
     let mut l_special = false;
@@ -359,7 +359,9 @@ pub(super) fn decoded_all_zero(decoded: &BpDecodeResult) -> bool {
 }
 
 pub(super) fn decoded_quality_rejected(decoded: &BpDecodeResult, isubp2: usize) -> bool {
-    decoded.nharderror as f32 + decoded.dmin >= 60.0 || (isubp2 > 2 && decoded.nharderror > 39)
+    decoded.nharderror < 0
+        || decoded.nharderror as f32 + decoded.dmin >= 60.0
+        || (isubp2 > 2 && decoded.nharderror > 39)
 }
 
 pub(super) fn decoded_bits_to_result(
@@ -421,32 +423,6 @@ pub(super) fn decoded_bits_to_result(
         itone,
         source,
     })
-}
-
-pub(super) fn get_tones_from_77bits(message77: &[u8; 77]) -> [i32; 79] {
-    let codeword = encode174_91(message77);
-    tones_from_codeword(&codeword)
-}
-
-fn tones_from_codeword(codeword: &[u8; N]) -> [i32; 79] {
-    let mut itone = [0i32; 79];
-    for i in 0..7 {
-        itone[i] = ICOS7[i];
-        itone[36 + i] = ICOS7[i];
-        itone[72 + i] = ICOS7[i];
-    }
-    let mut k = 7usize;
-    for j in 1..=58 {
-        let i = (j - 1) * 3;
-        if j == 30 {
-            k += 7;
-        }
-        let indx =
-            codeword[i] as usize * 4 + codeword[i + 1] as usize * 2 + codeword[i + 2] as usize;
-        itone[k] = GRAYMAP[indx];
-        k += 1;
-    }
-    itone
 }
 
 fn split_tu_message(msg: String) -> (String, String, bool) {
@@ -566,7 +542,10 @@ pub(super) fn estimate_snr(
         for itone in 0..8 {
             total += metrics.s8[itone][i] * metrics.s8[itone][i];
         }
-        let xnoi = (total - xsig) / 7.0;
+        let mut xnoi = (total - xsig) / 7.0;
+        if xnoi < 0.01 {
+            xnoi = 0.01;
+        }
         let xsnr = if xnoi < xsig { xsig / xnoi } else { 1.01 };
         xsnrtmp += xsnr;
     }

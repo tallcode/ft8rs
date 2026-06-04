@@ -1,6 +1,6 @@
 //! Mirrors JTDX `lib/ft8s.f90`.
 
-use super::ft8v2::packjt77sd::genft8sd;
+use super::genft8sd::genft8sd;
 use super::tone8::Tone8Tables;
 
 #[derive(Clone, Debug)]
