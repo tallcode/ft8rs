@@ -85,7 +85,7 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
             1,
         ),
         3 => (
-            format!("{} {} +00", mycall.as_deref()?, hiscall.as_deref()?),
+            format!("{} {} RRR", mycall.as_deref()?, hiscall.as_deref()?),
             &[(0, 58), (74, 77)],
             1,
         ),
@@ -105,12 +105,12 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
             1,
         ),
         11 => (
-            format!("{} <{}> +00", mycall.as_deref()?, hiscall.as_deref()?),
+            format!("{} <{}> -16", mycall.as_deref()?, hiscall.as_deref()?),
             &[(0, 58), (74, 77)],
             1,
         ),
         41 => (
-            format!("<{}> {} +00", mycall.as_deref()?, hiscall.as_deref()?),
+            format!("<{}> {} -15", mycall.as_deref()?, hiscall.as_deref()?),
             &[(0, 58), (74, 77)],
             1,
         ),
@@ -214,11 +214,7 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
             }
         }
         40 => (
-            format!(
-                "<{}> {} -15",
-                mycall.as_deref()?,
-                hiscall.as_deref().unwrap_or("ZZ1ZZZ")
-            ),
+            format!("<{}> ZZ1ZZZ -15", mycall.as_deref()?),
             &[(0, 29), (74, 77)],
             1,
         ),
