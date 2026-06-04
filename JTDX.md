@@ -301,6 +301,9 @@ Keep these as active caution points while continuing alignment:
   reuses the previous pair average in selected pass paths.
 - `ft8apset` nonstandard masks must preserve JTDX dummy-call and base-call
   choices; do not simplify them into ordinary full-call masks.
+  In particular, AP type 3 uses the `MyCall DxCall RRR` template for the
+  first 58 bits, AP type 11 uses `MyCall <DxCall> -16`, AP type 41 uses
+  `<MyCall> DxCall -15`, and AP type 40 uses `<MyCall> ZZ1ZZZ -15`.
 - `ft8b` focused-QSO `iqso=3` should reuse refined state from `iqso=2`, not
   rerun an independent sync search.
 - Special-message rows can produce both `msg37` and `msg37_2`; both need the
