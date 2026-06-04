@@ -72,6 +72,7 @@ impl JtdxStreamDecodeSession {
         state.nft8cycles = config.nft8cycles;
         state.nft8swlcycles = config.nft8swlcycles;
         state.lhound = config.lhound;
+        state.nintcount = 3;
         if let Some(mycall) = &config.mycall {
             state.mycall = mycall.clone();
         }
