@@ -56,7 +56,7 @@ pub struct JtdxStreamDecodeSession {
     _config: StreamDecodeConfig,
     _state: ft8_mod1::Ft8Mod1,
     book: HashCallBook,
-    ft8b_workspace: ft8b::Ft8bWorkspace,
+    ft8b_workspaces: Vec<ft8b::Ft8bWorkspace>,
     tone8_tables: Tone8Tables,
     ft8apset: Ft8ApSet,
 }
@@ -85,7 +85,7 @@ impl JtdxStreamDecodeSession {
             _config: config,
             _state: state,
             book: HashCallBook::new(),
-            ft8b_workspace: ft8b::Ft8bWorkspace::default(),
+            ft8b_workspaces: Vec::new(),
         }
     }
 
@@ -111,120 +111,166 @@ impl JtdxStreamDecodeSession {
         reset_decode_arrays(&mut self._state);
         prepare_qso_memory(&self._config, &mut self._state, interval);
         apply_agc_state(&self._config, &mut self._state);
-        self.ft8b_workspace.begin_slot();
         let passes = ft8_decode::decode_passes(&self._config, self._state.avexdt);
         let npass = passes.len();
+        let bands = jtdx_decode_bands(&self._config);
+        self.ensure_ft8b_workspaces(bands.len());
+        for workspace in &mut self.ft8b_workspaces {
+            workspace.begin_slot();
+        }
         let mut decoded = Vec::new();
         let mut dd8m: Option<Vec<f32>> = None;
-        for pass in passes {
-            apply_pass_sample_shift(&mut self._state.dd8, &mut dd8m, pass.ipass, npass);
-            self.ft8b_workspace.new_pass();
-            let mut sync8_config = pass.sync8;
-            sync8_config.lagcc = self._state.lagcc;
-            sync8_config.lagccbail = self._state.lagccbail;
-            sync8_config.nfawide = self._state.nfawide;
-            sync8_config.nfbwide = self._state.nfbwide;
-            let candidates = sync8::sync8(&self._state.dd8, sync8_config);
-            let mut newdat1 = true;
-            for candidate in candidates {
-                let sd_candidate =
-                    find_sd_candidate(&self._state, interval, candidate.freq, candidate.dt);
-                let context = ft8b::Ft8bCandidateContext {
-                    ipass: pass.ipass,
-                    npass,
-                    lsubtract: matches!(pass.subtract, ft8_decode::SubtractPolicy::Enabled),
-                    lhighsens: candidate.sync < 1.9
-                        || ((pass.ipass == 2 || pass.ipass == 4 || pass.ipass == 6)
-                            && candidate.sync < 3.15),
-                    lcqcand: candidate.lcq(),
-                    levenint: interval == IntervalKind::Even,
-                    loddint: interval == IntervalKind::Odd,
-                    lqsomsgdcd: self._state.lqsomsgdcd,
-                    lft8sdec: self._state.lft8sdec,
-                    stophint: self._config.stophint,
-                    nlasttx: self._config.nQSOProgress,
-                    call_dt_xdt: call_dt_xdt(&self._state, &self._config, interval),
-                    sd_msg: sd_candidate
-                        .map(|(_, entry)| ft8b::LastRxMsgText::from_str(&entry.msg)),
-                    sd_lcq: sd_candidate.is_some_and(|(_, entry)| is_cq_like(&entry.msg)),
-                    sd_index: sd_candidate.map(|(index, _)| index),
-                    last_rx_msg: self
-                        ._state
-                        .lastrxmsg
-                        .lstate
-                        .then(|| ft8b::LastRxMsgText::from_str(&self._state.lastrxmsg.lastmsg)),
-                    last_rx_xdt: self
-                        ._state
-                        .lastrxmsg
-                        .lstate
-                        .then_some(self._state.lastrxmsg.xdt),
-                    last_rx_is_rrr: last_rx_is_rrr(&self._config, &self._state),
-                };
-                if let Some(result) = ft8b::ft8b(
-                    &mut self.ft8b_workspace,
-                    &self._config,
-                    &self.book,
-                    &self.tone8_tables,
-                    &self.ft8apset,
-                    &mut self._state.dd8,
-                    newdat1,
-                    candidate,
-                    context,
-                ) {
-                    if rejects_special_deep_decode(&self._config, &self._state, &result) {
-                        newdat1 = false;
-                        continue;
-                    }
-                    for result in result_variants(result) {
-                        if result.source == DecodeSource::Ft8s {
-                            self._state.lft8sdec = true;
-                        }
-                        if result.source == DecodeSource::Ft8sd {
-                            clear_sd_candidate(&mut self._state, interval, context.sd_index);
-                        }
-                        if is_duplicate_decode(&self._state, &self._config, &result) {
-                            continue;
-                        }
-                        self.ft8b_workspace.remember_decoded_message(
-                            &result.msg37,
-                            result.freq,
-                            result.dt + 0.5,
-                            self._config.mycall.as_deref().unwrap_or(""),
-                            is_standard_context_call(self._config.mycall.as_deref()),
-                        );
-                        let message = StreamDecodedMessage {
-                            freq: result.freq as f64,
-                            dt: result.dt as f64,
-                            snr: result.snr as f64,
-                            msg: result.msg37.clone(),
-                            sync: candidate.sync as f64,
-                            itone: result.itone,
-                        };
-                        collect_book(&self.book, &message.msg);
-                        on_decode(&message)?;
-                        update_qso_memory(
-                            &self._config,
-                            &mut self._state,
-                            &message,
-                            interval,
-                            &result,
-                        );
-                        update_deep_false_state(&self._config, &mut self._state, &result);
-                        save_decode_state(&mut self._state, &result);
-                        decoded.push(message);
-                    }
+        for pass_block in jtdx_pass_blocks(&passes) {
+            if let Some(first) = pass_block.first() {
+                apply_pass_sample_shift(&mut self._state.dd8, &mut dd8m, first.ipass, npass);
+            }
+            for band in &bands {
+                for pass in pass_block {
+                    self.decode_pass_band(
+                        *pass,
+                        npass,
+                        *band,
+                        interval,
+                        &mut decoded,
+                        &mut on_decode,
+                    )?;
                 }
-                newdat1 = false;
             }
         }
-        self.ft8b_workspace.finish_slot(
-            interval == IntervalKind::Even,
-            interval == IntervalKind::Odd,
-            normalized_context_call(self._config.mycall.as_deref()).is_some(),
-            self._state.lqsomsgdcd,
-        );
+        for workspace in &mut self.ft8b_workspaces {
+            workspace.finish_slot(
+                interval == IntervalKind::Even,
+                interval == IntervalKind::Odd,
+                normalized_context_call(self._config.mycall.as_deref()).is_some(),
+                self._state.lqsomsgdcd,
+            );
+        }
         update_avexdt_after_slot(&self._config, &mut self._state, &decoded);
         Ok(decoded)
+    }
+
+    fn ensure_ft8b_workspaces(&mut self, len: usize) {
+        if self.ft8b_workspaces.len() < len {
+            self.ft8b_workspaces
+                .resize_with(len, ft8b::Ft8bWorkspace::default);
+        }
+    }
+
+    fn decode_pass_band<F>(
+        &mut self,
+        pass: ft8_decode::JtdxPass,
+        npass: usize,
+        band: JtdxDecodeBand,
+        interval: IntervalKind,
+        decoded: &mut Vec<StreamDecodedMessage>,
+        on_decode: &mut F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        let workspace = &mut self.ft8b_workspaces[band.index];
+        workspace.new_pass();
+        let mut band_config = self._config.clone();
+        band_config.nfa = band.nfa as f64;
+        band_config.nfb = band.nfb as f64;
+
+        let mut sync8_config = pass.sync8;
+        sync8_config.nfa = band.nfa;
+        sync8_config.nfb = band.nfb;
+        sync8_config.lqsothread =
+            band_config.nfqso >= band_config.nfa && band_config.nfqso <= band_config.nfb;
+        sync8_config.lagcc = self._state.lagcc;
+        sync8_config.lagccbail = self._state.lagccbail;
+        sync8_config.nfawide = self._state.nfawide;
+        sync8_config.nfbwide = self._state.nfbwide;
+
+        let candidates = sync8::sync8(&self._state.dd8, sync8_config);
+        let mut newdat1 = true;
+        for candidate in candidates {
+            let sd_candidate =
+                find_sd_candidate(&self._state, interval, candidate.freq, candidate.dt);
+            let context = ft8b::Ft8bCandidateContext {
+                ipass: pass.ipass,
+                npass,
+                lsubtract: matches!(pass.subtract, ft8_decode::SubtractPolicy::Enabled),
+                lhighsens: candidate.sync < 1.9
+                    || ((pass.ipass == 2 || pass.ipass == 4 || pass.ipass == 6)
+                        && candidate.sync < 3.15),
+                lcqcand: candidate.lcq(),
+                levenint: interval == IntervalKind::Even,
+                loddint: interval == IntervalKind::Odd,
+                lqsomsgdcd: self._state.lqsomsgdcd,
+                lft8sdec: self._state.lft8sdec,
+                stophint: band_config.stophint,
+                nlasttx: band_config.nQSOProgress,
+                call_dt_xdt: call_dt_xdt(&self._state, &band_config, interval),
+                sd_msg: sd_candidate.map(|(_, entry)| ft8b::LastRxMsgText::from_str(&entry.msg)),
+                sd_lcq: sd_candidate.is_some_and(|(_, entry)| is_cq_like(&entry.msg)),
+                sd_index: sd_candidate.map(|(index, _)| index),
+                last_rx_msg: self
+                    ._state
+                    .lastrxmsg
+                    .lstate
+                    .then(|| ft8b::LastRxMsgText::from_str(&self._state.lastrxmsg.lastmsg)),
+                last_rx_xdt: self
+                    ._state
+                    .lastrxmsg
+                    .lstate
+                    .then_some(self._state.lastrxmsg.xdt),
+                last_rx_is_rrr: last_rx_is_rrr(&band_config, &self._state),
+            };
+            if let Some(result) = ft8b::ft8b(
+                workspace,
+                &band_config,
+                &self.book,
+                &self.tone8_tables,
+                &self.ft8apset,
+                &mut self._state.dd8,
+                newdat1,
+                candidate,
+                context,
+            ) {
+                if rejects_special_deep_decode(&band_config, &self._state, &result) {
+                    newdat1 = false;
+                    continue;
+                }
+                for result in result_variants(result) {
+                    if result.source == DecodeSource::Ft8s {
+                        self._state.lft8sdec = true;
+                    }
+                    if result.source == DecodeSource::Ft8sd {
+                        clear_sd_candidate(&mut self._state, interval, context.sd_index);
+                    }
+                    if is_duplicate_decode(&self._state, &band_config, &result, band.numthreads) {
+                        continue;
+                    }
+                    workspace.remember_decoded_message(
+                        &result.msg37,
+                        result.freq,
+                        result.dt + 0.5,
+                        band_config.mycall.as_deref().unwrap_or(""),
+                        is_standard_context_call(band_config.mycall.as_deref()),
+                    );
+                    let message = StreamDecodedMessage {
+                        freq: result.freq as f64,
+                        dt: result.dt as f64,
+                        snr: result.snr as f64,
+                        msg: result.msg37.clone(),
+                        sync: candidate.sync as f64,
+                        itone: result.itone,
+                    };
+                    collect_book(&self.book, &message.msg);
+                    on_decode(&message)?;
+                    update_qso_memory(&band_config, &mut self._state, &message, interval, &result);
+                    update_deep_false_state(&band_config, &mut self._state, &result);
+                    save_decode_state(&mut self._state, &result);
+                    decoded.push(message);
+                }
+            }
+            newdat1 = false;
+        }
+
+        Ok(())
     }
 }
 
@@ -233,6 +279,129 @@ enum IntervalKind {
     Even,
     Odd,
     Other,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct JtdxDecodeBand {
+    index: usize,
+    nfa: i32,
+    nfb: i32,
+    numthreads: usize,
+}
+
+fn jtdx_decode_bands(config: &StreamDecodeConfig) -> Vec<JtdxDecodeBand> {
+    let nfa = config.nfa.round() as i32;
+    let nfb = config.nfb.round() as i32;
+    let numthreads = jtdx_numthreads(config);
+    if numthreads <= 1 || nfb <= nfa + 1 {
+        return vec![JtdxDecodeBand {
+            index: 0,
+            nfa,
+            nfb,
+            numthreads: 1,
+        }];
+    }
+
+    let nfdelta = ((nfb - nfa).abs() as f64 / numthreads as f64).round() as i32;
+    let mut mids = Vec::with_capacity(numthreads.saturating_sub(1));
+    for index in 1..numthreads {
+        let mut nfmid = nfa + nfdelta * index as i32;
+        if index == numthreads - 1 && nfmid + 1 > nfb {
+            nfmid = nfb - 1;
+        }
+        mids.push(nfmid);
+    }
+
+    let bands: Vec<_> = (0..numthreads)
+        .map(|index| {
+            let lo = if index == 0 { nfa } else { mids[index - 1] + 1 };
+            let hi = if index + 1 == numthreads {
+                nfb
+            } else {
+                mids[index]
+            };
+            JtdxDecodeBand {
+                index,
+                nfa: lo,
+                nfb: hi,
+                numthreads,
+            }
+        })
+        .collect();
+
+    jtdx_section_order(numthreads)
+        .into_iter()
+        .filter_map(|index| bands.get(index).copied())
+        .collect()
+}
+
+fn jtdx_numthreads(config: &StreamDecodeConfig) -> usize {
+    let numcores = std::thread::available_parallelism()
+        .map(|cores| cores.get())
+        .unwrap_or(1);
+    let nuserthr = config.jtdx_threads;
+    let mut numthreads = if nuserthr == 0 {
+        match numcores {
+            0 | 1 => 1,
+            2..=4 => numcores - 1,
+            5..=8 => numcores - 2,
+            9..=15 => numcores - 3,
+            16..=20 => numcores - 4,
+            21..=29 => numcores - 5,
+            _ => 24,
+        }
+    } else if nuserthr < 25 {
+        if numcores >= nuserthr {
+            nuserthr
+        } else {
+            numcores
+        }
+    } else {
+        1
+    };
+    if config.filter {
+        numthreads = numthreads.min(8);
+    }
+    if config.nagain {
+        numthreads = numthreads.min(4);
+    }
+    numthreads.max(1)
+}
+
+fn jtdx_section_order(numthreads: usize) -> Vec<usize> {
+    if numthreads <= 3 {
+        return (0..numthreads).collect();
+    }
+
+    let mut order = Vec::with_capacity(numthreads);
+    if numthreads % 2 == 0 {
+        let left = numthreads / 2 - 1;
+        let right = numthreads / 2;
+        order.push(left);
+        order.push(right);
+        for offset in 1..=left {
+            order.push(left - offset);
+            let upper = right + offset;
+            if upper < numthreads {
+                order.push(upper);
+            }
+        }
+    } else {
+        let center = numthreads / 2;
+        order.push(center);
+        for offset in 1..=center {
+            order.push(center - offset);
+            let upper = center + offset;
+            if upper < numthreads {
+                order.push(upper);
+            }
+        }
+    }
+    order
+}
+
+fn jtdx_pass_blocks(passes: &[ft8_decode::JtdxPass]) -> Vec<&[ft8_decode::JtdxPass]> {
+    passes.chunks(3).filter(|chunk| !chunk.is_empty()).collect()
 }
 
 impl IntervalKind {
@@ -512,7 +681,7 @@ fn find_sd_candidate(
         IntervalKind::Odd => &state.oddcopy,
         IntervalKind::Other => return None,
     };
-    entries.iter().enumerate().find(|(_, entry)| {
+    entries.iter().enumerate().rev().find(|(_, entry)| {
         entry.lstate && (entry.freq - freq).abs() < 3.0 && (entry.dt - dt).abs() < 0.19
     })
 }
@@ -777,6 +946,7 @@ fn is_duplicate_decode(
     state: &ft8_mod1::Ft8Mod1,
     config: &StreamDecodeConfig,
     result: &ft8b::Ft8bDecodeResult,
+    numthreads: usize,
 ) -> bool {
     let msg = result.msg37.trim();
     if msg.is_empty() {
@@ -795,6 +965,8 @@ fn is_duplicate_decode(
                 return true;
             }
         } else if nsnr <= state.allsnrs[i] && freq_delta < 45.0 {
+            return true;
+        } else if nsnr > state.allsnrs[i] && freq_delta < 45.0 && numthreads != 1 {
             return true;
         }
     }

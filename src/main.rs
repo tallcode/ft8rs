@@ -125,6 +125,10 @@ struct DecodeArgs {
     #[arg(long, help_heading = "Decode")]
     hound: bool,
 
+    /// JTDX FT8 band-decode threads: 0=auto, 1..24=user setting.
+    #[arg(long, default_value_t = 0, help_heading = "Decode")]
+    jtdx_threads: usize,
+
     /// Number of threads to process large FFTs. Values greater than 1 require an FFTW build.
     #[arg(short = 'm', long, default_value_t = 1, help_heading = "FFTW")]
     fft_threads: usize,
@@ -256,6 +260,7 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     config.swl = args.swl;
     config.lforcesync = args.force_sync;
     config.lhound = args.hound;
+    config.jtdx_threads = args.jtdx_threads;
     Ok(config)
 }
 
@@ -284,6 +289,9 @@ fn validate_decode_args(args: &DecodeArgs) -> Result<(), String> {
         if low >= high {
             return Err("--low must be less than --high".to_string());
         }
+    }
+    if args.jtdx_threads > 24 {
+        return Err("--jtdx-threads must be in 0..=24".to_string());
     }
     Ok(())
 }
