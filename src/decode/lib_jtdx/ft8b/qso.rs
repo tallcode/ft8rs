@@ -10,11 +10,14 @@ pub(super) struct QsoPlan {
     pub(super) lvirtual3: bool,
 }
 
-pub(super) fn qso_attempts(plan: QsoPlan) -> Vec<usize> {
+pub(super) fn qso_attempts(plan: QsoPlan, nft8rxfsens: usize) -> Vec<usize> {
     if plan.lvirtual2 {
         return vec![2];
     }
     if plan.lvirtual3 {
+        if nft8rxfsens < 3 {
+            return vec![2];
+        }
         return vec![2, 3];
     }
     match plan.nqso {

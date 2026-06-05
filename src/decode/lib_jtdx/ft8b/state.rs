@@ -50,6 +50,7 @@ pub struct Ft8bDecodeResult {
     pub msg37_2: String,
     pub l_free_text: bool,
     pub l_special: bool,
+    pub l_hashmsg: bool,
     pub snr: f32,
     pub freq: f32,
     pub dt: f32,

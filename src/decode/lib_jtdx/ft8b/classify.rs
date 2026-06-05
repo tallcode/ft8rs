@@ -400,13 +400,11 @@ fn first_nine_tone_snr(s8: &[[f32; 79]; 8], tones: &[i32; 58]) -> f32 {
         signal += s8[tone][i + 7];
     }
     let mut total = 0.0f32;
-    for tone_values in s8.iter() {
-        total += tone_values[7..16].iter().sum::<f32>();
+    for tone_values in s8.iter().take(8) {
+        for value in tone_values.iter().take(16).skip(7) {
+            total += *value;
+        }
     }
     let noise = (total - signal) / 7.0;
-    if noise > 0.0 {
-        signal / noise
-    } else {
-        2.0
-    }
+    signal / noise
 }

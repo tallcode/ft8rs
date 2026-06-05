@@ -11,7 +11,10 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
     let k = K;
 
     let gen = get_generator();
-    let absllr: Vec<f32> = llr.iter().map(|&x| x.abs()).collect();
+    let mut absllr = vec![0.0f32; n];
+    for i in 0..n {
+        absllr[i] = llr[i].abs();
+    }
 
     let indx = indexx_ascending(&absllr);
     let mut indices: Vec<usize> = indx.into_iter().rev().collect();
@@ -59,11 +62,18 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
     for i in 0..n {
         hdec[i] = if llr[indices[i]] >= 0.0 { 1 } else { 0 };
     }
-    let absrx: Vec<f32> = (0..n).map(|i| absllr[indices[i]]).collect();
-    let apmaskr: Vec<i8> = (0..n).map(|i| apmask[indices[i]]).collect();
+    let mut absrx = vec![0.0f32; n];
+    let mut apmaskr = vec![0i8; n];
+    for i in 0..n {
+        absrx[i] = absllr[indices[i]];
+        apmaskr[i] = apmask[indices[i]];
+    }
 
     // Encode hard decision on MRB
-    let m0: Vec<u8> = hdec[..k].iter().map(|&b| b as u8).collect();
+    let mut m0 = vec![0u8; k];
+    for i in 0..k {
+        m0[i] = hdec[i] as u8;
+    }
     let c0 = mrbencode91(&m0, &genmrb, n);
 
     let mut dmin = 0.0f32;
@@ -121,13 +131,7 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
                         for j in k..n {
                             e2sub[j - k] = ce[j] ^ hdec[j] as u8;
                         }
-                        d1 = me
-                            .iter()
-                            .zip(hdec.iter())
-                            .zip(absrx.iter())
-                            .take(k)
-                            .map(|((&m, &h), &a)| (m ^ h as u8) as f32 * a)
-                            .sum();
+                        d1 = xor_weight_sum_message(&me, &hdec, &absrx, k);
                         e2.copy_from_slice(&e2sub);
                         e2sub.iter().take(nt).filter(|&&b| b == 1).count() + 1
                     } else {
@@ -143,17 +147,10 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
                             mrbencode91_into(&me, &genmrb, n, &mut ce);
                         }
                         let dd = if n1 == flag {
-                            d1 + e2sub
-                                .iter()
-                                .zip(absrx.iter().skip(k))
-                                .map(|(&e, &a)| e as f32 * a)
-                                .sum::<f32>()
+                            d1 + error_weight_sum(&e2sub, &absrx, k)
                         } else {
                             d1 + (ce[n1] ^ hdec[n1] as u8) as f32 * absrx[n1]
-                                + e2.iter()
-                                    .zip(absrx.iter().skip(k))
-                                    .map(|(&e, &a)| e as f32 * a)
-                                    .sum::<f32>()
+                                + error_weight_sum(&e2, &absrx, k)
                         };
                         if dd < dmin {
                             dmin = dd;
@@ -201,9 +198,7 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
                         mi.copy_from_slice(&misub);
                         mi[in1] = 1;
                         mi[in2] = 1;
-                        if mi.iter().map(|&bit| bit as usize).sum::<usize>()
-                            < nord + npre1 as usize + npre2 as usize
-                        {
+                        if sum_bits(&mi) < nord + npre1 as usize + npre2 as usize {
                             continue;
                         }
                         if mi
@@ -219,12 +214,7 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
                             me[j] = m0[j] ^ mi[j];
                         }
                         mrbencode91_into(&me, &genmrb, n, &mut ce);
-                        let dd: f32 = ce
-                            .iter()
-                            .zip(hdec.iter())
-                            .zip(absrx.iter())
-                            .map(|((&c, &h), &a)| (c ^ h as u8) as f32 * a)
-                            .sum();
+                        let dd = xor_weight_sum_codeword(&ce, &hdec, &absrx, n);
                         if dd < dmin {
                             dmin = dd;
                             best_cw.copy_from_slice(&ce);
@@ -330,6 +320,38 @@ fn fetchit91_pattern(bits: &[u8]) -> usize {
         }
     }
     ipat
+}
+
+fn xor_weight_sum_message(me: &[u8], hdec: &[i8], absrx: &[f32], k: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for i in 0..k {
+        sum += (me[i] ^ hdec[i] as u8) as f32 * absrx[i];
+    }
+    sum
+}
+
+fn error_weight_sum(error: &[u8], absrx: &[f32], k: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for i in 0..error.len() {
+        sum += error[i] as f32 * absrx[k + i];
+    }
+    sum
+}
+
+fn xor_weight_sum_codeword(cw: &[u8], hdec: &[i8], absrx: &[f32], n: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for i in 0..n {
+        sum += (cw[i] ^ hdec[i] as u8) as f32 * absrx[i];
+    }
+    sum
+}
+
+fn sum_bits(bits: &[u8]) -> usize {
+    let mut sum = 0usize;
+    for &bit in bits {
+        sum += bit as usize;
+    }
+    sum
 }
 
 fn get_generator() -> &'static [u8] {

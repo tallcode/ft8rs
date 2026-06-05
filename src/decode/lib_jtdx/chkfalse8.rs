@@ -122,7 +122,7 @@ pub(crate) fn chkfalse8(
         if rejects_ap_qso_grid_message(&words, iaptype, context) {
             return false;
         }
-        return accept_optional_report_grid(&words);
+        return true;
     }
 
     if rejects_r_grid_message(&words, i3, lcall2hash) {
@@ -553,23 +553,6 @@ fn accept_ap_type40_message(words: &[&str]) -> bool {
                 return false;
             }
         }
-    }
-    true
-}
-
-fn accept_optional_report_grid(words: &[&str]) -> bool {
-    if words.len() < 3 {
-        return true;
-    }
-    if words[2] == "R" {
-        if words.len() >= 4 {
-            return is_grid4(words[3]);
-        }
-        return false;
-    }
-    if is_grid4(words[2]) {
-        let check = chkgrid(words[1], words[2]);
-        return check.lgvalid && !check.lwrongcall;
     }
     true
 }

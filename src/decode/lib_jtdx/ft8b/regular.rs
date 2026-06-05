@@ -109,15 +109,29 @@ pub(super) fn regular_decode(
                     return Some(result);
                 }
             }
+            if let Some(result) = try_ft8sd_regular_failure(
+                metrics,
+                refined_freq,
+                refined_dt,
+                config,
+                book,
+                context,
+                isubp2,
+                middle_sync_ratio(&metrics.s8),
+            ) {
+                return Some(result);
+            }
         }
 
         if config.lft8apon {
-            let apmag = bit_metrics
-                .bmeta
-                .iter()
-                .map(|value| (2.83 * value).abs())
-                .fold(0.0f32, f32::max)
-                * 1.01;
+            let mut apmag = 0.0f32;
+            for value in &bit_metrics.bmeta {
+                let llra_abs = (2.83 * *value).abs();
+                if llra_abs > apmag {
+                    apmag = llra_abs;
+                }
+            }
+            apmag *= 1.01;
             for (isubp2, iaptype) in plan_ap_subpasses(config) {
                 if !jtdx_ap_subpass_allowed(
                     config,
@@ -158,6 +172,18 @@ pub(super) fn regular_decode(
                     )
                 });
                 let Some(decoded) = decoded else {
+                    if let Some(result) = try_ft8sd_regular_failure(
+                        metrics,
+                        refined_freq,
+                        refined_dt,
+                        config,
+                        book,
+                        context,
+                        isubp2,
+                        middle_sync_ratio(&metrics.s8),
+                    ) {
+                        return Some(result);
+                    }
                     remember_failed_candidate_signal(
                         signal_memory,
                         metrics,
@@ -172,9 +198,33 @@ pub(super) fn regular_decode(
                     continue;
                 };
                 if decoded_all_zero(&decoded) {
+                    if let Some(result) = try_ft8sd_regular_failure(
+                        metrics,
+                        refined_freq,
+                        refined_dt,
+                        config,
+                        book,
+                        context,
+                        isubp2,
+                        middle_sync_ratio(&metrics.s8),
+                    ) {
+                        return Some(result);
+                    }
                     continue;
                 }
                 if decoded_quality_rejected(&decoded, isubp2) {
+                    if let Some(result) = try_ft8sd_regular_failure(
+                        metrics,
+                        refined_freq,
+                        refined_dt,
+                        config,
+                        book,
+                        context,
+                        isubp2,
+                        middle_sync_ratio(&metrics.s8),
+                    ) {
+                        return Some(result);
+                    }
                     remember_failed_candidate_signal(
                         signal_memory,
                         metrics,
@@ -200,6 +250,18 @@ pub(super) fn regular_decode(
                 ) {
                     return Some(result);
                 }
+                if let Some(result) = try_ft8sd_regular_failure(
+                    metrics,
+                    refined_freq,
+                    refined_dt,
+                    config,
+                    book,
+                    context,
+                    isubp2,
+                    middle_sync_ratio(&metrics.s8),
+                ) {
+                    return Some(result);
+                }
             }
         }
     }
@@ -212,18 +274,6 @@ pub(super) fn regular_decode(
         book,
         context,
         tone8_tables,
-    ) {
-        return Some(result);
-    }
-
-    if let Some(result) = try_ft8sd_regular_failure(
-        metrics,
-        refined_freq,
-        refined_dt,
-        config,
-        book,
-        context,
-        middle_sync_ratio(&metrics.s8),
     ) {
         return Some(result);
     }
@@ -323,7 +373,7 @@ fn try_ft8s_with_s8(
     let result = ft8s(
         s8,
         srr,
-        3,
+        config.nft8rxfsens,
         context.stophint,
         &mycall,
         &hiscall,
@@ -406,8 +456,12 @@ fn try_ft8sd_regular_failure(
     config: &StreamDecodeConfig,
     book: &HashCallBook,
     context: Ft8bCandidateContext,
+    isubp2: usize,
     srr: f32,
 ) -> Option<Ft8bDecodeResult> {
+    if isubp2 != 3 {
+        return None;
+    }
     if srr >= 7.0 {
         return None;
     }
@@ -487,9 +541,6 @@ fn jtdx_ap_subpass_allowed(
             return false;
         }
         if context.lqsomsgdcd {
-            return false;
-        }
-        if isubp1 > 8 && !is_qso_candidate_ap_type(iaptype) {
             return false;
         }
     } else if classifier.lmycsignal && lmycallstd {
@@ -636,6 +687,9 @@ fn jtdx_ap_subpass_allowed(
         {
             return false;
         }
+        if classifier.lqsocandave && isubp1 > 8 && !(3..=6).contains(&iaptype) {
+            return false;
+        }
         return true;
     }
 
@@ -677,6 +731,9 @@ fn jtdx_ap_subpass_allowed(
             return false;
         }
         if iaptype > 2 && iaptype < 15 && loutapwid {
+            return false;
+        }
+        if classifier.lqsocandave && isubp1 > 8 && !(11..=14).contains(&iaptype) {
             return false;
         }
         return true;
@@ -751,10 +808,6 @@ fn jtdx_ap_subpass_allowed(
     }
 
     false
-}
-
-fn is_qso_candidate_ap_type(iaptype: i32) -> bool {
-    matches!(iaptype, 3..=6 | 11..=14 | 21 | 23 | 24 | 41..=44)
 }
 
 fn jtdx_ap_signal_pruning_allowed(

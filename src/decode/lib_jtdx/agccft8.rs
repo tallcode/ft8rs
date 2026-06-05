@@ -1,6 +1,7 @@
 //! Mirrors JTDX `lib/agccft8.f90`.
 
 use crate::decode::lib_jtdx::four2a::four2a_r2c;
+use crate::decode::lib_jtdx::indexx::indexx_ascending;
 
 const NFFT: usize = 1024;
 const NHSYM: usize = 178;
@@ -62,15 +63,12 @@ pub fn agccft8(dd8: &mut [f32], nfa: i32, nfb: i32, lforcesync: bool) -> AgcResu
         );
     }
 
-    let s3min1 = s3[1..=10].iter().copied().fold(f32::INFINITY, f32::min);
-    let s3min2 = s3[169..=178].iter().copied().fold(f32::INFINITY, f32::min);
-    let mut s3min = s3min1.min(s3min2);
-    let s3max1 = s3[1..=10].iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    let s3max2 = s3[169..=178]
-        .iter()
-        .copied()
-        .fold(f32::NEG_INFINITY, f32::max);
-    let mut s3max = s3max1.max(s3max2);
+    let s3min1 = minval_s3(&s3, 1, 10);
+    let s3min2 = minval_s3(&s3, 169, 178);
+    let mut s3min = if s3min1 < s3min2 { s3min1 } else { s3min2 };
+    let s3max1 = maxval_s3(&s3, 1, 10);
+    let s3max2 = maxval_s3(&s3, 169, 178);
+    let mut s3max = if s3max1 > s3max2 { s3max1 } else { s3max2 };
     if s3min < 0.1 {
         s3min = 1.0;
         s3max = 1.0;
@@ -128,9 +126,9 @@ fn median_symbol_level(
     for i in nf1..=nf2 {
         sa33.push((x_re[i] * x_re[i] + x_im[i] * x_im[i]).sqrt().sqrt() as f32);
     }
-    sa33.sort_by(|a, b| a.total_cmp(b));
-    let smed_idx = nmed.saturating_sub(1).min(sa33.len().saturating_sub(1));
-    let smed = sa33[smed_idx];
+    let indx = indexx_ascending(&sa33);
+    let smed_idx = nmed.saturating_sub(1).min(indx.len().saturating_sub(1));
+    let smed = sa33[indx[smed_idx]];
     if smed > 1e-6 {
         smed
     } else {
@@ -146,9 +144,31 @@ fn fill_windowed(x_re: &mut [f64], dd8: &[f32], i0: usize, fac1: f32, w11: &[f32
 }
 
 fn spectrum_sum(x_re: &[f64], x_im: &[f64], nf1: usize, nf2: usize) -> f32 {
-    (nf1..=nf2)
-        .map(|i| (x_re[i] * x_re[i] + x_im[i] * x_im[i]).sqrt() as f32)
-        .sum()
+    let mut spec = 0.0f32;
+    for i in nf1..=nf2 {
+        spec += (x_re[i] * x_re[i] + x_im[i] * x_im[i]).sqrt() as f32;
+    }
+    spec
+}
+
+fn minval_s3(s3: &[f32; NHSYM + 1], start: usize, end: usize) -> f32 {
+    let mut value = s3[start];
+    for item in s3.iter().take(end + 1).skip(start + 1) {
+        if *item < value {
+            value = *item;
+        }
+    }
+    value
+}
+
+fn maxval_s3(s3: &[f32; NHSYM + 1], start: usize, end: usize) -> f32 {
+    let mut value = s3[start];
+    for item in s3.iter().take(end + 1).skip(start + 1) {
+        if *item > value {
+            value = *item;
+        }
+    }
+    value
 }
 
 fn divide_range(dd8: &mut [f32], start: usize, end: usize, level: f32) {

@@ -124,8 +124,8 @@ Current measured profile targets after the CSV marker refresh:
 
 - short `wsjtx`: `21/21`;
 - short `jtdx`: `20/20`;
-- long `wsjtx`: `425/425`;
-- long `jtdx`: `430/431`.
+- long `wsjtx`: `424/424`;
+- long `jtdx`: `429/431`.
 
 The existing WSJT-X baseline remains a hard gate. JTDX and hybrid are
 informational until their implementations are complete enough to establish
@@ -418,47 +418,49 @@ Initial status:
 
 Remaining implementation order:
 
-1. complete the remaining JTDX AP/deep source gating matrix. AP/deep now runs
+1. continue JTDX AP/deep source-gating audits as optional branches are used.
+   AP/deep now runs
    inside the source-shaped `isubp1` metric-source loop and can use high-order
    `nsubpasses`. The current gate set covers standard/nonstandard call shape,
    missing my/his-call, AP width, QSO-candidate priority, MyCall priority,
    CQ-only, `lqsomsgdcd`, `stophint`, `nmic`, standard/nonstandard DXCall
    signal classifiers, the `s256` CQ classifier, QSO end-message classifiers
-   (`RRR`/`73`/`RR73`), and the source-shaped hard/soft sync gate. Remaining
-   gates are mostly Hound fox-report/RR73 classifiers, later
-   source-specific CPU-pruning branches, and AP/deep false-positive coverage.
-   The first CQ/MyCall `scqnr` / `smycnr` AP-pruning checks and slot-local
-   `lft8sdec` state are represented;
+   (`RRR`/`73`/`RR73`), branch-specific `lqsocandave` late-subpass pruning,
+   Hound fox-report/RR73 classifiers, the source-shaped hard/soft sync gate,
+   and the first CQ/MyCall `scqnr` / `smycnr` AP-pruning checks. Slot-local
+   `lft8sdec` state is represented. Remaining gates are mainly optional-mode
+   validation and AP/deep false-positive coverage;
 2. complete JTDX-owned FT8v2 source-level refinement, especially any remaining
    differences in OSD/BP acceptance thresholds and packed-message handling;
-3. source-audit and tighten JTDX subtract/downsample residual interaction,
-   including `freqsub`, `npos`, `lsubtracted`, and focused-QSO retry products;
-4. source-audit the newly connected AGC forced-DT / `avexdt` behavior and
-   focused-QSO odd/even memory behavior against JTDX with real profile output;
-5. complete remaining signal-classified AP/deep gates. The known deferred
-   pieces are source-specific CPU-pruning gates around DX-call search and
-   optional wide-search controls. The main signal-driven `ndeep=4` / Hound
-   `ndeep=3` OSD-depth branch is represented;
+3. keep JTDX subtract/downsample residual interaction under regression watch.
+   The source `freqsub`, `npos`, `lsubtracted`, pass-4/7 sample shifts, and
+   focused-QSO retry products are now represented;
+4. keep AGC forced-DT / `avexdt` and focused-QSO odd/even memory behavior under
+   output validation. The persistent next-slot `avexdt` state follows
+   `decoder.f90`, including the `lforcesync` no-decode reset;
+5. complete only the remaining signal-classified AP/deep gates that prove
+   relevant in normal FT8. The main signal-driven `ndeep=4` / Hound `ndeep=3`
+   OSD-depth branch is represented;
 6. complete remaining AP/deep-specific false-positive filter coverage,
    including filters that depend on JTDX signal classifiers;
 7. source-audit all remaining uses of JTDX `chkflscall` against the newly
    wired `searchcalls` / `ALLCALL7.TXT` backed path, especially AP/deep
    filters that combine database lookup with signal classifiers;
-8. complete the remaining FT8S / superdeep branches that are part of JTDX's
+8. keep FT8S / superdeep source audits focused on behavior that affects the
    normal FT8 high-sensitivity path. The main `ft8s.f90` matcher,
    previous-slot `ft8sd1` / `ft8sd` recovery branches, `ft8mf1` / `ft8mfcq`
    memory-filter branches, and `tonesd` superdeep sync templates now exist.
    The `sync8d` main and extra template families (`csync`, `csynce`,
    `csynccq`, `csyncsd`, `csyncsdcq`) are represented, and the
-   FT8S/FT8SD-specific false-decode boundary is represented. Remaining work is
-   source audit of the combined virtual-QSO and superdeep control flow.
-   SWL-specific behavior remains deferred.
+   FT8S/FT8SD-specific false-decode boundary is represented. `syncdist` now
+   uses the source-shaped repeated `maxloc` ladder. SWL-specific behavior
+   remains deferred.
 
 Next checkpoint:
 
-- source-audit and tighten the remaining AP/deep per-`iaptype` gates against
-  JTDX `ft8b.f90`, especially Hound fox-report/RR73 branches and
-  false-positive gates that still need source-complete classifiers;
+- source-audit any newly exercised AP/deep per-`iaptype` gate against
+  JTDX `ft8b.f90`, especially optional Hound/SWL output and false-positive
+  gates that still need source-complete classifiers;
 - source-audit JTDX `chkflscall` call sites now that `searchcalls.f90` /
   `ALLCALL7.TXT` backed lookup is wired into `lib_jtdx`. The remaining work is
   branch coverage, not deciding whether to approximate the database;
@@ -468,13 +470,10 @@ Next checkpoint:
   Hound-specific output should not be treated as aligned until those branches
   are checked against real JTDX output;
 - source-audit the FT8S/FT8SD false-decode state (`lrepliedother`,
-  `msgsrcvd`, and source `stophint` boundaries) against JTDX before using the
-  native profile for sensitivity comparisons;
-- source-audit the now-wired `sync8d` template families (`csynce`,
-  `csynccq`, `csyncsd`, `csyncsdcq`, and the GFSK-derived primary `csync`)
-  against JTDX output before decode baseline testing;
-- after that, run only compile checks first, then re-enable profile-level short
-  decode smoke tests once native JTDX emits stable rows;
+  `msgsrcvd`, and source `stophint` boundaries) when a concrete miss or false
+  positive points there;
+- run compile checks first; run profile-level short/long decode smoke tests
+  only after a batch of source-alignment changes.
 - keep any new temporary instrumentation out of committed code. If a diagnostic
   is useful enough to keep, document the finding here or in `JTDX.md` rather
   than leaving ad hoc output paths in the decoder.
@@ -540,11 +539,12 @@ Current JTDX checkpoint:
 - native `profile=jtdx` short fixture is 20/20 on `210703_133430.wav`;
 - recovered `K1JT HA5WA 73` by enabling JTDX sensitivity level 2 subpass
   semantics in the high-sensitivity profile;
-- native `profile=jtdx` long fixture is 430/431 on `230208_140300.wav`;
+- native `profile=jtdx` long fixture is 429/431 on `230208_140300.wav`;
 - `CQ DX DL8YHR JO41` is a `W` row and no longer belongs to the JTDX target.
-  The current tracked long miss is
-  `140700 F1MLZ UA3QNA -04`, which enters `ft8b` with strong Costas sync but
-  does not produce a CRC-valid regular-path codeword;
+  The current tracked long misses are `140700 F1MLZ UA3QNA -04`, which enters
+  `ft8b` with strong Costas sync but does not produce a CRC-valid regular-path
+  codeword, and `140715 OH5NBJ SV1MRW KM17`, which remains a full-band
+  scheduling/residual interaction gap;
 - the latest source-shape passes added local `indexx` over `f32`,
   session-level `tone8` precompute with nonstandard-call table branches,
   session-level `ft8apset` precompute, `ft8s` consumption of the precomputed
@@ -557,10 +557,12 @@ Current JTDX checkpoint:
   false, and added the JTDX `nintcount` / `avexdt` fast-track state used after
   forced sync or mode-change windows, including the no-decode forced-sync reset
   that keeps next-slot `avexdt` at zero. The `filter` / `nagainfil` active-band
-  narrowing from `decoder.f90` is now represented in the JTDX `sync8` config
-  while preserving the original wide band for AGC normalization. The focused QSO
-  `iqso=3` path now reuses the preceding `iqso=2` refined state before the
-  source `ibest+1` adjustment instead of rerunning the sync search. The outer
+  narrowing from `decoder.f90` is now represented at the outer JTDX decode-band
+  split while preserving the original wide band for AGC normalization. The AP
+  `iaptype=3/11/21/41` false-decode branch now returns after its dedicated
+  source checks instead of applying an extra generic grid/report check. The
+  focused QSO `iqso=3` path now reuses the preceding `iqso=2` refined state
+  before the source `ibest+1` adjustment instead of rerunning the sync search. The outer
   post-decode memory update now uses the source duplicate/update ordering and
   narrower call-DT, odd/even-message, decoded-CQ/MyCall, and QSO signal-memory
   gates. The same layer now also expands `lspecial` results into the source
@@ -581,6 +583,65 @@ Current JTDX checkpoint:
   pruning to the same layers as `ft8b.f90`; the
   standard-MyCall/nonstandard-DXCall AP gate also now includes the source
   `lcqdxcnssig`, `lqso73`, and `lqsorr73` checks for `iaptype` 31/35/36;
+  `ft8b` results now preserve the source `lhashmsg` state across `delbraces`
+  so originally hash-braced messages are not saved into odd/even AP memory;
+  `nft8rxfsens` is now explicit JTDX profile state and drives both FT8S and
+  the virtual-QSO `iqso=3` skip gate;
+  call-DT memory now mirrors `extract_call.f90`, including directed CQ token
+  selection;
+  FT8SD regular-failure fallback is now tied to `isubp2 == 3` instead of a
+  global post-loop fallback;
+  `msgparser` now follows the source fifth-space/report extraction guards and
+  the exact 1-based brace threshold;
+  `delbraces` now uses fixed-width character shifts;
+  `packjt77sd` now narrows unpacking to source-supported SD message types and
+  falls back to free text for unsupported pack types;
+  `ft8sd` / `ft8sd1` now preserve source candidate text rather than `msgsent`;
+  `ft8mf1` / `ft8mfcq` now use source-shaped two-pass tone rank searches, and
+  `ft8mfcq` preserves `msgd` as the success text;
+  `ft8s` now keeps source candidate text when regenerating fallback symbols and
+  uses the source-shaped `s1/s2/s3/s4` rank loops;
+  `ft8mf1` / `ft8mfcq` now also accumulate `ref0` through explicit source-style
+  loops instead of iterator sums;
+  `ft8s` false-deep-search power ratios now use explicit source-order sums for
+  sync/data/noise windows;
+  `tonesd` / `ft8mf1` now preserve source SD candidate text and apply the
+  source first/second-field length guard;
+  `ft8sd` / `ft8sd1` now apply the same source `c1/c2` length guard before
+  building SD candidate variants;
+  `agccft8` now selects the median spectral level through the JTDX `indexx`
+  mirror instead of a direct vector sort;
+  `ft8b` `iqso=4` non-deep SD/MF recovery now reuses the preceding `iqso=1`
+  refined state and no longer runs an extra fallback sync search;
+  `ft8b` symbol extraction now preserves the source-shaped `syncavpart`
+  maxval path and the soft-sync `scoreratiow` division loop;
+  `ft8b` CQ/MyCall tone SNR hints now use the source `signal / noise`
+  expression directly instead of an extra Rust fallback;
+  `sync8` now uses the JTDX `indexx` mirror for red baseline selection and
+  candidate ordering instead of direct Rust sorting;
+  `agccft8` now keeps `spec`, `minval`, and `maxval` as explicit source-order
+  loops;
+  `ft8b` bit-metric construction now uses a fixed `s2(0:511)` mirror with
+  explicit source-style `k/ks/ks1/ks2` loops and paired masked max searches
+  instead of a generic vector/helper implementation;
+  `ft8b` SNR correction now follows the source expression order directly
+  (`log10`, explicit squared correction, and branch clamps) instead of
+  Rust-only safety clamps / `powi` rewrites;
+  `ft8b` sync scoring / tone normalization now uses explicit source-order
+  accumulation for `sum(s81)`, `sum(snrsync)`, `sum(s8(...))`, and `minloc`
+  equivalents instead of iterator reductions;
+  `normalizebmet`, AP `apmag`, JTDX CQ/MyCall first-nine tone totals, and
+  `sync8` AGC `tall` group sums now also use explicit source-order loops;
+  `sync8` candidate ordering now explicitly fills the `indexx` sort-key array
+  from candidate sync or weighted sync fields;
+  `bpdecode174_91` now uses explicit source-order loops for `sum(tov...)` and
+  parity syndrome accumulation;
+  `osd174_91` now uses explicit loops for weighted-distance and bit-count sums
+  in the main OSD scoring paths;
+  OSD receive-vector reordering for `absrx`, `apmaskr`, and `m0` is now
+  explicit instead of iterator-built;
+  `sync8d` top-level `ipass` branch now mirrors the source last-sync behavior,
+  including adjacent averaging for `ipass=3/4/8` before power scoring;
 - temporary trace and experiments must stay out of commits.
 
 ### Step 6: Enable JTDX Reporting

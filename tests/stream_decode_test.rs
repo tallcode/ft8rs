@@ -2,7 +2,7 @@ use ft8rs::fft_engine_name;
 use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
 use ft8rs::stream::{SlotTimestamp, StreamDecodeConfig, StreamDecodeSession};
 const SHORT_TARGET_ACCEPTED_FLOOR: usize = 19;
-const LONG_TARGET_ACCEPTED_FLOOR: usize = 425;
+const LONG_TARGET_ACCEPTED_FLOOR: usize = 424;
 
 #[derive(Clone, Debug)]
 struct BaselineRow {

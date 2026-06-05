@@ -1,6 +1,7 @@
 //! Mirrors JTDX `lib/sync8.f90`.
 
 use crate::decode::lib_jtdx::four2a::four2a_r2c;
+use crate::decode::lib_jtdx::indexx::indexx_ascending;
 use crate::stream::session::StreamDecodeConfig;
 
 use super::ft8_mod1::ICOS7;
@@ -73,7 +74,8 @@ impl Sync8Config {
             (-62 + avexdt_bins, 62 + avexdt_bins)
         };
 
-        let (nfa, nfb) = active_decode_band(config);
+        let nfa = config.nfa.round() as i32;
+        let nfb = config.nfb.round() as i32;
 
         Self {
             nfa,
@@ -107,24 +109,6 @@ impl Sync8Config {
             rcandthin
         }
     }
-}
-
-fn active_decode_band(config: &StreamDecodeConfig) -> (i32, i32) {
-    let mut nfa = config.nfa.round() as i32;
-    let mut nfb = config.nfb.round() as i32;
-    let nfqso = config.nfqso.round() as i32;
-
-    if config.filter && nfqso >= nfa && nfqso <= nfb {
-        let half_width = if config.lhound { 290 } else { 60 };
-        nfa = nfa.max(nfqso - half_width);
-        nfb = nfb.min(nfqso + half_width);
-    }
-    if config.nagain && nfqso >= nfa && nfqso <= nfb {
-        nfa = nfa.max(nfqso - 25);
-        nfb = nfb.min(nfqso + 25);
-    }
-
-    (nfa, nfb)
 }
 
 pub fn candidate_sort_metric(candidate: &SyncCandidate, config: Sync8Config) -> f32 {
@@ -366,9 +350,9 @@ impl Sync8Workspace {
                                 sig * 6.0 / (sum_s_stride(&self.s, i, i + nfos6, nfos, k) - sig);
                         }
                     }
-                    let sya: f32 = tall[0..7].iter().sum();
-                    let sycq: f32 = tall[7..16].iter().sum();
-                    let sybc: f32 = tall[16..30].iter().sum();
+                    let sya = sum_tall(&tall, 0, 7);
+                    let sycq = sum_tall(&tall, 7, 16);
+                    let sybc = sum_tall(&tall, 16, 30);
                     let sy1 = (sya + sycq + sybc) / 30.0;
                     let sy2 = (sya + sybc) / 21.0;
                     let sync_abc = sy1.max(sy2);
@@ -377,8 +361,8 @@ impl Sync8Workspace {
                     lcq = sy1 > sy2;
                     (sync_abc, sy1.max(sy2))
                 } else {
-                    let sybc: f32 = tall[16..30].iter().sum();
-                    ((tall[0..7].iter().sum::<f32>() + sybc) / 21.0, sybc / 14.0)
+                    let sybc = sum_tall(&tall, 16, 30);
+                    ((sum_tall(&tall, 0, 7) + sybc) / 21.0, sybc / 14.0)
                 };
 
                 let idx = self.j_idx(i, j);
@@ -423,11 +407,11 @@ impl Sync8Workspace {
             self.redcq[i] = best_cq;
         }
 
-        let mut base_values: Vec<f32> = self.red[iaw..=ibw].to_vec();
-        base_values.sort_by(|a, b| a.total_cmp(b));
         let iz = ibw - iaw + 1;
-        let base_idx = ((0.40 * iz as f32).round() as usize).max(1) - 1;
-        let mut base = base_values[base_idx];
+        let red_window: Vec<f32> = self.red[iaw..=ibw].to_vec();
+        let indx = indexx_ascending(&red_window);
+        let ibase_rel = indx[((0.40 * iz as f32).round() as usize).max(1) - 1];
+        let mut base = self.red[iaw + ibase_rel];
         if base < 1e-8 {
             base = 1.0;
         }
@@ -435,11 +419,12 @@ impl Sync8Workspace {
             self.red[i] /= base;
         }
 
-        let mut order: Vec<usize> = (ia..=ib).collect();
-        order.sort_by(|a, b| self.red[*b].total_cmp(&self.red[*a]));
+        let red_window: Vec<f32> = self.red[ia..=ib].to_vec();
+        let order = indexx_ascending(&red_window);
 
         let mut candidate0 = Vec::new();
-        for n in order {
+        for rel in order.iter().rev().copied() {
+            let n = ia + rel;
             let freq = n as f32 * df;
             let red = self.red[n];
             if (freq - config.nfqso as f32).abs() > 3.0 {
@@ -497,16 +482,23 @@ fn sync_pair(t1: f32, t01: f32, tcq: f32, t0cq: f32, den1: f32, den2: f32) -> (f
     (sync01.max(sync02), sync02 > sync01)
 }
 
-fn order_candidates(mut candidate0: Vec<SyncCandidate>, config: Sync8Config) -> Vec<SyncCandidate> {
+fn order_candidates(candidate0: Vec<SyncCandidate>, config: Sync8Config) -> Vec<SyncCandidate> {
+    let mut sort_values = vec![0.0f32; candidate0.len()];
     if config.rcandthin() > 0.99 {
-        candidate0.sort_by(|a, b| b.sync.total_cmp(&a.sync));
+        for i in 0..candidate0.len() {
+            sort_values[i] = candidate0[i].sync;
+        }
     } else {
-        candidate0.sort_by(|a, b| b.sort_metric.total_cmp(&a.sort_metric));
+        for i in 0..candidate0.len() {
+            sort_values[i] = candidate0[i].sort_metric;
+        }
     }
+    let indx = indexx_ascending(&sort_values);
 
     let mut out = Vec::new();
     let mut fprev = 5004.0f32;
-    for candidate in &candidate0 {
+    for &idx in indx.iter().rev() {
+        let candidate = &candidate0[idx];
         if (candidate.freq - config.nfqso as f32).abs() <= 3.0
             && candidate.sync >= 1.1
             && (candidate.freq - fprev).abs() > 3.0
@@ -535,7 +527,8 @@ fn order_candidates(mut candidate0: Vec<SyncCandidate>, config: Sync8Config) -> 
         ncandfqso += 1;
     }
 
-    for candidate in &candidate0 {
+    for &idx in indx.iter().rev() {
+        let candidate = &candidate0[idx];
         let syncmin1 = if (candidate.freq - config.nfqso as f32).abs() > 3.0 {
             config.syncmin
         } else {
@@ -594,11 +587,27 @@ fn suppress_near_dupes(candidates: &mut [SyncCandidate], config: Sync8Config) {
 }
 
 fn sum_s(s: &[f32], ia: usize, ib: usize, j: usize) -> f32 {
-    (ia..=ib).map(|i| s[s_idx(i, j)]).sum()
+    let mut sum = 0.0f32;
+    for i in ia..=ib {
+        sum += s[s_idx(i, j)];
+    }
+    sum
 }
 
 fn sum_s_stride(s: &[f32], ia: usize, ib: usize, step: usize, j: usize) -> f32 {
-    (ia..=ib).step_by(step).map(|i| s[s_idx(i, j)]).sum()
+    let mut sum = 0.0f32;
+    for i in (ia..=ib).step_by(step) {
+        sum += s[s_idx(i, j)];
+    }
+    sum
+}
+
+fn sum_tall(tall: &[f32; 30], start: usize, end: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for value in tall.iter().take(end).skip(start) {
+        sum += *value;
+    }
+    sum
 }
 
 fn s_idx(i: usize, j: usize) -> usize {

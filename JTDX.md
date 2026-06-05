@@ -177,8 +177,8 @@ Testing rules remain:
 Current observed checkpoint:
 
 ```text
-short fixture: 210703_133430.wav -> 20/20 target, 21 decoded total
-long fixture:  230208_140300.wav -> 430/431 target
+short fixture: 210703_133430.wav -> 20/20 target, 20 decoded total
+long fixture:  230208_140300.wav -> 429/431 target
 ```
 
 Current marker counts:
@@ -198,6 +198,7 @@ Current long-fixture misses are:
 
 ```text
 230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,J
+230208_140715,-23,0.5,1502,OH5NBJ SV1MRW KM17,
 ```
 
 Frequency-band scheduling note:
@@ -210,12 +211,11 @@ Frequency-band scheduling note:
   `Ft8bWorkspace` per band so `lsubtracted/npos/freqsub` are thread-local like
   the source, and follows the source's center-out OpenMP section order for
   `numthreads >= 4`.
-- This recovered the short-fixture `CQ DX DL8YHR JO41` row. On the current
-  8-core development machine,
-  `--jtdx-threads 0` and `--jtdx-threads 6` both produce the short extra row;
-  `1/2/4/8` do not. A narrower `1133..1600 Hz` run can find
-  `140715 OH5NBJ SV1MRW KM17`; later source-aligned SD candidate selection
-  also keeps it in the full-band run.
+- This recovered the short-fixture `CQ DX DL8YHR JO41` row in some band/thread
+  schedules. The row is marked `W`, so it is outside the JTDX target.
+- A narrower `1133..1600 Hz` run can find `140715 OH5NBJ SV1MRW KM17`, but the
+  current full-band source-shaped run does not keep it. Treat this as the
+  active full-slot scheduling/residual interaction gap.
 - JTDX `ft8b.f90` scans all odd/even SD memory entries and lets the last
   matching entry win. Mirroring that behavior recovered
   `140700 4S6NCH KK1F FN31`; first-match selection can use an older nearby
@@ -224,10 +224,10 @@ Frequency-band scheduling note:
   runtime `ALLCALL7.TXT`, but this is a CallDB coverage difference rather than
   a decoder-path alignment issue. The CSV marks this row as `Extra=E`, and the
   root call database is not modified for this milestone.
-- The remaining `F1MLZ UA3QNA -04` row enters `ft8b` with strong Costas sync,
-  but regular BP/OSD subpasses do not produce a valid codeword. Do not recover
-  it by relaxing false-decode filters; the open gap is in bit metrics,
-  candidate/refinement, OSD, or another regular-path numerical detail.
+- `F1MLZ UA3QNA -04` enters `ft8b` with strong Costas sync, but regular BP/OSD
+  subpasses do not produce a valid codeword. Do not recover it by relaxing
+  false-decode filters; the open gap is in bit metrics, candidate/refinement,
+  OSD, or another regular-path numerical detail.
 
 Recent source-level alignment:
 
@@ -257,28 +257,96 @@ Recent source-level alignment:
 - `call_q.f90` is now an independent mirror and is shared by the JTDX
   `chkfalse8` / `chkspecial8` paths, keeping it distinct from the stricter
   `callsign_q.f90` rules as in the source tree.
+- `decoder.f90` active-band narrowing for `filter` / `nagainfil` now lives at
+  the outer JTDX decode-band split, not inside `sync8`, matching the source
+  layering while preserving the original wide band for AGC normalization.
+- `chkfalse8` now returns immediately for the source AP QSO/grid iaptypes
+  `3/11/21/41` after their dedicated checks, instead of applying an extra
+  generic grid/report validation that JTDX does not run there.
+- `ft8b` results now carry the source `lhashmsg` state through `delbraces`.
+  This keeps originally hash-braced messages out of odd/even AP memory even
+  when the displayed message no longer contains angle brackets.
+- `nft8rxfsens` is represented as profile state instead of a hard-coded
+  FT8S argument. The high-sensitivity profile still sets it to `3`, matching
+  the current target, and virtual-QSO attempt pruning now reads the same value.
+- The outer call-DT memory now mirrors `extract_call.f90` instead of taking the
+  second whitespace token directly. This matters for directed CQ forms such as
+  `CQ DX CALL GRID`, where JTDX records `CALL` rather than `DX`.
+- The FT8SD regular-failure fallback is no longer a global post-regular
+  fallback. It is gated by the source `isubp2 == 3` / `srr < 7.0` condition and
+  is attempted on the matching regular/AP failure paths.
+- `msgparser` now follows the fixed-field source checks more closely, including
+  the fifth-space position guard, source-style report extraction, and the
+  1-based `ib.gt.3` brace-removal threshold translated to 0-based `ib >= 3`.
+- `delbraces` now uses a fixed 37-byte buffer and source-style character
+  shifts instead of tokenizing and joining whitespace.
+- `packjt77sd` now mirrors the source-supported SD unpack surface: free text
+  `0.0`, type `1/2`, and `i3=4` CQ-only messages. Unsupported packed types
+  fall back to SD free text on pack, matching `pack77sd.f90`.
+- `ft8sd` / `ft8sd1` now use `genft8sd` for symbols only and keep the source
+  candidate text (`msgd` / `msg4(imax)`) as the decoded message, matching the
+  Fortran callers that ignore `msgsent37` on success.
+- `ft8mf1` / `ft8mfcq` rank the best and second-best tones with the source
+  two-pass `s1/s2` search, so the second-best tone explicitly excludes the
+  first-best tone. `ft8mfcq` also keeps `msgd` as the success text, matching
+  `msg37=msgd`.
+- `ft8s` now keeps the source candidate text when the fallback table has to
+  regenerate symbols with `genft8sd`, and its four best-tone rows use the
+  source `s1/s2/s3/s4` scan order instead of a generic top-N helper.
+- `tonesd` / `ft8mf1` now keep the source SD candidate text after `genft8sd`
+  symbol generation, and `ft8mf1` applies the source 12-character guard to the
+  first two message fields.
+- `ft8sd` / `ft8sd1` now apply the same source 12-character `c1/c2` guard
+  before building SD candidate variants.
+- `agccft8` now uses the JTDX `indexx` mirror to select its median spectral
+  level instead of sorting the vector directly, matching the source call shape.
+- `ft8b` `iqso=4` non-deep SD/MF recovery now requires the preceding `iqso=1`
+  refined state, matching the source jump to label `32` that reuses the
+  existing symbol matrix instead of running a new sync search.
+- `ft8b` symbol extraction now keeps `syncavpart(1:3)` as an explicit
+  three-element vector before `maxval`, and the wide soft-sync `scoreratiow`
+  division follows the source loop without an extra zero guard.
+- `ft8b` CQ/MyCall tone SNR hints now use the source `signal / noise`
+  expression directly instead of Rust's previous fallback value when the noise
+  denominator was non-positive.
+- `sync8` now uses the JTDX `indexx` mirror for red baseline selection and
+  candidate ordering instead of direct Rust sorting, preserving the source's
+  sorted-index workflow.
+- AP `lqsocandave` pruning is branch-specific like `ft8b.f90`: standard
+  focused QSOs only keep `iaptype=3..6` on the late averaged-signal subpasses,
+  while nonstandard DX-call QSOs only keep `iaptype=11..14`.
+- `syncdist` is written as the same repeated `maxloc` / zero / retry ladder as
+  the include file, rather than a compact rank loop, so hard-sync rank tie
+  order stays audit-visible.
+- `decoder.f90` `avexdt` update is mirrored with the same `nFT8decd`
+  branches. For `lforcesync` with zero decodes, ft8rs stores the source's final
+  next-slot state: JTDX briefly assigns `forcedt` for reporting and then resets
+  `avexdt` to zero before the next decode.
+- Subtract/downsample residual state was rechecked against `ft8_decode.f90` and
+  `ft8_downsample.f90`: `npos` resets per pass, `lsubtracted` persists across
+  passes, and `freqsub` invalidates the cached long FFT when the next candidate
+  is within 50 Hz of a subtracted signal.
 
 ## Known Gaps
 
 Highest-value unfinished alignment items:
 
 - finish file-by-file source audit of `lib_jtdx` against `jtdx/lib`;
-- complete the remaining AP/deep skip and CPU-pruning matrix from
-  `ft8b.f90`; the highest-risk `iqso=4` SD entry split is now represented, but
-  AP `iaptype` pruning still needs periodic source audit;
-- validate newly wired forced-sync / `avexdt` / odd-even memory behavior
-  against real JTDX output;
+- keep validating Hound/SWL-only AP branches against real JTDX output before
+  calling those optional modes aligned;
 - complete AP/deep-specific false-positive filter coverage;
 - keep `chkgrid.f90` as a deliberately partial mirror. The full geographic
   callsign/grid rule table mostly reduces false positives and is not planned
   for this milestone. Maintain the current syntax/early-state behavior and
   only add small source rules when a real false positive points there;
+- keep `filtersfree.f90` without the `datacor(datapwr)` gate until `datapwr`
+  is represented at the Rust filter boundary. The current mirror intentionally
+  preserves only deterministic text-shape filters;
 - JTDX `four2a.f90` calls single-precision `sfftw_*`, while the Rust profile
   currently runs the local FFT abstraction with `f64` buffers. This is a known
   numerical-path difference and should be changed only as a deliberate
   full-chain FFT precision project, not as an isolated sensitivity tweak;
 - decide how to represent the `filtersfree.f90` `datapwr` correlation gate;
-- audit residual-aware downsample invalidation after subtract;
 - wire JTDX FFTW thread/patience settings into `lib_jtdx::four2a` only if
   JTDX FFT tuning becomes a profile target.
 
@@ -306,8 +374,74 @@ Keep these as active caution points while continuing alignment:
   `<MyCall> DxCall -15`, and AP type 40 uses `<MyCall> ZZ1ZZZ -15`.
 - `ft8b` focused-QSO `iqso=3` should reuse refined state from `iqso=2`, not
   rerun an independent sync search.
+- The source skips virtual `iqso=3` when `nft8rxfsens < 3`; keep that gate
+  tied to the FT8S sensitivity setting even though the default target uses `3`.
 - Special-message rows can produce both `msg37` and `msg37_2`; both need the
   normal duplicate/output/hash/memory path.
+- Do not infer hash-message state from the final rendered text alone:
+  JTDX sets `lhashmsg` before `delbraces`, and later memory gates use that
+  original state.
+- Keep call-DT extraction tied to the source `extract_call.f90` rules; simple
+  token-2 extraction breaks directed CQ messages.
+- Keep FT8SD fallback tied to the subpass where `ft8b.f90` calls it. Moving it
+  after all regular/AP attempts broadens the decode path and can add false
+  positives.
+- `agccft8` `lforcesync` intentionally returns after `forcedt` calculation:
+  this matches the source `if(lforcesync) ... else ... endif` structure.
+- In `agccft8`, keep `spec`, `minval(s3(...))`, and `maxval(s3(...))` as
+  explicit source-order loops. The values drive AGC bail/normalization and are
+  better left audit-visible.
+- In `filtersfree`, `?` intentionally increments both `nsign` and `nother`;
+  this is source behavior, not a duplicate-counting bug.
+- `encode174_91` may look structurally different from Fortran, but it still
+  builds `message77 + CRC14 + generator-matrix parity`; treat it as aligned
+  unless a bit-level fixture proves otherwise.
+- In SD decoders, do not replace the successful message text with
+  `unpack77sd` output. JTDX uses the original deep-search candidate text and
+  only uses `genft8sd` / `packjt77sd` to produce tones.
+- For `ft8mf1` and `ft8mfcq`, do not collapse the two source max searches into
+  a one-pass top-two helper; tie behavior and second-best exclusion should
+  follow the Fortran loops.
+- In `ft8mf1` and `ft8mfcq`, keep `ref0` accumulation as an explicit
+  `do i=1,58`-style loop, because it participates directly in the message
+  confidence ratio.
+- For `ft8s`, keep the four-rank search as the explicit `s1/s2/s3/s4` loops.
+  The compact top-N form is tempting but creates avoidable tie-order ambiguity.
+- In `ft8s`, keep false-deep-search power ratios (`ssync`, `spaty`,
+  `spnoise`, `spother`) as explicit source-order sums rather than iterator
+  reductions.
+- In `ft8b`, keep bit-metric construction shaped like the source: fixed
+  `s2(0:511)`, explicit `k=1,29,nsym`, separate `ks/ks1/ks2`, and paired
+  `maxval(..., one)` / `maxval(..., .not.one)` searches. Generic helpers or
+  vector top-N/max-by-bit code are mathematically close but make tiny numeric
+  and tie-order differences harder to audit.
+- In `ft8b` SNR estimation, avoid extra Rust-only safety clamps or `powi`
+  rewrites around the source `log10` and correction formula unless a real
+  input proves JTDX itself would guard that path.
+- In `ft8b` sync scoring and tone normalization, prefer explicit source-order
+  accumulation for `sum(s81)`, `sum(snrsync)`, `sum(s8(...))`, `minloc`, and
+  `maxval`-style paths. Iterator reductions are concise but make sum order and
+  first-tie behavior less obvious during Fortran audits.
+- Keep `normalizebmet` and AP `apmag=maxval(abs(llra))*1.01` source-shaped:
+  explicit square accumulation for `bmet2av` and explicit max scan for AP
+  magnitude.
+- In `sync8`, keep AGC `tall` group sums explicit (`sya/sycq/sybc`) to mirror
+  the source branches.
+- In `sync8` candidate ordering, fill the `indexx` input array explicitly from
+  `candidate0(3,:)` or `candidate0(5,:)`; this mirrors the source call shape
+  and makes the sync-vs-weighted-sync sort key obvious.
+- In `bpdecode174_91`, keep the `sum(tov(1:ncw,i))` and parity syndrome
+  accumulation as explicit loops. This preserves the LDPC source loop shape
+  without changing the decoder math.
+- In `osd174_91`, keep weighted-distance sums (`sum(xor*absrx)`) and bit-count
+  tests as explicit loops where practical. The OSD structure is still Rust
+  shaped, but the sensitive score accumulation should follow source order.
+- Also keep OSD receive-vector reordering (`absrx`, `apmaskr`, `m0`) as
+  explicit loops so it is visually traceable to the Fortran reordered arrays.
+- In `sync8d`, keep the top-level `ipass` branch structure aligned with the
+  source. In particular, `ipass=3/4/8` uses adjacent averaged sync vectors for
+  both non-last and last-sync paths; only the metric changes from abs-sum to
+  power.
 
 ## Do Not Do
 

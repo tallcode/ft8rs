@@ -85,12 +85,12 @@ pub(crate) fn tonesd_messages(c1: &str, c2: &str, grid: &str) -> Option<Vec<Tone
 }
 
 fn tonesd_message(msg: &str) -> Option<TonesdMessage> {
-    let (msg37, msgbits, itone) = genft8sd(msg)?;
+    let (_msgsent37, msgbits, itone) = genft8sd(msg)?;
     let mut idtone = [0i32; 58];
     idtone[..29].copy_from_slice(&itone[7..36]);
     idtone[29..].copy_from_slice(&itone[43..72]);
     Some(TonesdMessage {
-        msg37,
+        msg37: msg.trim().to_string(),
         msgbits,
         itone,
         idtone,

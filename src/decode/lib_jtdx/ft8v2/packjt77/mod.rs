@@ -945,7 +945,7 @@ fn try_pack_type5(parts: &[String]) -> Option<Vec<u8>> {
     Some(bits)
 }
 
-fn pack_free_text(msg: &str) -> Vec<u8> {
+pub(crate) fn pack_free_text(msg: &str) -> Vec<u8> {
     let raw = msg.to_uppercase();
     let chars: Vec<char> = raw.chars().take(13).collect();
     let bits71 = pack_text77(&chars);

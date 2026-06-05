@@ -13,13 +13,51 @@ pub(crate) fn sync_rank_distribution(s8: &[[f32; 79]; 8]) -> [usize; 8] {
 }
 
 fn syncdist(nsmax: &mut [usize; 8], mut s81: [f32; 8], target: usize) {
-    for rank in 0..8 {
+    let ip = maxloc(&s81);
+    if target == ip {
+        nsmax[0] += 1;
+    } else {
+        s81[ip] = 0.0;
         let ip = maxloc(&s81);
         if target == ip {
-            nsmax[rank] += 1;
-            return;
+            nsmax[1] += 1;
+        } else {
+            s81[ip] = 0.0;
+            let ip = maxloc(&s81);
+            if target == ip {
+                nsmax[2] += 1;
+            } else {
+                s81[ip] = 0.0;
+                let ip = maxloc(&s81);
+                if target == ip {
+                    nsmax[3] += 1;
+                } else {
+                    s81[ip] = 0.0;
+                    let ip = maxloc(&s81);
+                    if target == ip {
+                        nsmax[4] += 1;
+                    } else {
+                        s81[ip] = 0.0;
+                        let ip = maxloc(&s81);
+                        if target == ip {
+                            nsmax[5] += 1;
+                        } else {
+                            s81[ip] = 0.0;
+                            let ip = maxloc(&s81);
+                            if target == ip {
+                                nsmax[6] += 1;
+                            } else {
+                                s81[ip] = 0.0;
+                                let ip = maxloc(&s81);
+                                if target == ip {
+                                    nsmax[7] += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        s81[ip] = 0.0;
     }
 }
 
