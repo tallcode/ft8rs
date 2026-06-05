@@ -68,7 +68,7 @@ pub(crate) fn ft8b(
         &mut workspace.downsample_out,
     );
 
-    let attempts = qso_attempts(qso_plan);
+    let attempts = qso_attempts(qso_plan, config.nft8rxfsens);
     let mut previous_qso_state: Option<QsoRefinementState> = None;
     for iqso in attempts {
         if qso_plan.xdt0 < -4.9 || qso_plan.xdt0 > 4.9 {
@@ -155,7 +155,7 @@ fn try_ft8b_decode_for_iqso(
         if let Some(previous) = previous_qso_state {
             previous.clone()
         } else {
-            refine_qso_sync(cd0, candidate, iqso, xdt0, sync_context)
+            return None;
         }
     } else if iqso == 3 {
         if let Some(previous) = previous_qso_state {
@@ -328,7 +328,11 @@ fn extract_symbol_metrics(
         }
         let tone = ICOS7[costas_idx] as usize;
         let synclev = s81[tone];
-        let snoiselev = (s81.iter().sum::<f32>() - synclev) / 7.0;
+        let mut sum_s81 = 0.0f32;
+        for value in s81 {
+            sum_s81 += value;
+        }
+        let snoiselev = (sum_s81 - synclev) / 7.0;
         if snoiselev > 1e-16 {
             let out_idx = if k <= 6 {
                 k
@@ -341,13 +345,21 @@ fn extract_symbol_metrics(
         }
     }
 
-    let syncav = snrsync.iter().sum::<f32>() / 21.0;
-    let syncavemax = snrsync[0..7]
-        .iter()
-        .sum::<f32>()
-        .max(snrsync[7..14].iter().sum::<f32>())
-        .max(snrsync[14..21].iter().sum::<f32>())
-        / 7.0;
+    let mut sum_snrsync = 0.0f32;
+    for value in snrsync {
+        sum_snrsync += value;
+    }
+    let syncav = sum_snrsync / 21.0;
+    let mut syncavpart = [3.0f32; 3];
+    syncavpart[0] = sum_slice_f32(&snrsync, 0, 7) / 7.0;
+    syncavpart[1] = sum_slice_f32(&snrsync, 7, 14) / 7.0;
+    syncavpart[2] = sum_slice_f32(&snrsync, 14, 21) / 7.0;
+    let mut syncavemax = syncavpart[0];
+    for value in syncavpart.iter().skip(1) {
+        if *value > syncavemax {
+            syncavemax = *value;
+        }
+    }
     let lreverse = if !config.swl {
         if config.nft8cycles < 2 {
             context.ipass == 2
@@ -510,15 +522,24 @@ fn normalize_tone_spectra(
 ) {
     let mut sp = [0.0f32; 8];
     for tone in 0..8 {
-        sp[tone] = s8[tone][0..7].iter().sum::<f32>() + s8[tone][17..79].iter().sum::<f32>();
+        let mut sum1 = 0.0f32;
+        for k in 0..7 {
+            sum1 += s8[tone][k];
+        }
+        let mut sum2 = 0.0f32;
+        for k in 17..79 {
+            sum2 += s8[tone][k];
+        }
+        sp[tone] = sum1 + sum2;
     }
-    let Some((ka, &spmin)) = sp
-        .iter()
-        .enumerate()
-        .min_by(|(_, a), (_, b)| a.total_cmp(b))
-    else {
-        return;
-    };
+    let mut ka = 0usize;
+    let mut spmin = sp[0];
+    for (tone, value) in sp.iter().enumerate().skip(1) {
+        if *value < spmin {
+            spmin = *value;
+            ka = tone;
+        }
+    }
     if spmin <= 0.0 {
         return;
     }
@@ -642,7 +663,7 @@ fn jtdx_soft_sync_gate(s8: &[[f32; 79]; 8], refined_dt: f64) -> bool {
                 + s8[ICOS7[k] as usize][k + 72];
         }
         for tone in 0..7 {
-            sumkw[tone] = (s8[tone].iter().sum::<f32>() - syncw[tone]) / 25.333;
+            sumkw[tone] = (sum_symbol_range(s8, tone, 0, 79) - syncw[tone]) / 25.333;
         }
     } else if rrxdt < -0.5 {
         for k in 0..7 {
@@ -650,26 +671,24 @@ fn jtdx_soft_sync_gate(s8: &[[f32; 79]; 8], refined_dt: f64) -> bool {
                 s8[ICOS7[k] as usize][k + 36] + s8[ICOS7[k] as usize][k + 72];
         }
         for tone in 0..7 {
-            sumkw[tone] = (s8[tone][25..79].iter().sum::<f32>() - syncw[tone]) / 26.0;
+            sumkw[tone] = (sum_symbol_range(s8, tone, 25, 79) - syncw[tone]) / 26.0;
         }
     } else {
         for k in 0..7 {
             syncw[ICOS7[k] as usize] = s8[ICOS7[k] as usize][k] + s8[ICOS7[k] as usize][k + 36];
         }
         for tone in 0..7 {
-            sumkw[tone] = (s8[tone][0..54].iter().sum::<f32>() - syncw[tone]) / 26.0;
+            sumkw[tone] = (sum_symbol_range(s8, tone, 0, 54) - syncw[tone]) / 26.0;
         }
     }
 
     let mut nsyncscorew = 0usize;
     let mut scoreratiow = [0.0f32; 7];
     for tone in 0..7 {
-        if sumkw[tone] > 0.0 {
-            scoreratiow[tone] = syncw[tone] / sumkw[tone];
-        }
         if syncw[tone] > sumkw[tone] {
             nsyncscorew += 1;
         }
+        scoreratiow[tone] = syncw[tone] / sumkw[tone];
     }
 
     let mut nsyncscore1 = 0usize;
@@ -899,7 +918,27 @@ fn peakup(ym: f64, y0: f64, yp: f64) -> f64 {
 }
 
 pub(super) fn sum_tones(s8: &[[f32; 79]; 8], k: usize) -> f32 {
-    s8.iter().map(|tone| tone[k]).sum()
+    let mut sum = 0.0f32;
+    for tone in s8.iter().take(8) {
+        sum += tone[k];
+    }
+    sum
+}
+
+fn sum_symbol_range(s8: &[[f32; 79]; 8], tone: usize, start: usize, end: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for k in start..end {
+        sum += s8[tone][k];
+    }
+    sum
+}
+
+fn sum_slice_f32(values: &[f32], start: usize, end: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for value in values.iter().take(end).skip(start) {
+        sum += *value;
+    }
+    sum
 }
 
 pub(super) fn max_tone(s8: &[[f32; 79]; 8], k: usize, skip: Option<usize>) -> usize {

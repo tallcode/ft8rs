@@ -39,7 +39,11 @@ pub(crate) fn bpdecode174_91(
     for iter in 0..=maxiterations {
         for i in 0..N {
             if apmask[i] != 1 {
-                zn[i] = llr[i] + tov.iter().map(|row| row[i]).sum::<f32>();
+                let mut sum_tov = 0.0f32;
+                for row in tov.iter().take(NCW) {
+                    sum_tov += row[i];
+                }
+                zn[i] = llr[i] + sum_tov;
             } else {
                 zn[i] = llr[i];
             }
@@ -51,7 +55,10 @@ pub(crate) fn bpdecode174_91(
 
         let mut ncheck = 0usize;
         for i in 0..M {
-            let syndrome = nm(i).iter().map(|&bit| cw[bit] as usize).sum::<usize>();
+            let mut syndrome = 0usize;
+            for &bit in nm(i) {
+                syndrome += cw[bit] as usize;
+            }
             if syndrome % 2 != 0 {
                 ncheck += 1;
             }

@@ -112,16 +112,21 @@ pub(crate) fn ft8sd1(
 
 fn split_message3(msg: &str) -> Option<(&str, &str, &str)> {
     let mut parts = msg.split_whitespace();
-    Some((parts.next()?, parts.next()?, parts.next()?))
+    let c1 = parts.next()?;
+    let c2 = parts.next()?;
+    if c1.len() > 12 || c2.len() > 12 {
+        return None;
+    }
+    Some((c1, c2, parts.next()?))
 }
 
 fn build_message(msg: &str) -> Option<Ft8sd1Message> {
-    let (msg37, msgbits, itone) = genft8sd(msg)?;
+    let (_msgsent, msgbits, itone) = genft8sd(msg)?;
     let mut idtone = [0i32; 58];
     idtone[..29].copy_from_slice(&itone[7..36]);
     idtone[29..].copy_from_slice(&itone[43..72]);
     Some(Ft8sd1Message {
-        msg37,
+        msg37: msg.trim().to_string(),
         msgbits,
         itone,
         idtone,

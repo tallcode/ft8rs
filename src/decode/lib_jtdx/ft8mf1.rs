@@ -24,7 +24,10 @@ pub(crate) fn ft8mf1(s8: &[[f32; 79]; 8], msgd: &str) -> Option<Ft8mf1Result> {
     let messages = tonesd_messages(c1, c2, if lgrid { c3 } else { "AA00" })?;
     let s8d = data_symbols(s8);
     let ranks = tone_ranks(&s8d);
-    let ref0 = (0..58).map(|j| s8d[ranks[j][0]][j]).sum::<f32>();
+    let mut ref0 = 0.0f32;
+    for j in 0..58 {
+        ref0 += s8d[ranks[j][0]][j];
+    }
 
     let mut ipk = None;
     let mut u1 = 0.0f32;
@@ -50,7 +53,7 @@ pub(crate) fn ft8mf1(s8: &[[f32; 79]; 8], msgd: &str) -> Option<Ft8mf1Result> {
                 return None;
             }
         }
-        if ipk < 36 || (ipk > 71 && ipk < 75) {
+        if ipk > 71 && ipk < 75 {
             return None;
         }
     }
@@ -82,7 +85,12 @@ pub(crate) fn ft8mf1(s8: &[[f32; 79]; 8], msgd: &str) -> Option<Ft8mf1Result> {
 
 fn split_message3(msg: &str) -> Option<(&str, &str, &str)> {
     let mut parts = msg.split_whitespace();
-    Some((parts.next()?, parts.next()?, parts.next()?))
+    let c1 = parts.next()?;
+    let c2 = parts.next()?;
+    if c1.len() > 12 || c2.len() > 12 {
+        return None;
+    }
+    Some((c1, c2, parts.next()?))
 }
 
 fn data_symbols(s8: &[[f32; 79]; 8]) -> [[f32; 58]; 8] {
@@ -99,23 +107,23 @@ fn data_symbols(s8: &[[f32; 79]; 8]) -> [[f32; 58]; 8] {
 fn tone_ranks(s8d: &[[f32; 58]; 8]) -> [[usize; 2]; 58] {
     let mut ranks = [[0usize; 2]; 58];
     for j in 0..58 {
-        let mut first = 0usize;
-        let mut second = 0usize;
-        let mut first_v = f32::NEG_INFINITY;
-        let mut second_v = f32::NEG_INFINITY;
+        let mut i1 = 0usize;
+        let mut s1 = -1.0e6f32;
         for tone in 0..8 {
-            let value = s8d[tone][j];
-            if value > first_v {
-                second = first;
-                second_v = first_v;
-                first = tone;
-                first_v = value;
-            } else if value > second_v {
-                second = tone;
-                second_v = value;
+            if s8d[tone][j] > s1 {
+                s1 = s8d[tone][j];
+                i1 = tone;
             }
         }
-        ranks[j] = [first, second];
+        let mut i2 = 0usize;
+        let mut s2 = -1.0e6f32;
+        for tone in 0..8 {
+            if tone != i1 && s8d[tone][j] > s2 {
+                s2 = s8d[tone][j];
+                i2 = tone;
+            }
+        }
+        ranks[j] = [i1, i2];
     }
     ranks
 }

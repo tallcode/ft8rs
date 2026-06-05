@@ -71,6 +71,7 @@ impl JtdxStreamDecodeSession {
         let mut state = ft8_mod1::Ft8Mod1::default();
         state.nft8cycles = config.nft8cycles;
         state.nft8swlcycles = config.nft8swlcycles;
+        state.nft8rxfsens = config.nft8rxfsens;
         state.lhound = config.lhound;
         state.nintcount = 3;
         if let Some(mycall) = &config.mycall {
@@ -295,8 +296,7 @@ struct JtdxDecodeBand {
 }
 
 fn jtdx_decode_bands(config: &StreamDecodeConfig) -> Vec<JtdxDecodeBand> {
-    let nfa = config.nfa.round() as i32;
-    let nfb = config.nfb.round() as i32;
+    let (nfa, nfb) = active_jtdx_decode_band(config);
     let numthreads = jtdx_numthreads(config);
     if numthreads <= 1 || nfb <= nfa + 1 {
         return vec![JtdxDecodeBand {
@@ -338,6 +338,24 @@ fn jtdx_decode_bands(config: &StreamDecodeConfig) -> Vec<JtdxDecodeBand> {
         .into_iter()
         .filter_map(|index| bands.get(index).copied())
         .collect()
+}
+
+fn active_jtdx_decode_band(config: &StreamDecodeConfig) -> (i32, i32) {
+    let mut nfa = config.nfa.round() as i32;
+    let mut nfb = config.nfb.round() as i32;
+    let nfqso = config.nfqso.round() as i32;
+
+    if config.filter && nfqso >= nfa && nfqso <= nfb {
+        let half_width = if config.lhound { 290 } else { 60 };
+        nfa = nfa.max(nfqso - half_width);
+        nfb = nfb.min(nfqso + half_width);
+    }
+    if config.nagain && nfqso >= nfa && nfqso <= nfb {
+        nfa = nfa.max(nfqso - 25);
+        nfb = nfb.min(nfqso + 25);
+    }
+
+    (nfa, nfb)
 }
 
 fn jtdx_numthreads(config: &StreamDecodeConfig) -> usize {
@@ -626,7 +644,9 @@ fn last_rx_is_rrr(config: &StreamDecodeConfig, state: &ft8_mod1::Ft8Mod1) -> boo
 }
 
 fn is_qso_thread(config: &StreamDecodeConfig) -> bool {
-    config.nfqso >= config.nfa && config.nfqso <= config.nfb
+    let (nfa, nfb) = active_jtdx_decode_band(config);
+    let nfqso = config.nfqso.round() as i32;
+    nfqso >= nfa && nfqso <= nfb
 }
 
 fn restore_lastrx_from_incall(config: &StreamDecodeConfig, state: &mut ft8_mod1::Ft8Mod1) -> bool {
@@ -718,7 +738,7 @@ fn save_call_dt(
     if result.l_free_text {
         return;
     }
-    let Some(call2) = extract_call2(&message.msg) else {
+    let Some(call2) = extract_call(&message.msg) else {
         return;
     };
     let target = match interval {
@@ -765,7 +785,7 @@ fn should_save_odd_even_message(
     if result.i3 == 4 && message.msg.starts_with("CQ ") {
         return true;
     }
-    if result.l_free_text || result.msg37_2.contains('<') || message.msg.contains('<') {
+    if result.l_free_text || result.l_hashmsg || message.msg.contains('<') {
         return false;
     }
     let ft8sd = result.source == DecodeSource::Ft8sd;
@@ -816,15 +836,45 @@ fn call_dt_xdt(
         .map(|entry| entry.dt)
 }
 
-fn extract_call2(msg: &str) -> Option<String> {
+fn extract_call(msg: &str) -> Option<String> {
     let mut parts = msg.split_whitespace();
-    let _call1 = parts.next()?;
-    let call2 = parts.next()?;
-    if call2.len() < 3 {
-        None
+    let part1 = parts.next()?;
+    let part2 = parts.next().unwrap_or("");
+    let part3 = parts.next().unwrap_or("");
+
+    let call2 = if msg.starts_with("CQ ") || msg.starts_with("DE ") || msg.starts_with("QRZ ") {
+        match part2.len() {
+            5.. => part2,
+            4 => {
+                let bytes = part2.as_bytes();
+                if bytes.get(1).is_some_and(u8::is_ascii_digit)
+                    || bytes.get(2).is_some_and(u8::is_ascii_digit)
+                {
+                    part2
+                } else {
+                    part3
+                }
+            }
+            3 => {
+                let bytes = part2.as_bytes();
+                if bytes.first().is_some_and(u8::is_ascii_uppercase)
+                    && bytes.get(1).is_some_and(u8::is_ascii_digit)
+                {
+                    part2
+                } else {
+                    part3
+                }
+            }
+            2 => part3,
+            _ => "",
+        }
+    } else if part1.len() > 3 && part1.len() < 13 {
+        part2
     } else {
-        Some(call2.trim_matches(|c| c == '<' || c == '>').to_string())
-    }
+        ""
+    };
+
+    (!call2.trim().is_empty()).then(|| call2.to_string())
 }
 
 fn normalized_context_call(call: Option<&str>) -> Option<String> {
@@ -887,6 +937,7 @@ fn update_avexdt_after_slot(
     decoded: &[StreamDecodedMessage],
 ) {
     let n_ft8_decd = decoded.len();
+    let mut sumxdt = 0.0f32;
     if config.lforcesync {
         state.nintcount = 3;
     } else if state.nintcount > 0 {
@@ -895,31 +946,41 @@ fn update_avexdt_after_slot(
 
     if n_ft8_decd == 0 {
         if config.lforcesync {
+            // JTDX `decoder.f90` temporarily assigns `forcedt` for the
+            // DecodeFinished report, then resets `avexdt` to zero before the
+            // next slot. ft8rs stores only the persistent next-slot state.
             state.avexdt = 0.0;
         }
         return;
     }
 
-    let sumxdt = jtdx_sumxdt(decoded);
-    let mean = sumxdt / n_ft8_decd as f32;
-    state.avexdt = match n_ft8_decd {
-        1 => (1.75 * state.avexdt + 0.25 * sumxdt) / 2.0,
-        2 => (1.5 * state.avexdt + 0.5 * mean) / 2.0,
-        3 => (1.35 * state.avexdt + 0.65 * mean) / 2.0,
-        4 => (1.25 * state.avexdt + 0.75 * mean) / 2.0,
-        5 => (1.1 * state.avexdt + 0.9 * mean) / 2.0,
-        _ => (state.avexdt + mean) / 2.0,
-    };
+    if n_ft8_decd > 2 {
+        sumxdt = jtdx_sumxdt_median(decoded);
+        if n_ft8_decd > 5 {
+            state.avexdt = (state.avexdt + sumxdt / n_ft8_decd as f32) / 2.0;
+        } else if n_ft8_decd == 5 {
+            state.avexdt = (1.1 * state.avexdt + 0.9 * sumxdt / n_ft8_decd as f32) / 2.0;
+        } else if n_ft8_decd == 4 {
+            state.avexdt = (1.25 * state.avexdt + 0.75 * sumxdt / n_ft8_decd as f32) / 2.0;
+        } else if n_ft8_decd == 3 {
+            state.avexdt = (1.35 * state.avexdt + 0.65 * sumxdt / n_ft8_decd as f32) / 2.0;
+        }
+    } else {
+        for message in decoded.iter().take(n_ft8_decd) {
+            sumxdt += message.dt as f32;
+        }
+        if n_ft8_decd == 2 {
+            state.avexdt = (1.5 * state.avexdt + 0.5 * sumxdt / n_ft8_decd as f32) / 2.0;
+        } else if n_ft8_decd == 1 {
+            state.avexdt = (1.75 * state.avexdt + 0.25 * sumxdt) / 2.0;
+        }
+    }
     if n_ft8_decd > 10 && state.nintcount == 1 {
-        state.avexdt = mean;
+        state.avexdt = sumxdt / n_ft8_decd as f32;
     }
 }
 
-fn jtdx_sumxdt(decoded: &[StreamDecodedMessage]) -> f32 {
-    if decoded.len() <= 2 {
-        return decoded.iter().map(|message| message.dt as f32).sum();
-    }
-
+fn jtdx_sumxdt_median(decoded: &[StreamDecodedMessage]) -> f32 {
     let mut sumxdt = 0.0f32;
     let mut dtmed = 0.0f32;
     for i in 0..decoded.len() {

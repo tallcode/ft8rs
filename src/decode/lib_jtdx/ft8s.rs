@@ -363,12 +363,12 @@ fn build_ft8s_messages(mycall: &str, hiscall: &str) -> Option<Vec<Ft8sMessage>> 
 }
 
 fn build_message(msg: &str) -> Option<Ft8sMessage> {
-    let (msg37, msgbits, itone) = genft8sd(msg)?;
+    let (_msgsent37, msgbits, itone) = genft8sd(msg)?;
     let mut idtone = [0i32; 58];
     idtone[..29].copy_from_slice(&itone[7..36]);
     idtone[29..].copy_from_slice(&itone[43..72]);
     Some(Ft8sMessage {
-        msg37,
+        msg37: msg.trim().to_string(),
         msgbits,
         itone,
         idtone,
@@ -487,19 +487,39 @@ fn in_part(j: usize, part: Option<RefPart>) -> bool {
 fn tone_ranks(s8d: &[[f32; 58]; 8]) -> [[usize; 4]; 58] {
     let mut ranks = [[0usize; 4]; 58];
     for j in 0..58 {
-        let mut used = [false; 8];
-        for r in 0..4 {
-            let mut best = 0usize;
-            let mut best_value = f32::NEG_INFINITY;
-            for tone in 0..8 {
-                if !used[tone] && s8d[tone][j] > best_value {
-                    best_value = s8d[tone][j];
-                    best = tone;
-                }
+        let mut s1 = -1.0e6f32;
+        let mut s2 = -1.0e6f32;
+        let mut s3 = -1.0e6f32;
+        let mut s4 = -1.0e6f32;
+        let mut i1 = 0usize;
+        let mut i2 = 0usize;
+        let mut i3 = 0usize;
+        let mut i4 = 0usize;
+        for i in 0..8 {
+            if s8d[i][j] > s1 {
+                s1 = s8d[i][j];
+                i1 = i;
             }
-            ranks[j][r] = best;
-            used[best] = true;
         }
+        for i in 0..8 {
+            if i != i1 && s8d[i][j] > s2 {
+                s2 = s8d[i][j];
+                i2 = i;
+            }
+        }
+        for i in 0..8 {
+            if i != i1 && i != i2 && s8d[i][j] > s3 {
+                s3 = s8d[i][j];
+                i3 = i;
+            }
+        }
+        for i in 0..8 {
+            if i != i1 && i != i2 && i != i3 && s8d[i][j] > s4 {
+                s4 = s8d[i][j];
+                i4 = i;
+            }
+        }
+        ranks[j] = [i1, i2, i3, i4];
     }
     ranks
 }
@@ -610,11 +630,10 @@ fn validate_ft8s(
     xmnoise[77] = xmnoise[75];
     xmnoise[78] = xmnoise[76];
 
-    let ssync = xmsync.iter().sum::<f32>() / 21.0;
-    let spaty = xmdata[26..58].iter().sum::<f32>() / 32.0;
-    let spnoise =
-        (xmnoise[33..36].iter().sum::<f32>() + xmnoise[43..72].iter().sum::<f32>()) / 32.0;
-    let spother = (xmdata[..9].iter().sum::<f32>() + xmdata[26..58].iter().sum::<f32>()) / 41.0;
+    let ssync = sum_slice_f32(&xmsync, 0, 21) / 21.0;
+    let spaty = sum_slice_f32(&xmdata, 26, 58) / 32.0;
+    let spnoise = (sum_slice_f32(&xmnoise, 33, 36) + sum_slice_f32(&xmnoise, 43, 72)) / 32.0;
+    let spother = (sum_slice_f32(&xmdata, 0, 9) + sum_slice_f32(&xmdata, 26, 58)) / 41.0;
     let spratiom = ssync / (spaty + 1.0e-6);
     let spnratiom = spaty / (spnoise + 1.0e-6);
     let sporatiom = ssync / (spother + 1.0e-6);
@@ -636,7 +655,19 @@ fn validate_ft8s(
 }
 
 fn sum_symbol(s8: &[[f32; 79]; 8], sym: usize) -> f32 {
-    s8.iter().map(|row| row[sym]).sum()
+    let mut sum = 0.0f32;
+    for row in s8.iter().take(8) {
+        sum += row[sym];
+    }
+    sum
+}
+
+fn sum_slice_f32(values: &[f32], start: usize, end: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for value in values.iter().take(end).skip(start) {
+        sum += *value;
+    }
+    sum
 }
 
 fn median3(a: f32, b: f32, c: f32) -> f32 {

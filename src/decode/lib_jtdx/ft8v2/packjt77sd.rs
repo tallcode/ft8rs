@@ -1,6 +1,6 @@
 //! Mirrors JTDX `lib/ft8v2/packjt77sd.f90`.
 
-use super::packjt77::{pack77, unpack77};
+use super::packjt77::{pack77, pack_free_text, unpack77};
 
 pub(crate) fn pack77sd(msg: &str) -> Option<[u8; 77]> {
     let bits = pack77(msg);
@@ -15,14 +15,33 @@ pub(crate) fn pack77sd(msg: &str) -> Option<[u8; 77]> {
     {
         let mut out = [0u8; 77];
         out.copy_from_slice(&bits);
-        Some(out)
-    } else {
-        None
+        return Some(out);
     }
+
+    let mut out = [0u8; 77];
+    let bits = pack_free_text(msg);
+    out.copy_from_slice(&bits);
+    Some(out)
 }
 
 pub(crate) fn unpack77sd(bits77: &[u8; 77]) -> Option<String> {
-    unpack77(bits77, None)
+    let n3 = bits_to_usize(&bits77[71..74]);
+    let i3 = bits_to_usize(&bits77[74..77]);
+    let msg = unpack77(bits77, None)?;
+
+    if i3 == 0 && n3 == 0 {
+        return Some(msg);
+    }
+    if i3 == 1 || i3 == 2 {
+        return Some(msg);
+    }
+    if i3 == 4 {
+        let icq = bits77[73];
+        if icq == 1 && msg.starts_with("CQ ") && !msg.starts_with("CQ <") {
+            return Some(msg);
+        }
+    }
+    None
 }
 
 fn bits_to_usize(bits: &[u8]) -> usize {

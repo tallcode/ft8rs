@@ -154,6 +154,7 @@ pub struct StreamDecodeConfig {
     pub swl: bool,
     pub nft8cycles: usize,
     pub nft8swlcycles: usize,
+    pub nft8rxfsens: usize,
     pub lft8lowth: bool,
     pub lft8subpass: bool,
     pub lskiptx1: bool,
@@ -194,6 +195,7 @@ impl Default for StreamDecodeConfig {
             swl: false,
             nft8cycles: 1,
             nft8swlcycles: 1,
+            nft8rxfsens: 3,
             lft8lowth: false,
             lft8subpass: false,
             lskiptx1: false,
@@ -233,6 +235,7 @@ impl StreamDecodeConfig {
         let mut config = self.clone_for_profile_jtdx();
         config.nft8cycles = 3;
         config.nft8swlcycles = 3;
+        config.nft8rxfsens = 3;
         config.lft8lowth = true;
         config.lft8subpass = true;
         config.nagcc = true;
