@@ -67,8 +67,9 @@ Implemented or scaffolded:
 - WSJT-X progressive `nzhsym=41/47/50` events are forwarded immediately while
   JTDX runs;
 - after JTDX finishes, only JTDX-unique rows are emitted;
-- dedupe tracks normalized messages within the slot and keeps source
-  attribution internally;
+- dedupe tracks normalized messages within the slot, treats resolved hash-brace
+  display variants such as `<RK4FF>` and `RK4FF` as the same message, and keeps
+  source attribution internally;
 - JTDX no longer returns protected WSJT-X fallback rows, so source attribution
   stays meaningful.
 
@@ -121,12 +122,13 @@ Normalization should handle:
 
 - repeated spaces;
 - surrounding whitespace;
-- equivalent safe hash/bracket presentation;
+- equivalent resolved hash-brace presentation, for example `<RK4FF>` and
+  `RK4FF`;
 - SNR/frequency/DT differences for the same decoded message.
 
 Do not over-normalize: two real FT8 rows with the same text but clearly
 different frequency/DT positions should not be collapsed unless they are the
-same signal.
+same signal. The unresolved hash marker `<...>` must remain distinct.
 
 ## Output Policy
 
@@ -144,12 +146,21 @@ source=jtdx
 source=both
 ```
 
-## Baseline Rule
+## Current Comparison
 
-Hybrid CSV baseline rows use:
+Hybrid is currently compared against every row in the fixture CSV, ignoring the
+`Extra` marker. This is different from the pure WSJT-X/JTDX profile tests, where
+`Extra` selects the relevant profile baseline.
+
+Current release-mode observation for the long fixture:
 
 ```text
-Extra is empty, W, or J
+230208_140300.wav, profile=hybrid:
+  CSV rows: 458
+  decoded rows: 465
+  matched rows: 457
+  missing rows: 1
+  extra decoded rows: 8
 ```
 
 Hybrid should not become a hard gate until:

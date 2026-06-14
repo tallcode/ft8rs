@@ -126,11 +126,60 @@ fn merge_decodes_with_source(
 
 fn normalized_message(msg: &str) -> String {
     msg.split_whitespace()
-        .map(|word| word.to_ascii_uppercase())
+        .map(normalized_message_word)
         .collect::<Vec<_>>()
         .join(" ")
 }
 
+fn normalized_message_word(word: &str) -> String {
+    let word = word.to_ascii_uppercase();
+    if word.starts_with('<') && word.ends_with('>') {
+        let inner = &word[1..word.len() - 1];
+        if !inner.is_empty() && inner != "..." {
+            return inner.to_string();
+        }
+    }
+    word
+}
+
 fn is_same_signal(a: &StreamDecodedMessage, b: &StreamDecodedMessage) -> bool {
     (a.freq - b.freq).abs() <= 5.0 && (a.dt - b.dt).abs() <= 0.3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decoded(freq: f64, dt: f64, msg: &str) -> StreamDecodedMessage {
+        StreamDecodedMessage {
+            freq,
+            dt,
+            snr: 0.0,
+            msg: msg.to_string(),
+            sync: 0.0,
+            itone: [0; 79],
+        }
+    }
+
+    #[test]
+    fn merge_decodes_deduplicates_hash_brace_display_variants() {
+        let wsjtx = [decoded(1205.0, 0.6, "EA5/DH0YAH <RK4FF> RR73")];
+        let jtdx = [decoded(1206.0, 0.8, "EA5/DH0YAH RK4FF RR73")];
+
+        let merged = merge_decodes_with_source(&wsjtx, &jtdx);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].source, DecodeSource::Both);
+        assert_eq!(merged[0].decode.msg, "EA5/DH0YAH <RK4FF> RR73");
+    }
+
+    #[test]
+    fn merge_decodes_keeps_unresolved_hash_marker_distinct() {
+        let wsjtx = [decoded(1205.0, 0.6, "EA5/DH0YAH <...> RR73")];
+        let jtdx = [decoded(1206.0, 0.8, "EA5/DH0YAH RK4FF RR73")];
+
+        let merged = merge_decodes_with_source(&wsjtx, &jtdx);
+
+        assert_eq!(merged.len(), 2);
+    }
 }

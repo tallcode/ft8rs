@@ -7,23 +7,10 @@ const LONG_TARGET_ACCEPTED_FLOOR: usize = 424;
 #[derive(Clone, Debug)]
 struct BaselineRow {
     seg: usize,
-    date_time: String,
-    snr: String,
     drift: String,
-    freq: String,
     msg: String,
     norm_msg: String,
     ignored: bool,
-}
-
-#[derive(Clone, Debug)]
-struct DiffRow {
-    date_time: String,
-    snr: String,
-    drift: String,
-    freq: String,
-    msg: String,
-    tag: char,
 }
 
 #[derive(Default, Debug)]
@@ -115,16 +102,6 @@ fn segment_from_timestamp(ts: &str) -> usize {
     }
 }
 
-fn timestamp_for_segment(seg: usize) -> String {
-    let total = 14 * 3600 + 3 * 60 + seg * 15;
-    format!(
-        "230208_{:02}{:02}{:02}",
-        total / 3600,
-        (total / 60) % 60,
-        total % 60
-    )
-}
-
 fn slot_samples(samples: &[f32], start: usize, len: usize) -> Vec<f32> {
     let mut out = vec![0.0; len];
     for (dst, sample) in out.iter_mut().enumerate() {
@@ -133,35 +110,6 @@ fn slot_samples(samples: &[f32], start: usize, len: usize) -> Vec<f32> {
         }
     }
     out
-}
-
-fn csv_escape(value: &str) -> String {
-    if value.contains(',') || value.contains('"') || value.contains('\n') {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
-    }
-}
-
-fn diff_row_to_csv(row: &DiffRow) -> String {
-    format!(
-        "{},{},{},{},{},{}",
-        csv_escape(&row.date_time),
-        csv_escape(&row.snr),
-        csv_escape(&row.drift),
-        csv_escape(&row.freq),
-        csv_escape(&row.msg),
-        row.tag
-    )
-}
-
-fn write_diff_csv(path: &str, rows: &[DiffRow]) {
-    let mut out = String::from("Date-Time,SNR,Drift,Freq,Msg,Tag\n");
-    for row in rows {
-        out.push_str(&diff_row_to_csv(row));
-        out.push('\n');
-    }
-    std::fs::write(path, out).unwrap();
 }
 
 fn parse_baseline(path: &str) -> Vec<BaselineRow> {
@@ -182,10 +130,7 @@ fn parse_baseline(path: &str) -> Vec<BaselineRow> {
         let ignored = is_ignored_baseline_marker(&extra_marker);
         results.push(BaselineRow {
             seg: segment_from_timestamp(&date_time),
-            date_time,
-            snr: parts[1].trim().to_string(),
             drift: parts[2].trim().to_string(),
-            freq: parts[3].trim().to_string(),
             norm_msg: norm(&msg),
             msg,
             ignored,
@@ -308,7 +253,6 @@ fn test_stream_decode_long_audio() {
     let primary_total = baseline.iter().filter(|row| !row.ignored).count();
     let accepted_floor = LONG_TARGET_ACCEPTED_FLOOR;
     let severe_floor = accepted_floor.saturating_sub(10);
-    let mut diff_rows = Vec::new();
     let mut timing_stats = TimingStats::default();
 
     for seg in 0..nseg {
@@ -343,29 +287,6 @@ fn test_stream_decode_long_audio() {
                     primary_matched += 1;
                 }
                 timing_stats.push(&row.drift, result.dt);
-            } else {
-                if !row.ignored {
-                    diff_rows.push(DiffRow {
-                        date_time: row.date_time.clone(),
-                        snr: row.snr.clone(),
-                        drift: row.drift.clone(),
-                        freq: row.freq.clone(),
-                        msg: row.msg.clone(),
-                        tag: '-',
-                    });
-                }
-            }
-        }
-        for (idx, result) in results.iter().enumerate() {
-            if !used_results[idx] {
-                diff_rows.push(DiffRow {
-                    date_time: timestamp_for_segment(seg),
-                    snr: format!("{:.0}", result.snr.round()),
-                    drift: format!("{:.1}", result.dt),
-                    freq: format!("{:.0}", result.freq.round()),
-                    msg: result.msg.clone(),
-                    tag: '+',
-                });
             }
         }
         total_matched += matched;
@@ -409,9 +330,6 @@ fn test_stream_decode_long_audio() {
             "  Timing residual: baseline_drift-decoded_dt mean={:+.3}s median={:+.3}s p10={:+.3}s p90={:+.3}s n={}",
             timing.mean, timing.median, timing.p10, timing.p90, timing.count
         );
-    }
-    if std::env::var("FT8RS_WRITE_DIFF").ok().as_deref() == Some("1") {
-        write_diff_csv("tests/ft8/230208_140300_diff.csv", &diff_rows);
     }
     assert!(
         primary_matched >= accepted_floor,
