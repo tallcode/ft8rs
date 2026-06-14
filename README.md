@@ -1,21 +1,20 @@
 # ft8rs
 
-`ft8rs` is a WSJT-X-aligned FT8 streaming decoder written in Rust.
+`ft8rs` is a Rust FT8 streaming decoder with a command-line interface. It
+provides:
 
-It provides:
-
-- a pure FT8 decode core without UI coupling;
-- file input that decodes WAV audio by FT8 slots;
-- soundcard input that aligns to system time and monitors live FT8 audio;
+- a UI-independent FT8 decode core;
+- WAV file input decoded by 15-second FT8 slots;
+- live soundcard monitoring aligned to system time;
 - CLI output by default;
-- optional UDP decode reports compatible with WSJT-X-style consumers.
+- optional UDP decode reports;
+- selectable decode profiles: `wsjtx`, `jtdx`, and `hybrid`.
 
-The default build uses `rustfft @ 3840` and has no FFTW runtime dependency.
-An FFTW build is available at compile time for alignment checks.
+The default build uses RustFFT at the WSJT-X/JTDX-aligned 3840-point size and
+does not require FFTW at runtime. FFTW can be selected at compile time for
+alignment checks.
 
-## Requirements
-
-Install a stable Rust toolchain.
+## Build
 
 Default build:
 
@@ -29,28 +28,30 @@ FFTW build:
 cargo build --release --features fftw
 ```
 
-On macOS, install FFTW first:
+On macOS:
 
 ```bash
 brew install fftw
 ```
 
-On Linux, install the usual native dependencies:
+On Linux:
 
 ```bash
 sudo apt-get install -y libasound2-dev libfftw3-dev pkg-config
 ```
 
-The FFT backend is selected at compile time. A built binary cannot switch
-between RustFFT and FFTW at runtime.
+The FFT backend is fixed at compile time. A built binary cannot switch between
+RustFFT and FFTW at runtime.
+
+## Runtime Files
+
+Release packages include `ALLCALL7.TXT` next to the binary. Local `cargo build`
+also copies the root `ALLCALL7.TXT` into the target binary directory.
+
+Keep `ALLCALL7.TXT` beside `ft8rs` when using the JTDX profile. The repository
+copy is pinned to the JTDX source-tree CallDB used for alignment.
 
 ## CLI
-
-The binary is:
-
-```bash
-target/release/ft8rs
-```
 
 Help:
 
@@ -66,36 +67,46 @@ Version:
 target/release/ft8rs --version
 ```
 
-Release artifacts built from a tag such as `v0.0.1` print that tag version:
+Tagged release builds print the tag version, for example:
 
 ```text
-ft8rs 0.0.1
+ft8rs 0.0.2
 ```
 
-Local development builds print the default package version plus git metadata,
-for example:
+Development builds print the package version plus git metadata, for example:
 
 ```text
 ft8rs 0.0.0-dev+3ed8eaa
 ```
 
-Release packages include `ALLCALL7.TXT` next to the binary, and local
-`cargo build` copies the root `ALLCALL7.TXT` into the target binary directory.
-Keep that file in the same directory as `ft8rs` when using the JTDX profile; it
-can be updated in place when the callsign database changes.
-
 ## Decode A WAV File
 
-If the filename contains a WSJT-X timestamp, `ft8rs` infers the slot time:
+If the filename contains a WSJT-X-style timestamp, `ft8rs` infers the first
+slot time:
 
 ```bash
 target/release/ft8rs file tests/ft8/210703_133430.wav
+```
+
+For other filenames, pass `--start-time`:
+
+```bash
+target/release/ft8rs file recording.wav --start-time 230208_140300
+target/release/ft8rs file recording.wav --start-time 140300
+```
+
+Accepted timestamp formats:
+
+```text
+YYMMDD_HHMMSS
+HHMMSS
 ```
 
 Output format:
 
 ```text
 HHMMSS SNR DT FREQ MESSAGE
+------ slot done: NN decodes ------
 ```
 
 Example:
@@ -105,18 +116,6 @@ Example:
 133430  14 -0.1  2157 WM3PEN EA6VQ -09
 133430  -2 -0.8  1197 CQ F5RXL IN94
 ------ slot done: 21 decodes ------
-```
-
-For files without a timestamp in the name, pass `--start-time`.
-
-Accepted formats:
-
-- `YYMMDD_HHMMSS`, for example `230208_140300`
-- `HHMMSS`, for example `140300`
-
-```bash
-target/release/ft8rs file recording.wav --start-time 230208_140300
-target/release/ft8rs file recording.wav --start-time 140300
 ```
 
 ## Monitor A Soundcard
@@ -141,7 +140,7 @@ target/release/ft8rs monitor --device "VB-Cable A" --slots 2
 ```
 
 `monitor` aligns capture to the next UTC 15-second FT8 slot and streams decodes
-as each decode stage produces new messages.
+as they are produced.
 
 ## UDP Reports
 
@@ -149,8 +148,10 @@ UDP output is off by default. Enable it with `--udp`.
 
 Default destination:
 
-- host: `127.0.0.1`
-- port: `2238`
+```text
+host: 127.0.0.1
+port: 2238
+```
 
 ```bash
 target/release/ft8rs monitor --device "VB-Cable A" --udp
@@ -159,28 +160,61 @@ target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --
 
 UDP can be used together with CLI output.
 
-## Decode Options
+## Profiles
 
-Common options:
+```text
+wsjtx  - WSJT-X-aligned decoder, default
+jtdx   - JTDX-oriented high-sensitivity decoder path
+hybrid - WSJT-X and JTDX result union
+```
+
+Examples:
 
 ```bash
 target/release/ft8rs file tests/ft8/230208_140300.wav \
-  --profile wsjtx \
-  --low 200 \
-  --high 3000 \
-  --depth 3 \
-  --max-candidates 1000
+  --start-time 230208_140300 \
+  --profile wsjtx
+
+target/release/ft8rs file tests/ft8/230208_140300.wav \
+  --start-time 230208_140300 \
+  --profile jtdx
 ```
 
-Decode profiles:
+JTDX band-decode threads default to source-style auto selection:
 
-```text
-wsjtx  - current WSJT-X-aligned decoder, default
-jtdx   - JTDX-oriented high-sensitivity decoder path, under development
-hybrid - WSJT-X + JTDX result union, under development
+```bash
+target/release/ft8rs file tests/ft8/230208_140300.wav \
+  --start-time 230208_140300 \
+  --profile jtdx \
+  --jtdx-threads 0
 ```
 
-Short aliases:
+Use explicit thread counts for diagnostics:
+
+```bash
+target/release/ft8rs file tests/ft8/230208_140300.wav \
+  --start-time 230208_140300 \
+  --profile jtdx \
+  --jtdx-threads 4
+```
+
+## Decode Context
+
+AP and focused retry logic can use callsign/grid context:
+
+```bash
+target/release/ft8rs file tests/ft8/230208_140300.wav \
+  --start-time 230208_140300 \
+  --profile jtdx \
+  --my-call K1ABC \
+  --my-grid FN20 \
+  --his-call W9XYZ \
+  --his-grid EN60 \
+  --qso-progress 0 \
+  --rx-frequency 1153
+```
+
+Common options:
 
 | Option | Alias | Meaning |
 |---|---:|---|
@@ -194,36 +228,25 @@ Short aliases:
 | `--tx-frequency` | `-T` | transmit/focused AP frequency |
 | `--ap-width` | `-A` | AP frequency window |
 | `--depth` | `-d` | decode depth |
-| `--max-candidates` | `-C` | sync candidates |
+| `--max-candidates` | `-C` | maximum sync candidates |
 | `--no-ap` | `-P` | disable AP decode |
 | `--cq-only` | `-O` | CQ-only AP mode |
-| `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
-| `--force-sync` | | enable JTDX forced sync time-window tracking |
-| `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid` |
-| `--jtdx-threads` | | JTDX FT8 band-decode threads, `0=auto`, `1..=24` |
 | `--my-call` | `-c` | local callsign context |
 | `--my-grid` | `-G` | local grid context |
 | `--his-call` | `-x` | DX callsign context |
 | `--his-grid` | `-g` | DX grid context |
 | `--qso-progress` | `-Q` | AP QSO progress, `0..=5` |
+| `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
+| `--force-sync` | | enable JTDX forced sync time-window tracking |
+| `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid` |
+| `--jtdx-threads` | | JTDX FT8 band-decode threads, `0=auto`, `1..=24` |
 | `--udp` | `-u` | enable UDP output |
 | `--udp-host` | `-o` | UDP destination host |
 | `--udp-port` | `-p` | UDP destination port |
 | `--fft-threads` | `-m` | FFTW plan threads |
 | `--patience` | `-w` | FFTW planning patience |
 
-Context example:
-
-```bash
-target/release/ft8rs file tests/ft8/230208_140300.wav \
-  --my-call K1ABC \
-  --my-grid FN20 \
-  --his-call W9XYZ \
-  --his-grid EN60 \
-  --qso-progress 0
-```
-
-FFTW-only options:
+FFTW-only options require a binary built with `--features fftw`:
 
 ```bash
 target/release/ft8rs file tests/ft8/230208_140300.wav --fft-threads 3 --patience 1
@@ -231,17 +254,17 @@ target/release/ft8rs file tests/ft8/230208_140300.wav --fft-threads 3 --patience
 
 The default RustFFT build accepts only the default FFT settings.
 
-## Test
+## Tests
 
-Decode tests should be run in release mode.
+Decode tests must run in release mode.
 
-Short file:
+Short fixture:
 
 ```bash
 cargo test --release test_stream_decode_short_audio -- --nocapture
 ```
 
-Long file:
+Long fixture:
 
 ```bash
 cargo test --release test_stream_decode_long_audio -- --nocapture
@@ -254,25 +277,27 @@ cargo test --release --features fftw test_stream_decode_short_audio -- --nocaptu
 cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture
 ```
 
-Current expected release summaries:
+Current release expectations:
 
-- short fixture, default `wsjtx` profile: `21/21` target rows;
-- long fixture, default `wsjtx` profile: `425/425` target rows, every slot
-  under `15s`.
-
-The fixture CSV files include an `Extra` marker column. For the default WSJT-X
-profile, rows with an empty marker or `W` are target rows; `J` and `E` rows are
-ignored by the WSJT-X acceptance test.
-
-To write a long-test diff CSV for investigation:
-
-```bash
-FT8RS_WRITE_DIFF=1 cargo test --release test_stream_decode_long_audio -- --nocapture
+```text
+default wsjtx short fixture -> 21/21 target rows
+default wsjtx long fixture  -> 424/424 target rows
+jtdx short fixture          -> 20/20 target rows
+jtdx long fixture           -> 430/431 target rows with auto threads
 ```
 
-## Notes
+The fixture CSV files include an `Extra` marker column:
 
-- Active WAV fixtures are under `tests/ft8`.
-- Older diagnostic files are kept under `tests/old`.
-- WSJT-X alignment notes for developers are in `WSJTX.md`.
+```text
+blank -> multi-verified baseline
+W     -> WSJT-X-only reference row
+J     -> JTDX target row
+E     -> excluded row
+```
+
+## Developer Notes
+
+- WSJT-X alignment notes are in `WSJTX.md`.
+- JTDX alignment notes are in `JTDX.md`.
+- Hybrid result-union notes are in `HYBRID.md`.
 - License: GPL-3.0.
