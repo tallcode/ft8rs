@@ -79,17 +79,15 @@ pub(super) fn ft8b(
 
     extract_soft_symbols(ibest, workspace);
 
-    // WSJT-X ft8b.f90: syncmin=6, imetric=2 => 7, depth<=2 => 8,
-    // and bailout is nsync <= syncmin.
-    let min_costas_hits: usize = if depth <= 2 {
-        9
-    } else if imetric == 2 {
+    let syncmin: usize = if depth <= 2 {
         8
-    } else {
+    } else if imetric == 2 {
         7
+    } else {
+        6
     };
     let nsync = compute_nsync(&workspace.s8);
-    if nsync < min_costas_hits {
+    if nsync <= syncmin {
         return None;
     }
 

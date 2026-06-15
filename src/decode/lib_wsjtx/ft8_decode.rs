@@ -9,6 +9,8 @@ use crate::HashCallBook;
 
 #[path = "ft8/baseline.rs"]
 mod baseline;
+#[path = "ft8/ft8_a8d.rs"]
+mod ft8_a8d;
 #[path = "ft8/ft8_downsample.rs"]
 mod ft8_downsample;
 #[path = "ft8/ft8_params.rs"]
@@ -27,6 +29,7 @@ mod sync8d;
 mod twkfreq1;
 
 use self::baseline::baseline;
+pub(crate) use self::ft8_a8d::ft8_a8d_result;
 pub(crate) use self::ft8_downsample::ft8_downsample_from_cx;
 pub(crate) use self::ft8_params::{
     COSTAS_BLOCKS, COSTAS_SYMBOL_LEN, DOWNSAMPLE_BAUD, DOWNSAMPLE_DF, DT2, FS2, NFFT1, NFFT1_LONG,

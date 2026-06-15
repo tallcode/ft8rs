@@ -226,6 +226,54 @@ fn test_stream_decode_short_audio() {
 }
 
 #[test]
+fn test_stream_decode_a8d_audio() {
+    assert_release_mode();
+    let samples = samples_12k_from_wav("tests/ft8/a8d_k1jt_bg5atv_pm00.wav");
+    let target = "K1JT BG5ATV PM00";
+
+    let without_a8 = StreamDecodeSession::new(StreamDecodeConfig {
+        lft8apon: false,
+        nfa: 900.0,
+        nfb: 1100.0,
+        nfqso: 1000.0,
+        ..Default::default()
+    })
+    .decode_slot(&samples);
+    assert!(
+        !without_a8.iter().any(|d| norm(&d.msg) == target),
+        "a8 fixture should not decode without a8d context: {:?}",
+        without_a8
+            .iter()
+            .map(|d| d.msg.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    let with_a8 = StreamDecodeSession::new(StreamDecodeConfig {
+        lft8apon: true,
+        nfa: 900.0,
+        nfb: 1100.0,
+        nfqso: 1000.0,
+        mycall: Some("K1JT".to_string()),
+        hiscall: Some("BG5ATV".to_string()),
+        hisgrid: Some("PM00".to_string()),
+        ..Default::default()
+    })
+    .decode_slot(&samples);
+    assert!(
+        with_a8.iter().any(|d| norm(&d.msg) == target),
+        "a8 fixture should decode with a8d context: {:?}",
+        with_a8.iter().map(|d| d.msg.as_str()).collect::<Vec<_>>()
+    );
+
+    println!(
+        "\n[ENGINE={}] [STREAM A8D DECODE] without_a8={} | with_a8={}",
+        fft_engine_name(),
+        without_a8.len(),
+        with_a8.len()
+    );
+}
+
+#[test]
 fn test_stream_decode_long_audio() {
     assert_release_mode();
     let s12k = samples_12k_from_wav("tests/ft8/230208_140300.wav");
