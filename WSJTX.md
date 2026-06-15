@@ -29,6 +29,7 @@ Main reference files:
 - `wsjtx/lib/ft8/sync8.f90`
 - `wsjtx/lib/ft8/sync8d.f90`
 - `wsjtx/lib/ft8/ft8_a7.f90`
+- `wsjtx/lib/ft8/ft8_a8d.f90`
 - `wsjtx/lib/ft8/ft8_downsample.f90`
 - `wsjtx/lib/ft8/subtractft8.f90`
 - `wsjtx/lib/ft8/decode174_91.f90`
@@ -60,6 +61,12 @@ marker counts are:
 The active long WAV is normalized to `12 kHz / mono / 16-bit`, and sample 0 is
 aligned with the filename timestamp.
 
+`tests/ft8/a8d_k1jt_bg5atv_pm00.wav` is a synthetic one-slot a8 fixture:
+regular decode is expected to miss it, while WSJT-X a8 context
+`mycall=K1JT`, `hiscall=BG5ATV`, `hisgrid=PM00`, `nfqso=1000 Hz` must recover
+`K1JT BG5ATV PM00` at about `-17 dB`. The JTDX profile is expected to produce
+no decode for this fixture because it does not use the WSJT-X a8 list decoder.
+
 ## Source Layout
 
 The decode core lives under `src/decode`. Files under `src/decode/lib_wsjtx` mirror
@@ -74,6 +81,7 @@ Important mappings:
 - `src/decode/lib_wsjtx/ft8/ft8b.rs` -> `wsjtx/lib/ft8/ft8b.f90`
 - `src/decode/lib_wsjtx/ft8/ft8_downsample.rs` -> `wsjtx/lib/ft8/ft8_downsample.f90`
 - `src/decode/lib_wsjtx/ft8/ft8_a7.rs` -> `wsjtx/lib/ft8/ft8_a7.f90`
+- `src/decode/lib_wsjtx/ft8/ft8_a8d.rs` -> `wsjtx/lib/ft8/ft8_a8d.f90`
 - `src/decode/lib_wsjtx/ft8/ft8apset.rs` -> `wsjtx/lib/ft8/ft8apset.f90`
 - `src/decode/lib_wsjtx/ft8/twkfreq1.rs` -> `wsjtx/lib/ft8/twkfreq1.f90`
 - `src/decode/lib_wsjtx/ft8/gen_ft8wave.rs` -> `wsjtx/lib/ft8/gen_ft8wave.f90`
@@ -212,6 +220,24 @@ The stream adapter has a small AP seed retry around saved-entry frequency:
 `[0.0, +0.5, -0.5]`. This is outside the `ft8_a7d` core mirror. Removing it
 drops the active long WSJT-X target by one row, so keep it documented as an
 adapter-boundary quantization guard.
+
+`ft8_a8d` is implemented as the WSJT-X list decoder at `nfqso`. It is only
+entered when AP is enabled, contest modes 6/7 are inactive, `hiscall` has at
+least 3 characters, `hisgrid` has at least 4 characters, no prior regular/AP
+decode landed within 3 Hz of `nfqso`, and no a7 AP decode contains `hiscall`.
+
+Source-shape details to preserve:
+
+- message enumeration uses `getmsg(1..206,mycall,dxcall,dxgrid)`;
+- generated waveform uses `gen_ft8wave(itone,NN,32,2.0,200.0,0.0,...)`;
+- lag search is `-200..200` in steps of `4`, then `lagpk-8..lagpk+8` in
+  steps of `1`;
+- frequency tolerance is `abs(f1-fbest) <= 5.0`;
+- SNR uses the `s1(-200:-100)` and `s1(100:200)` average and clamps to `-30`;
+- accept gate remains `nhard<=54`, `plog>=-159.0`, and `sigobig>=0.71`;
+- callback output uses `sync=10.0`;
+- AP memory save follows `ft8_decode.f90`: save frequency is `nfqso` (`f1`),
+  not the displayed `fbest`.
 
 ## Pack/Unpack and Hash
 

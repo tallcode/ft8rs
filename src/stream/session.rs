@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use crate::decode::ft8_a7::{ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache};
 use crate::decode::ft8_decode::{
-    decode_f64_with_sbase, decode_f64_with_sbase_and_residual, DecodeOptions, DecodedMessage,
+    decode_f64_with_sbase, decode_f64_with_sbase_and_residual, ft8_a8d_result, DecodeOptions,
+    DecodedMessage,
 };
 use crate::decode::subtractft8::subtract_ft8_refined;
 use crate::stream::time::SlotTimestamp;
@@ -506,6 +507,17 @@ impl StreamDecodeSession {
             }
             ap_msgs
         };
+        let a8_result = if self.wsjtx_a8_allowed(&state.early_results, &full_results, &ap_results) {
+            ft8_a8d_result(
+                &full_residual,
+                self.params.mycall.as_deref().unwrap_or(""),
+                self.params.hiscall.as_deref().unwrap_or(""),
+                self.params.hisgrid.as_deref().unwrap_or(""),
+                self.params.nfqso,
+            )
+        } else {
+            None
+        };
 
         for d in &full_results {
             push_regular_decode(
@@ -536,12 +548,59 @@ impl StreamDecodeSession {
                 state.merged.push(decode);
             }
         }
+        if let Some(r) = &a8_result {
+            if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, self.params.nfqso, r.dt) {
+                entries_to_save.push(entry);
+            }
+            let key = normal(&r.msg);
+            if state.seen.insert(key) {
+                let decode = StreamDecodedMessage {
+                    freq: r.freq,
+                    dt: r.dt,
+                    snr: r.snr,
+                    msg: r.msg.clone(),
+                    sync: 10.0,
+                    itone: r.itone,
+                };
+                collect_book(&self.book, &decode.msg);
+                on_decode(&decode)?;
+                state.merged.push(decode);
+            }
+        }
 
         // Save current decodes for the next same-parity slot.
         self.a7[self.jseq][1] = entries_to_save;
         self.jseq = 1 - self.jseq;
 
         Ok(std::mem::take(&mut state.merged))
+    }
+
+    fn wsjtx_a8_allowed(
+        &self,
+        early_results: &[DecodedMessage],
+        full_results: &[DecodedMessage],
+        ap_results: &[ApDecodeResult],
+    ) -> bool {
+        if !self.params.lft8apon || self.params.ncontest == 6 || self.params.ncontest == 7 {
+            return false;
+        }
+        let hiscall = self.params.hiscall.as_deref().unwrap_or("").trim();
+        let hisgrid = self.params.hisgrid.as_deref().unwrap_or("").trim();
+        if hiscall.len() < 3 || hisgrid.len() < 4 {
+            return false;
+        }
+        let nfqso = self.params.nfqso;
+        // Mirrors WSJT-X `ltry_a8`: callback processing disables a8 when any
+        // decode has already landed within 3 Hz of the QSO frequency.
+        let ltry_a8 = early_results
+            .iter()
+            .chain(full_results.iter())
+            .all(|d| (d.freq - nfqso).abs() >= 3.0)
+            && ap_results.iter().all(|d| (d.freq - nfqso).abs() >= 3.0);
+        // Mirrors WSJT-X `la8`: a7 AP decode containing `hiscall12` suppresses
+        // the later a8 list decode.
+        let la8 = ap_results.iter().all(|d| !d.msg.contains(hiscall));
+        la8 && ltry_a8
     }
 
     fn ft8_a7_new_slot(&mut self, timestamp: Option<&SlotTimestamp>) {
