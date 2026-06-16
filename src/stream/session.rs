@@ -265,12 +265,29 @@ pub struct StreamDecodedMessage {
     pub itone: [i32; 79],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamDecodeProvenance {
+    Regular,
+    ApMask,
+    A7Memory,
+    A8List,
+    JtdxDeep,
+    ImportedMemory,
+}
+
+#[derive(Clone, Debug)]
+pub struct StreamDecodedWithProvenance {
+    pub decode: StreamDecodedMessage,
+    pub provenance: StreamDecodeProvenance,
+}
+
 pub struct StreamSlotDecodeState {
     dd0: Vec<f64>,
     dd0_samples_ptr: usize,
     dd0_sample_len: usize,
     seen: HashSet<String>,
     merged: Vec<StreamDecodedMessage>,
+    provenance: Vec<StreamDecodedWithProvenance>,
     early_results: Vec<DecodedMessage>,
     dd1: Vec<f64>,
     work: Vec<f64>,
@@ -283,6 +300,7 @@ impl StreamSlotDecodeState {
         self.dd0_sample_len = usize::MAX;
         self.seen.clear();
         self.merged.clear();
+        self.provenance.clear();
         self.early_results.clear();
         self.early_subtracted.clear();
     }
@@ -291,6 +309,7 @@ impl StreamSlotDecodeState {
 pub struct StreamDecodeSession {
     params: StreamDecodeConfig,
     book: HashCallBook,
+    regular_hash_calls: HashSet<String>,
     /// AP memory: a7[jseq][k], where jseq is even/odd UTC sequence parity and
     /// k=0/1 is previous/current for that parity.
     a7: [[Vec<A7SaveEntry>; 2]; 2],
@@ -304,6 +323,7 @@ impl StreamDecodeSession {
         Self {
             params,
             book: HashCallBook::new(),
+            regular_hash_calls: HashSet::new(),
             a7: [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]],
             jseq: 0,
             slot_state: None,
@@ -353,6 +373,60 @@ impl StreamDecodeSession {
         Ok(results)
     }
 
+    pub fn decode_slot_streaming_with_provenance_at<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedWithProvenance>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        self.ft8_decode_slot_with_provenance_at(Some(timestamp), samples, on_decode)
+            .map(|(_, provenance)| provenance)
+    }
+
+    pub fn import_hash_calls(&mut self, calls: &[String]) {
+        for call in calls {
+            self.book.save(call);
+        }
+    }
+
+    /// Diagnostic hook for hybrid SameParityA7 experiments.
+    ///
+    /// This is a session-boundary import used by ignored tests to measure
+    /// whether a7 memory sharing would recover rows. Normal profile/hybrid
+    /// decode paths do not call it.
+    pub fn import_same_parity_a7_seed_rows(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        rows: &[StreamDecodedMessage],
+    ) -> usize {
+        let jseq = jseq_from_nutc(timestamp.nutc());
+        let target = &mut self.a7[jseq][1];
+        let before = target.len();
+        for row in rows {
+            let Some(entry) = ft8_a7_save_entry_from_parts(&row.msg, row.freq, row.dt) else {
+                continue;
+            };
+            let duplicate = target.iter().any(|existing| {
+                existing.msg0 == entry.msg0
+                    && (existing.f0 - entry.f0).abs() <= 3.0
+                    && (existing.dt0 - entry.dt0).abs() <= 0.3
+            });
+            if !duplicate {
+                target.push(entry);
+            }
+        }
+        target.len() - before
+    }
+
+    pub fn export_regular_hash_calls(&self) -> Vec<String> {
+        let mut calls: Vec<String> = self.regular_hash_calls.iter().cloned().collect();
+        calls.sort();
+        calls
+    }
+
     pub fn start_slot_decode(&self) -> StreamSlotDecodeState {
         StreamSlotDecodeState {
             dd0: vec![0.0; NMAX],
@@ -360,6 +434,7 @@ impl StreamDecodeSession {
             dd0_sample_len: usize::MAX,
             seen: HashSet::new(),
             merged: Vec::new(),
+            provenance: Vec::new(),
             early_results: Vec::new(),
             dd1: vec![0.0; NMAX],
             work: vec![0.0; NMAX],
@@ -403,7 +478,10 @@ impl StreamDecodeSession {
             push_regular_decode(
                 &mut state.seen,
                 &mut state.merged,
+                &mut state.provenance,
                 &self.book,
+                &mut self.regular_hash_calls,
+                StreamDecodeProvenance::Regular,
                 d,
                 &mut on_decode,
             )?;
@@ -523,7 +601,10 @@ impl StreamDecodeSession {
             push_regular_decode(
                 &mut state.seen,
                 &mut state.merged,
+                &mut state.provenance,
                 &self.book,
+                &mut self.regular_hash_calls,
+                StreamDecodeProvenance::Regular,
                 d,
                 &mut on_decode,
             )?;
@@ -545,6 +626,10 @@ impl StreamDecodeSession {
                 };
                 collect_book(&self.book, &decode.msg);
                 on_decode(&decode)?;
+                state.provenance.push(StreamDecodedWithProvenance {
+                    decode: decode.clone(),
+                    provenance: StreamDecodeProvenance::A7Memory,
+                });
                 state.merged.push(decode);
             }
         }
@@ -564,6 +649,10 @@ impl StreamDecodeSession {
                 };
                 collect_book(&self.book, &decode.msg);
                 on_decode(&decode)?;
+                state.provenance.push(StreamDecodedWithProvenance {
+                    decode: decode.clone(),
+                    provenance: StreamDecodeProvenance::A8List,
+                });
                 state.merged.push(decode);
             }
         }
@@ -631,8 +720,21 @@ impl StreamDecodeSession {
         &mut self,
         timestamp: Option<&SlotTimestamp>,
         samples: &[f32],
-        mut on_decode: F,
+        on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        self.ft8_decode_slot_with_provenance_at(timestamp, samples, on_decode)
+            .map(|(rows, _)| rows)
+    }
+
+    fn ft8_decode_slot_with_provenance_at<F>(
+        &mut self,
+        timestamp: Option<&SlotTimestamp>,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<(Vec<StreamDecodedMessage>, Vec<StreamDecodedWithProvenance>), String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
@@ -646,8 +748,13 @@ impl StreamDecodeSession {
             self.subtract_slot_nzhsym47(&mut state, samples);
             self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
         })();
+        let provenance = if result.is_ok() {
+            std::mem::take(&mut state.provenance)
+        } else {
+            Vec::new()
+        };
         self.slot_state = Some(state);
-        result
+        result.map(|rows| (rows, provenance))
     }
 
     fn ft8_decode_options(&self, nzhsym: usize) -> DecodeOptions {
@@ -821,7 +928,10 @@ fn suppress_previous_a7_entries(
 fn push_regular_decode<F>(
     seen: &mut std::collections::HashSet<String>,
     merged: &mut Vec<StreamDecodedMessage>,
+    provenance_rows: &mut Vec<StreamDecodedWithProvenance>,
     book: &HashCallBook,
+    regular_hash_calls: &mut HashSet<String>,
+    provenance: StreamDecodeProvenance,
     d: &DecodedMessage,
     on_decode: &mut F,
 ) -> Result<(), String>
@@ -843,19 +953,32 @@ where
         sync: d.sync,
         itone,
     };
-    collect_book(book, &decode.msg);
+    for call in collect_book(book, &decode.msg) {
+        regular_hash_calls.insert(call);
+    }
     on_decode(&decode)?;
+    provenance_rows.push(StreamDecodedWithProvenance {
+        decode: decode.clone(),
+        provenance,
+    });
     merged.push(decode);
     Ok(())
 }
 
-fn collect_book(book: &HashCallBook, msg: &str) {
+fn collect_book(book: &HashCallBook, msg: &str) -> Vec<String> {
+    let mut saved = Vec::new();
     for part in msg.split_whitespace() {
         let p = part.trim_matches(|c: char| c == ';' || c == ',');
         if is_hashable_callsign_token(p) {
             book.save(p);
+            saved.push(
+                p.trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .to_ascii_uppercase(),
+            );
         }
     }
+    saved
 }
 
 fn is_grid4(s: &str) -> bool {
@@ -1054,6 +1177,26 @@ mod tests {
         assert_eq!(session.a7[1][0].len(), 1);
         assert!(session.a7[1][1].is_empty());
         assert_eq!(session.a7[0][0].len(), 1);
+    }
+
+    #[test]
+    fn diagnostic_a7_seed_import_targets_timestamp_parity() {
+        let mut session = StreamDecodeSession::new(StreamDecodeConfig::default());
+        let even_timestamp = SlotTimestamp::parse("230208_140330").unwrap();
+        let rows = vec![super::StreamDecodedMessage {
+            freq: 1500.0,
+            dt: 0.5,
+            snr: -12.0,
+            msg: "K1ABC W9XYZ -10".to_string(),
+            sync: 0.0,
+            itone: [0; 79],
+        }];
+
+        let imported = session.import_same_parity_a7_seed_rows(&even_timestamp, &rows);
+
+        assert_eq!(imported, 1);
+        assert_eq!(session.a7[0][1].len(), 1);
+        assert!(session.a7[1][1].is_empty());
     }
 
     fn test_a7_entry(msg0: &str) -> A7SaveEntry {
