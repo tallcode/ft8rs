@@ -319,14 +319,14 @@ Run these before accepting decode-core changes:
 
 ```bash
 cargo fmt --check
-cargo test --release test_stream_decode_short_audio -- --nocapture
-cargo test --release test_stream_decode_long_audio -- --nocapture
-cargo test --release --test wsjtx_source_audit_test -- --nocapture
+cargo test --release test_stream_decode_short_audio
+cargo test --release test_stream_decode_long_audio
+cargo test --release --test wsjtx_source_audit_test
 ```
 
 For FFTW alignment:
 
 ```bash
-cargo test --release --features fftw test_stream_decode_short_audio -- --nocapture
-cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture
+cargo test --release --features fftw test_stream_decode_short_audio
+cargo test --release --features fftw test_stream_decode_long_audio
 ```

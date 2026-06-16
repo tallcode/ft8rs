@@ -2,8 +2,8 @@
 
 This document records `--profile hybrid`: the result-union mode that runs the
 WSJT-X-aligned decoder and the JTDX-oriented decoder together, plus the
-hybrid-only shared-knowledge layer built on top of them. It absorbs the former
-`PLAN.md` design notes, so this is the single source of truth for hybrid.
+hybrid-only shared-knowledge layer built on top of them. This is the single
+source of truth for hybrid design notes.
 
 Decoder internals belong in their own documents:
 
@@ -511,17 +511,9 @@ regular/deep; JTDX `iaptype>0` is conservatively treated as assisted memory.
 
 ## Phase 0 Measurement
 
-Combined diagnostic (decodes the long fixture once and prints all opportunity
-summaries):
-
-```bash
-cargo test --release test_hybrid_phase0_opportunity_long_audio -- --ignored --nocapture
-```
-
-Narrower per-channel diagnostics also exist:
-`test_hybrid_hash_call_opportunity_long_audio`,
-`test_hybrid_qso_context_opportunity_long_audio`,
-`test_hybrid_divergence_report_long_audio`.
+The exploratory hybrid opportunity tests used during this phase have been removed
+from the normal test tree. The measured results are kept here so the old
+decisions remain auditable without carrying long-running diagnostic code.
 
 All recovery numbers are reported **relative to the best single profile** (JTDX
 alone), not only hybrid-off-vs-on, and **in the no-context SWL baseline** (the
@@ -555,9 +547,10 @@ Interpretation:
 - The hybrid union has a small false-positive cost (2 unsupported JTDX-unique
   rows). Any active import must report whether it increases this number.
 
-## Active-Channel Experiments (diagnostic-only, killed)
+## Active-Channel Experiments (killed)
 
-These ignored release-mode diagnostics are not part of normal hybrid decode.
+These experiments were diagnostic-only and are no longer kept as runnable tests.
+The results below are historical measurements from the long fixture.
 
 ### QSO Context Replay
 
@@ -565,10 +558,6 @@ Replays the slot through a temporary JTDX session using ≤4 context hints
 committed before the slot starts (via `hiscall`/`nfqso`), comparing replay rows
 against the ordinary union and splitting added rows into CSV-supported vs.
 unsupported.
-
-```bash
-cargo test --release test_hybrid_qso_context_replay_long_audio -- --ignored --nocapture
-```
 
 ```text
 attempted_hints=72  added_rows=2  supported=0  unsupported=2  elapsed=643.85s
@@ -585,10 +574,6 @@ start from the same false-positive gate.
 Imports JTDX-only regular rows from the previous same-parity slot into a
 temporary WSJT-X session as a7 seeds, counting only `A7Memory` replay rows not
 already in the union.
-
-```bash
-cargo test --release test_hybrid_same_parity_a7_replay_long_audio -- --ignored --nocapture
-```
 
 ```text
 attempted_slots=8  imported_seeds=8  added_rows=0  supported=0  unsupported=0  elapsed=203.32s
@@ -667,8 +652,8 @@ Required checks before accepting hybrid changes:
 ```bash
 cargo fmt --check
 cargo check
-cargo test --release test_stream_decode_short_audio -- --nocapture
-cargo test --release test_stream_decode_long_audio -- --nocapture
+cargo test --release test_stream_decode_short_audio
+cargo test --release test_stream_decode_long_audio
 ```
 
 Hybrid-specific: pure-profile baselines unchanged; file-mode hybrid reproducible

@@ -4,6 +4,7 @@
 //! subtraction and hash-call logic. Stream/file/soundcard orchestration lives
 //! outside this module.
 
+pub mod dx;
 pub mod hybrid;
 pub mod lib_jtdx;
 

@@ -16,6 +16,7 @@ use output::udp::UdpConfig;
 use output::Outputs;
 
 const VERSION: &str = env!("FT8RS_VERSION");
+const DX_MONITOR_WATCHDOG_MS: u64 = 12_000;
 
 #[derive(Parser)]
 #[command(name = "ft8rs", version = VERSION, about = "FT8 streaming decoder")]
@@ -53,7 +54,7 @@ struct FileArgs {
 
 #[derive(Args, Clone, Debug)]
 struct DecodeArgs {
-    /// Decode profile: wsjtx, jtdx, or hybrid.
+    /// Decode profile: wsjtx, jtdx, hybrid, or dx.
     #[arg(long, default_value = "wsjtx", help_heading = "Decode")]
     profile: String,
 
@@ -114,19 +115,23 @@ struct DecodeArgs {
     cq_only: bool,
 
     /// Enable JTDX SWL mode for profile=jtdx or profile=hybrid.
+    /// The dx profile enables its own SWL listen pass automatically.
     #[arg(long, help_heading = "Decode")]
     swl: bool,
 
     /// Enable JTDX "decode again" deep mode (nagainfil): OSD ndeep=5 plus a
     /// focused nfqso+/-25 Hz window. Combine with --swl for max sensitivity.
+    /// The dx profile enables nagain only for its own focused passes.
     #[arg(long, help_heading = "Decode")]
     nagain: bool,
 
     /// Enable JTDX forced sync time-window tracking for profile=jtdx or profile=hybrid.
+    /// The dx profile forwards this to its JTDX workers when set.
     #[arg(long, help_heading = "Decode")]
     force_sync: bool,
 
     /// Enable JTDX Hound AP table for profile=jtdx or profile=hybrid.
+    /// The dx profile uses it for focused passes.
     #[arg(long, help_heading = "Decode")]
     hound: bool,
 
@@ -267,6 +272,9 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     config.lforcesync = args.force_sync;
     config.lhound = args.hound;
     config.jtdx_threads = args.jtdx_threads;
+    if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
+        return Err("--profile dx requires --his-call CALL".to_string());
+    }
     Ok(config)
 }
 
@@ -320,10 +328,14 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
         port: args.udp_port,
     });
     let outputs = RefCell::new(Outputs::new(udp)?);
+    let mut config = stream_decode_config(&args.decode)?;
+    if config.profile == DecodeProfile::Dx {
+        config.dx_monitor_watchdog_ms = Some(DX_MONITOR_WATCHDOG_MS);
+    }
     decode_soundcard_streaming_decodes(
         ft8rs::input::SoundcardDecodeOptions {
             device: args.device,
-            config: stream_decode_config(&args.decode)?,
+            config,
             max_slots: args.slots,
         },
         |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
