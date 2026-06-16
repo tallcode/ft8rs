@@ -346,7 +346,13 @@ fn find_char(alphabet: &[u8], c: char) -> usize {
     alphabet.iter().position(|&x| x == b).unwrap_or(0)
 }
 
-fn ihashcall(c0: &str, width: usize) -> usize {
+/// FT8 callsign hash (`packjt77.f90` `ihashcall`).
+///
+/// This is the protocol-level hash shared by both upstream decoders (WSJT-X and
+/// JTDX define byte-identical `ihashcall`), so it doubles as the single source
+/// of truth for the hybrid shared hash-call book's collision detection. Keep it
+/// `pub(crate)` for that reuse; do not fork a second copy.
+pub(crate) fn ihashcall(c0: &str, width: usize) -> usize {
     let s = format!("{:<11}", c0).to_uppercase();
     let mut n8: u64 = 0;
     for c in s.chars().take(11) {

@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-const C38: &[u8; 38] = b" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/";
+use crate::decode::packjt77::ihashcall;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct SharedHashCallBook {
@@ -55,7 +55,7 @@ impl SharedHashCallBook {
         self.calls.insert(call.clone());
 
         for width in [10u8, 12, 22] {
-            let key = (width, ihashcall(&call, width as usize));
+            let key = (width, ihashcall(&call, usize::from(width)));
             match self.hashes.get(&key) {
                 Some(existing) if existing != &call => {
                     self.conflict_hashes.insert(key);
@@ -161,21 +161,41 @@ fn clean_call(call: &str) -> Option<String> {
     Some(clean.to_ascii_uppercase())
 }
 
-fn ihashcall(c0: &str, width: usize) -> usize {
-    let s = format!("{:<11}", c0).to_uppercase();
-    let mut n8: u64 = 0;
-    for c in s.chars().take(11) {
-        let j = C38.iter().position(|&x| x == c as u8).unwrap_or(0) as u64;
-        n8 = 38 * n8 + j;
-    }
-    const MAGIC: u64 = 47055833459;
-    let prod = MAGIC.wrapping_mul(n8);
-    ((prod >> (64 - width as u32)) & ((1u64 << width as u32) - 1)) as usize
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_book_reuses_protocol_hash_for_collision_detection() {
+        // The shared book reuses the kernel's `ihashcall` (the FT8 protocol hash
+        // both decoders use) rather than forking a copy. Pin known values so a
+        // silent change to the kernel hash — which would desync the shared book's
+        // collision marking from the decoders' actual resolution — fails here.
+        assert_eq!(
+            (
+                ihashcall("K1ABC", 10),
+                ihashcall("K1ABC", 12),
+                ihashcall("K1ABC", 22)
+            ),
+            (712, 2851, 2920267)
+        );
+        assert_eq!(
+            (
+                ihashcall("RK4FF", 10),
+                ihashcall("RK4FF", 12),
+                ihashcall("RK4FF", 22)
+            ),
+            (775, 3102, 3177032)
+        );
+        assert_eq!(
+            (
+                ihashcall("EA5/DH0YAH", 10),
+                ihashcall("EA5/DH0YAH", 12),
+                ihashcall("EA5/DH0YAH", 22)
+            ),
+            (110, 441, 451662)
+        );
+    }
 
     #[test]
     fn shared_hash_book_exports_clean_calls_once() {

@@ -92,14 +92,10 @@ impl HybridStreamDecodeSession {
                 )
             });
 
-            let mut wsjtx_results = Vec::new();
             let wsjtx_tagged = self.wsjtx.decode_slot_streaming_with_provenance_at(
                 timestamp,
                 samples,
-                |decode| {
-                    wsjtx_results.push(decode.clone());
-                    on_decode(decode)
-                },
+                &mut on_decode,
             )?;
 
             let jtdx_tagged = jtdx_handle
@@ -150,12 +146,8 @@ pub fn hybrid_hash_call_opportunity_report(
     wsjtx: &[StreamDecodedMessage],
     jtdx: &[StreamDecodedMessage],
 ) -> HashCallOpportunityReport {
-    let mut report = hash_call_opportunity_report(
-        wsjtx,
-        jtdx,
-        |row| row.msg.as_str(),
-        |a, b| is_same_signal(a, b),
-    );
+    let mut report =
+        hash_call_opportunity_report(wsjtx, jtdx, |row| row.msg.as_str(), is_same_signal);
     let mut book = SharedHashCallBook::default();
     book.import_regular_calls(extract_full_call_candidates(wsjtx));
     book.import_regular_calls(extract_full_call_candidates(jtdx));
@@ -163,7 +155,14 @@ pub fn hybrid_hash_call_opportunity_report(
     report
 }
 
-pub fn build_passive_evidence_store(
+/// Test-only convenience that treats every row as `Regular` provenance.
+///
+/// Real callers must use [`build_passive_evidence_store_from_tagged`] with true
+/// provenance: assuming `Regular` would let assisted/AP/deep rows masquerade as
+/// `ConfirmedRegular` and become `import_eligible`, defeating the confidence
+/// gate. Gated to `cfg(test)` so it can never be reached from a production path.
+#[cfg(test)]
+fn build_passive_evidence_store(
     wsjtx: &[StreamDecodedMessage],
     jtdx: &[StreamDecodedMessage],
 ) -> SharedEvidenceStore {
