@@ -167,10 +167,9 @@ mod tests {
 
     #[test]
     fn shared_book_reuses_protocol_hash_for_collision_detection() {
-        // The shared book reuses the kernel's `ihashcall` (the FT8 protocol hash
-        // both decoders use) rather than forking a copy. Pin known values so a
-        // silent change to the kernel hash — which would desync the shared book's
-        // collision marking from the decoders' actual resolution — fails here.
+        // The shared book uses the FT8 protocol callsign hash instead of keeping
+        // a local copy. Pin known values so collision marking stays aligned with
+        // decoder hash-call resolution.
         assert_eq!(
             (
                 ihashcall("K1ABC", 10),
