@@ -42,7 +42,9 @@ pub mod tone8myc;
 pub mod tonesd;
 pub mod twkfreq1;
 
-use crate::stream::session::{StreamDecodeConfig, StreamDecodedMessage};
+use crate::stream::session::{
+    StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage, StreamDecodedWithProvenance,
+};
 use crate::stream::time::SlotTimestamp;
 
 use self::agccft8::agccft8;
@@ -60,6 +62,8 @@ pub struct JtdxStreamDecodeSession {
     _config: StreamDecodeConfig,
     _state: ft8_mod1::Ft8Mod1,
     book: HashCallBook,
+    regular_hash_calls: std::collections::HashSet<String>,
+    last_provenance: Vec<StreamDecodedWithProvenance>,
     ft8b_workspaces: Vec<ft8b::Ft8bWorkspace>,
     tone8_tables: Tone8Tables,
     ft8apset: Ft8ApSet,
@@ -91,12 +95,39 @@ impl JtdxStreamDecodeSession {
             _config: config,
             _state: state,
             book: HashCallBook::new(),
+            regular_hash_calls: std::collections::HashSet::new(),
+            last_provenance: Vec::new(),
             ft8b_workspaces: Vec::new(),
         }
     }
 
     pub fn is_implemented(&self) -> bool {
         true
+    }
+
+    pub fn import_hash_calls(&mut self, calls: &[String]) {
+        for call in calls {
+            self.book.save(call);
+        }
+    }
+
+    pub fn export_regular_hash_calls(&self) -> Vec<String> {
+        let mut calls: Vec<String> = self.regular_hash_calls.iter().cloned().collect();
+        calls.sort();
+        calls
+    }
+
+    pub fn decode_slot_streaming_with_provenance_at<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedWithProvenance>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        self.decode_slot_streaming_at(timestamp, samples, on_decode)?;
+        Ok(std::mem::take(&mut self.last_provenance))
     }
 
     pub fn decode_slot_streaming_at<F>(
@@ -108,6 +139,7 @@ impl JtdxStreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
+        self.last_provenance.clear();
         self._state.dd8.fill(0.0);
         for (dst, src) in self._state.dd8.iter_mut().zip(samples.iter().copied()) {
             *dst = src;
@@ -265,7 +297,17 @@ impl JtdxStreamDecodeSession {
                         sync: candidate.sync as f64,
                         itone: result.itone,
                     };
-                    collect_book(&self.book, &message.msg);
+                    if result.source == DecodeSource::Regular && result.iaptype == 0 {
+                        for call in collect_book(&self.book, &message.msg) {
+                            self.regular_hash_calls.insert(call);
+                        }
+                    } else {
+                        collect_book(&self.book, &message.msg);
+                    }
+                    self.last_provenance.push(StreamDecodedWithProvenance {
+                        decode: message.clone(),
+                        provenance: jtdx_stream_provenance(&result),
+                    });
                     on_decode(&message)?;
                     update_qso_memory(&band_config, &mut self._state, &message, interval, &result);
                     update_deep_false_state(&band_config, &mut self._state, &result);
@@ -1081,13 +1123,29 @@ fn save_decode_state(state: &mut ft8_mod1::Ft8Mod1, result: &ft8b::Ft8bDecodeRes
     state.nmsg = state.ndecodes;
 }
 
-fn collect_book(book: &HashCallBook, msg: &str) {
+fn jtdx_stream_provenance(result: &ft8b::Ft8bDecodeResult) -> StreamDecodeProvenance {
+    match result.source {
+        DecodeSource::Ft8s | DecodeSource::Ft8sd => StreamDecodeProvenance::JtdxDeep,
+        DecodeSource::Regular if result.iaptype == 0 => StreamDecodeProvenance::Regular,
+        DecodeSource::Regular => StreamDecodeProvenance::A7Memory,
+    }
+}
+
+fn collect_book(book: &HashCallBook, msg: &str) -> Vec<String> {
+    let mut saved = Vec::new();
     for part in msg.split_whitespace() {
         let token = part.trim_matches(|c: char| c == ';' || c == ',');
         if is_hashable_callsign_token(token) {
             book.save(token);
+            saved.push(
+                token
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .to_ascii_uppercase(),
+            );
         }
     }
+    saved
 }
 
 fn is_hashable_callsign_token(token: &str) -> bool {
