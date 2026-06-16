@@ -9,17 +9,20 @@ Related documents:
 
 - WSJT-X alignment: `WSJTX.md`
 - JTDX profile: `JTDX.md`
-- Hybrid result-union + shared knowledge: `HYBRID.md`
+- Hybrid result-union + shared knowledge: `HYBRID.md` (separate profile; `dx`
+  does not depend on it and is not validated through it)
 
-`dx` reuses the same shared-knowledge philosophy as hybrid (provenance,
-confidence, cross-slot context harvest), but narrows it to **one operator-given
-target callsign**.
+`dx` is intentionally independent: its context store, target filter, confidence
+rules, and merge behavior live under the DX orchestration layer. If any code is
+ever shared with `hybrid`, that should be a later explicit refactor after both
+profiles are stable, not part of the DX design.
 
 ## Scope
 
 ```text
 profile=dx -> JTDX SWL worker (sensitivity + harvest)
-              -> WSJT-X a8d / MyCall-AP worker (focused recovery)
+              -> focused JTDX swl+nagain worker (target-frequency recovery)
+              -> focused WSJT-X a8d / MyCall-AP worker (target-frequency recovery)
               -> single-target context harvest (cross-slot, deterministic)
               -> hiscall output filter
 ```
@@ -29,16 +32,14 @@ reception of **that station's** transmissions, by automatically turning a
 no/low-context situation into a full-context one. Everything not related to
 `hiscall` is suppressed from output (but may be used internally for harvest).
 
-This is the single-target specialization of the hybrid shared-knowledge idea. It
-is feasible where hybrid's general `QsoContextHint` was killed-with-evidence
-(`HYBRID.md`, 72-hint replay → 643s, 0 gain) precisely because the target is
-**one known callsign**, not the whole band — there is no per-partner replay
-explosion.
+This is a single-target chase profile, not a general result-union or shared-memory
+mode. Its cost stays bounded because the target is **one known callsign**, not
+the whole band — there is no per-partner replay explosion.
 
 ## Non-Negotiable Constraints
 
-Inherits all of `HYBRID.md`'s constraints, plus the chase-specific rules the
-owner set:
+Carries forward the same top-level safety discipline used elsewhere in the
+project, plus the chase-specific rules the owner set:
 
 1. **Do not change `lib_wsjtx`/`lib_jtdx` alignment semantics.** The original
    decoders stay aligned and independent. This is the top principle. Any
@@ -188,8 +189,9 @@ single-target store (used for slot N+1 and same-parity slots):
   and additionally hash `hiscall` with the kernel `ihashcall` (the same protocol
   hash both decoders use; reused, not forked, for all of 10/12/22 bits) to
   match `<...>` rows at a harvested target frequency as candidate target
-  transmissions. This reuses the hybrid `SharedHashCallBook` collision-safety
-  machinery but with a one- or two-entry book, not a database.
+  transmissions. This should be implemented as DX-local hash/collision handling
+  with a one- or two-entry book, not by depending on the hybrid shared-book
+  machinery.
 - **Harvest hygiene (stability invariant).** Cross-slot focus is a feedback loop,
   so a bad harvest can lock later slots onto the wrong frequency. Only harvest a
   frequency from rows that actually contain `hiscall`/`mycall` (not low-confidence
@@ -314,10 +316,11 @@ committed state). This keeps the JTDX path faithfully aligned and keeps file-mod
 output reproducible.
 
 **Monitor latency.** Cheap listen ≈6 s; focused passes are seconds; the ≤5-foci
-FH worst case is bounded by a monitor-only ~12 s watchdog that runs each focused
-pass on a disposable worker (never the committed session) and abandons an
-over-budget result (≤1 outstanding). File mode runs every pass to completion (no
-watchdog) so output stays reproducible.
+FH worst case is bounded by a monitor-only 12 s focused-pass budget. Once that
+budget is spent, `dx` stops starting additional disposable focused workers. The
+simple watchdog does **not** force-kill a focused worker that has already started.
+File mode runs every pass to completion (no watchdog) so output stays
+reproducible.
 
 ## Output Policy
 
@@ -330,7 +333,7 @@ Hash resolution can mislabel a colliding station as `<hiscall>` (negligible at
 22-bit, ~1/1024 at 10-bit — same as stock WSJT-X/JTDX); cross-check frequency/dt
 before trusting (False-Positive Control). Normal output shape stays
 `HHMMSS snr dt freq message`. Internal attribution (`source`, provenance,
-confidence) is available to debug/test tooling only.
+confidence) is kept inside diagnostics and tests only.
 
 **Expect mostly-empty slots.** Because `dx` shows only the one target, most slots
 emit **nothing** — that is normal monitoring, not a fault. A slot summary, if
@@ -346,9 +349,10 @@ FP — but **not** by mutating kernel false-decode filtering:
 - **Do not** route the dynamic `hiscall` into JTDX `searchcalls`/`chkfalse8`.
   `searchcalls` is a process-global `OnceLock` loaded once from `ALLCALL7.TXT`
   (`searchcalls.rs`); dynamic injection would break reproducibility and change
-  the kernel's accepted set (`HYBRID.md` marks this high-risk/killed).
-- **Do** control FP at the orchestration boundary using the existing confidence
-  model (`hybrid/evidence.rs`). A super-sensitive target row is trusted by:
+  the kernel's accepted set. This stays forbidden in DX regardless of any other
+  profile's shared-knowledge experiments.
+- **Do** control FP at the orchestration boundary using a DX-local confidence
+  model. A super-sensitive target row is trusted by:
   1. frequency proximity to a harvested target frequency (±`napwid`);
   2. grid consistency with a harvested `hisgrid` (a conflicting grid demotes it);
   3. corroboration across slots / workers (`ConfirmedMulti`);
@@ -362,8 +366,8 @@ strongest FP filter. The callsign list / `ALLCALL7.TXT` is not needed here.
 
 **Emission policy:** a chaser must not wait a same-parity cycle (~30 s) to see a
 target row, so a `hiscall` match is **emitted in the slot it is found**.
-Confidence is computed but is a *soft annotation* (carried to UDP/debug, not the
-clean CLI line). The **only** confidence-based suppression is a **hard grid
+Confidence is computed but is a *soft annotation* (kept for internal tooling, not
+the clean CLI line). The **only** confidence-based suppression is a **hard grid
 conflict** — a row whose grid contradicts a confidently-harvested `hisgrid` is
 almost certainly a hash collision / fabrication and is dropped. Off-frequency,
 off-`dt`, or single-sighting rows are flagged low-confidence but still emitted
@@ -388,8 +392,8 @@ The target frequency can be prioritized without touching kernels:
 
 - Setting `nfqso` to the harvested frequency makes `sync8` order the
   `nfqso ± 10 Hz` candidates **first** (`WSJTX.md`; JTDX similar) — this is the
-  decoder's own documented context behavior (allowed by hybrid constraint 10:
-  "feed context, let the decoder decide").
+  decoder's own documented context behavior: feed context through public config,
+  let the decoder decide.
 - Narrowing `napwid` focuses AP near the target.
 - The session layer already controls *which* early decodes get subtracted and in
   what order; a chase strategy may subtract strong non-target signals first to
@@ -466,7 +470,7 @@ target slot). The store must therefore harvest frequency from **either** `mycall
 measured recovery used one session decoding all 19 slots (so by `140700` it had
 accumulated `avexdt` and AP memory). The shipped `dx` uses a **fresh focused
 worker per pass** (`avexdt=0`, empty memory, slightly different sync-window
-center). **This has now been verified** (PLAN Step 0): a fresh single-slot focused
+center). **This has now been verified**: a fresh single-slot focused
 worker `{swl, nagain, mycall=F1MLZ, hiscall=UA3QNA, nfqso=1152}` recovers exactly
 `F1MLZ UA3QNA -04` — the `avexdt=0` concern did not materialize, and no mitigation
 is needed.
@@ -475,17 +479,20 @@ is needed.
 fixture prepends a *synthesized strong* `F1MLZ UA3QNA -04 @1152` (a clean harvest
 source) before four real contiguous slots (140645/140700/140715/140730), so the
 end-to-end harvest→focus→recover flow has a controlled, deterministic target.
-Tellingly, `--profile hybrid` (WSJT-X+JTDX union, no context) on this fixture
-decodes the synth slot and the real 140730 but **misses the real 140700** — which
-is precisely the row `dx` recovers from harvested context, so the fixture is a
-genuine discriminator. See `PLAN.md` for the generation recipe.
+As a reference comparison only, a no-context WSJT-X+JTDX union decodes the synth
+slot and the real 140730 but **misses the real 140700** — which is precisely the
+row `dx` recovers from harvested context, so the fixture is a genuine DX-context
+discriminator. This comparison does not make `dx` depend on `profile=hybrid`.
+Generation recipe: `genft8("F1MLZ UA3QNA -04")` → `itone`;
+`gen_ft8wave(itone, 1152.0)` → waveform; slot 0 places `waveform*0.5` at the
+0.5 s FT8 start with deterministic Gaussian noise `*0.02`, then appends real
+slots 140645/140700/140715/140730 from `230208_140300.wav`.
 
 ### Measured results (long fixture, `jtdx --swl --nagain`)
 
 Phase-0 confirmation, all on `230208_140300.wav`. **`Time` is the whole-fixture
 total over all 19 slots, NOT per-slot** — divide by 19 for per-slot (e.g. the
 0–1000 blind case is 437 s total ≈ 23 s/slot, the focused case is seconds/slot).
-See `PLAN.md` "Measured cost" for the per-slot table.
 
 | Config | Target 140700 | Rows | Total (19 slots) | ≈ per-slot |
 |---|---|---|---:|---:|
@@ -516,6 +523,52 @@ Lessons, now empirically grounded:
   (RA3ABG and IW1PUR), leaving only the 2 target rows — which is exactly why the
   hiscall filter, not internal FP gating, is chase's FP control.
 
+### Implemented DX result (current code)
+
+Command:
+
+```bash
+target/release/ft8rs file tests/ft8/230208_140300.wav \
+  --start-time 230208_140300 \
+  --profile dx \
+  --my-call F1MLZ \
+  --his-call UA3QNA
+```
+
+Current behavior:
+
+- recovers `140700 F1MLZ UA3QNA -04` without `--rx-frequency`;
+- also emits the later target repeat `140730 F1MLZ UA3QNA -04`;
+- emits no RA3ABG/IW1PUR side-decodes;
+- FP budget on this target chase is **0 same-slot-unsupported rows** against the
+  CSV;
+- release ignored gate below passes, currently ~220 s total for the 19-slot
+  fixture.
+
+```bash
+cargo test --release test_dx_profile_long_ua3qna -- --ignored
+```
+
+The synthetic discriminator fixture also passes:
+
+```bash
+cargo test --release test_dx_profile_synthetic_ua3qna -- --ignored
+```
+
+File-mode reproducibility is covered by running the same synthetic fixture twice
+and comparing the emitted rows:
+
+```bash
+cargo test --release test_dx_profile_synthetic_reproducible -- --ignored
+```
+
+The a8d path is reachable through `profile=dx` when `mycall`, `hiscall`,
+`hisgrid`, and a focus frequency are available:
+
+```bash
+cargo test --release test_dx_profile_a8d_fixture
+```
+
 Secondary checks:
 
 - with `--his-call UA3QNA` only (no `mycall`): target stays missed — documents the
@@ -523,25 +576,32 @@ Secondary checks:
 - compound-`hiscall` variant: pick a hashed call in the fixture and confirm
   hash-match + resolution path.
 
-## Phased Plan (measure-first)
+## Implementation Status
 
-Follow the `HYBRID.md` methodology: measure before building, kill-with-evidence.
+Follow the project methodology used throughout the decoder work: measure before
+building, kill-with-evidence.
 
-- **Phase 0 (measure, no new decoder).** On the long fixture, quantify: (a) can
-  the harvest see 1152 Hz by 140630 and does MyCall-AP recover 140700 with the
-  harvested frequency; (b) for a real FH recording, the harvestable rate of
-  `hisgrid` and the a8d vs MyCall-AP recovery delta vs no-context; (c) the extra
-  FP count from the SWL fallback. Decide scope from the numbers.
-- **Phase 1.** `dx` profile skeleton: SWL worker + `TargetContextStore`
-  (single target, cross-slot frequency/grid harvest) + focused worker; support
-  "frequency known/unknown, single target". Validate the 140700 target.
-- **Phase 2.** FH multi-frequency: `lhound` + bounded multi-focus + Fox tones +
-  compound-call hash matching.
-- **Phase 3.** Confidence/grid-consistency output gate; record an FP budget.
+- **Shipped.** `profile=dx`, mandatory `--his-call`, DX-local target filter,
+  long-lived JTDX SWL listen worker, cross-slot `TargetContextStore`, disposable
+  focused JTDX `swl+nagain` workers, disposable focused WSJT-X/a8d workers when
+  `hisgrid+mycall+focus` exist, bounded ≤5 focus selection, target-only
+  emit/merge, hard target-sender grid contradiction suppression, and monitor-only
+  focused-pass watchdog.
+- **Validated.** Real long fixture recovers `140700 F1MLZ UA3QNA -04` without
+  `--rx-frequency`; the synthetic fixture recovers the same weak row via
+  harvest→focus; the a8d fixture is reachable through `profile=dx`; synthetic
+  file-mode output is reproducible; pure `wsjtx`/`jtdx` profile gates remain
+  unchanged.
+- **FP budget.** The UA3QNA long-fixture chase emits 0 same-slot-unsupported
+  target rows. Non-target rows remain harvest-only and are not printed.
+- **Deferred.** Real Fox/Hound gain remains unmeasured because no FH fixture is
+  available. The bounded multi-focus and hash-seeding machinery is present, but
+  real-signal FH acceptance stays deferred until a recording exists.
 
-Hard gates each phase: pure-profile baselines row-for-row unchanged
-(`wsjtx` 21/21 & 424/424, `jtdx` 20/20 & 430/431); file-mode reproducible; FP
-recorded as a number.
+Hard gates: pure-profile baselines row-for-row unchanged (`wsjtx` 21/21 &
+424/424, `jtdx` 20/20 & 430/431); file-mode reproducible; output only contains
+`hiscall` rows; FP budget recorded. `hybrid` remains a separate profile and is
+only checked when a change touches shared dispatcher/output code.
 
 ## Do Not Do
 

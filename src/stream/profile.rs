@@ -1,3 +1,4 @@
+use crate::decode::dx::DxStreamDecodeSession;
 use crate::decode::hybrid::HybridStreamDecodeSession;
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::stream::session::{
@@ -5,10 +6,12 @@ use crate::stream::session::{
 };
 use crate::stream::time::SlotTimestamp;
 
+#[allow(clippy::large_enum_variant)]
 pub enum ProfileStreamDecodeSession {
     Wsjtx(StreamDecodeSession),
     Jtdx(JtdxStreamDecodeSession),
     Hybrid(HybridStreamDecodeSession),
+    Dx(DxStreamDecodeSession),
 }
 
 impl ProfileStreamDecodeSession {
@@ -21,6 +24,7 @@ impl ProfileStreamDecodeSession {
                 config.clone_for_profile_jtdx(),
             )),
             DecodeProfile::Hybrid => Self::Hybrid(HybridStreamDecodeSession::new(config)),
+            DecodeProfile::Dx => Self::Dx(DxStreamDecodeSession::new(config)),
         }
     }
 
@@ -48,6 +52,7 @@ impl ProfileStreamDecodeSession {
             Self::Hybrid(decoder) => {
                 decoder.decode_slot_streaming_at(timestamp, samples, on_decode)
             }
+            Self::Dx(decoder) => decoder.decode_slot_streaming_at(timestamp, samples, on_decode),
         }
     }
 }

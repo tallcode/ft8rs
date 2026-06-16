@@ -19,6 +19,7 @@ pub enum DecodeProfile {
     Wsjtx,
     Jtdx,
     Hybrid,
+    Dx,
 }
 
 impl DecodeProfile {
@@ -27,6 +28,7 @@ impl DecodeProfile {
             Self::Wsjtx => "wsjtx",
             Self::Jtdx => "jtdx",
             Self::Hybrid => "hybrid",
+            Self::Dx => "dx",
         }
     }
 
@@ -35,8 +37,9 @@ impl DecodeProfile {
             "wsjtx" => Ok(Self::Wsjtx),
             "jtdx" => Ok(Self::Jtdx),
             "hybrid" => Ok(Self::Hybrid),
+            "dx" => Ok(Self::Dx),
             _ => Err(format!(
-                "unknown profile '{value}'; expected one of: wsjtx, jtdx, hybrid"
+                "unknown profile '{value}'; expected one of: wsjtx, jtdx, hybrid, dx"
             )),
         }
     }
@@ -170,6 +173,7 @@ pub struct StreamDecodeConfig {
     pub filter: bool,
     pub hide_dupes: bool,
     pub hide_hash: bool,
+    pub dx_monitor_watchdog_ms: Option<u64>,
     pub mycall: Option<String>,
     pub mygrid: Option<String>,
     pub hiscall: Option<String>,
@@ -211,6 +215,7 @@ impl Default for StreamDecodeConfig {
             filter: false,
             hide_dupes: false,
             hide_hash: false,
+            dx_monitor_watchdog_ms: None,
             mycall: None,
             mygrid: None,
             hiscall: None,
@@ -335,10 +340,8 @@ impl StreamDecodeSession {
     }
 
     pub fn decode_slot(&mut self, samples: &[f32]) -> Vec<StreamDecodedMessage> {
-        let results = self
-            .decode_slot_streaming(samples, |_| Ok(()))
-            .expect("in-memory decode callback cannot fail");
-        results
+        self.decode_slot_streaming(samples, |_| Ok(()))
+            .expect("in-memory decode callback cannot fail")
     }
 
     pub fn decode_slot_at(
@@ -346,10 +349,8 @@ impl StreamDecodeSession {
         timestamp: &SlotTimestamp,
         samples: &[f32],
     ) -> Vec<StreamDecodedMessage> {
-        let results = self
-            .decode_slot_streaming_at(timestamp, samples, |_| Ok(()))
-            .expect("in-memory decode callback cannot fail");
-        results
+        self.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))
+            .expect("in-memory decode callback cannot fail")
     }
 
     pub fn decode_slot_streaming<F>(
@@ -929,6 +930,7 @@ fn suppress_previous_a7_entries(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_regular_decode<F>(
     seen: &mut std::collections::HashSet<String>,
     merged: &mut Vec<StreamDecodedMessage>,
@@ -1050,7 +1052,7 @@ fn is_reference_chkcall(token: &str) -> bool {
 
     let bytes = base.as_bytes();
     let nbc = bytes.len();
-    if nbc > 6 || nbc < 3 {
+    if !(3..=6).contains(&nbc) {
         return false;
     }
     if !bytes[0].is_ascii_uppercase() && !bytes[1].is_ascii_uppercase() {

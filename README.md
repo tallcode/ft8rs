@@ -8,7 +8,7 @@ provides:
 - live soundcard monitoring aligned to system time;
 - CLI output by default;
 - optional UDP decode reports;
-- selectable decode profiles: `wsjtx`, `jtdx`, and `hybrid`.
+- selectable decode profiles: `wsjtx`, `jtdx`, `hybrid`, and `dx`.
 
 The default build uses RustFFT at the WSJT-X/JTDX-aligned 3840-point size and
 does not require FFTW at runtime. FFTW can be selected at compile time for
@@ -166,7 +166,11 @@ UDP can be used together with CLI output.
 wsjtx  - WSJT-X-aligned decoder, default
 jtdx   - JTDX-oriented high-sensitivity decoder path
 hybrid - WSJT-X and JTDX result union
+dx     - single-target DX chase profile, requires --his-call
 ```
+
+`dx` is not a `hybrid` alias. It is a separate single-target chase mode with its
+own orchestration and target filter, so it can be tuned independently.
 
 Examples:
 
@@ -178,6 +182,12 @@ target/release/ft8rs file tests/ft8/230208_140300.wav \
 target/release/ft8rs file tests/ft8/230208_140300.wav \
   --start-time 230208_140300 \
   --profile jtdx
+
+target/release/ft8rs file tests/ft8/dx_synth_ua3qna.wav \
+  --start-time 230208_140630 \
+  --profile dx \
+  --my-call F1MLZ \
+  --his-call UA3QNA
 ```
 
 JTDX band-decode threads default to source-style auto selection:
@@ -221,7 +231,7 @@ Common options:
 | `--start-time` | `-s` | file start timestamp |
 | `--device` | `-i` | soundcard input index or name |
 | `--slots` | `-S` | number of slots to decode |
-| `--profile` | | decode profile: `wsjtx`, `jtdx`, or `hybrid` |
+| `--profile` | | decode profile: `wsjtx`, `jtdx`, `hybrid`, or `dx` |
 | `--low` | `-L` | low decode frequency |
 | `--high` | `-H` | high decode frequency |
 | `--rx-frequency` | `-f` | focused receive frequency |
@@ -239,7 +249,7 @@ Common options:
 | `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
 | `--nagain` | | enable JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
 | `--force-sync` | | enable JTDX forced sync time-window tracking |
-| `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid` |
+| `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid`; used by focused DX passes |
 | `--jtdx-threads` | | JTDX FT8 band-decode threads, `0=auto`, `1..=24` |
 | `--udp` | `-u` | enable UDP output |
 | `--udp-host` | `-o` | UDP destination host |
@@ -262,20 +272,20 @@ Decode tests must run in release mode.
 Short fixture:
 
 ```bash
-cargo test --release test_stream_decode_short_audio -- --nocapture
+cargo test --release test_stream_decode_short_audio
 ```
 
 Long fixture:
 
 ```bash
-cargo test --release test_stream_decode_long_audio -- --nocapture
+cargo test --release test_stream_decode_long_audio
 ```
 
 FFTW path:
 
 ```bash
-cargo test --release --features fftw test_stream_decode_short_audio -- --nocapture
-cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture
+cargo test --release --features fftw test_stream_decode_short_audio
+cargo test --release --features fftw test_stream_decode_long_audio
 ```
 
 Current release expectations:
@@ -285,6 +295,7 @@ default wsjtx short fixture -> 21/21 target rows
 default wsjtx long fixture  -> 424/424 target rows
 jtdx short fixture          -> 20/20 target rows
 jtdx long fixture           -> 430/431 target rows with auto threads
+dx a8d fixture              -> target row recovered
 ```
 
 The fixture CSV files include an `Extra` marker column:
@@ -301,4 +312,5 @@ E     -> excluded row
 - WSJT-X alignment notes are in `WSJTX.md`.
 - JTDX alignment notes are in `JTDX.md`.
 - Hybrid result-union notes are in `HYBRID.md`.
+- DX chase profile notes are in `DX.md`.
 - License: GPL-3.0.
