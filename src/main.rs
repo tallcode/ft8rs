@@ -117,6 +117,11 @@ struct DecodeArgs {
     #[arg(long, help_heading = "Decode")]
     swl: bool,
 
+    /// Enable JTDX "decode again" deep mode (nagainfil): OSD ndeep=5 plus a
+    /// focused nfqso+/-25 Hz window. Combine with --swl for max sensitivity.
+    #[arg(long, help_heading = "Decode")]
+    nagain: bool,
+
     /// Enable JTDX forced sync time-window tracking for profile=jtdx or profile=hybrid.
     #[arg(long, help_heading = "Decode")]
     force_sync: bool,
@@ -258,6 +263,7 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
         config.lapcqonly = true;
     }
     config.swl = args.swl;
+    config.nagain = args.nagain;
     config.lforcesync = args.force_sync;
     config.lhound = args.hound;
     config.jtdx_threads = args.jtdx_threads;
