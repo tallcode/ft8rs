@@ -1,6 +1,6 @@
 # DX Chase Decode Notes
 
-This document records `--profile chase`: a single-target DXpedition-pursuit
+This document records `--profile dx`: a single-target DXpedition-pursuit
 decoder built as an orchestration layer on top of the existing aligned WSJT-X and
 JTDX kernels. It does not introduce a new decode algorithm and does not modify
 `lib_wsjtx`/`lib_jtdx`.
@@ -11,14 +11,14 @@ Related documents:
 - JTDX profile: `JTDX.md`
 - Hybrid result-union + shared knowledge: `HYBRID.md`
 
-`chase` reuses the same shared-knowledge philosophy as hybrid (provenance,
+`dx` reuses the same shared-knowledge philosophy as hybrid (provenance,
 confidence, cross-slot context harvest), but narrows it to **one operator-given
 target callsign**.
 
 ## Scope
 
 ```text
-profile=chase -> JTDX SWL worker (sensitivity + harvest)
+profile=dx -> JTDX SWL worker (sensitivity + harvest)
               -> WSJT-X a8d / MyCall-AP worker (focused recovery)
               -> single-target context harvest (cross-slot, deterministic)
               -> hiscall output filter
@@ -128,24 +128,50 @@ single-target store (used for slot N+1 and same-parity slots):
   is a trusted anchor, while harvested frequencies cover the cases where the user
   value is approximate, stale, drifting, or one of several (FH). The focused
   worker decodes at the union of {user frequency} ∪ {harvested frequencies}.
-  (Harvesting on `mycall` matters: the target's QSO frequency is often first
-  observable from *another* station working us at that frequency — see
-  Validation Target.)
+  **Reliability differs by role:** a row where the target is the *sender* gives
+  the target's own TX frequency — exact, and the only reliable source under FH
+  (where the Fox transmits low and hunters call high, so a hunter's frequency is
+  *not* the Fox's). A row where the target is the *addressee*, or a `mycall`-as-
+  addressee row (another station working us), gives the *QSO* frequency, which
+  equals the target's only in **simplex** — keep these as weaker hints. (This is
+  why `1152 Hz` is harvestable from `140630 F1MLZ RA3ABG` in the Validation
+  Target: that exchange is simplex.)
 - **Grid.** A `hisgrid` is harvested when the target sends a `CQ <call> GRID` or
   `<mine> <target> GRID` row. Once known, it promotes recovery from MyCall-AP to
   full a8d.
 - **Drift.** The frequency set ages out with a sliding window so the focus
   tracks a moving target; stale frequencies are dropped.
-- **TX parity (sequence).** FT8 QSOs alternate every 15 s by parity
-  (`jseq = (nutc/5) % 2`; `{:00,:30}=0`, `{:15,:45}=1`). The target transmits on
-  **one** parity; the other parity carries *us and other hunters calling the
-  target*. Harvest the parity on which `hiscall` is decoded as the target's TX
-  parity. This gates the expensive work (see Per-Slot Decode Strategy): only the
-  target's TX parity needs the deep search; the opposite parity needs only the
-  cheap SWL listen (which is still the main *frequency* harvest source — hunters
-  calling the target reveal the QSO frequency, exactly how 1152 Hz is harvested
-  from `140630 F1MLZ RA3ABG`). Until the parity is observed, treat both as the
-  target's (no premature skipping).
+- **dt (time offset) — confidence/window hint, NOT a recovery lever.** Unlike
+  frequency, `dt` cannot be "fed" to focus the decode: `sync8` already searches
+  all time lags in the window and `ft8b` refines `dt` to sub-symbol before LLR
+  extraction, so the decoder finds and refines `dt` on its own. `dt` matters for
+  both the sync gate (the metric is evaluated at the best lag) and soft-symbol
+  quality (sub-symbol misalignment smears LLRs) — but the decoder self-optimizes
+  both. So harvested `dt` is used only for: (a) **confidence/FP** — a target row
+  near the expected/consistent `dt` is more trustworthy, a wildly off-`dt`
+  "match" is suspect; and (b) a **window hint** — if the target consistently
+  shows a large `dt` (clock error / long path), keep `swl` (±3.5 s window)
+  and/or `--force-sync` on so the wide window keeps covering it (`avexdt`
+  already auto-recenters the window from recent decodes).
+- **TX parity (sequence) — inferred by sender/recipient role, not by mere
+  presence.** FT8 QSOs alternate every 15 s by parity (`jseq = (nutc/5) % 2`;
+  `{:00,:30}=0`, `{:15,:45}=1`); the target transmits on **one** parity, the other
+  carries *us and other hunters calling the target*. **Crucially, in an FT8
+  message `CALL1 CALL2 …` the sender is `CALL2`; `CALL1` is the addressee** (CQ is
+  the exception: `CQ CALL …` → `CALL` is the sender). So `hiscall` merely
+  *appearing* does not mean the target is on air — its role decides:
+  - target **IS transmitting** this parity when it is the sender: `CQ HISCALL …`,
+    or `OTHER HISCALL …` (e.g. `MYCALL HISCALL -04` = the DX answering us);
+  - target is being **called** (not transmitting) when it is the addressee:
+    `HISCALL HUNTER …` (e.g. `HISCALL MYCALL R-05` = us calling the DX).
+  Mark sender-role observations as **strong** TX-parity evidence; if only
+  recipient-role rows are seen, infer the opposite parity as the target's but mark
+  it **weaker**. Never collapse this to "hiscall appears → target TX parity" —
+  that mislabels `MYCALL HISCALL report` (the very message we chase) as hunter
+  parity, and the gate would then skip the real target slot. Until parity is
+  observed, treat both as the target's (no premature skipping). The opposite
+  (hunter) parity still runs the cheap listen and is a main frequency-harvest
+  source.
 - **FH / multiple frequencies.** The harvested frequency is a **set**, not a
   single value — a Fox/Hound DX emits several streams per slot. The store keeps a
   **bounded** set (Fox uses ≤5), and the focused worker does a bounded
@@ -164,6 +190,12 @@ single-target store (used for slot N+1 and same-parity slots):
   match `<...>` rows at a harvested target frequency as candidate target
   transmissions. This reuses the hybrid `SharedHashCallBook` collision-safety
   machinery but with a one- or two-entry book, not a database.
+- **Harvest hygiene (stability invariant).** Cross-slot focus is a feedback loop,
+  so a bad harvest can lock later slots onto the wrong frequency. Only harvest a
+  frequency from rows that actually contain `hiscall`/`mycall` (not low-confidence
+  noise); age out stale frequencies; keep the user `nfqso` seed plus multiple
+  candidates rather than over-committing to one value. This keeps the loop from
+  drifting onto QRM.
 
 ## Sensitivity Ceiling and the `--swl --nagain` Lever
 
@@ -226,45 +258,85 @@ harvested target TX parity:
   the QSO frequency from hunters calling the target.
 - **Target's TX parity** (or parity not yet known): run the full ladder below.
 
-Per slot, cheapest first, stop when the target is found (`hiscall` filter applied
-to all output throughout):
+Per slot, cheapest first, stop climbing once the target is found — but **always
+harvest from every pass that ran** (the listen/focused decodes feed the store
+even after a hit). `hiscall` filter applies to all output throughout.
 
-1. **Listen / harvest — plain `--swl`, full passband, `ndeep=3`.** Cheap; also
-   harvests the target's frequency/grid/dt/parity for later slots. (`nagain` here
-   is pointless — no focus, and full-band `ndeep=5` adds nothing without context.)
-2. **Focused recovery — when a frequency is known/harvested.** `--swl --nagain`
-   at `nfqso` = harvested freq → `ndeep=5` inside `nfqso ± 25 Hz` (fast). For FH,
-   ≤5 foci over the harvested Fox frequency set (`lhound`). Needs `mycall` for
-   MyCall-AP.
+1. **Listen / harvest — plain `--swl`, full passband, `ndeep=3`, *pure
+   observation*.** The listen carries **no MyCall/hiscall AP context** (it still
+   does JTDX's own no-context AP, like a standalone `jtdx --swl`); all
+   target-context recovery happens in the focused step. Cheap (~6 s); harvests the
+   target's frequency/grid/dt/parity for later slots, and is the only pass when no
+   frequency is known yet. (`nagain` here is pointless — no focus, and full-band
+   `ndeep=5` adds nothing without context.) **Bootstrapping:** the *frequency* is
+   harvested here (from stronger activity naming `mycall`/`hiscall`); the target's
+   own *grid/parity* are harvested later from a focused-step target-as-sender hit.
+2. **Focused recovery — requires `mycall` AND a known frequency.** `--swl
+   --nagain` at `nfqso` = harvested freq → `ndeep=5` inside `nfqso ± 25 Hz`
+   (fast). For FH, ≤5 foci over the harvested Fox frequency set (`lhound`),
+   low-band first per the 0–1000 prior. **Without `mycall` this step is skipped
+   entirely** — `ndeep=5` only helps the MyCall-AP branch, so with no `mycall`
+   it is pure cost for zero gain; `dx` then just listens (1) + filters, which is
+   the legitimate no-`mycall` monitoring mode (C3).
 3. **a8d — when `hisgrid` is also harvested** (and `mycall` set). Second engine,
-   list decode at `nfqso`; reaches the weakest "DX-calling-me" replies.
-4. **Blind deep fallback — only when no frequency has been harvested yet.**
-   `--swl --nagain` with **no** `nfqso`, but **restricted to the 0–1000 Hz
-   sub-band** (set `nfb=1000`). This is the most expensive pass; the 0–1000 Hz
-   cap follows the DXpedition convention (Fox/rare DX transmits low — FH Fox sits
-   ~300–900 Hz) and roughly cuts the candidate band 200–3000→200–1000 (~70%
-   fewer), turning the ~26 min full-band run into ~8 min.
+   focused at `nfqso`; reaches the weakest "DX-calling-me" replies.
+4. **Harvest update.** Fold every pass that ran into `TargetContextStore`, but
+   **layered by trust**: the cheap listen (1) is the broad harvest source; the
+   focused/deep passes (2/3) have a higher false-positive rate, so only their
+   *target-filter hits* update target evidence, and `hisgrid`/parity update only
+   from a target-as-**sender** row near an existing focus — never from a deep
+   pass's non-target side-decode. This keeps the feedback loop from amplifying a
+   false decode.
 
-5. **Harvest update.** Update `TargetContextStore` from all confirmed rows for
-   the next slot.
+**There is no blind full-band deep pass (Option A).** Deep search (`ndeep=5`) is
+*always* focused on a harvested/given frequency — never run blind across the
+band. When no frequency is known, the slot does only the cheap listen (1); the
+target is picked up once any frequency emerges (its own stronger slot, or a
+hunter calling it). **Accepted limitation:** if a target is too weak for the
+context-free listen **and** no one works it loudly enough to reveal the
+frequency, no focus ever starts and that target is missed — recovery resumes as
+soon as any decodable activity exposes the frequency. Rationale: a blind
+full-band `ndeep=5` measured ~0 gain and
+≈23 s/slot — not worth it. The **0–1000 Hz DXpedition convention** (Fox/rare DX
+sits low, ~300–900 Hz in FH) survives only as a **soft prior**: when guessing or
+ranking candidate target frequencies, prefer the low sub-band. It is *not* a hard
+band cap on any pass — focused passes decode at the real frequency wherever it is
+(the validation target `F1MLZ UA3QNA @1152 Hz` is recovered by the focused path,
+which is never capped).
 
-**Critical scope of the 0–1000 Hz cap: it applies to the blind fallback (4)
-ONLY.** Focused passes (2/3) decode at the actual harvested/given frequency
-wherever it is — including above 1000 Hz. The validation target
-`F1MLZ UA3QNA @1152 Hz` is recovered by the focused path (2), not the blind
-fallback, so the 0–1000 Hz cap does not block it. Never apply the cap to a
-focused pass, or known-high-frequency targets are lost.
+**Cross-slot state isolation (alignment + reproducibility).** Running several
+passes in one slot must not disturb the JTDX worker's cross-slot decode state
+(odd/even interval memory, AP/QSO memory, average-dt, duplicate/hash state). So
+exactly **one** pass per slot — the cheap listen — commits to the worker, making
+its per-slot evolution identical to a real `jtdx --swl` run; the focused/deep
+passes are **state-isolated** (they decode and return rows without advancing that
+committed state). This keeps the JTDX path faithfully aligned and keeps file-mode
+output reproducible.
 
-If every pass misses, step 1's full-band listen result still stands. This is the
-concrete form of "if other methods miss the target, the sensitivity pass still
-tried."
+**Monitor latency.** Cheap listen ≈6 s; focused passes are seconds; the ≤5-foci
+FH worst case is bounded by a monitor-only ~12 s watchdog that runs each focused
+pass on a disposable worker (never the committed session) and abandons an
+over-budget result (≤1 outstanding). File mode runs every pass to completion (no
+watchdog) so output stays reproducible.
 
 ## Output Policy
 
-Emit only rows whose message involves `hiscall` (as a standard token, or as a
-resolved/hash-matched compound call). Everything else is harvest-only. Normal
-output shape stays `HHMMSS snr dt freq message`. Internal attribution
-(`source`, provenance, confidence) is available to debug/test tooling only.
+Emit only rows whose message involves `hiscall` — as a plain/compound token or
+the kernel-resolved `<hiscall>`. We seed `{hiscall, mycall}` into the worker
+`HashCallBook`, so a `<...>` whose hash matches `hiscall` is resolved to
+`<hiscall>` natively and kept; **any still-unresolved `<...>` did not match our
+two calls and is discarded** (not our target). Everything else is harvest-only.
+Hash resolution can mislabel a colliding station as `<hiscall>` (negligible at
+22-bit, ~1/1024 at 10-bit — same as stock WSJT-X/JTDX); cross-check frequency/dt
+before trusting (False-Positive Control). Normal output shape stays
+`HHMMSS snr dt freq message`. Internal attribution (`source`, provenance,
+confidence) is available to debug/test tooling only.
+
+**Expect mostly-empty slots.** Because `dx` shows only the one target, most slots
+emit **nothing** — that is normal monitoring, not a fault. A slot summary, if
+shown, counts emitted (`hiscall`) rows, not the many filtered-out decodes; `dx`
+may show a quiet "listening" state rather than a "0 decodes" that reads like a
+failure.
 
 ## False-Positive Control
 
@@ -287,6 +359,28 @@ FP — but **not** by mutating kernel false-decode filtering:
 
 Because chase only outputs one target call, the single `hiscall` is itself the
 strongest FP filter. The callsign list / `ALLCALL7.TXT` is not needed here.
+
+**Emission policy:** a chaser must not wait a same-parity cycle (~30 s) to see a
+target row, so a `hiscall` match is **emitted in the slot it is found**.
+Confidence is computed but is a *soft annotation* (carried to UDP/debug, not the
+clean CLI line). The **only** confidence-based suppression is a **hard grid
+conflict** — a row whose grid contradicts a confidently-harvested `hisgrid` is
+almost certainly a hash collision / fabrication and is dropped. Off-frequency,
+off-`dt`, or single-sighting rows are flagged low-confidence but still emitted
+(suppressing them would lose real first sightings and target drift).
+
+**The hiscall filter is NOT a license to lower decode thresholds.** It removes
+decodes about *other* callsigns, but it cannot remove a fabricated codeword that
+happens to spell `hiscall` — and to a chaser that is the worst error (a false
+"the DX answered me"). The real guard against fabricated decodes is the 14-bit
+CRC (~1/16384 false-pass per attempt); lowering `syncmin` or the
+decode-acceptance gates increases the number of attempts and thus the count of
+CRC-false-passes, including fabricated-`hiscall` ones the filter can't catch.
+Sensitivity must come from **context** (MyCall-AP + frequency focus), which adds
+information and raises the *true*-decode probability, not from loosened gates,
+which raise the noise floor too. The aligned sensitivity levers (`swl`+`lft8lowth`
+→ `syncmin` 1.1; `nagain` → `ndeep=5`) are already at their ceiling; going below
+them would also touch the kernel (violates C1). So: do not tune thresholds.
 
 ## Frequency Prioritization (orchestration-only)
 
@@ -316,7 +410,7 @@ aggressive internal search. The resolved answer is that the aggressive lever
 | Option | What | Alignment impact | Verdict |
 |---|---|---|---|
 | **A. `--swl --nagain` (config-only)** | enable upstream `swl` + `nagainfil` (OSD `ndeep=5`, `nfqso ± 25 Hz` focus) at the harvested frequency; `hiscall` filters the extra false decodes | none — both are existing upstream flags; `lib_jtdx` untouched; `nagain=false` default keeps baselines identical | **Recommended / shippable** — this *is* the enhanced SWL |
-| **B. Chase-private kernel fork** | copy a JTDX decode path into `src/decode/chase/` and push past `ndeep=5`/`syncmin` *in the copy only* | none to `lib_wsjtx`/`lib_jtdx` (isolated); high maintenance | **Not needed** — `ndeep=5` is already the OSD maximum; only revisit if a measured target proves the aligned ceiling insufficient |
+| **B. Private kernel fork** | copy a JTDX decode path into `src/decode/dx/` and push past `ndeep=5`/`syncmin` *in the copy only* | none to `lib_wsjtx`/`lib_jtdx` (isolated); high maintenance | **Not needed** — `ndeep=5` is already the OSD maximum; only revisit if a measured target proves the aligned ceiling insufficient |
 | **C. Tune shared kernel** | relax thresholds inside `lib_wsjtx`/`lib_jtdx` | **violates principle 1** | **Forbidden** |
 
 Option A is the implementation. `ndeep=5` is the OSD cap (`osd174_91` clamps to
@@ -334,8 +428,14 @@ and `hiscall`** (no `--rx-frequency`):
 
 ```text
 target: 230208_140700, -16 dB, ~1153 Hz, "F1MLZ UA3QNA -04"  (CSV Extra=J)
-run:    --profile chase --my-call F1MLZ --his-call UA3QNA
+run:    --profile dx --my-call F1MLZ --his-call UA3QNA
 ```
+
+**This is a *mechanism* fixture, not a real DXpedition.** `F1MLZ/UA3QNA` is an
+ordinary simplex FT8 QSO at 1152 Hz, not Fox/Hound. It validates the recovery
+*mechanism* — harvest the QSO frequency, then focused MyCall-AP pulls back a
+missed weak reply — not real-world DXpedition/FH performance, which stays
+unmeasured until an FH recording exists.
 
 Why it is recoverable from harvest alone (grounded in the fixture):
 
@@ -362,16 +462,38 @@ QSO frequency), not prior `hiscall` activity (UA3QNA does not appear before the
 target slot). The store must therefore harvest frequency from **either** `mycall`
 **or** `hiscall` appearances.
 
+**Caveat — the recovery evidence is from a *long-lived* `jtdx` session.** The
+measured recovery used one session decoding all 19 slots (so by `140700` it had
+accumulated `avexdt` and AP memory). The shipped `dx` uses a **fresh focused
+worker per pass** (`avexdt=0`, empty memory, slightly different sync-window
+center). **This has now been verified** (PLAN Step 0): a fresh single-slot focused
+worker `{swl, nagain, mycall=F1MLZ, hiscall=UA3QNA, nfqso=1152}` recovers exactly
+`F1MLZ UA3QNA -04` — the `avexdt=0` concern did not materialize, and no mitigation
+is needed.
+
+**Synthetic validation fixture (`tests/ft8/dx_synth_ua3qna.wav`).** A 5-slot
+fixture prepends a *synthesized strong* `F1MLZ UA3QNA -04 @1152` (a clean harvest
+source) before four real contiguous slots (140645/140700/140715/140730), so the
+end-to-end harvest→focus→recover flow has a controlled, deterministic target.
+Tellingly, `--profile hybrid` (WSJT-X+JTDX union, no context) on this fixture
+decodes the synth slot and the real 140730 but **misses the real 140700** — which
+is precisely the row `dx` recovers from harvested context, so the fixture is a
+genuine discriminator. See `PLAN.md` for the generation recipe.
+
 ### Measured results (long fixture, `jtdx --swl --nagain`)
 
-Phase-0 confirmation, all on `230208_140300.wav`:
+Phase-0 confirmation, all on `230208_140300.wav`. **`Time` is the whole-fixture
+total over all 19 slots, NOT per-slot** — divide by 19 for per-slot (e.g. the
+0–1000 blind case is 437 s total ≈ 23 s/slot, the focused case is seconds/slot).
+See `PLAN.md` "Measured cost" for the per-slot table.
 
-| Config | Target 140700 | Rows | Time |
-|---|---|---|---|
-| `--swl` (no context) | missed | 454 | ~2 min |
-| `--swl --nagain --his-call UA3QNA` | missed | 454 (=plain) | ~12 min |
-| `--swl --nagain --my-call F1MLZ --his-call UA3QNA` (no freq) | **recovered** | 458 (+4) | **~26 min** |
-| `--swl --nagain --my-call F1MLZ --rx-frequency 1152` | **recovered** | — | **seconds** |
+| Config | Target 140700 | Rows | Total (19 slots) | ≈ per-slot |
+|---|---|---|---:|---:|
+| `--swl` (no context, `ndeep=3`) | missed | 454 | ~2 min | ~6 s |
+| `--swl --nagain --his-call UA3QNA` (no mycall) | missed | 454 (=plain) | 765 s | ~40 s |
+| `--swl --nagain --my-call F1MLZ --his-call UA3QNA` (no freq) | **recovered** | 458 (+4) | 1557 s | ~82 s |
+| `--swl --nagain --my-call`, **0–1000 Hz** (would-be blind) | — | 124 | 437 s | **~23 s** |
+| `--swl --nagain --my-call F1MLZ --rx-frequency 1152` (focused) | **recovered** | — | — | **seconds** |
 
 Lessons, now empirically grounded:
 
@@ -410,7 +532,7 @@ Follow the `HYBRID.md` methodology: measure before building, kill-with-evidence.
   harvested frequency; (b) for a real FH recording, the harvestable rate of
   `hisgrid` and the a8d vs MyCall-AP recovery delta vs no-context; (c) the extra
   FP count from the SWL fallback. Decide scope from the numbers.
-- **Phase 1.** `chase` profile skeleton: SWL worker + `TargetContextStore`
+- **Phase 1.** `dx` profile skeleton: SWL worker + `TargetContextStore`
   (single target, cross-slot frequency/grid harvest) + focused worker; support
   "frequency known/unknown, single target". Validate the 140700 target.
 - **Phase 2.** FH multi-frequency: `lhound` + bounded multi-focus + Fox tones +
