@@ -237,6 +237,7 @@ Common options:
 | `--his-grid` | `-g` | DX grid context |
 | `--qso-progress` | `-Q` | AP QSO progress, `0..=5` |
 | `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
+| `--nagain` | | enable JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
 | `--force-sync` | | enable JTDX forced sync time-window tracking |
 | `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid` |
 | `--jtdx-threads` | | JTDX FT8 band-decode threads, `0=auto`, `1..=24` |

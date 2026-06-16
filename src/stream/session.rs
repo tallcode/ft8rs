@@ -250,7 +250,11 @@ impl StreamDecodeConfig {
         config.ndepth = config.ndepth.max(3);
         config.lft8apon = true;
         config.lapcqonly = false;
-        config.nagain = false;
+        // Leave `nagain` (upstream `nagainfil`: OSD ndeep=5 + nfqso±25 Hz focus)
+        // under explicit `--nagain` control — do not force it here. DX-chase max
+        // sensitivity is `--swl --nagain`. Without `--nagain`, nagain stays false
+        // (from the base config), so the aligned baseline is unchanged and
+        // `lib_jtdx` is untouched.
         config
     }
 }
