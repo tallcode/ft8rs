@@ -3,120 +3,44 @@
 `ft8rs` is a Rust FT8 streaming decoder with a command-line interface. It
 provides:
 
-- a UI-independent FT8 decode core;
-- WAV file input decoded by 15-second FT8 slots;
 - live soundcard monitoring aligned to system time;
-- CLI output by default;
-- optional UDP decode reports;
+- WAV file input decoded by 15-second FT8 slots;
+- a UI-independent FT8 decode core;
+- CLI output by default, with optional UDP decode reports;
 - selectable decode profiles: `wsjtx`, `jtdx`, `hybrid`, and `dx`.
 
 The default build uses RustFFT at the WSJT-X/JTDX-aligned 3840-point size and
-does not require FFTW at runtime. FFTW can be selected at compile time for
-alignment checks.
+needs no FFTW at runtime. FFTW can be selected at compile time for alignment
+checks.
 
 ## Build
 
-Default build:
-
 ```bash
-cargo build --release
+cargo build --release                  # default (RustFFT)
+cargo build --release --features fftw  # FFTW backend, for alignment checks
 ```
 
-FFTW build:
-
-```bash
-cargo build --release --features fftw
-```
-
-On macOS:
-
-```bash
-brew install fftw
-```
-
-On Linux:
-
-```bash
-sudo apt-get install -y libasound2-dev libfftw3-dev pkg-config
-```
-
-The FFT backend is fixed at compile time. A built binary cannot switch between
-RustFFT and FFTW at runtime.
+The FFTW backend needs system libraries: `brew install fftw` on macOS, or
+`sudo apt-get install -y libasound2-dev libfftw3-dev pkg-config` on Linux. The
+FFT backend is fixed at compile time; a built binary cannot switch at runtime.
 
 ## Runtime Files
 
-Release packages include `ALLCALL7.TXT` next to the binary. Local `cargo build`
-also copies the root `ALLCALL7.TXT` into the target binary directory.
-
-Keep `ALLCALL7.TXT` beside `ft8rs` when using the JTDX profile. The repository
-copy is pinned to the JTDX source-tree CallDB used for alignment.
+Keep `ALLCALL7.TXT` beside the `ft8rs` binary when using the JTDX profile.
+Release packages include it; a local `cargo build` copies the repository copy
+(pinned to the JTDX CallDB used for alignment) into the target binary directory.
 
 ## CLI
 
-Help:
-
 ```bash
 target/release/ft8rs --help
-target/release/ft8rs file --help
 target/release/ft8rs monitor --help
-```
-
-Version:
-
-```bash
+target/release/ft8rs file --help
 target/release/ft8rs --version
 ```
 
-Tagged release builds print the tag version, for example:
-
-```text
-ft8rs 0.0.2
-```
-
-Development builds print the package version plus git metadata, for example:
-
-```text
-ft8rs 0.0.0-dev+3ed8eaa
-```
-
-## Decode A WAV File
-
-If the filename contains a WSJT-X-style timestamp, `ft8rs` infers the first
-slot time:
-
-```bash
-target/release/ft8rs file tests/ft8/210703_133430.wav
-```
-
-For other filenames, pass `--start-time`:
-
-```bash
-target/release/ft8rs file recording.wav --start-time 230208_140300
-target/release/ft8rs file recording.wav --start-time 140300
-```
-
-Accepted timestamp formats:
-
-```text
-YYMMDD_HHMMSS
-HHMMSS
-```
-
-Output format:
-
-```text
-HHMMSS SNR DT FREQ MESSAGE
------- slot done: NN decodes ------
-```
-
-Example:
-
-```text
-133430  16 +0.3  2571 W1FC F5BZB -08
-133430  14 -0.1  2157 WM3PEN EA6VQ -09
-133430  -2 -0.8  1197 CQ F5RXL IN94
------- slot done: 21 decodes ------
-```
+Tagged releases print the tag (e.g. `ft8rs 0.0.2`); development builds append git
+metadata (e.g. `ft8rs 0.0.0-dev+3ed8eaa`).
 
 ## Monitor A Soundcard
 
@@ -133,32 +57,37 @@ target/release/ft8rs monitor --device 0
 target/release/ft8rs monitor --device "VB-Cable A"
 ```
 
-Limit the number of slots:
+`monitor` aligns capture to the next UTC 15-second FT8 slot and streams decodes
+as they are produced:
+
+```text
+HHMMSS SNR DT FREQ MESSAGE
+------ slot done: NN decodes ------
+```
+
+```text
+133430  16 +0.3  2571 W1FC F5BZB -08
+133430  14 -0.1  2157 WM3PEN EA6VQ -09
+133430  -2 -0.8  1197 CQ F5RXL IN94
+------ slot done: 21 decodes ------
+```
+
+Limit the number of slots (otherwise it runs until stopped):
 
 ```bash
 target/release/ft8rs monitor --device "VB-Cable A" --slots 2
 ```
 
-`monitor` aligns capture to the next UTC 15-second FT8 slot and streams decodes
-as they are produced.
+## Decode A WAV File
 
-## UDP Reports
-
-UDP output is off by default. Enable it with `--udp`.
-
-Default destination:
-
-```text
-host: 127.0.0.1
-port: 2238
-```
+Offline decoding takes the same decode options as `monitor`, reading a recording
+instead of live audio. A WSJT-X-style filename sets the start time; otherwise
+pass `--start-time` (`YYMMDD_HHMMSS` or `HHMMSS`):
 
 ```bash
-target/release/ft8rs monitor --device "VB-Cable A" --udp
-target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --udp-port 2238
+target/release/ft8rs file tests/ft8/210703_133430.wav
+target/release/ft8rs file recording.wav --start-time 230208_140300
 ```
-
-UDP can be used together with CLI output.
 
 ## Profiles
 
@@ -172,59 +101,41 @@ dx     - single-target DX chase profile, requires --his-call
 `dx` is not a `hybrid` alias. It is a separate single-target chase mode with its
 own orchestration and target filter, so it can be tuned independently.
 
-Examples:
-
 ```bash
-target/release/ft8rs file tests/ft8/230208_140300.wav \
-  --start-time 230208_140300 \
-  --profile wsjtx
+target/release/ft8rs monitor --device "VB-Cable A" --profile jtdx --swl
+target/release/ft8rs monitor --device "VB-Cable A" --profile hybrid
 
-target/release/ft8rs file tests/ft8/230208_140300.wav \
-  --start-time 230208_140300 \
-  --profile jtdx
-
-target/release/ft8rs file tests/ft8/dx_synth_ua3qna.wav \
-  --start-time 230208_140630 \
-  --profile dx \
-  --my-call F1MLZ \
-  --his-call UA3QNA
+# dx requires --his-call; --my-call unlocks AP/a8d recovery
+target/release/ft8rs monitor --device "VB-Cable A" \
+  --profile dx --my-call F1MLZ --his-call UA3QNA
 ```
 
-JTDX band-decode threads default to source-style auto selection:
-
-```bash
-target/release/ft8rs file tests/ft8/230208_140300.wav \
-  --start-time 230208_140300 \
-  --profile jtdx \
-  --jtdx-threads 0
-```
-
-Use explicit thread counts for diagnostics:
-
-```bash
-target/release/ft8rs file tests/ft8/230208_140300.wav \
-  --start-time 230208_140300 \
-  --profile jtdx \
-  --jtdx-threads 4
-```
+JTDX band-decode threads default to source-style auto selection (`--jtdx-threads
+0`); pass an explicit `1..=24` only for diagnostics.
 
 ## Decode Context
 
-AP and focused retry logic can use callsign/grid context:
+AP and focused-retry logic can use callsign/grid context:
 
 ```bash
-target/release/ft8rs file tests/ft8/230208_140300.wav \
-  --start-time 230208_140300 \
+target/release/ft8rs monitor --device "VB-Cable A" \
   --profile jtdx \
-  --my-call K1ABC \
-  --my-grid FN20 \
-  --his-call W9XYZ \
-  --his-grid EN60 \
-  --qso-progress 0 \
-  --rx-frequency 1153
+  --my-call K1ABC --my-grid FN20 \
+  --his-call W9XYZ --his-grid EN60 \
+  --qso-progress 0 --rx-frequency 1153
 ```
 
-Common options:
+## UDP Reports
+
+UDP output is off by default and can run alongside CLI output. The default
+destination is `127.0.0.1:2238`.
+
+```bash
+target/release/ft8rs monitor --device "VB-Cable A" --udp
+target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --udp-port 2238
+```
+
+## Options
 
 | Option | Alias | Meaning |
 |---|---:|---|
@@ -243,49 +154,32 @@ Common options:
 | `--cq-only` | `-O` | CQ-only AP mode |
 | `--my-call` | `-c` | local callsign context |
 | `--my-grid` | `-G` | local grid context |
-| `--his-call` | `-x` | DX callsign context |
+| `--his-call` | `-x` | DX callsign context (required by `dx`) |
 | `--his-grid` | `-g` | DX grid context |
 | `--qso-progress` | `-Q` | AP QSO progress, `0..=5` |
 | `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
-| `--nagain` | | enable JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
+| `--nagain` | | JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
 | `--force-sync` | | enable JTDX forced sync time-window tracking |
 | `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid`; used by focused DX passes |
 | `--jtdx-threads` | | JTDX FT8 band-decode threads, `0=auto`, `1..=24` |
 | `--udp` | `-u` | enable UDP output |
 | `--udp-host` | `-o` | UDP destination host |
 | `--udp-port` | `-p` | UDP destination port |
-| `--fft-threads` | `-m` | FFTW plan threads |
-| `--patience` | `-w` | FFTW planning patience |
+| `--fft-threads` | `-m` | FFTW plan threads (FFTW build only) |
+| `--patience` | `-w` | FFTW planning patience (FFTW build only) |
 
-FFTW-only options require a binary built with `--features fftw`:
-
-```bash
-target/release/ft8rs file tests/ft8/230208_140300.wav --fft-threads 3 --patience 1
-```
-
-The default RustFFT build accepts only the default FFT settings.
+The `--fft-threads`/`--patience` options require a binary built with
+`--features fftw`; the default RustFFT build accepts only the default FFT
+settings.
 
 ## Tests
 
-Decode tests must run in release mode.
-
-Short fixture:
+Decode tests must run in release mode:
 
 ```bash
 cargo test --release test_stream_decode_short_audio
-```
-
-Long fixture:
-
-```bash
 cargo test --release test_stream_decode_long_audio
-```
-
-FFTW path:
-
-```bash
-cargo test --release --features fftw test_stream_decode_short_audio
-cargo test --release --features fftw test_stream_decode_long_audio
+cargo test --release --features fftw test_stream_decode_short_audio  # FFTW path
 ```
 
 Current release expectations:
