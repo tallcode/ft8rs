@@ -123,25 +123,30 @@ Cross-slot, deterministic. From every confirmed decode in slot N, update the
 single-target store (used for slot N+1 and same-parity slots):
 
 - **Frequency association.** The target's candidate frequency set is seeded by
-  the user-provided `nfqso`/`nftx` (if any) **and** grown by harvest: any slot
-  where `hiscall` **or** `mycall` appears in a decoded message contributes its
-  frequency. Both sources are kept and used together — a user-supplied frequency
-  is a trusted anchor, while harvested frequencies cover the cases where the user
-  value is approximate, stale, drifting, or one of several (FH). The focused
-  worker decodes at the union of {user frequency} ∪ {harvested frequencies}.
+  the user-provided `nfqso`/`nftx` (if any, and only when inside the configured
+  passband) **and** grown by harvest. Both sources are kept and used together — a
+  user-supplied frequency is a trusted, pinned anchor (it does not age out),
+  while harvested frequencies cover the cases where the user value is
+  approximate, stale, drifting, or one of several (FH). The focused worker
+  decodes at the union of {user frequency} ∪ {harvested frequencies}, with every
+  focus clamped to the passband before worker config is built.
   **Reliability differs by role:** a row where the target is the *sender* gives
   the target's own TX frequency — exact, and the only reliable source under FH
   (where the Fox transmits low and hunters call high, so a hunter's frequency is
   *not* the Fox's). A row where the target is the *addressee*, or a `mycall`-as-
   addressee row (another station working us), gives the *QSO* frequency, which
-  equals the target's only in **simplex** — keep these as weaker hints. (This is
-  why `1152 Hz` is harvestable from `140630 F1MLZ RA3ABG` in the Validation
-  Target: that exchange is simplex.)
+  equals the target's only in **simplex** — keep these as weaker hints outside
+  Hound mode. In Hound mode, recipient/`mycall` rows inform parity only; they do
+  **not** seed focus frequencies, because hunter TX frequency is not Fox TX
+  frequency. (This is why `1152 Hz` is harvestable from `140630 F1MLZ RA3ABG` in
+  the Validation Target: that exchange is simplex.)
 - **Grid.** A `hisgrid` is harvested when the target sends a `CQ <call> GRID` or
   `<mine> <target> GRID` row. Once known, it promotes recovery from MyCall-AP to
   full a8d.
 - **Drift.** The frequency set ages out with a sliding window so the focus
-  tracks a moving target; stale frequencies are dropped.
+  tracks a moving target; stale frequencies are dropped. The aging calculation
+  handles a UTC-midnight wrap (`23:59:xx -> 00:00:xx`) so monitor sessions do not
+  keep stale foci forever.
 - **dt (time offset) — confidence/window hint, NOT a recovery lever.** Unlike
   frequency, `dt` cannot be "fed" to focus the decode: `sync8` already searches
   all time lags in the window and `ft8b` refines `dt` to sub-symbol before LLR
@@ -260,9 +265,10 @@ harvested target TX parity:
   the QSO frequency from hunters calling the target.
 - **Target's TX parity** (or parity not yet known): run the full ladder below.
 
-Per slot, cheapest first, stop climbing once the target is found — but **always
-harvest from every pass that ran** (the listen/focused decodes feed the store
-even after a hit). `hiscall` filter applies to all output throughout.
+Per slot, cheapest first, but **do not treat one target hit as proof that this
+focus is exhausted**. Fox/Hound and multi-stream DX traffic can carry several
+target-related messages near the same frequency, so a8d still runs when its
+context is available. `hiscall` filter applies to all output throughout.
 
 1. **Listen / harvest — plain `--swl`, full passband, `ndeep=3`, *pure
    observation*.** The listen carries **no MyCall/hiscall AP context** (it still
@@ -281,7 +287,10 @@ even after a hit). `hiscall` filter applies to all output throughout.
    it is pure cost for zero gain; `dx` then just listens (1) + filters, which is
    the legitimate no-`mycall` monitoring mode (C3).
 3. **a8d — when `hisgrid` is also harvested** (and `mycall` set). Second engine,
-   focused at `nfqso`; reaches the weakest "DX-calling-me" replies.
+   focused at `nfqso`; reaches the weakest "DX-calling-me" replies. It is not
+   skipped merely because step 2 found another target-related row near the same
+   focus: under FH/multi-stream operation that row may not be the same message.
+   Cost is bounded by the same focused-pass watchdog in monitor mode.
 4. **Harvest update.** Fold every pass that ran into `TargetContextStore`, but
    **layered by trust**: the cheap listen (1) is the broad harvest source; the
    focused/deep passes (2/3) have a higher false-positive rate, so only their
@@ -315,12 +324,23 @@ passes are **state-isolated** (they decode and return rows without advancing tha
 committed state). This keeps the JTDX path faithfully aligned and keeps file-mode
 output reproducible.
 
-**Monitor latency.** Cheap listen ≈6 s; focused passes are seconds; the ≤5-foci
-FH worst case is bounded by a monitor-only 12 s focused-pass budget. Once that
-budget is spent, `dx` stops starting additional disposable focused workers. The
-simple watchdog does **not** force-kill a focused worker that has already started.
-File mode runs every pass to completion (no watchdog) so output stays
-reproducible.
+**Concurrent foci (orchestration-only parallelism).** Because each focus runs a
+*fresh, fully isolated* disposable worker (its own kernel state, AP/hash book, and
+residual — nothing shared with the listen worker or with other foci), the ≤5 foci
+are decoded **concurrently, one thread per focus**, purely for wall-clock. This is
+**not** kernel parallelism: every worker stays single-threaded internally and its
+rows are byte-identical to a serial run, so sensitivity is unchanged. Determinism
+is preserved by merging results in the fixed, sorted **foci order** (never
+thread-completion order) before emit/harvest — so file-mode output stays
+reproducible. (The cross-slot listen worker still commits serially, before the
+focused fan-out.)
+
+**Monitor latency.** Cheap listen ≈6 s; concurrent focused passes are seconds; the
+≤5-foci FH worst case is now ≈ the slowest single focus rather than their sum. A
+monitor-only 12 s budget still guards escalation: a focus whose JTDX pass has
+already overrun the budget skips its a8d sub-pass. The watchdog does **not**
+force-kill a worker already in flight. File mode runs every pass to completion (no
+budget) so output stays reproducible.
 
 ## Output Policy
 
@@ -584,7 +604,9 @@ building, kill-with-evidence.
 - **Shipped.** `profile=dx`, mandatory `--his-call`, DX-local target filter,
   long-lived JTDX SWL listen worker, cross-slot `TargetContextStore`, disposable
   focused JTDX `swl+nagain` workers, disposable focused WSJT-X/a8d workers when
-  `hisgrid+mycall+focus` exist, bounded ≤5 focus selection, target-only
+  `hisgrid+mycall+focus` exist (the ≤5 foci decoded **concurrently, one isolated
+  worker per thread**, merged in deterministic foci order), bounded ≤5 focus
+  selection, target-only
   emit/merge, hard target-sender grid contradiction suppression, and monitor-only
   focused-pass watchdog.
 - **Validated.** Real long fixture recovers `140700 F1MLZ UA3QNA -04` without
@@ -602,6 +624,26 @@ Hard gates: pure-profile baselines row-for-row unchanged (`wsjtx` 21/21 &
 424/424, `jtdx` 20/20 & 430/431); file-mode reproducible; output only contains
 `hiscall` rows; FP budget recorded. `hybrid` remains a separate profile and is
 only checked when a change touches shared dispatcher/output code.
+
+## Known Limitations / Future Hardening
+
+These are edge-case robustness gaps, not correctness bugs — the validated path
+(harvest → focus → recover `140700`, FP budget 0) is unaffected. Recorded here so
+they are deliberate, not forgotten.
+
+- **Watchdog is a "don't-start-next-pass" gate, not a true interrupt.** The
+  monitor 12 s budget is checked before each focus and before each a8d sub-pass;
+  a single focused pass already in flight is never force-killed (no thread
+  cancellation). It bounds the *number* of passes started, not total wall-clock.
+  Acceptable because focused passes are seconds; documented under *Monitor
+  latency*.
+- **Harvested `hisgrid` can be poisoned by a hash collision.** A ~1/1024 10-bit
+  collision that mislabels another station as `<hiscall>` in a sender position
+  with a different grid would lock the wrong `hisgrid`, after which
+  `has_hard_grid_contradiction` could suppress the *real* target's rows. Only
+  applies to harvested (not user-provided) grids. Future: trust only a
+  user-supplied `hisgrid` for the contradiction gate, or require grid
+  corroboration across ≥2 slots before locking.
 
 ## Do Not Do
 
