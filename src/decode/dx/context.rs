@@ -11,6 +11,7 @@ struct FrequencyCandidate {
     freq: f64,
     confidence: u8,
     last_seen_nutc: u32,
+    pinned: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +36,8 @@ pub(super) struct TargetContextStore {
     dt: Option<f64>,
     low_band_prior: bool,
     hound: bool,
+    nfa: f64,
+    nfb: f64,
 }
 
 impl TargetContextStore {
@@ -44,6 +47,8 @@ impl TargetContextStore {
         seed_frequency: f64,
         hisgrid: Option<&str>,
         hound: bool,
+        nfa: f64,
+        nfb: f64,
     ) -> Self {
         let mut store = Self {
             target,
@@ -54,9 +59,11 @@ impl TargetContextStore {
             dt: None,
             low_band_prior: true,
             hound,
+            nfa,
+            nfb,
         };
         if seed_frequency > 0.0 {
-            store.remember_frequency(seed_frequency, 8, 0);
+            store.remember_frequency(seed_frequency, 8, 0, true);
         }
         store
     }
@@ -156,8 +163,10 @@ impl TargetContextStore {
             1
         };
 
-        if role.target_sender || role.target_recipient || role.contains_mycall {
-            self.remember_frequency(row.freq, confidence, timestamp.nutc());
+        let frequency_seed_allowed =
+            role.target_sender || (!self.hound && (role.target_recipient || role.contains_mycall));
+        if frequency_seed_allowed {
+            self.remember_frequency(row.freq, confidence, timestamp.nutc(), false);
         }
     }
 
@@ -176,8 +185,8 @@ impl TargetContextStore {
         }
     }
 
-    fn remember_frequency(&mut self, freq: f64, confidence: u8, nutc: u32) {
-        if !(freq.is_finite() && freq > 0.0) {
+    fn remember_frequency(&mut self, freq: f64, confidence: u8, nutc: u32, pinned: bool) {
+        if !(freq.is_finite() && freq >= self.nfa && freq <= self.nfb) {
             return;
         }
         if let Some(existing) = self
@@ -189,6 +198,7 @@ impl TargetContextStore {
                 existing.freq = freq;
                 existing.confidence = confidence;
             }
+            existing.pinned |= pinned;
             existing.last_seen_nutc = nutc;
             return;
         }
@@ -196,12 +206,13 @@ impl TargetContextStore {
             freq,
             confidence,
             last_seen_nutc: nutc,
+            pinned,
         });
     }
 
     fn age_frequencies(&mut self, nutc: u32) {
         self.frequencies
-            .retain(|freq| slots_between(freq.last_seen_nutc, nutc) <= 16);
+            .retain(|freq| freq.pinned || slots_between(freq.last_seen_nutc, nutc) <= 16);
     }
 
     fn harvest_grid(&mut self, msg: &str) {
@@ -292,8 +303,11 @@ fn low_band_rank(low_band_prior: bool, freq: f64) -> u8 {
 
 fn slots_between(start_nutc: u32, end_nutc: u32) -> u32 {
     let start = nutc_to_seconds(start_nutc);
-    let end = nutc_to_seconds(end_nutc);
-    end.saturating_sub(start) / 15
+    let mut end = nutc_to_seconds(end_nutc);
+    if end < start {
+        end += 24 * 60 * 60;
+    }
+    (end - start) / 15
 }
 
 fn nutc_to_seconds(nutc: u32) -> u32 {
@@ -346,8 +360,15 @@ mod tests {
 
     #[test]
     fn frequency_selection_collapses_one_window_and_prefers_confidence() {
-        let mut store =
-            TargetContextStore::new(DxTarget::new("UA3QNA"), Some("F1MLZ"), 0.0, None, false);
+        let mut store = TargetContextStore::new(
+            DxTarget::new("UA3QNA"),
+            Some("F1MLZ"),
+            0.0,
+            None,
+            false,
+            200.0,
+            3000.0,
+        );
         let ts = SlotTimestamp::parse("140630").unwrap();
         store.harvest_listen(&ts, &[row(1152.0, "F1MLZ RA3ABG KO95")]);
         store.harvest_listen(&ts, &[row(1154.0, "F1MLZ UA3QNA -04")]);
@@ -363,10 +384,71 @@ mod tests {
             1000.0,
             Some("PM00"),
             false,
+            200.0,
+            3000.0,
         );
 
         assert!(!store.should_emit_target_row(&row(1000.0, "CQ BG5ATV FN42")));
         assert!(store.should_emit_target_row(&row(1000.0, "BG5ATV K1JT FN42")));
         assert!(store.should_emit_target_row(&row(1000.0, "CQ BG5ATV PM00")));
+    }
+
+    #[test]
+    fn out_of_passband_seed_is_ignored() {
+        let store = TargetContextStore::new(
+            DxTarget::new("UA3QNA"),
+            Some("F1MLZ"),
+            3500.0,
+            None,
+            false,
+            200.0,
+            3000.0,
+        );
+
+        assert!(store.selected_foci().is_empty());
+    }
+
+    #[test]
+    fn in_passband_user_seed_is_pinned() {
+        let mut store = TargetContextStore::new(
+            DxTarget::new("UA3QNA"),
+            Some("F1MLZ"),
+            1152.0,
+            None,
+            false,
+            200.0,
+            3000.0,
+        );
+        let later = SlotTimestamp::parse("140630").unwrap();
+
+        store.harvest_listen(&later, &[]);
+
+        assert_eq!(store.selected_foci(), vec![1152.0]);
+    }
+
+    #[test]
+    fn hound_mode_does_not_focus_hunter_rows() {
+        let mut store = TargetContextStore::new(
+            DxTarget::new("DX1AAA"),
+            Some("MY1AAA"),
+            0.0,
+            None,
+            true,
+            200.0,
+            3000.0,
+        );
+        let ts = SlotTimestamp::parse("140630").unwrap();
+
+        store.harvest_listen(&ts, &[row(2100.0, "DX1AAA MY1AAA R-05")]);
+        assert!(store.selected_foci().is_empty());
+
+        store.harvest_listen(&ts, &[row(600.0, "MY1AAA DX1AAA -10")]);
+        assert_eq!(store.selected_foci(), vec![600.0]);
+    }
+
+    #[test]
+    fn frequency_aging_survives_midnight_rollover() {
+        assert_eq!(slots_between(235945, 0), 1);
+        assert_eq!(slots_between(235945, 15), 2);
     }
 }

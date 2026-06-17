@@ -39,6 +39,8 @@ impl DxStreamDecodeSession {
             config.nfqso,
             config.hisgrid.as_deref(),
             config.lhound,
+            config.nfa,
+            config.nfb,
         );
         Self {
             base_config: config,
@@ -83,49 +85,116 @@ impl DxStreamDecodeSession {
                 })?;
         self.context.harvest_listen(timestamp, &listen_results);
 
+        // Focused recovery runs one fully isolated disposable worker per focus,
+        // so the foci are mutually independent and share no kernel state. Decode
+        // them concurrently for wall-clock, then merge in the deterministic foci
+        // order: every worker's rows are byte-identical to a serial run (no
+        // shared residual/AP/hash state across foci, and each kernel stays
+        // single-threaded internally), and emit/harvest stay reproducible
+        // because they replay the sorted foci order, never thread-completion
+        // order.
+        let focus_rows = self.decode_foci_concurrently(timestamp, samples, &foci, started_at)?;
+
         let mut focused_target_rows = Vec::new();
-        for focus in foci {
-            if dx_focused_budget_expired(&self.base_config, started_at.elapsed()) {
-                break;
+        for rows in focus_rows {
+            for decode in &rows {
+                emit_target_row(&self.context, &mut emitted, decode, &mut on_decode)?;
             }
-            let mut focused =
-                JtdxStreamDecodeSession::new(dx_focus_config(&self.base_config, focus));
-            focused.import_hash_calls(&self.hash_seed_calls);
-            let focused_results =
-                focused.decode_slot_streaming_at(timestamp, samples, |decode| {
-                    emit_target_row(&self.context, &mut emitted, decode, &mut on_decode)?;
-                    Ok(())
-                })?;
             focused_target_rows.extend(
-                focused_results
-                    .into_iter()
+                rows.into_iter()
                     .filter(|row| self.target.matches_message(&row.msg)),
             );
-
-            if let Some(hisgrid) = self.context.hisgrid() {
-                if dx_focused_budget_expired(&self.base_config, started_at.elapsed()) {
-                    break;
-                }
-                let mut wsjtx =
-                    StreamDecodeSession::new(dx_a8_config(&self.base_config, focus, hisgrid));
-                wsjtx.import_hash_calls(&self.hash_seed_calls);
-                let wsjtx_results =
-                    wsjtx.decode_slot_streaming_at(timestamp, samples, |decode| {
-                        emit_target_row(&self.context, &mut emitted, decode, &mut on_decode)?;
-                        Ok(())
-                    })?;
-                focused_target_rows.extend(
-                    wsjtx_results
-                        .into_iter()
-                        .filter(|row| self.target.matches_message(&row.msg)),
-                );
-            }
         }
         self.context
             .harvest_focused(timestamp, &focused_target_rows);
 
         Ok(emitted)
     }
+
+    /// Decode every focus on its own thread and return the raw rows per focus in
+    /// the same order as `foci` (deterministic). Each closure builds, seeds, and
+    /// drops its own disposable workers, so nothing is shared between threads but
+    /// immutable config/seed/grid references; the returned rows are merged by the
+    /// caller in foci order to keep emit/harvest reproducible.
+    fn decode_foci_concurrently(
+        &self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        foci: &[f64],
+        started_at: std::time::Instant,
+    ) -> Result<Vec<Vec<StreamDecodedMessage>>, String> {
+        if foci.is_empty() {
+            return Ok(Vec::new());
+        }
+        let base_config = &self.base_config;
+        let hash_seed_calls = &self.hash_seed_calls;
+        let hisgrid = self.context.hisgrid().map(str::to_string);
+
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = foci
+                .iter()
+                .map(|&focus| {
+                    let hisgrid = hisgrid.as_deref();
+                    scope.spawn(move || {
+                        decode_one_focus(
+                            base_config,
+                            hash_seed_calls,
+                            hisgrid,
+                            focus,
+                            timestamp,
+                            samples,
+                            started_at,
+                        )
+                    })
+                })
+                .collect();
+
+            let mut outputs = Vec::with_capacity(handles.len());
+            for handle in handles {
+                let rows = handle
+                    .join()
+                    .map_err(|_| "dx focus worker panicked".to_string())??;
+                outputs.push(rows);
+            }
+            Ok(outputs)
+        })
+    }
+}
+
+/// Run the focused JTDX `swl+nagain` worker and, when a grid is known, the a8d
+/// WSJT-X worker for a single focus. Returns every decoded row (JTDX first, then
+/// a8d) so the caller can emit/harvest them in a deterministic order. Both
+/// workers are fresh and disposable, matching the serial path exactly.
+fn decode_one_focus(
+    base_config: &StreamDecodeConfig,
+    hash_seed_calls: &[String],
+    hisgrid: Option<&str>,
+    focus: f64,
+    timestamp: &SlotTimestamp,
+    samples: &[f32],
+    started_at: std::time::Instant,
+) -> Result<Vec<StreamDecodedMessage>, String> {
+    let mut rows = Vec::new();
+    if dx_focused_budget_expired(base_config, started_at.elapsed()) {
+        return Ok(rows);
+    }
+    let mut focused = JtdxStreamDecodeSession::new(dx_focus_config(base_config, focus));
+    focused.import_hash_calls(hash_seed_calls);
+    rows.extend(focused.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))?);
+
+    if let Some(hisgrid) = hisgrid {
+        if dx_focused_budget_expired(base_config, started_at.elapsed()) {
+            return Ok(rows);
+        }
+        // Do not skip a8d just because the JTDX focused pass already found a
+        // target row near this focus. In FH/multi-stream traffic, another
+        // target-related message at the same focus can still be the one a8d
+        // recovers.
+        let mut wsjtx = StreamDecodeSession::new(dx_a8_config(base_config, focus, hisgrid));
+        wsjtx.import_hash_calls(hash_seed_calls);
+        rows.extend(wsjtx.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))?);
+    }
+    Ok(rows)
 }
 
 fn dx_listen_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
@@ -142,6 +211,7 @@ fn dx_listen_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
 
 fn dx_focus_config(config: &StreamDecodeConfig, focus: f64) -> StreamDecodeConfig {
     let mut focused = config.clone_for_profile_jtdx();
+    let focus = focus.clamp(config.nfa, config.nfb);
     focused.profile = DecodeProfile::Jtdx;
     focused.swl = true;
     focused.nagain = true;
@@ -154,6 +224,7 @@ fn dx_focus_config(config: &StreamDecodeConfig, focus: f64) -> StreamDecodeConfi
 
 fn dx_a8_config(config: &StreamDecodeConfig, focus: f64, hisgrid: &str) -> StreamDecodeConfig {
     let mut focused = config.clone_for_profile_wsjt_x();
+    let focus = focus.clamp(config.nfa, config.nfb);
     focused.profile = DecodeProfile::Wsjtx;
     focused.nfqso = focus;
     focused.nfa = (focus - 25.0).max(config.nfa);
@@ -306,6 +377,28 @@ mod tests {
         assert_eq!(focused.hiscall.as_deref(), Some("BG5ATV"));
         assert_eq!(focused.hisgrid.as_deref(), Some("PM00"));
         assert!(focused.lft8apon);
+    }
+
+    #[test]
+    fn dx_focused_configs_clamp_out_of_band_focus() {
+        let config = StreamDecodeConfig {
+            profile: DecodeProfile::Dx,
+            nfa: 200.0,
+            nfb: 3000.0,
+            mycall: Some("K1JT".to_string()),
+            hiscall: Some("BG5ATV".to_string()),
+            ..StreamDecodeConfig::default()
+        };
+
+        let focused = dx_focus_config(&config, 3500.0);
+        assert_eq!(focused.nfqso, 3000.0);
+        assert_eq!(focused.nfa, 2975.0);
+        assert_eq!(focused.nfb, 3000.0);
+
+        let a8 = dx_a8_config(&config, 100.0, "PM00");
+        assert_eq!(a8.nfqso, 200.0);
+        assert_eq!(a8.nfa, 200.0);
+        assert_eq!(a8.nfb, 225.0);
     }
 
     #[test]

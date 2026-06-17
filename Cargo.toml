@@ -15,7 +15,12 @@ default = []
 fftw = []
 
 [profile.release]
-codegen-units = 16
+# Performance: cross-crate inlining (thin LTO) + a single codegen unit. These
+# are optimization-only and do not change floating-point semantics, so the
+# byte-identical WSJT-X/JTDX baselines are preserved (re-validated). For a small
+# extra gain at the cost of much slower builds, switch to `lto = true` (fat).
+codegen-units = 1
+lto = "thin"
 
 [dependencies]
 rustfft = "6"
