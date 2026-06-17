@@ -5,6 +5,13 @@ use super::filter::{normalize_message_word, DxTarget};
 
 const MAX_FOCI: usize = 5;
 const FOCUS_HALF_WIDTH_HZ: f64 = 25.0;
+/// Upstream `foxgen.f90` lays out the Fox's multi-stream signals at a fixed
+/// spacing `fstep = 60 Hz` (`f0 = nfreq + fstep*(n-1)`). We mirror that constant
+/// to pre-place the full focus grid in Hound mode.
+const FOX_STREAM_SPACING_HZ: f64 = 60.0;
+/// Number of distinct observed Fox streams at/above which we treat the target as
+/// a multi-stream Fox and switch to the equally-spaced grid (owner's rule: ">= 2").
+const FOX_MULTISTREAM_THRESHOLD: usize = 2;
 
 #[derive(Clone, Debug)]
 struct FrequencyCandidate {
@@ -76,6 +83,10 @@ impl TargetContextStore {
     }
 
     pub(super) fn selected_foci(&self) -> Vec<f64> {
+        if let Some(grid) = self.fox_multistream_foci() {
+            return grid;
+        }
+
         let mut candidates = self.frequencies.clone();
         candidates.sort_by(|a, b| {
             b.confidence
@@ -101,6 +112,45 @@ impl TargetContextStore {
             }
         }
         foci
+    }
+
+    /// FH/Hound multi-stream foci. Once at least `FOX_MULTISTREAM_THRESHOLD`
+    /// distinct Fox-stream frequencies have been observed (in Hound mode every
+    /// harvested frequency is a target-as-sender Fox stream), the target is a
+    /// multi-stream Fox transmitting an equally-spaced block. Mirror upstream
+    /// `foxgen.f90` (`f0 = nfreq + 60*(n-1)`): anchor on the lowest live observed
+    /// stream and pre-place the full `MAX_FOCI` grid at 60 Hz, so a Fox that
+    /// dynamically grows to 3/4/5 streams is already monitored instead of being
+    /// discovered a slot late.
+    ///
+    /// Dynamic-lowest fallback: the anchor is the running minimum of the live
+    /// observed streams, so it re-adjusts downward for free — the always-on
+    /// full-band listen decodes any lower stream we had missed, which lowers the
+    /// minimum next slot and shifts the whole grid down; stale high anchors age
+    /// out the same way. No focus slot is spent on a separate downward probe, so
+    /// the upward coverage the owner asked for is preserved.
+    fn fox_multistream_foci(&self) -> Option<Vec<f64>> {
+        if !self.hound || self.frequencies.len() < FOX_MULTISTREAM_THRESHOLD {
+            return None;
+        }
+        let base = self
+            .frequencies
+            .iter()
+            .map(|candidate| candidate.freq)
+            .fold(f64::INFINITY, f64::min);
+        if !base.is_finite() {
+            return None;
+        }
+        let mut foci = Vec::with_capacity(MAX_FOCI);
+        for step in 0..MAX_FOCI {
+            let freq = base + FOX_STREAM_SPACING_HZ * step as f64;
+            // Stop once the grid point's whole focus window has left the passband.
+            if freq - FOCUS_HALF_WIDTH_HZ > self.nfb {
+                break;
+            }
+            foci.push(freq);
+        }
+        (!foci.is_empty()).then_some(foci)
     }
 
     pub(super) fn hisgrid(&self) -> Option<&str> {
@@ -450,5 +500,73 @@ mod tests {
     fn frequency_aging_survives_midnight_rollover() {
         assert_eq!(slots_between(235945, 0), 1);
         assert_eq!(slots_between(235945, 15), 2);
+    }
+
+    #[test]
+    fn fox_multistream_pre_places_full_60hz_grid_from_lowest() {
+        let mut store =
+            TargetContextStore::new(DxTarget::new("DX1AAA"), Some("MY1AAA"), 0.0, None, true, 200.0, 3000.0);
+        let ts = SlotTimestamp::parse("140630").unwrap();
+
+        // One observed Fox stream is not enough — stays a single focus.
+        store.harvest_listen(&ts, &[row(300.0, "MY1AAA DX1AAA -10")]);
+        assert_eq!(store.selected_foci(), vec![300.0]);
+
+        // A second distinct stream proves a multi-stream Fox: lay the full grid
+        // at 60 Hz from the lowest, so streams 3/4/5 are covered before they appear.
+        store.harvest_listen(&ts, &[row(360.0, "OTHER DX1AAA -12")]);
+        assert_eq!(
+            store.selected_foci(),
+            vec![300.0, 360.0, 420.0, 480.0, 540.0]
+        );
+    }
+
+    #[test]
+    fn fox_multistream_anchor_re_adjusts_to_dynamic_lowest() {
+        let mut store =
+            TargetContextStore::new(DxTarget::new("DX1AAA"), Some("MY1AAA"), 0.0, None, true, 200.0, 3000.0);
+        let ts = SlotTimestamp::parse("140630").unwrap();
+
+        store.harvest_listen(&ts, &[row(360.0, "MY1AAA DX1AAA -10")]);
+        store.harvest_listen(&ts, &[row(420.0, "OTHER DX1AAA -12")]);
+        assert_eq!(
+            store.selected_foci(),
+            vec![360.0, 420.0, 480.0, 540.0, 600.0]
+        );
+
+        // The always-on listen later decodes a lower stream we had missed; the
+        // anchor drops to it and the whole grid shifts down (dynamic fallback).
+        store.harvest_listen(&ts, &[row(300.0, "THIRD DX1AAA -08")]);
+        assert_eq!(
+            store.selected_foci(),
+            vec![300.0, 360.0, 420.0, 480.0, 540.0]
+        );
+    }
+
+    #[test]
+    fn fox_multistream_grid_is_clipped_to_passband_top() {
+        let mut store =
+            TargetContextStore::new(DxTarget::new("DX1AAA"), Some("MY1AAA"), 0.0, None, true, 200.0, 1000.0);
+        let ts = SlotTimestamp::parse("140630").unwrap();
+
+        store.harvest_listen(&ts, &[row(900.0, "MY1AAA DX1AAA -10")]);
+        store.harvest_listen(&ts, &[row(960.0, "OTHER DX1AAA -12")]);
+
+        // 900, 960, 1020(window 995..1045 still overlaps the 1000 Hz top);
+        // 1080's window 1055..1105 is fully past the passband, so it is dropped.
+        assert_eq!(store.selected_foci(), vec![900.0, 960.0, 1020.0]);
+    }
+
+    #[test]
+    fn multistream_grid_is_hound_only() {
+        // Same two streams but not in Hound mode: keep the plain harvested foci,
+        // never the Fox grid (a non-FH target does not transmit a spaced block).
+        let mut store =
+            TargetContextStore::new(DxTarget::new("DX1AAA"), Some("MY1AAA"), 0.0, None, false, 200.0, 3000.0);
+        let ts = SlotTimestamp::parse("140630").unwrap();
+
+        store.harvest_listen(&ts, &[row(300.0, "MY1AAA DX1AAA -10")]);
+        store.harvest_listen(&ts, &[row(360.0, "OTHER DX1AAA -12")]);
+        assert_eq!(store.selected_foci(), vec![300.0, 360.0]);
     }
 }

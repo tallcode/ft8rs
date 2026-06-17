@@ -140,6 +140,21 @@ single-target store (used for slot N+1 and same-parity slots):
   **not** seed focus frequencies, because hunter TX frequency is not Fox TX
   frequency. (This is why `1152 Hz` is harvestable from `140630 F1MLZ RA3ABG` in
   the Validation Target: that exchange is simplex.)
+- **FH multi-stream grid (Hound mode).** A Fox does not sit on one frequency — it
+  transmits up to five simultaneous streams and **changes that count dynamically**
+  mid-pileup. Upstream `foxgen.f90` places stream *n* at `nfreq + 60·(n-1)` (fixed
+  `fstep = 60 Hz`). So once **≥2** distinct Fox streams have been observed in Hound
+  mode (where every harvested frequency is a target-as-sender stream), `dx` stops
+  chasing only the seen frequencies and instead pre-places the **full 5-focus grid
+  at 60 Hz** from the lowest observed stream — `base, base+60, …, base+240` (each
+  clipped to the passband). This way a Fox that suddenly grows from 2 to 3/4/5
+  streams is already monitored, not discovered a slot late. **Dynamic lowest
+  (fallback):** the anchor is the running *minimum* of the live observed streams,
+  so if the always-on full-band listen later decodes a lower stream we had missed
+  (or the Fox moves down), the minimum drops and the whole grid shifts down next
+  slot — no focus slot is spent on a separate downward probe, so upward coverage is
+  preserved. The `60 Hz` spacing is hardcoded to match upstream WSJT-X DXpedition
+  mode (MSHV/non-standard Foxes are out of scope).
 - **Grid.** A `hisgrid` is harvested when the target sends a `CQ <call> GRID` or
   `<mine> <target> GRID` row. Once known, it promotes recovery from MyCall-AP to
   full a8d.
