@@ -174,6 +174,8 @@ pub struct StreamDecodeConfig {
     pub hide_dupes: bool,
     pub hide_hash: bool,
     pub dx_monitor_watchdog_ms: Option<u64>,
+    pub dx_deep_experimental_output: bool,
+    pub dx_deep_diagnostics: bool,
     pub mycall: Option<String>,
     pub mygrid: Option<String>,
     pub hiscall: Option<String>,
@@ -216,6 +218,8 @@ impl Default for StreamDecodeConfig {
             hide_dupes: false,
             hide_hash: false,
             dx_monitor_watchdog_ms: None,
+            dx_deep_experimental_output: false,
+            dx_deep_diagnostics: false,
             mycall: None,
             mygrid: None,
             hiscall: None,
@@ -269,9 +273,25 @@ pub struct StreamDecodedMessage {
     pub freq: f64,
     pub dt: f64,
     pub snr: f64,
+    pub snr_source: StreamSnrSource,
+    pub deep_confidence: Option<StreamDeepConfidence>,
     pub msg: String,
     pub sync: f64,
     pub itone: [i32; 79],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamSnrSource {
+    Decoder,
+    DxDeepEstimated,
+    DxDeepUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamDeepConfidence {
+    TwoSlotMatched,
+    StackedLlrMatched,
+    CrcConfirmedExperimental,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -625,6 +645,8 @@ impl StreamDecodeSession {
                     freq: r.freq,
                     dt: r.dt,
                     snr: r.snr,
+                    snr_source: StreamSnrSource::Decoder,
+                    deep_confidence: None,
                     msg: r.msg.clone(),
                     sync: 0.0,
                     itone: [0i32; 79],
@@ -648,6 +670,8 @@ impl StreamDecodeSession {
                     freq: r.freq,
                     dt: r.dt,
                     snr: r.snr,
+                    snr_source: StreamSnrSource::Decoder,
+                    deep_confidence: None,
                     msg: r.msg.clone(),
                     sync: 10.0,
                     itone: r.itone,
@@ -955,6 +979,8 @@ where
         freq: d.freq,
         dt: d.dt,
         snr: d.snr,
+        snr_source: StreamSnrSource::Decoder,
+        deep_confidence: None,
         msg: d.msg.clone(),
         sync: d.sync,
         itone,
@@ -1193,6 +1219,8 @@ mod tests {
             freq: 1500.0,
             dt: 0.5,
             snr: -12.0,
+            snr_source: super::StreamSnrSource::Decoder,
+            deep_confidence: None,
             msg: "K1ABC W9XYZ -10".to_string(),
             sync: 0.0,
             itone: [0; 79],

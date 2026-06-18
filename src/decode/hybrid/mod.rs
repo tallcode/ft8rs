@@ -332,12 +332,15 @@ fn is_shared_full_call_candidate(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream::session::StreamSnrSource;
 
     fn decoded(freq: f64, dt: f64, msg: &str) -> StreamDecodedMessage {
         StreamDecodedMessage {
             freq,
             dt,
             snr: 0.0,
+            snr_source: StreamSnrSource::Decoder,
+            deep_confidence: None,
             msg: msg.to_string(),
             sync: 0.0,
             itone: [0; 79],

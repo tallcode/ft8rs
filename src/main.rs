@@ -135,6 +135,15 @@ struct DecodeArgs {
     #[arg(long, help_heading = "Decode")]
     hound: bool,
 
+    /// Allow experimental DX deep-stack rows to enter normal CLI/UDP output.
+    /// Keep disabled unless running the manual DX false-alarm gates.
+    #[arg(long, help_heading = "Decode")]
+    dx_deep_experimental_output: bool,
+
+    /// Print per-slot DX deep-engine diagnostic counters to stderr.
+    #[arg(long, help_heading = "Decode")]
+    dx_deep_diagnostics: bool,
+
     /// JTDX FT8 band-decode threads: 0=auto, 1..24=user setting.
     #[arg(long, default_value_t = 0, help_heading = "Decode")]
     jtdx_threads: usize,
@@ -223,8 +232,10 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     ft8rs::set_fft_patience(args.patience)?;
     ft8rs::set_fft_threads(args.fft_threads)?;
 
-    let mut config = StreamDecodeConfig::default();
-    config.profile = DecodeProfile::parse(&args.profile)?;
+    let mut config = StreamDecodeConfig {
+        profile: DecodeProfile::parse(&args.profile)?,
+        ..StreamDecodeConfig::default()
+    };
     if let Some(value) = normalized_nonempty(&args.my_call) {
         config.mycall = Some(value);
     }
@@ -272,6 +283,8 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     config.lforcesync = args.force_sync;
     config.lhound = args.hound;
     config.jtdx_threads = args.jtdx_threads;
+    config.dx_deep_experimental_output = args.dx_deep_experimental_output;
+    config.dx_deep_diagnostics = args.dx_deep_diagnostics;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
         return Err("--profile dx requires --his-call CALL".to_string());
     }
@@ -306,6 +319,12 @@ fn validate_decode_args(args: &DecodeArgs) -> Result<(), String> {
     }
     if args.jtdx_threads > 24 {
         return Err("--jtdx-threads must be in 0..=24".to_string());
+    }
+    if args.dx_deep_experimental_output && !args.profile.trim().eq_ignore_ascii_case("dx") {
+        return Err("--dx-deep-experimental-output requires --profile dx".to_string());
+    }
+    if args.dx_deep_diagnostics && !args.profile.trim().eq_ignore_ascii_case("dx") {
+        return Err("--dx-deep-diagnostics requires --profile dx".to_string());
     }
     Ok(())
 }
@@ -372,4 +391,64 @@ fn format_soundcard_format(format: &SoundcardFormatInfo) -> String {
         "{}ch/{}Hz/{}",
         format.channels, format.sample_rate, format.sample_format
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode_args(profile: &str) -> DecodeArgs {
+        DecodeArgs {
+            profile: profile.to_string(),
+            my_call: None,
+            my_grid: None,
+            his_call: None,
+            his_grid: None,
+            qso_progress: None,
+            low: None,
+            high: None,
+            rx_frequency: None,
+            tx_frequency: None,
+            ap_width: None,
+            depth: None,
+            max_candidates: None,
+            no_ap: false,
+            cq_only: false,
+            swl: false,
+            nagain: false,
+            force_sync: false,
+            hound: false,
+            dx_deep_experimental_output: false,
+            dx_deep_diagnostics: false,
+            jtdx_threads: 0,
+            fft_threads: 1,
+            patience: 1,
+        }
+    }
+
+    #[test]
+    fn dx_deep_diagnostics_is_dx_only() {
+        let mut args = decode_args("wsjtx");
+        args.dx_deep_diagnostics = true;
+        assert_eq!(
+            validate_decode_args(&args).unwrap_err(),
+            "--dx-deep-diagnostics requires --profile dx"
+        );
+
+        args.profile = "dx".to_string();
+        assert!(validate_decode_args(&args).is_ok());
+    }
+
+    #[test]
+    fn dx_deep_experimental_output_is_dx_only() {
+        let mut args = decode_args("jtdx");
+        args.dx_deep_experimental_output = true;
+        assert_eq!(
+            validate_decode_args(&args).unwrap_err(),
+            "--dx-deep-experimental-output requires --profile dx"
+        );
+
+        args.profile = "dx".to_string();
+        assert!(validate_decode_args(&args).is_ok());
+    }
 }

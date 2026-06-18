@@ -4,6 +4,7 @@ use super::ft8_downsample::ft8_downsample;
 use super::ft8_mod1::ICOS7;
 use super::ft8_params::{DT2, FS2, TWO_PI};
 use super::ft8apset::Ft8ApSet;
+use super::ft8v2::bpdecode174_91::N;
 use super::ft8v2::packjt77::HashCallBook;
 use super::ft8v2::subtractft8::subtractft8;
 use super::gen_ft8wave::gen_ft8wave;
@@ -27,7 +28,7 @@ use regular::{regular_decode, try_ft8s_virtual, try_ft8sd_iqso4};
 pub use state::{
     DecodeSource, Ft8bCandidateContext, Ft8bDecodeResult, Ft8bWorkspace, LastRxMsgText,
 };
-use state::{SignalMemory, SymbolMetrics, SyncGate};
+use state::{MetricSource, SignalMemory, SymbolMetrics, SyncGate};
 
 #[derive(Clone, Debug)]
 struct QsoRefinementState {
@@ -41,6 +42,26 @@ struct QsoRefinementState {
 struct QsoAttemptOutcome {
     decoded: Option<Ft8bDecodeResult>,
     state: QsoRefinementState,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DxSymbolSeed {
+    pub freq: f32,
+    pub xdt0: f32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DxSymbolField {
+    pub s8: [[f32; 79]; 8],
+    pub llr: [f32; N],
+    // Keep the refined symbol index in the D1 wrapper contract for audits and
+    // diagnostics, even though the current dx stack consumes refined freq/dt.
+    #[allow(dead_code)]
+    pub ibest: isize,
+    pub refined_freq: f64,
+    pub refined_dt: f64,
+    pub syncavemax: f32,
+    pub nsync: usize,
 }
 
 pub(crate) fn ft8b(
@@ -111,6 +132,97 @@ pub(crate) fn ft8b(
     }
 
     None
+}
+
+pub(crate) fn dx_symbol_field(
+    dd8: &mut [f32],
+    workspace: &mut Ft8bWorkspace,
+    config: &StreamDecodeConfig,
+    seed: DxSymbolSeed,
+) -> Option<DxSymbolField> {
+    let context = Ft8bCandidateContext {
+        ipass: 1,
+        npass: 1,
+        lsubtract: false,
+        lhighsens: config.swl || config.nagain || config.lft8lowth || config.lft8subpass,
+        lcqcand: false,
+        levenint: false,
+        loddint: false,
+        lqsomsgdcd: false,
+        lft8sdec: false,
+        stophint: config.stophint,
+        nlasttx: config.nQSOProgress,
+        call_dt_xdt: None,
+        sd_msg: None,
+        sd_lcq: false,
+        sd_index: None,
+        last_rx_msg: None,
+        last_rx_xdt: None,
+        last_rx_is_rrr: false,
+    };
+    let candidate = SyncCandidate {
+        freq: seed.freq,
+        dt: seed.xdt0,
+        sync: 0.0,
+        lcq: false,
+        sort_metric: 0.0,
+    };
+
+    ft8_downsample(
+        &mut workspace.downsample,
+        dd8,
+        true,
+        seed.freq,
+        1,
+        context.lhighsens,
+        &mut workspace.lsubtracted,
+        &mut workspace.npos,
+        &workspace.freqsub,
+        &mut workspace.downsample_out,
+    );
+
+    let sync_context = Sync8dContext {
+        ipass: context.ipass,
+        lastsync: false,
+        iqso: 1,
+        lcq: false,
+        lcallsstd: jtdx_config_calls_standard(config),
+        lcqcand: false,
+        tonesd: None,
+        csynce: None,
+    };
+    let state = refine_qso_sync(
+        &workspace.downsample_out.c0,
+        candidate,
+        1,
+        seed.xdt0,
+        sync_context,
+    );
+    let metrics = extract_symbol_metrics(&state.cd0, state.ibest, config, context);
+    let bmet = build_bit_metrics(&metrics, MetricSource::Cs);
+    let mut llr = [0.0f32; N];
+    for (dst, src) in llr.iter_mut().zip(bmet.bmeta.iter().copied()) {
+        *dst = 2.83 * src;
+    }
+
+    Some(DxSymbolField {
+        s8: metrics.s8,
+        llr,
+        ibest: state.ibest,
+        refined_freq: state.refined_freq,
+        refined_dt: state.refined_dt,
+        syncavemax: metrics.syncavemax,
+        nsync: metrics.nsync,
+    })
+}
+
+pub(crate) fn dx_symbol_estimate_snr(
+    field: &DxSymbolField,
+    itone: &[i32; 79],
+    iaptype: i32,
+    lft8s_or_sd: bool,
+) -> f32 {
+    estimate_snr_from_s8(&field.s8, itone, iaptype, lft8s_or_sd)
 }
 
 fn try_ft8b_decode_for_iqso(
@@ -966,4 +1078,35 @@ pub(super) fn maxloc_1based(values: &[f32]) -> usize {
         }
     }
     best_idx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::ft8_params::NFFT1_LONG;
+    use super::*;
+
+    #[test]
+    fn dx_symbol_field_returns_ap_free_channel_llr_shape() {
+        let mut dd8 = vec![0.0f32; NFFT1_LONG];
+        let mut workspace = Ft8bWorkspace::default();
+        let config = StreamDecodeConfig::default().clone_for_profile_jtdx_high_sensitivity();
+
+        let field = dx_symbol_field(
+            &mut dd8,
+            &mut workspace,
+            &config,
+            DxSymbolSeed {
+                freq: 1000.0,
+                xdt0: 0.0,
+            },
+        )
+        .expect("D1 wrapper should return a shaped field for a valid coarse seed");
+
+        assert_eq!(field.s8.len(), 8);
+        assert_eq!(field.s8[0].len(), 79);
+        assert_eq!(field.llr.len(), N);
+        assert!(field.llr.iter().all(|value| value.is_finite()));
+        assert!(field.refined_freq.is_finite());
+        assert!(field.refined_dt.is_finite());
+    }
 }

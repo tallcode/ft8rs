@@ -4,6 +4,10 @@
 //! files below mirror the JTDX FT8 dependency closure and should be filled in
 //! from the corresponding JTDX source files.
 
+// Preserve source-audit shape against JTDX Fortran. Non-mirror orchestration code
+// remains clippy-checked normally.
+#![allow(clippy::all)]
+
 pub mod agccft8;
 pub mod call_q;
 pub mod callsign_q;
@@ -44,6 +48,7 @@ pub mod twkfreq1;
 
 use crate::stream::session::{
     StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage, StreamDecodedWithProvenance,
+    StreamSnrSource,
 };
 use crate::stream::time::SlotTimestamp;
 
@@ -293,6 +298,8 @@ impl JtdxStreamDecodeSession {
                         freq: result.freq as f64,
                         dt: result.dt as f64,
                         snr: result.snr as f64,
+                        snr_source: StreamSnrSource::Decoder,
+                        deep_confidence: None,
                         msg: result.msg37.clone(),
                         sync: candidate.sync as f64,
                         itone: result.itone,

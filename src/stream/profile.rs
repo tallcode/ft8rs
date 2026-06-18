@@ -1,4 +1,4 @@
-use crate::decode::dx::DxStreamDecodeSession;
+use crate::decode::dx::{DxExposure, DxStreamDecodeSession};
 use crate::decode::hybrid::HybridStreamDecodeSession;
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::stream::session::{
@@ -53,6 +53,13 @@ impl ProfileStreamDecodeSession {
                 decoder.decode_slot_streaming_at(timestamp, samples, on_decode)
             }
             Self::Dx(decoder) => decoder.decode_slot_streaming_at(timestamp, samples, on_decode),
+        }
+    }
+
+    pub fn dx_exposure(&self) -> Option<DxExposure> {
+        match self {
+            Self::Dx(decoder) => Some(decoder.exposure()),
+            _ => None,
         }
     }
 }

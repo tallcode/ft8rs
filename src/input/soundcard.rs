@@ -212,7 +212,7 @@ enum DecodeWorkerCommand {
 enum DecodeWorkerEvent {
     Decode {
         timestamp: SlotTimestamp,
-        decode: StreamDecodedMessage,
+        decode: Box<StreamDecodedMessage>,
     },
     SlotComplete {
         timestamp: SlotTimestamp,
@@ -249,7 +249,7 @@ fn start_decode_worker(
                             event_tx
                                 .send(DecodeWorkerEvent::Decode {
                                     timestamp: timestamp.clone(),
-                                    decode: decode.clone(),
+                                    decode: Box::new(decode.clone()),
                                 })
                                 .map_err(|err| err.to_string())
                         },
@@ -281,7 +281,7 @@ fn start_decode_worker(
                                 event_tx
                                     .send(DecodeWorkerEvent::Decode {
                                         timestamp: timestamp.clone(),
-                                        decode: decode.clone(),
+                                        decode: Box::new(decode.clone()),
                                     })
                                     .map_err(|err| err.to_string())
                             })
@@ -334,7 +334,7 @@ fn run_profile_worker(
                         event_tx
                             .send(DecodeWorkerEvent::Decode {
                                 timestamp: timestamp.clone(),
-                                decode: decode.clone(),
+                                decode: Box::new(decode.clone()),
                             })
                             .map_err(|err| err.to_string())
                     })

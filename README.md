@@ -65,6 +65,11 @@ HHMMSS SNR DT FREQ MESSAGE
 ------ slot done: NN decodes ------
 ```
 
+For experimental DX deep-stack rows, the CLI prints a JTDX-formula SNR estimate
+when the recovered message can be re-packed into tones. If that estimate is not
+available, the CLI prints `DX` in the SNR column and UDP reports use `-99` as the
+same explicit unavailable-SNR sentinel.
+
 ```text
 133430  16 +0.3  2571 W1FC F5BZB -08
 133430  14 -0.1  2157 WM3PEN EA6VQ -09
@@ -161,6 +166,13 @@ target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --
 | `--nagain` | | JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
 | `--force-sync` | | enable JTDX forced sync time-window tracking |
 | `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid`; used by focused DX passes |
+| `--dx-deep-experimental-output` | | allow experimental DX T1/T2 deep-stack rows into normal output; validation-only until the false-alarm corpus is green |
+| `--dx-deep-diagnostics` | | print per-slot DX deep-engine counters to stderr |
+
+The DX T1/T2 deep-integration engine runs **only** when one of the two flags
+above is set; a plain `--profile dx` run skips it entirely and stays at baseline
+speed. Setting either flag adds the per-slot deep cost (extra downsample/sync8 +
+matched-filter/stack work per focus).
 | `--jtdx-threads` | | JTDX FT8 band-decode threads, `0=auto`, `1..=24` |
 | `--udp` | `-u` | enable UDP output |
 | `--udp-host` | `-o` | UDP destination host |
@@ -200,6 +212,41 @@ W     -> WSJT-X-only reference row
 J     -> JTDX target row
 E     -> excluded row
 ```
+
+## DX G2 False-Alarm Corpus
+
+DX T1/T2 deep-stack rows are experimental until the real false-alarm corpus is
+green. The full corpus is currently a long-term field-collection item; collect it
+gradually during real use, then run the gate before enabling deep rows by default.
+The manual gate expects a local directory pointed to by
+`FT8RS_DX_G2_CORPUS`:
+
+```text
+$FT8RS_DX_G2_CORPUS/
+  manifest.csv
+  noise/*.wav
+  wrong_call/*.wav
+  on_band/*.wav
+  hash_collision/*.wav
+```
+
+Start from `tests/ft8/g2_manifest.example.csv`.
+Each manifest row names a manually confirmed absent target and a focus window.
+Blank `wav` applies to every wav in that category.
+When `wav` is set, it must be a file name that exists in that category directory;
+the harness rejects missing names so a typo cannot silently shrink the corpus.
+
+Run the gate manually in release mode:
+
+```bash
+FT8RS_DX_G2_CORPUS=/path/to/g2 \
+  cargo test --release test_dx_profile_external_g2_corpus_no_deep_false_alarm -- --ignored --nocapture
+```
+
+The required budgets are `noise >= 5760` slots, `wrong_call >= 1000` slots,
+`on_band >= 480` slots, and `hash_collision >= 50` slots. A skipped run is only
+harness evidence, not safety evidence. Until this field corpus is green,
+experimental deep rows should remain behind `--dx-deep-experimental-output`.
 
 ## Developer Notes
 

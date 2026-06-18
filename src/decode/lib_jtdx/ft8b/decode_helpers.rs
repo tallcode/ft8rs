@@ -773,13 +773,22 @@ pub(super) fn estimate_snr(
     iaptype: i32,
     lft8s_or_sd: bool,
 ) -> f32 {
+    estimate_snr_from_s8(&metrics.s8, itone, iaptype, lft8s_or_sd)
+}
+
+pub(super) fn estimate_snr_from_s8(
+    s8: &[[f32; 79]; 8],
+    itone: &[i32; 79],
+    iaptype: i32,
+    lft8s_or_sd: bool,
+) -> f32 {
     let mut xsnrtmp = 0.001f32;
     for (i, &tone) in itone.iter().enumerate() {
         let tone = tone.clamp(0, 7) as usize;
-        let xsig = metrics.s8[tone][i] * metrics.s8[tone][i];
+        let xsig = s8[tone][i] * s8[tone][i];
         let mut total = 0.0f32;
         for itone in 0..8 {
-            total += metrics.s8[itone][i] * metrics.s8[itone][i];
+            total += s8[itone][i] * s8[itone][i];
         }
         let mut xnoi = (total - xsig) / 7.0;
         if xnoi < 0.01 {

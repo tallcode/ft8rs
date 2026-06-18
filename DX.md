@@ -60,7 +60,10 @@ project, plus the chase-specific rules the owner set:
    layer**, fed back to workers only through documented config entry points
    (`mycall`/`hiscall`/`hisgrid`/`nfqso`/`nftx`/`napwid`/`nQSOProgress`).
 7. **Feedback is cross-slot only** (slot N uses knowledge committed before slot N
-   begins), so file mode stays reproducible. No same-slot re-decode feedback.
+   begins), so file mode stays reproducible. No same-slot re-decode feedback. The
+   implementation snapshots foci, `hisgrid`, target dt, QSO progress, and deep
+   hypotheses at slot start; listen/focused harvest from the current slot can only
+   affect later slots.
 
 ## Use Case
 
@@ -192,7 +195,12 @@ single-target store (used for slot N+1 and same-parity slots):
   parity, and the gate would then skip the real target slot. Until parity is
   observed, treat both as the target's (no premature skipping). The opposite
   (hunter) parity still runs the cheap listen and is a main frequency-harvest
-  source.
+  source. **Observed parity ages out after the same 16-slot freshness window used
+  for target frequency context**: while fresh, it can skip focused/deep work on
+  the opposite slot; once stale, `dx` probes both parities again until a new
+  sender-role target row refreshes the observation. This avoids permanently
+  missing a DX that changes sequence or whose old parity evidence no longer
+  applies.
 - **FH / multiple frequencies.** The harvested frequency is a **set**, not a
   single value — a Fox/Hound DX emits several streams per slot. The store keeps a
   **bounded** set (Fox uses ≤5), and the focused worker does a bounded
@@ -294,13 +302,14 @@ context is available. `hiscall` filter applies to all output throughout.
    `ndeep=5` adds nothing without context.) **Bootstrapping:** the *frequency* is
    harvested here (from stronger activity naming `mycall`/`hiscall`); the target's
    own *grid/parity* are harvested later from a focused-step target-as-sender hit.
-2. **Focused recovery — requires `mycall` AND a known frequency.** `--swl
+2. **Focused recovery — requires a known frequency; `mycall` is optional.** `--swl
    --nagain` at `nfqso` = harvested freq → `ndeep=5` inside `nfqso ± 25 Hz`
-   (fast). For FH, ≤5 foci over the harvested Fox frequency set (`lhound`),
-   low-band first per the 0–1000 prior. **Without `mycall` this step is skipped
-   entirely** — `ndeep=5` only helps the MyCall-AP branch, so with no `mycall`
-   it is pure cost for zero gain; `dx` then just listens (1) + filters, which is
-   the legitimate no-`mycall` monitoring mode (C3).
+   (fast). With `mycall`, this enables the MyCall-AP branch; without `mycall`, the
+   same focused JTDX worker still runs as a narrow regular/SWL recovery pass and
+   `hiscall` filter. For FH, ≤5 foci over the harvested Fox frequency set
+   (`lhound`), low-band first per the 0–1000 prior. Without `mycall`, a8d/MyCall-AP
+   are disabled and deep hypotheses shrink to CQ/target-only forms, but focused
+   recovery is not skipped.
 3. **a8d — when `hisgrid` is also harvested** (and `mycall` set). Second engine,
    focused at `nfqso`; reaches the weakest "DX-calling-me" replies. It is not
    skipped merely because step 2 found another target-related row near the same
@@ -420,6 +429,21 @@ information and raises the *true*-decode probability, not from loosened gates,
 which raise the noise floor too. The aligned sensitivity levers (`swl`+`lft8lowth`
 → `syncmin` 1.1; `nagain` → `ndeep=5`) are already at their ceiling; going below
 them would also touch the kernel (violates C1). So: do not tune thresholds.
+
+**DX deep rows are experimental-only until the real G2 corpus is green.** The
+T1/T2 deep-integration engine can internally recover rows below the per-slot
+kernel ceiling, but those rows are suppressed from normal CLI/UDP output unless
+`--dx-deep-experimental-output` is set. This is covered by an end-to-end runtime
+test: the same weak repeated synthetic audio is recoverable internally by the
+stack, hidden by default output, and visible only with the explicit experimental
+flag. The full external G2 corpus has been explicitly deferred and should be
+accumulated gradually from real operation; it remains the future default-output
+release gate. When enough field data exists, record `0 fabricated / exposure /
+95% Pfa upper bound`, with exposure broken down into `slots`, `focus_trials`,
+`field_trials`, `hypothesis_trials`, `stack_osd_candidates`,
+`stack_osd_attempts`, `stack_osd_skipped_budget`, `deep_rows_emitted`, and
+`emitted_fabrications`. The report prints separate rule-of-three upper bounds for
+slot, focus, hypothesis, and stack-OSD-attempt denominators.
 
 ## Frequency Prioritization (orchestration-only)
 
@@ -591,7 +615,8 @@ cargo test --release test_dx_profile_synthetic_ua3qna -- --ignored
 ```
 
 File-mode reproducibility is covered by running the same synthetic fixture twice
-and comparing the emitted rows:
+with experimental deep output enabled over the first 3 target slots and comparing
+the emitted rows:
 
 ```bash
 cargo test --release test_dx_profile_synthetic_reproducible -- --ignored
@@ -627,10 +652,136 @@ building, kill-with-evidence.
 - **Validated.** Real long fixture recovers `140700 F1MLZ UA3QNA -04` without
   `--rx-frequency`; the synthetic fixture recovers the same weak row via
   harvest→focus; the a8d fixture is reachable through `profile=dx`; synthetic
-  file-mode output is reproducible; pure `wsjtx`/`jtdx` profile gates remain
-  unchanged.
+  file-mode output is reproducible. Focus selection is also deterministic:
+  harvested foci are sorted by confidence / low-band priority / frequency rather
+  than listen row order, and concurrent focused workers are merged in that fixed
+  order. Pure `wsjtx`/`jtdx` profile gates remain unchanged.
+- **Experimental.** Deep cross-slot T1/T2 rows are collected internally but are
+  not normal output unless `--dx-deep-experimental-output` is set. T1 matched
+  filtering is wired but threshold-disabled by default until calibration; the
+  current positive evidence is T2 stacked LLR + CRC/OSD recovery. Deep rows now
+  carry a JTDX-formula SNR estimate when the recovered message can be re-packed
+  into tones from the current `DxSymbolField.s8`; CLI/UDP use that dB value. If a
+  message cannot be re-packed, CLI renders `DX` and UDP uses `-99` as an explicit
+  unavailable-SNR sentinel. The estimator still needs broader real-signal
+  calibration before deep rows can be default output; the current synthetic guard
+  verifies monotonicity when signal amplitude increases on the same message/noise
+  seed, and the short real-audio scaffold checks already-decoded rows against the
+  JTDX decoder's own SNR path (`pairs=20`, `mean_abs_delta=0.02`,
+  `max_abs_delta=0.21` on `210703_133430.wav`). Even CRC-valid deep stack rows are
+  typed and treated as
+  `CrcConfirmedExperimental` before the sized false-alarm corpus is green; this is
+  not a default-output trust label for the active weak-stack path.
+  The current T1 calibration scaffold is only a measurement hook: last local
+  synthetic release run reported `target_min_stat=67.530`,
+  `target_min_margin=32.861`, `false_max_stat=41.916`,
+  `false_max_margin=18.150` over 444 false fields (wrong-call, near-call,
+  hash-like/braced-call, and pure-noise). A real-audio T1 scaffold also reuses
+  already-decoded rows from `210703_133430.wav`; last local release run ranked the
+  exact decoded v1-compatible message first for 16/18 rows, with the two misses on
+  adjacent report/terminator hypotheses. These are front-end/scoring datapoints;
+  they do not enable matched-only output.
+  A real-audio false-alarm ceiling scaffold
+  (`dx_t1_real_audio_false_alarm_ceiling_scaffold`, ignored/release) now measures
+  the raw matched-filter score that an **absent** target's v1 hypotheses reach on a
+  real on-band recording — the empirical floor any `min_stat` must clear. Last
+  local release run on `230208_140300.wav` (4 absent targets × 4 foci × 6 slots,
+  244 scored fields) reported `false_max_stat=144.461` (worst case a bare
+  `CQ ZZ1ZZZ`), `false_max_finite_margin=131.554`, with `61` degenerate
+  single-runner fields whose `margin` was `+inf`. **Two hard conclusions, both
+  arguing against a single-slot matched-only gate:** (1) `margin` is unsafe as a
+  sole gate — a bare-`CQ` hypothesis set (and any non-standard call like the
+  observed `QQ9QQQ`, which collapses to 1 hypothesis) has no runner-up, so
+  `margin = stat − (−∞) = +inf` passes trivially. (2) The `false_max_stat≈144`
+  ceiling **overlaps the weak-true-signal range**: on `210703_133430.wav` the
+  weakest correctly-ranked true decode was `stat≈158` and a genuine decoded row
+  (`WA2FZW DL5AXX`) scored only `stat≈77` — below the false-alarm ceiling. A global
+  `min_stat` high enough to clear false alarms would therefore suppress real weak
+  targets, which is precisely the regime deep is meant to recover. The matched
+  filter does **not** cleanly separate true from false on real audio with one
+  global single-slot threshold; the safe sensitivity path is cross-slot
+  corroboration + CRC (T2), not lowering the T1 single-slot gate. The runtime gate
+  stays `INFINITY` and these remain measurement-only datapoints; the scaffold's
+  `< 180.0` assertion is a regression guard against ceiling inflation on this
+  fixture, not a calibrated `Pfa` threshold (absolute `stat` is not normalized
+  across SNR/recording, so a real threshold needs the deferred field corpus to
+  characterize the ceiling distribution across many recordings).
+- **T2 hardening.** Stack OSD candidates are batch-ranked before spending the
+  per-slot CRC/OSD budget, and a conservative sustained-hypothesis-flip reset
+  prevents clearly different repeated target messages from being accumulated
+  forever into one LLR sum. Internal counters track stack CRC/OSD candidates,
+  attempts, and budget skips; `--dx-deep-diagnostics` prints the per-slot
+  foci/field/hit/CRC-budget report to stderr without changing decode output.
+  T1 two-slot corroboration also requires the same normalized message; a
+  same-parity, physically compatible hit with a different message is retained as a
+  separate observation rather than promoted.
+  A current-single-slot CRC contradiction guard suppresses stack output when the
+  current slot already decodes as a different target message. The stack also keeps
+  the capped per-slot LLR history and requires statistical member-slot support for
+  the final decoded codeword (positive total support plus a 2/3 non-negative-slot
+  majority) before a stack CRC row can be emitted experimentally. This covers both
+  obvious and sub-CRC variants of the "DX keeps working different callers" hazard
+  without rejecting a single noisy weak outlier.
+  Synthetic tests now cover both `MYCALL HISCALL ...` and the more important
+  `OTHER HISCALL ...` repeated-message shape; the latter proves the blind stack
+  path rather than the enumerable matched-filter path. This is intentionally a
+  repeated-identical-message guarantee: if the DX changes the caller/report every
+  slot, the stack must not merge those slots and no T2 gain is claimed. Both shapes
+  have matching ignored/release G1 amplitude-search gates; last local G1-B pass was
+  `RA3ABG BG5ATV -10` at `amp=0.0030`, `noise=0.0800`.
+- **T0 AP tuning.** Target QSO progress inferred from committed prior target rows
+  is applied to the next focused JTDX worker and deep symbol extraction. If no
+  committed progress exists, the user-supplied `--qso-progress` remains the
+  fallback. Same-slot listen results are not used to configure a focused replay;
+  foci, `hisgrid`, target dt, QSO progress, and deep hypotheses are snapped at
+  slot start. The `dx_committed_qso_progress_feeds_next_focused_config` test covers
+  the harvest → snapshot → focused-config path.
 - **FP budget.** The UA3QNA long-fixture chase emits 0 same-slot-unsupported
-  target rows. Non-target rows remain harvest-only and are not printed.
+  target rows. Non-target rows remain harvest-only and are not printed. A fast
+  DX deep-engine smoke test also verifies that deterministic wrong-call and pure
+  noise LLR stacks do not fabricate the target, but the full sized false-alarm
+  corpus remains a future hard gate before deep output can be default-enabled.
+  This field corpus is intentionally deferred for now and should be filled from
+  future operating recordings rather than fabricated just to close the plan.
+  A real-on-band absent-target scaffold also passes locally: running
+  `tests/ft8/230208_140300.wav` with experimental deep output and absent target
+  `ZZ1ZZZ` emitted 0 rows. A heavier matrix version also emitted 0 rows across
+  4 absent targets × 4 focus frequencies × first 6 real slots (`261.82s`). This is
+  useful evidence for the real-audio path, not a replacement for the required ≥2 h
+  real on-band corpus.
+  The ignored `dx_false_alarm_corpus_manual_gate` currently reports the scaffold
+  format; last local release run was `emitted_fabrications=0/7264`,
+  `pfa95_slots<=0.000413`, `pfa95_focus<=0.000413`,
+  `pfa95_hypothesis<=0.000008`, `pfa95_stack_osd<=0.000472`, `slots=7264`,
+  `focus_trials=7264`, `field_trials=7264`,
+  `hypothesis_trials=384992`, `stack_osd_candidates=6356`,
+  `stack_osd_attempts=6356`, `stack_osd_skipped_budget=0`,
+  `deep_rows_emitted=0`, `wrong_slots=1024`, `near_call_slots=288`,
+  `hash_collision_slots=192`, `noise_slots=5760`, which covers the synthetic
+  wrong-call, synthetic hash-like / near-callsign, and 24h-equivalent synthetic
+  pure-noise LLR sub-budgets but is still not the final G2 corpus. The ignored
+  `test_dx_profile_external_g2_corpus_no_deep_false_alarm` gate is now the
+  real-recording harness: point `FT8RS_DX_G2_CORPUS` at a directory containing
+  `noise/*.wav`, `wrong_call/*.wav`, `on_band/*.wav`, and
+  `hash_collision/*.wav`. With the env var set, all four categories are mandatory
+  and must satisfy the PLAN budgets: `noise >= 5760` slots,
+  `wrong_call >= 1000` slots, `on_band >= 480` slots, and
+  `hash_collision >= 50` slots.
+  The corpus can include `manifest.csv` with columns
+  `label,wav,target,mycall,focus,nfa,nfb`; supported labels are `noise`,
+  `wrong_call`, `on_band`/`real_on_band`, and `hash_collision`. Use the manifest
+  to record the manually confirmed absent target and focus/frequency window for
+  each category or individual wav. Blank `wav` applies a case to every wav in that
+  category; each non-comment row must have exactly 7 columns, and a non-blank
+  `wav` must be a `.wav` file name, not a path. The harness also rejects
+  non-finite or reversed frequency windows, requires `focus` to lie inside
+  `nfa..nfb` with `0 <= nfa < nfb <= 5000`, and rejects a non-blank `wav` that is
+  not present in the matching category directory. A parse-checked starter template
+  is tracked at `tests/ft8/g2_manifest.example.csv`; copy it to
+  `$FT8RS_DX_G2_CORPUS/manifest.csv` and edit the manually confirmed absent
+  targets/focus windows. With no manifest, the harness falls back to the legacy
+  hard-coded absent-target cases. With the env var unset it skips cleanly; a
+  skipped run is not G2 evidence.
 - **Deferred.** Real Fox/Hound gain remains unmeasured because no FH fixture is
   available. The bounded multi-focus and hash-seeding machinery is present, but
   real-signal FH acceptance stays deferred until a recording exists.

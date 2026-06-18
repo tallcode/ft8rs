@@ -1,6 +1,6 @@
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 
-use ft8rs::stream::StreamDecodedMessage;
+use ft8rs::stream::{StreamDecodedMessage, StreamSnrSource};
 use ft8rs::SlotTimestamp;
 
 const MAGIC: u32 = 0xadbccbda;
@@ -70,7 +70,14 @@ fn build_decode_packet(timestamp: SlotTimestamp, row: &StreamDecodedMessage) -> 
 
     put_bool(&mut packet, true);
     put_qtime(&mut packet, timestamp);
-    put_i32(&mut packet, row.snr.round() as i32);
+    // The compatible packet has only an integer SNR field. DX deep rows use their
+    // JTDX-formula estimate when available; otherwise -99 remains the explicit
+    // "unavailable" sentinel.
+    let snr = match row.snr_source {
+        StreamSnrSource::Decoder | StreamSnrSource::DxDeepEstimated => row.snr.round() as i32,
+        StreamSnrSource::DxDeepUnavailable => -99,
+    };
+    put_i32(&mut packet, snr);
     put_f64(&mut packet, row.dt);
     put_u32(&mut packet, row.freq.round().max(0.0) as u32);
     put_byte_array(&mut packet, MODE.as_bytes());
@@ -108,7 +115,7 @@ fn put_f64(out: &mut Vec<u8>, value: f64) {
 #[cfg(test)]
 mod tests {
     use super::build_decode_packet;
-    use ft8rs::stream::StreamDecodedMessage;
+    use ft8rs::stream::{StreamDecodedMessage, StreamSnrSource};
     use ft8rs::SlotTimestamp;
 
     #[test]
@@ -117,6 +124,8 @@ mod tests {
             freq: 1501.7,
             dt: -0.3,
             snr: -17.4,
+            snr_source: StreamSnrSource::Decoder,
+            deep_confidence: None,
             msg: "CQ TEST PM95".to_string(),
             sync: 0.0,
             itone: [0; 79],
@@ -139,5 +148,39 @@ mod tests {
             &3_u32.to_be_bytes()
         );
         assert_eq!(&packet[mode_len_offset + 4..mode_len_offset + 7], b"FT8");
+    }
+
+    #[test]
+    fn dx_deep_unavailable_snr_uses_udp_sentinel() {
+        let row = StreamDecodedMessage {
+            freq: 1501.7,
+            dt: -0.3,
+            snr: -99.0,
+            snr_source: StreamSnrSource::DxDeepUnavailable,
+            deep_confidence: None,
+            msg: "CQ TEST PM95".to_string(),
+            sync: 0.0,
+            itone: [0; 79],
+        };
+        let packet = build_decode_packet(SlotTimestamp::parse("230208_140300").unwrap(), &row);
+
+        assert_eq!(&packet[26..30], &(-99_i32).to_be_bytes());
+    }
+
+    #[test]
+    fn dx_deep_estimated_snr_uses_udp_integer_snr() {
+        let row = StreamDecodedMessage {
+            freq: 1501.7,
+            dt: -0.3,
+            snr: -18.4,
+            snr_source: StreamSnrSource::DxDeepEstimated,
+            deep_confidence: None,
+            msg: "CQ TEST PM95".to_string(),
+            sync: 0.0,
+            itone: [0; 79],
+        };
+        let packet = build_decode_packet(SlotTimestamp::parse("230208_140300").unwrap(), &row);
+
+        assert_eq!(&packet[26..30], &(-18_i32).to_be_bytes());
     }
 }

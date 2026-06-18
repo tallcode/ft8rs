@@ -1,0 +1,22 @@
+# Example manifest for FT8RS_DX_G2_CORPUS.
+# Copy this file to $FT8RS_DX_G2_CORPUS/manifest.csv and edit targets/frequencies.
+# Columns:
+# label,wav,target,mycall,focus,nfa,nfb
+#
+# label:
+#   noise          -> $FT8RS_DX_G2_CORPUS/noise/*.wav
+#   wrong_call     -> $FT8RS_DX_G2_CORPUS/wrong_call/*.wav
+#   on_band        -> $FT8RS_DX_G2_CORPUS/on_band/*.wav
+#   hash_collision -> $FT8RS_DX_G2_CORPUS/hash_collision/*.wav
+#
+# wav:
+#   blank applies the case to every wav in that category.
+#   non-blank must be a .wav file name in that category, not a path.
+#
+# target must be manually confirmed absent from that recording/category.
+# focus must be inside nfa..nfb, with 0 <= nfa < nfb <= 5000.
+label,wav,target,mycall,focus,nfa,nfb
+noise,,ZZ1ZZZ,,1000,900,1100
+wrong_call,,ZZ1ZZZ,,1000,900,1100
+on_band,,ZZ1ZZZ,,1000,900,1100
+hash_collision,,BG5ATV,K1JT,1000,900,1100
