@@ -186,13 +186,27 @@ settings.
 
 ## Tests
 
-Decode tests must run in release mode:
+Decode tests must run optimized (they assert non-debug mode and have per-slot time
+budgets). For the day-to-day edit/test loop use the `fast` profile — it keeps the
+same optimized, byte-identical results but compiles in a fraction of the time
+(incremental rebuild ~16s vs ~208s for `--release` on an 8-core machine, because it
+drops the shipped binary's LTO + single-codegen-unit last mile):
+
+```bash
+cargo test --profile fast test_stream_decode_short_audio
+cargo test --profile fast test_stream_decode_long_audio
+```
+
+Use `--release` for the final acceptance run that must match the shipped binary's
+exact optimization, and for the FFTW path:
 
 ```bash
 cargo test --release test_stream_decode_short_audio
-cargo test --release test_stream_decode_long_audio
 cargo test --release --features fftw test_stream_decode_short_audio  # FFTW path
 ```
+
+Both profiles produce identical decode results (the byte-identical WSJT-X/JTDX
+baselines pass under either); `fast` only changes build speed, not float semantics.
 
 Current release expectations:
 

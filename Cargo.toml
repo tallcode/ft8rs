@@ -19,8 +19,27 @@ fftw = []
 # are optimization-only and do not change floating-point semantics, so the
 # byte-identical WSJT-X/JTDX baselines are preserved (re-validated). For a small
 # extra gain at the cost of much slower builds, switch to `lto = true` (fat).
+# Use this profile for the shipped binary and final acceptance runs.
 codegen-units = 1
 lto = "thin"
+
+# Fast iteration profile for the test/debug loop. Keeps `debug-assertions = false`
+# (inherited from release, so `assert_release_mode()` and the decode timing budgets
+# still hold), but trades the shipped binary's last-mile codegen for build speed:
+# `opt-level = 2` instead of 3, no LTO, and many codegen units so the single
+# ~6k-line crate compiles in parallel across all cores. Measured on an 8-core
+# machine, an incremental rebuild after touching one file drops from ~208s
+# (release) to ~16s here, while test execution is essentially unchanged (~67s vs
+# ~70s) and every byte-identical WSJT-X/JTDX baseline still passes — opt-level/LTO
+# are optimization-only and do not alter IEEE float semantics, so results match the
+# release binary (the passing baselines are the proof). Run the suite with
+# `cargo test --profile fast`. Use `--release` for the final acceptance run that
+# must match the shipped binary's exact optimization.
+[profile.fast]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 256
 
 [dependencies]
 rustfft = "6"
