@@ -729,6 +729,23 @@ building, kill-with-evidence.
   slot, the stack must not merge those slots and no T2 gain is claimed. Both shapes
   have matching ignored/release G1 amplitude-search gates; last local G1-B pass was
   `RA3ABG BG5ATV -10` at `amp=0.0030`, `noise=0.0800`.
+  A P3 quantification scaffold (`dx_p3_t2_stack_gain_over_single_slot_kernel`,
+  ignored) measures how much fainter a *repeated* target the T2 CRC stack recovers
+  versus the strongest single-slot kernel (focused `swl+nagain`). On a synthetic
+  white-noise model (perfect alignment, 4 noise floors, 0.83 dB/step amplitude
+  sweep, ≤6 same-parity repeats) the measured edge is small: per-level gains
+  `1.66 / 0.83 / 0.00 / 1.66 dB` (mean ~1.0 dB), recovery taking 4–5 stacked slots,
+  with no level where the kernel was impossible but T2 still succeeded. This is
+  expected and consistent with §0 "single-slot maxed": both paths are OSD-based, so
+  the single-slot `swl+nagain` OSD already absorbs most of the non-coherent stacking
+  SNR. Two caveats keep this a *lower bound*, not the real-world figure: (a) the
+  synthetic model — perfect frequency/time alignment + pure Gaussian noise — is the
+  most favorable case for the single slot, whereas real drift/QSB makes per-slot
+  decoding worse and the cross-slot average relatively stronger; (b) FT8's decode
+  curve is steep near threshold, so ~1 dB still shifts edge-target yield
+  meaningfully. The real number needs repeated-target weak recordings (the deferred
+  field corpus). The scaffold changes no runtime threshold; the T2 CRC path (CRC +
+  target filter + slot support) is what emits, not `DeepSearchGate`.
 - **T0 AP tuning.** Target QSO progress inferred from committed prior target rows
   is applied to the next focused JTDX worker and deep symbol extraction. If no
   committed progress exists, the user-supplied `--qso-progress` remains the

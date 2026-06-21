@@ -1483,6 +1483,115 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual P3 T2 gain quantification; run with --profile fast -- --ignored --nocapture"]
+    fn dx_p3_t2_stack_gain_over_single_slot_kernel() {
+        // Quantifies how much fainter a *repeated* target the T2 LLR stack recovers
+        // versus the strongest single-slot kernel (focused swl+nagain). For each
+        // noise floor we sweep the signal amplitude (faint -> strong) and record the
+        // faintest amp at which (a) the single-slot kernel still decodes slot 0, and
+        // (b) the T2 stack recovers across same-parity repeats. The amplitude ratio
+        // kernel_min / t2_min is the non-coherent stacking gain in dB. Noise seeds
+        // depend only on (noise level, slot index), not amplitude, so amplitude is
+        // the only variable across the sweep. This is a measurement scaffold; it
+        // changes no runtime threshold (the T2 CRC path is what emits here, gated by
+        // CRC + target filter + slot support, not by DeepSearchGate).
+        let expected = "K1JT BG5ATV -10";
+        let config = StreamDecodeConfig {
+            profile: DecodeProfile::Dx,
+            nfa: 900.0,
+            nfb: 1100.0,
+            nfqso: 1000.0,
+            dx_deep_experimental_output: true,
+            mycall: Some("K1JT".to_string()),
+            hiscall: Some("BG5ATV".to_string()),
+            hisgrid: Some("PM00".to_string()),
+            ..StreamDecodeConfig::default()
+        };
+        let focused = dx_focus_config(&config, 1000.0, None);
+        let noises = [0.10f64, 0.18, 0.30, 0.50];
+        // Fine log-spaced amplitude grid: 0.83 dB/step (1.10x) so the kernel/T2
+        // threshold gap is resolved instead of quantized to one coarse step, with a
+        // wide enough span (~0.0020..0.0386) to bracket the kernel threshold even at
+        // the highest noise floor.
+        let amps: Vec<f64> = (0..32).map(|i| 0.0020 * 1.10f64.powi(i)).collect();
+        let max_depth = 6usize;
+
+        let mut gains_db = Vec::new();
+        let mut t2_only_levels = Vec::new();
+        for (n_idx, &noise) in noises.iter().enumerate() {
+            let mut kernel_min: Option<f64> = None;
+            let mut t2_min: Option<f64> = None;
+            let mut t2_depth_at_min = 0usize;
+            for &amp in &amps {
+                let slots: Vec<Vec<f32>> = (0..max_depth)
+                    .map(|i| {
+                        let seed = 0x9123_0000u64 + (n_idx as u64) * 0x100 + i as u64;
+                        synthetic_ft8_slot_with_noise(expected, 1000.0, amp, noise, seed)
+                    })
+                    .collect();
+                if kernel_min.is_none()
+                    && focused_kernel_decodes_target(&focused, &slots[0], expected)
+                {
+                    kernel_min = Some(amp);
+                }
+                if t2_min.is_none() {
+                    if let Some(depth) = synthetic_stack_recovery_depth(&focused, &slots, expected) {
+                        t2_min = Some(amp);
+                        t2_depth_at_min = depth;
+                    }
+                }
+                if kernel_min.is_some() && t2_min.is_some() {
+                    break;
+                }
+            }
+            match (kernel_min, t2_min) {
+                (Some(k), Some(t)) => {
+                    let gain = 20.0 * (k / t).log10();
+                    gains_db.push(gain);
+                    eprintln!(
+                        "P3 T2 gain: noise={noise:.2} kernel_min_amp={k:.5} t2_min_amp={t:.5} t2_depth={t2_depth_at_min} gain={gain:.2}dB"
+                    );
+                }
+                (None, Some(t)) => {
+                    // T2-only region: the single-slot kernel never decodes within the
+                    // swept range, but the stack recovers the repeated target. This is
+                    // the qualitative value of T2 — recovery where the strongest single
+                    // slot is impossible — distinct from a finite dB edge.
+                    t2_only_levels.push(noise);
+                    eprintln!(
+                        "P3 T2 gain: noise={noise:.2} kernel_min_amp=NONE(>grid) t2_min_amp={t:.5} t2_depth={t2_depth_at_min} -> T2-only recovery"
+                    );
+                }
+                other => {
+                    eprintln!("P3 T2 gain: noise={noise:.2} no recovery in swept range {other:?}");
+                }
+            }
+        }
+
+        eprintln!(
+            "P3 T2 gain summary: db_levels={} t2_only_levels={} gains={gains_db:?} t2_only_noises={t2_only_levels:?}",
+            gains_db.len(),
+            t2_only_levels.len()
+        );
+        assert!(
+            !gains_db.is_empty() || !t2_only_levels.is_empty(),
+            "T2 produced no measurable recovery advantage at any noise level"
+        );
+        if !gains_db.is_empty() {
+            let mean_gain = gains_db.iter().sum::<f64>() / gains_db.len() as f64;
+            let min_gain = gains_db.iter().cloned().fold(f64::INFINITY, f64::min);
+            eprintln!(
+                "P3 T2 gain: mean={mean_gain:.2}dB min={min_gain:.2}dB over {} dB-measurable level(s)",
+                gains_db.len()
+            );
+            assert!(
+                min_gain >= 0.0,
+                "T2 stack regressed below the single-slot kernel at some noise level: min_gain={min_gain:.2}dB"
+            );
+        }
+    }
+
+    #[test]
     fn dx_false_alarm_smoke_rejects_wrong_call_and_noise() {
         let mut store = TargetContextStore::new(
             DxTarget::new("BG5ATV"),
@@ -1983,6 +2092,56 @@ mod tests {
                 .is_some_and(|hit| normalize_message(&hit.msg) == normalize_message(expected_msg))
             {
                 return hit;
+            }
+        }
+        None
+    }
+
+    /// Like `synthetic_stack_recovery_hit` but returns the 1-based slot count at
+    /// which the T2 stack first recovers `expected_msg` (or `None`), with no
+    /// "first slot must stay silent" assertion — so it can be swept across signal
+    /// strengths where a strong slot recovers immediately. Slots are 30s apart so
+    /// every slot shares the same parity and all stack into one sum (FT8 alternates
+    /// parity every 15s; the T2 physical gate only merges same-parity slots).
+    fn synthetic_stack_recovery_depth(
+        focused: &StreamDecodeConfig,
+        slots: &[Vec<f32>],
+        expected_msg: &str,
+    ) -> Option<usize> {
+        let mut store = TargetContextStore::new(
+            DxTarget::new("BG5ATV"),
+            Some("K1JT"),
+            1000.0,
+            Some("PM00"),
+            false,
+            900.0,
+            1100.0,
+        );
+        let hypotheses = build_v1_hypotheses(Some("K1JT"), "BG5ATV", Some("PM00"));
+        let physical_gate = PhysicalAdmissionGate {
+            min_nsync: 1,
+            min_syncavemax: 0.0,
+            ..PhysicalAdmissionGate::default()
+        };
+        let base = SlotTimestamp::parse("140630").unwrap();
+        for (idx, samples) in slots.iter().enumerate() {
+            let timestamp = base.add_seconds((idx * 30) as i64);
+            let Some(field) = synthetic_deep_field(focused, samples) else {
+                continue;
+            };
+            let hit = store.observe_deep_field(
+                &timestamp,
+                1000.0,
+                &field,
+                &hypotheses,
+                DeepSearchGate::default(),
+                physical_gate,
+            );
+            if hit
+                .as_ref()
+                .is_some_and(|hit| normalize_message(&hit.msg) == normalize_message(expected_msg))
+            {
+                return Some(idx + 1);
             }
         }
         None

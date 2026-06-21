@@ -1245,3 +1245,14 @@ zones for clippy style lints; non-mirror code remains checked normally.
   is pure cost until its rows can surface or its counters are requested. *Rejected:*
   always-run with emit-only gating — a default dx user paid the full deep cost
   (~15 extra 192k FFTs/slot) for output they never see.
+- **D6 — T2 marginal gain over the single-slot kernel is ~1 dB (synthetic), and
+  that is accepted, not chased.** The P3 quantification scaffold
+  (`dx_p3_t2_stack_gain_over_single_slot_kernel`) measured the faintest repeated
+  target the T2 CRC stack recovers vs. focused `swl+nagain` on a synthetic
+  white-noise model: per-noise gains `1.66 / 0.83 / 0.00 / 1.66 dB` (mean ~1.0 dB),
+  4–5 stacked slots, no T2-only region. Small because both paths are OSD-based and
+  the single slot is already maxed (§0). Treated as a *lower bound* — synthetic
+  perfect alignment favors the single slot, and FT8's steep near-threshold curve
+  makes ~1 dB still useful — so T2 stays experimental and the real figure waits on
+  the deferred repeated-target field corpus. *Rejected:* re-architecting T2 to chase
+  the extra dB before any real-recording evidence exists.
