@@ -672,3 +672,46 @@ they are deliberate, not forgotten.
 - Do not claim FH gains before measuring on a real Fox/Hound recording.
 - Do not ship the aggressive Option B without an explicit flag, an
   alignment-isolated private copy, and a measured FP budget.
+
+## Deep-Integration Engine — Exploration Findings (`dx-deep-engine` branch)
+
+An additive T0/T1/T2 deep-integration engine was explored on the `dx-deep-engine`
+branch to push sensitivity *beyond* the strongest single-slot kernel. It is kept on
+that branch (frozen, experimental) rather than merged, because the exploration showed
+the marginal gain is thin. The conclusions are recorded here so they live on the main
+line even if the branch is never merged.
+
+- **What was built (branch).** D1 additive `dx_symbol_field` wrapper (AP-free channel
+  LLR, kernel untouched); T0 QSO-state AP tuning; T1 single-slot LLR matched filter
+  over enumerable DX hypotheses; T2 per-`(parity,freq)` LLR stacking + blind OSD with
+  a CRC + target-filter + slot-support backstop. All behind
+  `--dx-deep-experimental-output` / `--dx-deep-diagnostics`; a plain `--profile dx`
+  run pays zero deep cost (verified by a gate test).
+- **T1 single-slot matched filter is not viable.** On real audio the true and false
+  matched-filter `stat` ranges overlap — a bare `CQ HISCALL` false alarm reaches the
+  same statistic as a genuine weak decode — so no global threshold both clears false
+  alarms and keeps weak targets. The detection gate stays `INFINITY` (disabled). A
+  fabricated `hiscall` is the worst error and there is no safe single-slot threshold.
+- **T2 stacking gives ~1 dB over the single slot (synthetic), and only for repeats.**
+  The CRC stack recovers a repeated target ~1 dB fainter than focused `swl+nagain`
+  (synthetic, 4–5 slots). Two caveats shrink the real value: it only helps when the
+  target repeats the *same* message (a DXpedition target answering different callers
+  changes the message every slot → no stacking), and synthetic perfect alignment
+  favors the single slot. The real figure needs a repeated-target weak-signal corpus.
+- **The single slot is already maxed.** Both deep paths are OSD-based; `swl+nagain`
+  (OSD `ndeep=5`) already absorbs most of the cross-slot SNR, which is why the extra
+  edge is small.
+- **The engineering layer is what pays off.** Concurrent foci + focused `swl+nagain`
+  + a8d worker + single-target context/AP (T0) is what recovers the validation
+  target; the *deep emit* layer (T1/T2) adds little on top. A sensitivity exploration
+  that produces a negative result is a valid, useful outcome — it bounds where further
+  investment should *not* go.
+- **Build-loop note.** That work added a `[profile.fast]` (opt-level 2, no LTO, many
+  codegen units) to cut the optimized test rebuild from ~3 min to ~16 s incremental;
+  this main line now carries the same profile. Use `cargo test --profile fast` for
+  the edit/test loop, `--release` for acceptance.
+
+**Status:** `dx-deep-engine` is frozen and experimental. Do not invest further in
+deep sensitivity until a real repeated-target weak recording shows T2 `> ~1 dB` in
+practice. Full implementation, data, calibration scaffolds, and decisions D1–D6 live
+on the branch (with `PLAN.md`).
