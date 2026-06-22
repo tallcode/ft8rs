@@ -874,6 +874,74 @@ mod tests {
     }
 
     #[test]
+    fn dx_deep_engine_enabled_truth_table() {
+        // P0: the whole deep probe runs only under one of the two flags. This guards
+        // the gate logic itself (separate from `dx_deep_output_enabled`, which only
+        // gates emit). A plain `--profile dx` user must leave the engine off.
+        let mut config = StreamDecodeConfig {
+            profile: DecodeProfile::Dx,
+            ..StreamDecodeConfig::default()
+        };
+        assert!(!dx_deep_engine_enabled(&config));
+        config.dx_deep_experimental_output = true;
+        assert!(dx_deep_engine_enabled(&config));
+        config.dx_deep_experimental_output = false;
+        config.dx_deep_diagnostics = true;
+        assert!(dx_deep_engine_enabled(&config));
+        config.dx_deep_experimental_output = true;
+        assert!(dx_deep_engine_enabled(&config));
+    }
+
+    #[test]
+    fn dx_deep_probe_is_gated_off_without_experimental_or_diagnostics_flags() {
+        // P0 behavioral guard: with a hiscall + a synthetic on-focus target the deep
+        // probe WOULD produce fields if it ran, so assert a default `--profile dx`
+        // focus produces none, and that either flag turns the probe back on. Prevents
+        // a refactor from silently reviving the deep cost on the default path.
+        let expected_msg = "K1JT BG5ATV -10";
+        let mut base_config = StreamDecodeConfig {
+            profile: DecodeProfile::Dx,
+            nfa: 900.0,
+            nfb: 1100.0,
+            nfqso: 1000.0,
+            mycall: Some("K1JT".to_string()),
+            hiscall: Some("BG5ATV".to_string()),
+            hisgrid: Some("PM00".to_string()),
+            ..StreamDecodeConfig::default()
+        };
+        let samples = synthetic_ft8_slot_with_noise(expected_msg, 1000.0, 0.02, 0.08, 0x0d33_0000);
+        let hash_seed_calls = dx_hash_seed_calls(&base_config);
+        let timestamp = SlotTimestamp::parse("140630").unwrap();
+
+        let run = |config: &StreamDecodeConfig| {
+            decode_one_focus(FocusDecodeJob {
+                base_config: config,
+                hash_seed_calls: &hash_seed_calls,
+                hisgrid: Some("PM00"),
+                focus: 1000.0,
+                target_dt: None,
+                qso_progress: None,
+                timestamp: &timestamp,
+                samples: &samples,
+                started_at: std::time::Instant::now(),
+            })
+            .expect("focus decode should not fail")
+            .deep_fields
+            .len()
+        };
+
+        // Default: neither flag → the deep probe is skipped entirely.
+        assert_eq!(run(&base_config), 0, "default dx focus must run no deep probe");
+        // Experimental flag → probe runs and yields fields for the on-focus target.
+        base_config.dx_deep_experimental_output = true;
+        assert!(run(&base_config) > 0, "experimental flag must re-enable the probe");
+        // Diagnostics flag alone also enables the probe.
+        base_config.dx_deep_experimental_output = false;
+        base_config.dx_deep_diagnostics = true;
+        assert!(run(&base_config) > 0, "diagnostics flag must also enable the probe");
+    }
+
+    #[test]
     fn dx_deep_rows_are_runtime_suppressed_without_experimental_output() {
         let expected_msg = "K1JT BG5ATV -10";
         let base_config = StreamDecodeConfig {

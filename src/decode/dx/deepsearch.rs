@@ -98,6 +98,16 @@ pub(super) fn build_v1_hypotheses(
     out
 }
 
+/// Single-slot matched-filter detection (the `TwoSlotMatched` path).
+///
+/// **Production-dead.** The runtime always passes `DeepSearchGate::default()`
+/// (`min_stat`/`min_margin` = `INFINITY`), so the gate check below rejects every
+/// finite score and this returns `None` on every real slot. P1 proved the
+/// single-slot matched filter cannot separate true from false on real audio (the
+/// true/false `stat` ranges overlap), so the gate stays disabled. Kept rather than
+/// deleted because the calibration scaffolds still exercise it with finite gates and
+/// the deferred field corpus could re-enable it. See PLAN.md decision D5 and the
+/// `dx-t1-matched-filter-not-viable` note. Do not "wire it up" without that corpus.
 pub(super) fn dx_deep_search(
     field: &DxSymbolField,
     hypotheses: &[Hypothesis],

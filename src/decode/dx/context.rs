@@ -487,6 +487,12 @@ impl TargetContextStore {
             .retain(|obs| slots_between(obs.last_seen_nutc, nutc) <= 16);
     }
 
+    /// Two-slot corroboration for `TwoSlotMatched` single-slot matched hits.
+    ///
+    /// **Production-dead.** Its only caller feeds it the result of [`dx_deep_search`],
+    /// which returns `None` under the `INFINITY` runtime gate, so this never runs in
+    /// production. Exercised by tests with finite gates; kept for the deferred field
+    /// corpus. See PLAN.md D5 and `dx-t1-matched-filter-not-viable`.
     fn observe_matched_hit(
         &mut self,
         timestamp: &SlotTimestamp,

@@ -11,10 +11,27 @@ use super::deepsearch::{
 };
 use super::filter::normalize_message;
 
+// Heuristic thresholds for the CRC stack-output path. These are conservative
+// hand-picked values, NOT yet calibrated against a sized false-alarm corpus (P2 is
+// deferred). They only tighten the experimental CRC emit path; they do not loosen
+// it, so an un-calibrated value cannot fabricate a target (worst case it suppresses
+// a real recovery). Revisit once the field corpus exists.
+//
+// Cosine alignment a slot's field LLR must have with the running stack sum before it
+// can produce a CRC row — rejects a slot whose LLR points elsewhere than the
+// accumulation (a different/absent signal). ~0.20 ≈ 78° tolerance: permissive enough
+// to admit a genuinely weak repeat, tight enough that a single random-noise slot
+// rarely aligns.
 const MIN_STACK_LLR_COSINE_FOR_CRC_OUTPUT: f32 = 0.20;
+// A member slot "supports" the decoded codeword if its matched-filter score is at
+// least this (0.0 = any non-negative correlation counts as support).
 const MIN_SLOT_CODEWORD_SUPPORT_FOR_CRC_OUTPUT: f32 = 0.0;
+// Require a >=2/3 majority of member slots to support the decoded codeword before a
+// CRC row may emit — blocks a codeword that only one outlier slot agrees with.
 const MIN_SUPPORTED_SLOT_NUMERATOR_FOR_CRC_OUTPUT: usize = 2;
 const MIN_SUPPORTED_SLOT_DENOMINATOR_FOR_CRC_OUTPUT: usize = 3;
+// Cap stack depth (D3): past ~5–7 slots non-coherent gain has flattened and older
+// slots only add staleness/memory.
 const MAX_STACK_DEPTH: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -34,6 +51,12 @@ pub(super) struct PhysicalAdmissionGate {
 impl Default for PhysicalAdmissionGate {
     fn default() -> Self {
         Self {
+            // Anchor tolerances for admitting a slot into a target stack. 3.0 Hz is
+            // under half the 6.25 Hz FT8 tone spacing, so adjacent tones do not bleed
+            // into the same stack; 0.3 s is ~9% of the 3.45 s frame, covering
+            // oscillator/multipath drift without merging a differently-timed signal.
+            // min_nsync = 4 requires a real Costas sync presence. Hand-picked,
+            // corpus-calibration deferred (P2); see the threshold note above.
             freq_tolerance_hz: 3.0,
             dt_tolerance_s: 0.3,
             min_nsync: 4,
@@ -302,6 +325,12 @@ where
     crc.or(matched)
 }
 
+/// Stacked matched-filter detection (the `StackedLlrMatched` path).
+///
+/// **Production-dead** for the same reason as [`dx_deep_search`]: the runtime gate is
+/// `INFINITY`, so the `stat`/`margin` check below always rejects. The only live deep
+/// emit path is the CRC route ([`decode_crc_llr`]). Kept for the calibration
+/// scaffolds / future field corpus. See PLAN.md D5 and `dx-t1-matched-filter-not-viable`.
 fn decode_matched_llr(
     llr: &[f32; N],
     freq: f64,
@@ -342,6 +371,10 @@ fn decode_matched_llr(
     })
 }
 
+/// Best hypothesis index *iff* it clears the matched-filter gate — used only by the
+/// stack's confident-flip reset. **Production-dead** (gate is `INFINITY`), so the
+/// reset it feeds never fires in production; the physical admission gate is the live
+/// accumulation control. Kept for tests / future corpus. See PLAN.md D5.
 fn confident_best_hypothesis(
     llr: &[f32; N],
     hypotheses: &[Hypothesis],
