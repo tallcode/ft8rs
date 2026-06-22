@@ -1,0 +1,658 @@
+//! Live monitor engine (P2).
+//!
+//! A controllable, long-lived engine the GUI drives over channels. Two actors:
+//!
+//! - **Decode actor** (own thread): holds the decode session for its whole life,
+//!   processes staged decode commands (wsjtx nzhsym 41/47/50 early decode, others
+//!   final-only), and can `Reconfigure` in place (rebuild session, migrate hash).
+//! - **Engine/control thread**: owns the cpal capture + UTC-aligned slot timing,
+//!   feeds staged samples to the Decode actor, routes its decode events to the GUI
+//!   and the UDP sink, and applies reconfig plans at slot boundaries.
+//!
+//! Because the Decode actor is separate and long-lived, a device change (L2)
+//! restarts only capture — the session and all decode state survive (GUI_PLAN.md
+//! §6.2, decision 5). Config changes (L1) reconfigure the actor at the next slot
+//! boundary; the control loop polls commands every ~50 ms so Stop/Shutdown are
+//! prompt even mid-slot (decode runs off-thread). The existing blocking CLI path
+//! in `soundcard.rs` is untouched.
+//!
+//! Nothing here touches `lib_wsjtx`/`lib_jtdx`.
+
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use ft8rs::input::audio::resample_linear;
+use ft8rs::stream::profile::ProfileStreamDecodeSession;
+use ft8rs::stream::session::{
+    DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage,
+    StreamSlotDecodeState,
+};
+use ft8rs::stream::session::StreamDecodeProvenance;
+use ft8rs::SlotTimestamp;
+
+use crate::protocol::{DecodeRecord, DecodeStage, EngineCommand, EngineEvent, EngineStatus};
+use crate::reconfig::{plan_reconfig, EngineState};
+use crate::report::{UdpConfig, UdpOutput};
+use crate::soundcard::{
+    drain_pending_audio, list_soundcards, native_samples_for_nzhsym, next_slot_start_unix_seconds,
+    start_input_stream,
+};
+
+const TARGET_SAMPLE_RATE: u32 = 12_000;
+const SLOT_SECONDS: u64 = 15;
+/// Mirrors the CLI's per-slot focused-decode budget for DX live (`main.rs`).
+const DX_MONITOR_WATCHDOG_MS: u64 = 12_000;
+/// Command/event polling granularity inside the capture loop.
+const POLL: Duration = Duration::from_millis(50);
+
+/// Handle the GUI holds to drive the engine. Dropping it shuts the engine down.
+pub struct EngineHandle {
+    cmd_tx: Sender<EngineCommand>,
+    event_rx: Receiver<EngineEvent>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl EngineHandle {
+    /// Spawn the engine thread (starts Idle).
+    pub fn spawn() -> Self {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let join = thread::spawn(move || engine_loop(cmd_rx, event_tx));
+        Self {
+            cmd_tx,
+            event_rx,
+            join: Some(join),
+        }
+    }
+
+    /// Send a command to the engine.
+    pub fn send(&self, cmd: EngineCommand) -> Result<(), String> {
+        self.cmd_tx.send(cmd).map_err(|err| err.to_string())
+    }
+
+    /// Non-blocking poll for the next engine event (call each GUI frame).
+    pub fn try_recv(&self) -> Option<EngineEvent> {
+        self.event_rx.try_recv().ok()
+    }
+}
+
+impl Drop for EngineHandle {
+    fn drop(&mut self) {
+        let _ = self.cmd_tx.send(EngineCommand::Shutdown);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+// ── Engine control thread ───────────────────────────────────────────────────
+
+fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: Sender<EngineEvent>) {
+    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Idle));
+    while let Ok(cmd) = cmd_rx.recv() {
+        match cmd {
+            EngineCommand::Shutdown => return,
+            // Idle: nothing to stop, and ApplyState has no session yet — the GUI
+            // sends the full desired state with StartMonitor.
+            EngineCommand::StopMonitor | EngineCommand::ApplyState(_) => {}
+            EngineCommand::RefreshDevices => refresh_devices(&event_tx),
+            EngineCommand::StartMonitor(state) => match run_monitor(&cmd_rx, &event_tx, state) {
+                MonitorExit::Stopped => {
+                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Idle));
+                }
+                MonitorExit::Shutdown => return,
+            },
+        }
+    }
+}
+
+enum MonitorExit {
+    Stopped,
+    Shutdown,
+}
+
+#[derive(Clone, Copy)]
+enum Flow {
+    Ready,
+    Stop,
+    Shutdown,
+}
+
+fn run_monitor(
+    cmd_rx: &Receiver<EngineCommand>,
+    event_tx: &Sender<EngineEvent>,
+    mut state: EngineState,
+) -> MonitorExit {
+    let mut udp = build_udp(state.udp.as_ref(), event_tx);
+
+    let (mut stream, mut rx, mut sample_rate) = match start_input_stream(state.device.as_deref()) {
+        Ok(parts) => parts,
+        Err(err) => {
+            let _ = event_tx.send(EngineEvent::Error(err));
+            return MonitorExit::Stopped;
+        }
+    };
+
+    let (dec_cmd_tx, dec_evt_rx) = spawn_decode_actor(effective_config(&state.config));
+
+    let mut pending: Option<EngineState> = None;
+    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
+    let mut slot_start = match align(cmd_rx, event_tx, &mut pending) {
+        AlignResult::Ready(start) => start,
+        AlignResult::Stop => return teardown(dec_cmd_tx, stream),
+        AlignResult::Shutdown => {
+            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+            drop(stream);
+            return MonitorExit::Shutdown;
+        }
+    };
+    drain_pending_audio(&rx);
+    let mut carry: Vec<f32> = Vec::new();
+    let mut slot_index: i64 = 0;
+    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
+
+    loop {
+        let timestamp = SlotTimestamp::from_unix_seconds_utc(slot_start + slot_index * 15);
+        let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 8);
+        let mut native: Vec<f32> = Vec::new();
+
+        for (nzhsym, stage) in [(41, Stage::N41), (47, Stage::N47), (50, Stage::N50)] {
+            let target = if nzhsym == 50 {
+                sample_rate as usize * SLOT_SECONDS as usize
+            } else {
+                native_samples_for_nzhsym(sample_rate, nzhsym)
+            };
+            match pump_until(
+                &rx,
+                &mut carry,
+                &mut native,
+                target,
+                deadline,
+                cmd_rx,
+                &dec_evt_rx,
+                event_tx,
+                &mut udp,
+                &mut pending,
+            ) {
+                Flow::Ready => {}
+                Flow::Stop => return teardown(dec_cmd_tx, stream),
+                Flow::Shutdown => {
+                    let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                    drop(stream);
+                    return MonitorExit::Shutdown;
+                }
+            }
+            let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+            if dec_cmd_tx
+                .send(DecodeCmd::Stage {
+                    stage,
+                    timestamp: timestamp.clone(),
+                    samples_12k,
+                })
+                .is_err()
+            {
+                drop(stream);
+                return MonitorExit::Stopped;
+            }
+        }
+
+        forward_decode_events(&dec_evt_rx, event_tx, &mut udp);
+
+        // Apply a queued reconfiguration at the slot boundary.
+        if let Some(new_state) = pending.take() {
+            let outcome = plan_reconfig(&state, &new_state);
+            if outcome.rebuild_output {
+                udp = build_udp(new_state.udp.as_ref(), event_tx);
+            }
+            if outcome.rebuild_session {
+                let _ = dec_cmd_tx.send(DecodeCmd::Reconfigure(effective_config(&new_state.config)));
+            }
+            let mut restarted = false;
+            if outcome.restart_capture {
+                drop(stream);
+                match start_input_stream(new_state.device.as_deref()) {
+                    Ok((new_stream, new_rx, new_rate)) => {
+                        stream = new_stream;
+                        rx = new_rx;
+                        sample_rate = new_rate;
+                    }
+                    Err(err) => {
+                        let _ = event_tx.send(EngineEvent::Error(err));
+                        let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                        return MonitorExit::Stopped;
+                    }
+                }
+                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
+                slot_start = match align(cmd_rx, event_tx, &mut pending) {
+                    AlignResult::Ready(start) => start,
+                    AlignResult::Stop => return teardown(dec_cmd_tx, stream),
+                    AlignResult::Shutdown => {
+                        let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                        drop(stream);
+                        return MonitorExit::Shutdown;
+                    }
+                };
+                drain_pending_audio(&rx);
+                carry.clear();
+                slot_index = 0;
+                restarted = true;
+                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
+            }
+            let _ = event_tx.send(EngineEvent::Reconfigured(outcome));
+            state = new_state;
+            // The reconfig path `continue`s past the normal end-of-loop advance,
+            // so advance here — unless a capture restart already reset to slot 0.
+            if !restarted {
+                slot_index += 1;
+            }
+            continue;
+        }
+
+        slot_index += 1;
+    }
+}
+
+fn teardown(dec_cmd_tx: Sender<DecodeCmd>, stream: cpal::Stream) -> MonitorExit {
+    let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+    drop(stream);
+    MonitorExit::Stopped
+}
+
+enum AlignResult {
+    Ready(i64),
+    Stop,
+    Shutdown,
+}
+
+/// Sleep (interruptibly) until the next UTC slot boundary, returning its unix
+/// second. Polls the command channel so Stop/Shutdown stay responsive.
+fn align(
+    cmd_rx: &Receiver<EngineCommand>,
+    event_tx: &Sender<EngineEvent>,
+    pending: &mut Option<EngineState>,
+) -> AlignResult {
+    let start = match next_slot_start_unix_seconds() {
+        Ok(start) => start,
+        Err(err) => {
+            let _ = event_tx.send(EngineEvent::Error(err));
+            return AlignResult::Stop;
+        }
+    };
+    let target = UNIX_EPOCH + Duration::from_secs(start as u64);
+    while let Ok(remaining) = target.duration_since(SystemTime::now()) {
+        match drain_commands(cmd_rx, event_tx, pending) {
+            CmdFlow::Continue => {}
+            CmdFlow::Stop => return AlignResult::Stop,
+            CmdFlow::Shutdown => return AlignResult::Shutdown,
+        }
+        thread::sleep(remaining.min(POLL));
+    }
+    AlignResult::Ready(start)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pump_until(
+    rx: &Receiver<Vec<f32>>,
+    carry: &mut Vec<f32>,
+    out: &mut Vec<f32>,
+    target_len: usize,
+    deadline: Instant,
+    cmd_rx: &Receiver<EngineCommand>,
+    dec_evt_rx: &Receiver<EngineEvent>,
+    event_tx: &Sender<EngineEvent>,
+    udp: &mut Option<UdpOutput>,
+    pending: &mut Option<EngineState>,
+) -> Flow {
+    take_from_carry(carry, out, target_len);
+    while out.len() < target_len {
+        forward_decode_events(dec_evt_rx, event_tx, udp);
+        match drain_commands(cmd_rx, event_tx, pending) {
+            CmdFlow::Continue => {}
+            CmdFlow::Stop => return Flow::Stop,
+            CmdFlow::Shutdown => return Flow::Shutdown,
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            let _ = event_tx.send(EngineEvent::Error(
+                "timed out collecting soundcard slot".to_string(),
+            ));
+            return Flow::Stop;
+        }
+        let timeout = deadline.saturating_duration_since(now).min(POLL);
+        match rx.recv_timeout(timeout) {
+            Ok(chunk) => append_with_carry(out, carry, target_len, chunk),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = event_tx
+                    .send(EngineEvent::Error("soundcard input stopped".to_string()));
+                return Flow::Stop;
+            }
+        }
+    }
+    forward_decode_events(dec_evt_rx, event_tx, udp);
+    Flow::Ready
+}
+
+enum CmdFlow {
+    Continue,
+    Stop,
+    Shutdown,
+}
+
+fn drain_commands(
+    cmd_rx: &Receiver<EngineCommand>,
+    event_tx: &Sender<EngineEvent>,
+    pending: &mut Option<EngineState>,
+) -> CmdFlow {
+    loop {
+        match cmd_rx.try_recv() {
+            Ok(EngineCommand::Shutdown) => return CmdFlow::Shutdown,
+            Ok(EngineCommand::StopMonitor) => return CmdFlow::Stop,
+            // Both ApplyState and a StartMonitor while running update the desired
+            // state, applied at the next slot boundary.
+            Ok(EngineCommand::ApplyState(state)) | Ok(EngineCommand::StartMonitor(state)) => {
+                *pending = Some(state)
+            }
+            Ok(EngineCommand::RefreshDevices) => refresh_devices(event_tx),
+            Err(TryRecvError::Empty) => return CmdFlow::Continue,
+            Err(TryRecvError::Disconnected) => return CmdFlow::Shutdown,
+        }
+    }
+}
+
+/// Forward decode-actor events to the GUI, feeding decode rows to the UDP sink.
+/// Sink failures are isolated (logged-and-dropped), never stopping decode.
+fn forward_decode_events(
+    dec_evt_rx: &Receiver<EngineEvent>,
+    event_tx: &Sender<EngineEvent>,
+    udp: &mut Option<UdpOutput>,
+) {
+    while let Ok(evt) = dec_evt_rx.try_recv() {
+        if let EngineEvent::Decode(record) = &evt {
+            if let Some(sink) = udp.as_ref() {
+                let _ = sink.on_decode(record.timestamp.clone(), &record.row);
+            }
+        }
+        let _ = event_tx.send(evt);
+    }
+}
+
+fn refresh_devices(event_tx: &Sender<EngineEvent>) {
+    match list_soundcards() {
+        Ok(devices) => {
+            let _ = event_tx.send(EngineEvent::DevicesRefreshed(devices));
+        }
+        Err(err) => {
+            let _ = event_tx.send(EngineEvent::Error(err));
+        }
+    }
+}
+
+fn build_udp(config: Option<&UdpConfig>, event_tx: &Sender<EngineEvent>) -> Option<UdpOutput> {
+    let config = config?;
+    match UdpOutput::new(config.clone()) {
+        Ok(sink) => Some(sink),
+        Err(err) => {
+            // Output failure must not stop decode (GUI_PLAN.md §4): disable sink.
+            let _ = event_tx.send(EngineEvent::Error(format!("UDP disabled: {err}")));
+            None
+        }
+    }
+}
+
+fn effective_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
+    let mut config = config.clone();
+    if config.profile == DecodeProfile::Dx {
+        config.dx_monitor_watchdog_ms = Some(DX_MONITOR_WATCHDOG_MS);
+    }
+    config
+}
+
+fn take_from_carry(carry: &mut Vec<f32>, out: &mut Vec<f32>, target_len: usize) {
+    if carry.is_empty() || out.len() >= target_len {
+        return;
+    }
+    let needed = target_len - out.len();
+    if carry.len() <= needed {
+        out.extend_from_slice(carry);
+        carry.clear();
+    } else {
+        out.extend_from_slice(&carry[..needed]);
+        carry.drain(..needed);
+    }
+}
+
+fn append_with_carry(out: &mut Vec<f32>, carry: &mut Vec<f32>, target_len: usize, chunk: Vec<f32>) {
+    let remaining = target_len - out.len();
+    if chunk.len() <= remaining {
+        out.extend_from_slice(&chunk);
+    } else {
+        out.extend_from_slice(&chunk[..remaining]);
+        carry.extend_from_slice(&chunk[remaining..]);
+    }
+}
+
+// ── Decode actor ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+enum Stage {
+    N41,
+    N47,
+    N50,
+}
+
+enum DecodeCmd {
+    Stage {
+        stage: Stage,
+        timestamp: SlotTimestamp,
+        samples_12k: Vec<f32>,
+    },
+    Reconfigure(StreamDecodeConfig),
+    Stop,
+}
+
+/// wsjtx uses the staged `StreamDecodeSession` (early decode); other profiles use
+/// the unified `ProfileStreamDecodeSession` (final decode only) — mirroring the
+/// shipped soundcard worker exactly, so decode behavior is unchanged.
+enum DecodeSession {
+    Wsjtx(StreamDecodeSession),
+    Profile(ProfileStreamDecodeSession),
+}
+
+fn build_session(config: &StreamDecodeConfig) -> DecodeSession {
+    if config.profile == DecodeProfile::Wsjtx {
+        DecodeSession::Wsjtx(StreamDecodeSession::new(config.clone()))
+    } else {
+        DecodeSession::Profile(ProfileStreamDecodeSession::new(config.clone()))
+    }
+}
+
+fn export_hash(session: &DecodeSession) -> Vec<String> {
+    match session {
+        DecodeSession::Wsjtx(s) => s.export_regular_hash_calls(),
+        DecodeSession::Profile(p) => p.export_hash_calls(),
+    }
+}
+
+fn import_hash(session: &mut DecodeSession, calls: &[String]) {
+    match session {
+        DecodeSession::Wsjtx(s) => s.import_hash_calls(calls),
+        DecodeSession::Profile(p) => p.import_hash_calls(calls),
+    }
+}
+
+fn emit_decode(
+    evt_tx: &Sender<EngineEvent>,
+    timestamp: &SlotTimestamp,
+    row: &StreamDecodedMessage,
+    stage: DecodeStage,
+) -> Result<(), String> {
+    evt_tx
+        .send(EngineEvent::Decode(DecodeRecord {
+            timestamp: timestamp.clone(),
+            row: row.clone(),
+            // P2: provenance plumbing for the `a7`/AP marker lands later; until
+            // then every row is reported as Regular.
+            provenance: StreamDecodeProvenance::Regular,
+            stage,
+        }))
+        .map_err(|err| err.to_string())
+}
+
+fn spawn_decode_actor(
+    config: StreamDecodeConfig,
+) -> (Sender<DecodeCmd>, Receiver<EngineEvent>) {
+    let (cmd_tx, cmd_rx) = mpsc::channel::<DecodeCmd>();
+    let (evt_tx, evt_rx) = mpsc::channel::<EngineEvent>();
+    thread::spawn(move || decode_actor(config, cmd_rx, evt_tx));
+    (cmd_tx, evt_rx)
+}
+
+fn decode_actor(config: StreamDecodeConfig, cmd_rx: Receiver<DecodeCmd>, evt_tx: Sender<EngineEvent>) {
+    let mut session = build_session(&config);
+    let mut slot_state: Option<StreamSlotDecodeState> = None;
+
+    while let Ok(cmd) = cmd_rx.recv() {
+        match cmd {
+            DecodeCmd::Stop => break,
+            DecodeCmd::Reconfigure(new_config) => {
+                let calls = export_hash(&session);
+                session = build_session(&new_config);
+                import_hash(&mut session, &calls);
+                slot_state = None;
+            }
+            DecodeCmd::Stage {
+                stage,
+                timestamp,
+                samples_12k,
+            } => match (&mut session, stage) {
+                (DecodeSession::Wsjtx(s), Stage::N41) => {
+                    let mut state = s.start_slot_decode();
+                    let result = s.decode_slot_nzhsym41_at(
+                        Some(&timestamp),
+                        &mut state,
+                        &samples_12k,
+                        |row| emit_decode(&evt_tx, &timestamp, row, DecodeStage::Early),
+                    );
+                    match result {
+                        Ok(_) => slot_state = Some(state),
+                        Err(err) => {
+                            let _ = evt_tx.send(EngineEvent::Error(err));
+                        }
+                    }
+                }
+                (DecodeSession::Wsjtx(s), Stage::N47) => {
+                    if let Some(state) = slot_state.as_mut() {
+                        s.subtract_slot_nzhsym47(state, &samples_12k);
+                    }
+                }
+                (DecodeSession::Wsjtx(s), Stage::N50) => {
+                    if let Some(state) = slot_state.take() {
+                        match s.decode_slot_nzhsym50_and_finish(state, &samples_12k, |row| {
+                            emit_decode(&evt_tx, &timestamp, row, DecodeStage::Final)
+                        }) {
+                            Ok(results) => {
+                                let _ = evt_tx.send(EngineEvent::SlotComplete {
+                                    timestamp,
+                                    count: results.len(),
+                                });
+                            }
+                            Err(err) => {
+                                let _ = evt_tx.send(EngineEvent::Error(err));
+                            }
+                        }
+                    }
+                }
+                (DecodeSession::Profile(_), Stage::N41)
+                | (DecodeSession::Profile(_), Stage::N47) => {}
+                (DecodeSession::Profile(p), Stage::N50) => {
+                    match p.decode_slot_streaming_at(&timestamp, &samples_12k, |row| {
+                        emit_decode(&evt_tx, &timestamp, row, DecodeStage::Final)
+                    }) {
+                        Ok(results) => {
+                            let _ = evt_tx.send(EngineEvent::SlotComplete {
+                                timestamp,
+                                count: results.len(),
+                            });
+                        }
+                        Err(err) => {
+                            let _ = evt_tx.send(EngineEvent::Error(err));
+                        }
+                    }
+                }
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    const NZHSYM_STRIDE: usize = 3456;
+    const SHORT_FIXTURE: &str = "../ft8rs-core/tests/ft8/210703_133430.wav";
+
+    fn load_fixture_12k() -> Option<Vec<f32>> {
+        if !Path::new(SHORT_FIXTURE).exists() {
+            eprintln!("skipping decode-actor test: fixture {SHORT_FIXTURE} not present");
+            return None;
+        }
+        let audio = ft8rs::input::audio::read_wav_mono_f32(SHORT_FIXTURE).ok()?;
+        Some(resample_linear(&audio.samples, audio.sample_rate, TARGET_SAMPLE_RATE))
+    }
+
+    fn feed_slot(cmd_tx: &Sender<DecodeCmd>, ts: &SlotTimestamp, s12k: &[f32]) {
+        let slice = |n: usize| s12k[..(n * NZHSYM_STRIDE).min(s12k.len())].to_vec();
+        for (n, stage) in [(41, Stage::N41), (47, Stage::N47), (50, Stage::N50)] {
+            let samples = if n == 50 { s12k.to_vec() } else { slice(n) };
+            cmd_tx
+                .send(DecodeCmd::Stage {
+                    stage,
+                    timestamp: ts.clone(),
+                    samples_12k: samples,
+                })
+                .unwrap();
+        }
+    }
+
+    fn drain_until_slot_complete(rx: &Receiver<EngineEvent>) -> (usize, usize) {
+        let mut decodes = 0usize;
+        loop {
+            match rx.recv_timeout(Duration::from_secs(60)) {
+                Ok(EngineEvent::Decode(_)) => decodes += 1,
+                Ok(EngineEvent::SlotComplete { count, .. }) => return (decodes, count),
+                Ok(EngineEvent::Error(err)) => panic!("decode actor error: {err}"),
+                Ok(_) => {}
+                Err(err) => panic!("timed out waiting for slot complete: {err}"),
+            }
+        }
+    }
+
+    #[test]
+    fn decode_actor_reproduces_wsjtx_short_slot_and_reconfigures() {
+        let Some(s12k) = load_fixture_12k() else {
+            return;
+        };
+        let ts = SlotTimestamp::parse("210703_133430").unwrap();
+
+        let (cmd_tx, evt_rx) = spawn_decode_actor(StreamDecodeConfig::default());
+
+        // wsjtx staged decode of the short fixture.
+        feed_slot(&cmd_tx, &ts, &s12k);
+        let (_early_or_final, count) = drain_until_slot_complete(&evt_rx);
+        assert!(count >= 15, "wsjtx short slot decoded too few rows: {count}");
+
+        // Reconfigure to jtdx in place (hash migrated) and decode again — the
+        // actor must survive the rebuild and keep producing.
+        let mut jtdx = StreamDecodeConfig::default();
+        jtdx.profile = DecodeProfile::Jtdx;
+        cmd_tx.send(DecodeCmd::Reconfigure(jtdx)).unwrap();
+        feed_slot(&cmd_tx, &ts, &s12k);
+        let (_d2, count2) = drain_until_slot_complete(&evt_rx);
+        assert!(count2 >= 15, "jtdx short slot decoded too few rows: {count2}");
+
+        cmd_tx.send(DecodeCmd::Stop).unwrap();
+    }
+}
