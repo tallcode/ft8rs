@@ -171,9 +171,9 @@ single-target store (used for slot N+1 and same-parity slots):
   both. So harvested `dt` is used only for: (a) **confidence/FP** — a target row
   near the expected/consistent `dt` is more trustworthy, a wildly off-`dt`
   "match" is suspect; and (b) a **window hint** — if the target consistently
-  shows a large `dt` (clock error / long path), keep `swl` (±3.5 s window)
-  and/or `--force-sync` on so the wide window keeps covering it (`avexdt`
-  already auto-recenters the window from recent decodes).
+  shows a large `dt` (clock error / long path), keep `swl` (±3.5 s window) on
+  so the wide window keeps covering it (`avexdt` already auto-recenters the
+  window from recent decodes).
 - **TX parity (sequence) — inferred by sender/recipient role, not by mere
   presence.** FT8 QSOs alternate every 15 s by parity (`jseq = (nutc/5) % 2`;
   `{:00,:30}=0`, `{:15,:45}=1`); the target transmits on **one** parity, the other

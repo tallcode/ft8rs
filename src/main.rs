@@ -74,10 +74,6 @@ struct DecodeArgs {
     #[arg(short = 'g', long, help_heading = "Decode context")]
     his_grid: Option<String>,
 
-    /// QSO progress (0-5), used by AP pass selection.
-    #[arg(short = 'Q', long, help_heading = "Decode context")]
-    qso_progress: Option<usize>,
-
     /// Lower decode frequency bound in Hz
     #[arg(short = 'L', long, help_heading = "Frequency")]
     low: Option<f64>,
@@ -90,30 +86,6 @@ struct DecodeArgs {
     #[arg(short = 'f', long, help_heading = "Frequency")]
     rx_frequency: Option<f64>,
 
-    /// Transmit frequency offset in Hz, used by AP frequency gating.
-    #[arg(short = 'T', long, help_heading = "Frequency")]
-    tx_frequency: Option<f64>,
-
-    /// AP frequency gate width in Hz.
-    #[arg(short = 'A', long, help_heading = "Frequency")]
-    ap_width: Option<f64>,
-
-    /// Decode depth
-    #[arg(short = 'd', long, help_heading = "Decode")]
-    depth: Option<usize>,
-
-    /// Maximum sync candidates per pass
-    #[arg(short = 'C', long, help_heading = "Decode")]
-    max_candidates: Option<usize>,
-
-    /// Disable AP decoding
-    #[arg(short = 'P', long, help_heading = "Decode")]
-    no_ap: bool,
-
-    /// Restrict AP decoding to CQ-style AP.
-    #[arg(short = 'O', long, help_heading = "Decode")]
-    cq_only: bool,
-
     /// Enable JTDX SWL mode for profile=jtdx or profile=hybrid.
     /// The dx profile enables its own SWL listen pass automatically.
     #[arg(long, help_heading = "Decode")]
@@ -124,28 +96,6 @@ struct DecodeArgs {
     /// The dx profile enables nagain only for its own focused passes.
     #[arg(long, help_heading = "Decode")]
     nagain: bool,
-
-    /// Enable JTDX forced sync time-window tracking for profile=jtdx or profile=hybrid.
-    /// The dx profile forwards this to its JTDX workers when set.
-    #[arg(long, help_heading = "Decode")]
-    force_sync: bool,
-
-    /// Enable JTDX Hound AP table for profile=jtdx or profile=hybrid.
-    /// The dx profile uses it for focused passes.
-    #[arg(long, help_heading = "Decode")]
-    hound: bool,
-
-    /// JTDX FT8 band-decode threads: 0=auto, 1..24=user setting.
-    #[arg(long, default_value_t = 0, help_heading = "Decode")]
-    jtdx_threads: usize,
-
-    /// Number of threads to process large FFTs. Values greater than 1 require an FFTW build.
-    #[arg(short = 'm', long, default_value_t = 1, help_heading = "FFTW")]
-    fft_threads: usize,
-
-    /// FFTW3 planning patience (0-4). Values other than 1 require an FFTW build.
-    #[arg(short = 'w', long, default_value_t = 1, help_heading = "FFTW")]
-    patience: usize,
 }
 
 #[derive(Args)]
@@ -220,8 +170,10 @@ fn run_file(args: FileArgs) -> Result<(), String> {
 
 fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String> {
     validate_decode_args(args)?;
-    ft8rs::set_fft_patience(args.patience)?;
-    ft8rs::set_fft_threads(args.fft_threads)?;
+    // FFT threads/patience are no longer CLI-configurable; initialize the FFT
+    // backend with its defaults (only the FFTW build honors non-default values).
+    ft8rs::set_fft_threads(1)?;
+    ft8rs::set_fft_patience(1)?;
 
     let mut config = StreamDecodeConfig::default();
     config.profile = DecodeProfile::parse(&args.profile)?;
@@ -246,32 +198,8 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     if let Some(rx_frequency) = args.rx_frequency {
         config.nfqso = rx_frequency;
     }
-    if let Some(tx_frequency) = args.tx_frequency {
-        config.nftx = tx_frequency;
-    }
-    if let Some(qso_progress) = args.qso_progress {
-        config.nQSOProgress = qso_progress;
-    }
-    if let Some(ap_width) = args.ap_width {
-        config.napwid = ap_width;
-    }
-    if let Some(depth) = args.depth {
-        config.ndepth = depth;
-    }
-    if let Some(max_candidates) = args.max_candidates {
-        config.ncand = max_candidates;
-    }
-    if args.no_ap {
-        config.lft8apon = false;
-    }
-    if args.cq_only {
-        config.lapcqonly = true;
-    }
     config.swl = args.swl;
     config.nagain = args.nagain;
-    config.lforcesync = args.force_sync;
-    config.lhound = args.hound;
-    config.jtdx_threads = args.jtdx_threads;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
         return Err("--profile dx requires --his-call CALL".to_string());
     }
@@ -279,33 +207,10 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
 }
 
 fn validate_decode_args(args: &DecodeArgs) -> Result<(), String> {
-    if let Some(qso_progress) = args.qso_progress {
-        if qso_progress > 5 {
-            return Err("--qso-progress must be in 0..=5".to_string());
-        }
-    }
-    if let Some(depth) = args.depth {
-        if !(1..=3).contains(&depth) {
-            return Err("--depth must be in 1..=3".to_string());
-        }
-    }
-    if let Some(max_candidates) = args.max_candidates {
-        if max_candidates == 0 {
-            return Err("--max-candidates must be at least 1".to_string());
-        }
-    }
-    if let Some(ap_width) = args.ap_width {
-        if ap_width <= 0.0 {
-            return Err("--ap-width must be greater than 0".to_string());
-        }
-    }
     if let (Some(low), Some(high)) = (args.low, args.high) {
         if low >= high {
             return Err("--low must be less than --high".to_string());
         }
-    }
-    if args.jtdx_threads > 24 {
-        return Err("--jtdx-threads must be in 0..=24".to_string());
     }
     Ok(())
 }

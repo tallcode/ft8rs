@@ -110,9 +110,6 @@ target/release/ft8rs monitor --device "VB-Cable A" \
   --profile dx --my-call F1MLZ --his-call UA3QNA
 ```
 
-JTDX band-decode threads default to source-style auto selection (`--jtdx-threads
-0`); pass an explicit `1..=24` only for diagnostics.
-
 ## Decode Context
 
 AP and focused-retry logic can use callsign/grid context:
@@ -122,7 +119,7 @@ target/release/ft8rs monitor --device "VB-Cable A" \
   --profile jtdx \
   --my-call K1ABC --my-grid FN20 \
   --his-call W9XYZ --his-grid EN60 \
-  --qso-progress 0 --rx-frequency 1153
+  --rx-frequency 1153
 ```
 
 ## UDP Reports
@@ -146,31 +143,15 @@ target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --
 | `--low` | `-L` | low decode frequency |
 | `--high` | `-H` | high decode frequency |
 | `--rx-frequency` | `-f` | focused receive frequency |
-| `--tx-frequency` | `-T` | transmit/focused AP frequency |
-| `--ap-width` | `-A` | AP frequency window |
-| `--depth` | `-d` | decode depth |
-| `--max-candidates` | `-C` | maximum sync candidates |
-| `--no-ap` | `-P` | disable AP decode |
-| `--cq-only` | `-O` | CQ-only AP mode |
 | `--my-call` | `-c` | local callsign context |
 | `--my-grid` | `-G` | local grid context |
 | `--his-call` | `-x` | DX callsign context (required by `dx`) |
 | `--his-grid` | `-g` | DX grid context |
-| `--qso-progress` | `-Q` | AP QSO progress, `0..=5` |
 | `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
 | `--nagain` | | JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
-| `--force-sync` | | enable JTDX forced sync time-window tracking |
-| `--hound` | | enable JTDX Hound AP table for `jtdx`/`hybrid`; used by focused DX passes |
-| `--jtdx-threads` | | JTDX FT8 band-decode threads, `0=auto`, `1..=24` |
 | `--udp` | `-u` | enable UDP output |
 | `--udp-host` | `-o` | UDP destination host |
 | `--udp-port` | `-p` | UDP destination port |
-| `--fft-threads` | `-m` | FFTW plan threads (FFTW build only) |
-| `--patience` | `-w` | FFTW planning patience (FFTW build only) |
-
-The `--fft-threads`/`--patience` options require a binary built with
-`--features fftw`; the default RustFFT build accepts only the default FFT
-settings.
 
 ## Tests
 
