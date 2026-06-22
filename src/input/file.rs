@@ -66,7 +66,7 @@ pub fn infer_start_time_from_path(path: impl AsRef<Path>) -> Option<SlotTimestam
     let suffix = stem
         .as_bytes()
         .windows(13)
-        .rposition(|window| is_timestamp_bytes(window))
+        .rposition(is_timestamp_bytes)
         .map(|idx| &stem[idx..idx + 13])?;
     SlotTimestamp::parse(suffix).ok()
 }
