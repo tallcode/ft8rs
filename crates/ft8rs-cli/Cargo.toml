@@ -1,0 +1,22 @@
+[package]
+name = "ft8rs-cli"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0"
+description = "FT8 streaming decoder CLI"
+
+[[bin]]
+name = "ft8rs"
+path = "src/main.rs"
+
+[dependencies]
+ft8rs-core = { path = "../ft8rs-core" }
+ft8rs-engine = { path = "../ft8rs-engine" }
+clap = { version = "4", features = ["derive"] }
+
+[build-dependencies]
+ft8rs-build = { path = "../ft8rs-build" }
+
+[features]
+default = []
+fftw = ["ft8rs-core/fftw", "ft8rs-engine/fftw"]

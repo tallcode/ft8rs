@@ -28,6 +28,28 @@ impl ProfileStreamDecodeSession {
         }
     }
 
+    /// Seed the learned hash-call book of the underlying session. Used by the
+    /// live engine to migrate hash calls across a session rebuild (GUI_PLAN.md
+    /// §5.3). Hybrid manages its own shared hash book and DX seeds from the
+    /// target calls, so both are no-ops here.
+    pub fn import_hash_calls(&mut self, calls: &[String]) {
+        match self {
+            Self::Wsjtx(session) => session.import_hash_calls(calls),
+            Self::Jtdx(session) => session.import_hash_calls(calls),
+            Self::Hybrid(_) | Self::Dx(_) => {}
+        }
+    }
+
+    /// Export the learned regular hash calls for migration into a rebuilt
+    /// session. Hybrid/DX return empty (their hash state is reseeded on rebuild).
+    pub fn export_hash_calls(&self) -> Vec<String> {
+        match self {
+            Self::Wsjtx(session) => session.export_regular_hash_calls(),
+            Self::Jtdx(session) => session.export_regular_hash_calls(),
+            Self::Hybrid(_) | Self::Dx(_) => Vec::new(),
+        }
+    }
+
     pub fn decode_slot_at(
         &mut self,
         timestamp: &SlotTimestamp,

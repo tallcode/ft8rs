@@ -1,0 +1,6 @@
+[package]
+name = "ft8rs-build"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0"
+description = "Build-time version helper shared by ft8rs binaries"

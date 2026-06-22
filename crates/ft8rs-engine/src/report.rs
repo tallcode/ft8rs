@@ -9,6 +9,7 @@ const TYPE_DECODE: u32 = 2;
 const CLIENT_ID: &str = "ft8rs";
 const MODE: &str = "FT8";
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UdpConfig {
     pub host: String,
     pub port: u16,

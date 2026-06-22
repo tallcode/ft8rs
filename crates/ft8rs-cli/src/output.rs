@@ -1,11 +1,8 @@
-pub mod cli;
-pub mod udp;
-
 use ft8rs::stream::StreamDecodedMessage;
 use ft8rs::SlotTimestamp;
 
-use cli::CliOutput;
-use udp::{UdpConfig, UdpOutput};
+use crate::output_cli::CliOutput;
+pub use ft8rs_engine::report::{UdpConfig, UdpOutput};
 
 pub struct Outputs {
     cli: CliOutput,

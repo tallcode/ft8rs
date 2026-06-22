@@ -1,0 +1,14 @@
+[package]
+name = "ft8rs-engine"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0"
+description = "ft8rs live runtime: soundcard capture + UDP reporting"
+
+[dependencies]
+ft8rs-core = { path = "../ft8rs-core" }
+cpal = "0.15"
+
+[features]
+default = []
+fftw = ["ft8rs-core/fftw"]

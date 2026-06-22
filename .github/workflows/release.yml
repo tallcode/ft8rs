@@ -58,7 +58,7 @@ jobs:
       - name: Build default release binary
         env:
           FT8RS_RELEASE_TAG: ${{ github.ref_name }}
-        run: cargo build --release
+        run: cargo build --release -p ft8rs-cli
 
       - name: Package Unix release
         if: runner.os != 'Windows'
@@ -67,7 +67,7 @@ jobs:
           pkg="${{ matrix.package_name }}"
           mkdir -p "dist/$pkg"
           cp "target/release/${{ matrix.binary_name }}" "dist/$pkg/"
-          cp "ALLCALL7.TXT" "dist/$pkg/"
+          cp "crates/ft8rs-core/ALLCALL7.TXT" "dist/$pkg/"
           chmod +x "dist/$pkg/${{ matrix.binary_name }}"
           printf '%s\n' 'Run ./ft8rs from this directory. Keep ALLCALL7.TXT next to the binary for JTDX callsign filtering. This build uses rustfft@3840 and has no FFTW runtime dependency.' > "dist/$pkg/README.txt"
           tar -czf "${{ matrix.artifact_name }}" -C dist "$pkg"
@@ -79,7 +79,7 @@ jobs:
           $pkg = "${{ matrix.package_name }}"
           New-Item -ItemType Directory -Force -Path "dist\$pkg" | Out-Null
           Copy-Item "target\release\${{ matrix.binary_name }}" "dist\$pkg\"
-          Copy-Item "ALLCALL7.TXT" "dist\$pkg\"
+          Copy-Item "crates\ft8rs-core\ALLCALL7.TXT" "dist\$pkg\"
           "Run .\ft8rs.exe from this directory. Keep ALLCALL7.TXT next to the binary for JTDX callsign filtering. This build uses rustfft@3840 and has no FFTW runtime dependency." |
             Out-File -FilePath "dist\$pkg\README.txt" -Encoding utf8
           Compress-Archive -Path "dist\$pkg" -DestinationPath "${{ matrix.artifact_name }}" -Force
