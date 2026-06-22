@@ -5,6 +5,7 @@ members = [
     "crates/ft8rs-core",
     "crates/ft8rs-engine",
     "crates/ft8rs-cli",
+    "crates/ft8rs-gui",
 ]
 
 # Performance: cross-crate inlining (thin LTO) + a single codegen unit. These
