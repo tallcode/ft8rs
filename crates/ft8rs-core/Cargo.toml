@@ -1,0 +1,23 @@
+[package]
+name = "ft8rs-core"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0"
+description = "FT8 streaming decoder core: decode/stream/file-input, UI-independent"
+
+# Lib name is `ft8rs` (not `ft8rs_core`) so the decode core keeps the same import
+# path (`use ft8rs::...`) as before the workspace split — the baseline tests and
+# mirrored lib_wsjtx/lib_jtdx sources move in unchanged.
+[lib]
+name = "ft8rs"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Compile-time: default rustfft@3840. Enable fftw for FFTW@3840 validation.
+fftw = []
+
+[dependencies]
+rustfft = "6"
+hound = "3"
+num-bigint = "0.4"

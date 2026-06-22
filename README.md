@@ -15,9 +15,13 @@ checks.
 
 ## Build
 
+`ft8rs` is a Cargo workspace: `ft8rs-core` (decode core), `ft8rs-engine`
+(soundcard capture + UDP), and the `ft8rs-cli` binary (plus `ft8rs-build`, a
+build-time version helper).
+
 ```bash
-cargo build --release                  # default (RustFFT)
-cargo build --release --features fftw  # FFTW backend, for alignment checks
+cargo build --release -p ft8rs-cli                  # default (RustFFT)
+cargo build --release -p ft8rs-cli --features fftw  # FFTW backend, for alignment checks
 ```
 
 The FFTW backend needs system libraries: `brew install fftw` on macOS, or
@@ -160,18 +164,23 @@ budgets). For the day-to-day edit/test loop use the `fast` profile — same opti
 byte-identical results, but it compiles in a fraction of the time by dropping the
 shipped binary's LTO + single-codegen-unit last mile:
 
+The baseline tests live in `ft8rs-core`:
+
 ```bash
-cargo test --profile fast test_stream_decode_short_audio
-cargo test --profile fast test_stream_decode_long_audio
+cargo test --profile fast -p ft8rs-core test_stream_decode_short_audio
+cargo test --profile fast -p ft8rs-core test_stream_decode_long_audio
 ```
 
 Use `--release` for the final acceptance run that must match the shipped binary's
 exact optimization, and for the FFTW path:
 
 ```bash
-cargo test --release test_stream_decode_short_audio
-cargo test --release --features fftw test_stream_decode_short_audio  # FFTW path
+cargo test --release -p ft8rs-core test_stream_decode_short_audio
+cargo test --release -p ft8rs-core --features fftw test_stream_decode_short_audio  # FFTW path
 ```
+
+The profile/DX manual acceptance gates (hybrid 465 count, jtdx long, dx) are
+`#[ignore]`d; run them with `cargo test --release -p ft8rs-core -- --ignored`.
 
 Both profiles produce identical decode results; `fast` only changes build speed.
 

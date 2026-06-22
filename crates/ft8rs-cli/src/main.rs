@@ -4,16 +4,19 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 mod output;
+mod output_cli;
 
 use ft8rs::input::{
-    decode_soundcard_streaming_decodes, decode_wav_file_streaming_decodes,
-    infer_start_time_from_path, list_soundcards, FileDecodeOptions, SoundcardFormatInfo,
+    decode_wav_file_streaming_decodes, infer_start_time_from_path, FileDecodeOptions,
 };
 use ft8rs::stream::{DecodeProfile, StreamDecodeConfig};
 use ft8rs::SlotTimestamp;
+use ft8rs_engine::{
+    decode_soundcard_streaming_decodes, list_soundcards, SoundcardDecodeOptions,
+    SoundcardFormatInfo,
+};
 
-use output::udp::UdpConfig;
-use output::Outputs;
+use output::{Outputs, UdpConfig};
 
 const VERSION: &str = env!("FT8RS_VERSION");
 const DX_MONITOR_WATCHDOG_MS: u64 = 12_000;
@@ -238,7 +241,7 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
         config.dx_monitor_watchdog_ms = Some(DX_MONITOR_WATCHDOG_MS);
     }
     decode_soundcard_streaming_decodes(
-        ft8rs::input::SoundcardDecodeOptions {
+        SoundcardDecodeOptions {
             device: args.device,
             config,
             max_slots: args.slots,

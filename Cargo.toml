@@ -1,47 +1,27 @@
-[package]
-name = "ft8rs"
-version = "0.0.0"
-edition = "2021"
-description = "FT8 streaming decoder"
-license = "GPL-3.0"
+[workspace]
+resolver = "2"
+members = [
+    "crates/ft8rs-build",
+    "crates/ft8rs-core",
+    "crates/ft8rs-engine",
+    "crates/ft8rs-cli",
+]
 
-[[bin]]
-name = "ft8rs"
-path = "src/main.rs"
-
-[features]
-default = []
-# Compile-time: default rustfft@3840. Enable fftw for FFTW@3840 validation.
-fftw = []
-
-[profile.release]
 # Performance: cross-crate inlining (thin LTO) + a single codegen unit. These
 # are optimization-only and do not change floating-point semantics, so the
-# byte-identical WSJT-X/JTDX baselines are preserved (re-validated). For a small
-# extra gain at the cost of much slower builds, switch to `lto = true` (fat).
-# Use this profile for the shipped binary and final acceptance runs.
+# byte-identical WSJT-X/JTDX baselines are preserved. Use this profile for the
+# shipped binaries and final acceptance runs.
+[profile.release]
 codegen-units = 1
 lto = "thin"
 
 # Fast iteration profile for the test/debug loop. Keeps `debug-assertions = false`
 # (inherited from release, so `assert_release_mode()` and the decode timing budgets
-# still hold), but trades the shipped binary's last-mile codegen for build speed:
-# `opt-level = 2` instead of 3, no LTO, and many codegen units so the crate compiles
-# in parallel across all cores instead of the serial single-unit + thin-LTO link the
-# release profile pays. Run the suite with `cargo test --profile fast`; opt-level/LTO
-# are optimization-only and do not alter IEEE float semantics, so results match the
-# release binary (the byte-identical baselines pass under either). Use `--release`
-# for the final acceptance run that must match the shipped binary's exact
-# optimization.
+# still hold), but trades the shipped binary's last-mile codegen for build speed.
+# opt-level/LTO are optimization-only and do not alter IEEE float semantics, so
+# results match the release binary. Use `--release` for the final acceptance run.
 [profile.fast]
 inherits = "release"
 opt-level = 2
 lto = false
 codegen-units = 256
-
-[dependencies]
-rustfft = "6"
-hound = "3"
-num-bigint = "0.4"
-clap = { version = "4", features = ["derive"] }
-cpal = "0.15"

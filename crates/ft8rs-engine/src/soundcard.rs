@@ -1,14 +1,13 @@
-use crate::stream::profile::ProfileStreamDecodeSession;
-use crate::stream::session::{DecodeProfile, StreamDecodeConfig};
-use crate::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
+use ft8rs::input::audio::resample_linear;
+use ft8rs::stream::profile::ProfileStreamDecodeSession;
+use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig};
+use ft8rs::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
 
 use cpal::traits::StreamTrait;
 use cpal::traits::{DeviceTrait, HostTrait};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use super::audio::resample_linear;
 
 const TARGET_SAMPLE_RATE: u32 = 12_000;
 const SLOT_SECONDS: u64 = 15;
@@ -431,7 +430,7 @@ where
     }
 }
 
-fn start_input_stream(
+pub(crate) fn start_input_stream(
     selector: Option<&str>,
 ) -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), String> {
     let selector = selector.unwrap_or("default");
@@ -726,17 +725,17 @@ impl<'a> NativeSampleCollector<'a> {
     }
 }
 
-fn native_samples_for_nzhsym(sample_rate: u32, nzhsym: usize) -> usize {
+pub(crate) fn native_samples_for_nzhsym(sample_rate: u32, nzhsym: usize) -> usize {
     let samples_12k = nzhsym * NZHSYM_STRIDE;
     ((samples_12k as u64 * sample_rate as u64) + TARGET_SAMPLE_RATE as u64 - 1) as usize
         / TARGET_SAMPLE_RATE as usize
 }
 
-fn drain_pending_audio(rx: &Receiver<Vec<f32>>) {
+pub(crate) fn drain_pending_audio(rx: &Receiver<Vec<f32>>) {
     while rx.try_recv().is_ok() {}
 }
 
-fn next_slot_start_unix_seconds() -> Result<i64, String> {
+pub(crate) fn next_slot_start_unix_seconds() -> Result<i64, String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|err| format!("system time is before Unix epoch: {err}"))?;
@@ -744,7 +743,7 @@ fn next_slot_start_unix_seconds() -> Result<i64, String> {
     Ok(((now_millis / 15_000) + 1) * 15)
 }
 
-fn sleep_until_unix_seconds(unix_seconds: i64) -> Result<(), String> {
+pub(crate) fn sleep_until_unix_seconds(unix_seconds: i64) -> Result<(), String> {
     let target = UNIX_EPOCH + Duration::from_secs(unix_seconds as u64);
     if let Ok(duration) = target.duration_since(SystemTime::now()) {
         std::thread::sleep(duration);

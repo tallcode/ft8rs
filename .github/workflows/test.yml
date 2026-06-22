@@ -37,13 +37,13 @@ jobs:
           sudo apt-get install -y libasound2-dev libfftw3-dev pkg-config
 
       - name: Run default short stream test
-        run: cargo test --release test_stream_decode_short_audio -- --nocapture
+        run: cargo test --release -p ft8rs-core test_stream_decode_short_audio -- --nocapture
 
       - name: Run default long stream test
-        run: cargo test --release test_stream_decode_long_audio -- --nocapture
+        run: cargo test --release -p ft8rs-core test_stream_decode_long_audio -- --nocapture
 
       - name: Run FFTW short stream test
-        run: cargo test --release --features fftw test_stream_decode_short_audio -- --nocapture
+        run: cargo test --release -p ft8rs-core --features fftw test_stream_decode_short_audio -- --nocapture
 
       - name: Run FFTW long stream test
-        run: cargo test --release --features fftw test_stream_decode_long_audio -- --nocapture
+        run: cargo test --release -p ft8rs-core --features fftw test_stream_decode_long_audio -- --nocapture
