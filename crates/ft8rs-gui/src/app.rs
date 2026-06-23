@@ -12,7 +12,6 @@ use std::time::Duration;
 use eframe::egui::{self, Color32, RichText};
 
 use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance};
-use ft8rs::SlotTimestamp;
 use ft8rs_engine::protocol::{
     DxContextSnapshot, EngineCommand, EngineEvent, EngineStatus, HisgridSource,
 };
@@ -33,12 +32,27 @@ enum SettingsTab {
     Frequency,
     Station,
     Output,
+    Compare,
     Advanced,
+}
+
+/// Where a decode row came from, for the compare-mode coloring.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DecodeSource {
+    Local,
+    External,
+    Both,
 }
 
 struct Row {
     text: String,
     parity: u8,
+    // Merge keys (compare mode): same slot + freq within tolerance + compatible
+    // message tokens identify the same transmission across the two decoders.
+    slot_key: u32,
+    freq: f64,
+    tokens: Vec<String>,
+    source: DecodeSource,
 }
 
 pub struct Ft8rsApp {
@@ -64,6 +78,13 @@ pub struct Ft8rsApp {
     hide_dupes: bool,
     hide_hash: bool,
 
+    // Compare (GUI-only): listen to WSJT-X UDP decodes and merge/dedupe them
+    // with the local decoder's, coloring by source.
+    udp_in_on: bool,
+    udp_in_host: String,
+    udp_in_port: String,
+    udp_in_tol: f64,
+
     devices: Vec<SoundcardDeviceInfo>,
     selected_device: Option<String>, // device name; None = default
 
@@ -88,6 +109,8 @@ pub struct Ft8rsApp {
     last_title: String,
     // The app logo as an egui texture (None if it failed to decode).
     logo: Option<egui::TextureHandle>,
+    // Running WSJT-X UDP listener (compare mode); None when disabled/stopped.
+    udp_in: Option<crate::wsjtx_udp::UdpIn>,
 }
 
 impl Ft8rsApp {
@@ -115,7 +138,9 @@ impl Ft8rsApp {
         let device = load("device", "");
         let profile =
             DecodeProfile::parse(&load("profile", "wsjtx")).unwrap_or(DecodeProfile::Wsjtx);
-        let profile_menu = install_menu(profile);
+        // Native menu bar: macOS via the system menu, Windows via the window's
+        // HWND (Win32 menu bar), Linux falls back to the in-window menu.
+        let profile_menu = install_menu(profile, window_hwnd(cc));
 
         // Decode the embedded logo into a texture for the About dialog.
         let logo = image::load_from_memory(crate::LOGO_PNG).ok().map(|img| {
@@ -144,6 +169,10 @@ impl Ft8rsApp {
             filter: load_bool("filter", false),
             hide_dupes: load_bool("hide_dupes", false),
             hide_hash: load_bool("hide_hash", false),
+            udp_in_on: load_bool("udp_in_on", false),
+            udp_in_host: load("udp_in_host", "127.0.0.1"),
+            udp_in_port: load("udp_in_port", "2237"),
+            udp_in_tol: load("udp_in_tol", "7").trim().parse().unwrap_or(7.0),
             devices: Vec::new(),
             selected_device: (!device.is_empty()).then_some(device),
             status: EngineStatus::Idle,
@@ -160,6 +189,7 @@ impl Ft8rsApp {
             styled_theme: theme,
             last_title: String::new(),
             logo,
+            udp_in: None,
         }
     }
 
@@ -290,11 +320,15 @@ impl Ft8rsApp {
                 EngineEvent::Error(err) => self.error = Some(err),
             }
         }
+        // Compare mode: fold in external (WSJT-X) decodes.
+        while let Some(decode) = self.udp_in.as_ref().and_then(|udp| udp.try_recv()) {
+            self.merge_external(decode);
+        }
     }
 
     fn push_decode(&mut self, record: ft8rs_engine::protocol::DecodeRecord) {
         let ts = record.timestamp;
-        let parity = slot_parity(&ts);
+        let slot_key = ts.milliseconds_since_midnight() / 15_000;
         let row = record.row;
         // Message in a fixed-width column so the provenance tag forms its own
         // trailing column (slot boundaries are shown by the alternating bg).
@@ -307,10 +341,97 @@ impl Ft8rsApp {
             row.msg,
             provenance_tag(record.provenance),
         );
-        self.rows.push(Row { text, parity });
+        self.ingest(slot_key, row.freq, text, norm_tokens(&row.msg), DecodeSource::Local);
+    }
+
+    fn merge_external(&mut self, decode: crate::wsjtx_udp::ExternalDecode) {
+        let slot_key = decode.ms_since_midnight / 15_000;
+        // No provenance column for external decodes (WSJT-X doesn't send one).
+        let body = clean_message(&decode.message);
+        let text = format!(
+            "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
+            format_ms_time(decode.ms_since_midnight),
+            decode.snr,
+            decode.dt,
+            decode.freq,
+            body,
+            "",
+        );
+        self.ingest(
+            slot_key,
+            decode.freq as f64,
+            text,
+            norm_tokens(&decode.message),
+            DecodeSource::External,
+        );
+    }
+
+    /// Merge a decode into the row list. A match (same slot + freq within
+    /// tolerance + compatible message) from the other source upgrades the
+    /// existing row to `Both`; any match keeps the first row (dedupe). No match
+    /// appends a new row.
+    fn ingest(
+        &mut self,
+        slot_key: u32,
+        freq: f64,
+        text: String,
+        tokens: Vec<String>,
+        source: DecodeSource,
+    ) {
+        let tol = self.udp_in_tol;
+        for row in self.rows.iter_mut() {
+            if row.slot_key == slot_key
+                && (row.freq - freq).abs() <= tol
+                && tokens_compatible(&row.tokens, &tokens)
+            {
+                if row.source != source && row.source != DecodeSource::Both {
+                    row.source = DecodeSource::Both;
+                }
+                return; // keep the first row
+            }
+        }
+        let parity = (slot_key % 2) as u8;
+        self.rows.push(Row {
+            text,
+            parity,
+            slot_key,
+            freq,
+            tokens,
+            source,
+        });
         if self.rows.len() > MAX_ROWS {
             let drop = self.rows.len() - MAX_ROWS;
             self.rows.drain(..drop);
+        }
+    }
+
+    /// Start/stop/restart the WSJT-X listener to match the current settings.
+    /// Called every frame; cheap when nothing changed.
+    fn sync_udp_in(&mut self) {
+        if !self.udp_in_on {
+            self.udp_in = None; // drop stops the thread
+            return;
+        }
+        let port: u16 = self.udp_in_port.trim().parse().unwrap_or(2237);
+        let host = self.udp_in_host.trim();
+        let needs_restart = match &self.udp_in {
+            Some(udp) => udp.host != host || udp.port != port,
+            None => true,
+        };
+        if !needs_restart {
+            return;
+        }
+        self.udp_in = None;
+        match crate::wsjtx_udp::UdpIn::spawn(host, port) {
+            Ok(udp) => {
+                self.udp_in = Some(udp);
+                self.error = None;
+            }
+            Err(err) => {
+                // Disable to avoid a per-frame rebind loop; surface the error.
+                self.udp_in_on = false;
+                self.error = Some(err);
+            }
         }
     }
 
@@ -348,8 +469,9 @@ impl Ft8rsApp {
         self.menu_profile_synced = self.profile;
     }
 
-    // Non-macOS in-window menu (macOS uses the native system menu bar).
-    #[cfg(not(target_os = "macos"))]
+    // In-window menu fallback for platforms without a native menu (Linux). macOS
+    // and Windows attach a native menu bar instead.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui.button("Settings").clicked() {
@@ -449,8 +571,12 @@ impl Ft8rsApp {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 let width = ui.available_width();
+                let dark = ui.visuals().dark_mode;
                 let text_color = ui.visuals().text_color();
                 let stripe = ui.visuals().faint_bg_color;
+                // Compare-mode coloring only applies while listening; otherwise
+                // every row is the default color.
+                let comparing = self.udp_in_on;
                 for row in &self.rows {
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
@@ -459,12 +585,17 @@ impl Ft8rsApp {
                     if row.parity == 1 {
                         ui.painter().rect_filled(rect, 0.0, stripe);
                     }
+                    let color = if comparing {
+                        source_color(row.source, dark, text_color)
+                    } else {
+                        text_color
+                    };
                     ui.painter().text(
                         egui::pos2(rect.left() + PAD, rect.center().y),
                         egui::Align2::LEFT_CENTER,
                         &row.text,
                         font.clone(),
-                        text_color,
+                        color,
                     );
                 }
             });
@@ -545,7 +676,9 @@ impl Ft8rsApp {
             egui::ViewportBuilder::default()
                 .with_title("Settings")
                 .with_inner_size([560.0, 400.0])
-                .with_resizable(false),
+                .with_resizable(false)
+                .with_minimize_button(false)
+                .with_maximize_button(false),
             |vctx, _class| {
                 egui::SidePanel::left("settings_tabs")
                     .resizable(false)
@@ -564,6 +697,7 @@ impl Ft8rsApp {
                                     (SettingsTab::Decode, "Decode"),
                                     (SettingsTab::Frequency, "Frequency"),
                                     (SettingsTab::Output, "Output"),
+                                    (SettingsTab::Compare, "Compare"),
                                     (SettingsTab::Advanced, "Advanced"),
                                 ] {
                                     if ui.selectable_label(self.tab == tab, label).clicked() {
@@ -691,6 +825,27 @@ impl Ft8rsApp {
                 commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_host, 160.0));
                 commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_port, 100.0));
             }
+            SettingsTab::Compare => {
+                section_heading(ui, "Compare");
+                commit |= setting_row(ui, "Listen to WSJT-X (UDP)", |ui| {
+                    ui.add(egui::Checkbox::without_text(&mut self.udp_in_on)).changed()
+                });
+                commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_in_host, 160.0));
+                commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_in_port, 100.0));
+                commit |= setting_row(ui, "Match ± Hz", |ui| {
+                    ui.add(egui::DragValue::new(&mut self.udp_in_tol).speed(0.25).range(0.0..=10.0))
+                        .changed()
+                });
+                ui.add_space(10.0);
+                ui.label(RichText::new("Merges WSJT-X decodes with the local ones to compare").weak());
+                ui.label(RichText::new("sensitivity. Color shows the source:").weak());
+                ui.add_space(4.0);
+                let dark = ui.visuals().dark_mode;
+                let default = ui.visuals().text_color();
+                ui.colored_label(source_color(DecodeSource::External, dark, default), "■ only WSJT-X");
+                ui.colored_label(source_color(DecodeSource::Local, dark, default), "■ only ft8.rs");
+                ui.colored_label(default, "■ both decoders");
+            }
             SettingsTab::Advanced => {
                 section_heading(ui, "Advanced");
                 let dx = self.profile == DecodeProfile::Dx;
@@ -788,7 +943,9 @@ impl Ft8rsApp {
             egui::ViewportBuilder::default()
                 .with_title("About ft8.rs")
                 .with_inner_size([320.0, 420.0])
-                .with_resizable(false),
+                .with_resizable(false)
+                .with_minimize_button(false)
+                .with_maximize_button(false),
             |vctx, _class| {
                 egui::CentralPanel::default()
                     .frame(
@@ -861,6 +1018,10 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("filter", bs(self.filter));
         storage.set_string("hide_dupes", bs(self.hide_dupes));
         storage.set_string("hide_hash", bs(self.hide_hash));
+        storage.set_string("udp_in_on", bs(self.udp_in_on));
+        storage.set_string("udp_in_host", self.udp_in_host.clone());
+        storage.set_string("udp_in_port", self.udp_in_port.clone());
+        storage.set_string("udp_in_tol", self.udp_in_tol.to_string());
         storage.set_string(
             "device",
             self.selected_device.clone().unwrap_or_default(),
@@ -875,12 +1036,13 @@ impl eframe::App for Ft8rsApp {
             self.styled_theme = theme;
         }
         self.sync_title(ctx);
+        self.sync_udp_in();
         self.pump_menu();
         self.pump_events();
 
-        // macOS uses the native system menu bar and shows status in the bottom
-        // bar, so no in-window top panel there.
-        #[cfg(not(target_os = "macos"))]
+        // macOS and Windows use a native menu bar; only the fallback platforms
+        // (Linux) get an in-window top menu panel.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu_bar(ui));
         egui::TopBottomPanel::bottom("controls")
             .exact_height(42.0)
@@ -1089,15 +1251,82 @@ fn provenance_tag(provenance: StreamDecodeProvenance) -> &'static str {
     }
 }
 
-/// Slot timing parity for the alternating row background: :00/:30 → 0, :15/:45 → 1.
-fn slot_parity(ts: &SlotTimestamp) -> u8 {
-    ((ts.nutc() % 100 / 15) % 2) as u8
+/// Format a UTC time-of-day given in milliseconds since midnight as `HHMMSS`
+/// (matching `SlotTimestamp::format_time`), for external decode rows.
+fn format_ms_time(ms: u32) -> String {
+    let s = ms / 1000;
+    format!("{:02}{:02}{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
-/// Install the native macOS system menu bar (app menu with About / Settings… /
-/// Quit). The menu is leaked so it lives for the app's lifetime. No-op on other
-/// platforms, which use the in-window buttons instead. Shows best when run as a
-/// `.app` bundle; a bare terminal-launched binary may not display the system bar.
+/// Normalize a decode message for merge matching: drop WSJT-X annotations, then
+/// uppercase the remaining tokens (the actual message body).
+fn norm_tokens(msg: &str) -> Vec<String> {
+    msg.split_whitespace()
+        .filter(|t| !is_annotation(t))
+        .map(|t| t.to_ascii_uppercase())
+        .collect()
+}
+
+/// The message body with WSJT-X trailing annotations removed (for display of
+/// external decodes, so they read like the local ones).
+fn clean_message(msg: &str) -> String {
+    msg.split_whitespace()
+        .filter(|t| !is_annotation(t))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A WSJT-X decode annotation, not part of the message body: `a` + 1-2 digits
+/// (AP type + optional averaging count, lowercase per the decoder) or the `?`
+/// low-confidence marker. FT8 message text is uppercase, so this never matches a
+/// real token (see wsjtx/lib/decoder.f90 and mainwindow.cpp:6907).
+fn is_annotation(token: &str) -> bool {
+    token == "?"
+        || (token.len() >= 2
+            && token.starts_with('a')
+            && token[1..].bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether two normalized messages describe the same transmission, lenient on
+/// hashed-call format: equal token counts and, per position, equal tokens or
+/// either side being a `<...>` hash token (so `<...>` ↔ `<K1ABC>` ↔ a resolved
+/// call all match).
+fn tokens_compatible(a: &[String], b: &[String]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(x, y)| x == y || is_hash_token(x) || is_hash_token(y))
+}
+
+fn is_hash_token(token: &str) -> bool {
+    token.starts_with('<') && token.ends_with('>')
+}
+
+/// Compare-mode row color: external-only = sky, local-only = rose (tailwind,
+/// lighter -300 on dark themes / darker -900 on light), both = default.
+fn source_color(source: DecodeSource, dark: bool, default: Color32) -> Color32 {
+    match source {
+        DecodeSource::Both => default,
+        DecodeSource::External => {
+            if dark {
+                Color32::from_rgb(0x7d, 0xd3, 0xfc) // sky-300
+            } else {
+                Color32::from_rgb(0x0c, 0x4a, 0x6e) // sky-900
+            }
+        }
+        DecodeSource::Local => {
+            if dark {
+                Color32::from_rgb(0xfd, 0xa4, 0xaf) // rose-300
+            } else {
+                Color32::from_rgb(0x88, 0x13, 0x37) // rose-900
+            }
+        }
+    }
+}
+
+/// Profiles shown in the native Profile menu (macOS + Windows). The menu is
+/// leaked so it lives for the app's lifetime; Linux uses the in-window menu.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const MENU_PROFILES: [DecodeProfile; 4] = [
     DecodeProfile::Wsjtx,
     DecodeProfile::Jtdx,
@@ -1105,14 +1334,33 @@ const MENU_PROFILES: [DecodeProfile; 4] = [
     DecodeProfile::Dx,
 ];
 
-#[cfg(target_os = "macos")]
-fn install_menu(initial: DecodeProfile) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
+/// The native main-window handle (HWND) on Windows, used to attach the menu bar.
+/// None on other platforms (and if eframe can't supply a Win32 handle).
+#[cfg(target_os = "windows")]
+fn window_hwnd(cc: &eframe::CreationContext<'_>) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match cc.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn window_hwnd(_cc: &eframe::CreationContext<'_>) -> Option<isize> {
+    None
+}
+
+/// Build the shared muda menu (works on every platform muda supports): an app
+/// menu (About / Settings… / Quit) plus a Profile menu with a checked item per
+/// profile. Returns the menu and the profile items (for checkmark syncing).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn build_menu(
+    initial: DecodeProfile,
+) -> (muda::Menu, Vec<(DecodeProfile, muda::CheckMenuItem)>) {
     use muda::accelerator::Accelerator;
     use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 
     let menu = Menu::new();
-
-    // App menu: About / Settings… / Quit.
     let app_menu = Submenu::new("ft8.rs", true);
     let about = MenuItem::with_id("about", "About", true, None);
     let settings = MenuItem::with_id(
@@ -1130,7 +1378,6 @@ fn install_menu(initial: DecodeProfile) -> Vec<(DecodeProfile, muda::CheckMenuIt
     ]);
     let _ = menu.append(&app_menu);
 
-    // Top-level Profile menu: a checked item per profile for quick switching.
     let profile_menu = Submenu::new("Profile", true);
     let mut items = Vec::new();
     for profile in MENU_PROFILES {
@@ -1145,14 +1392,43 @@ fn install_menu(initial: DecodeProfile) -> Vec<(DecodeProfile, muda::CheckMenuIt
         items.push((profile, item));
     }
     let _ = menu.append(&profile_menu);
+    (menu, items)
+}
 
+#[cfg(target_os = "macos")]
+fn install_menu(
+    initial: DecodeProfile,
+    _hwnd: Option<isize>,
+) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
+    let (menu, items) = build_menu(initial);
     menu.init_for_nsapp();
     std::mem::forget(menu);
     items
 }
 
-#[cfg(not(target_os = "macos"))]
-fn install_menu(_initial: DecodeProfile) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
+#[cfg(target_os = "windows")]
+fn install_menu(
+    initial: DecodeProfile,
+    hwnd: Option<isize>,
+) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
+    let Some(hwnd) = hwnd else {
+        return Vec::new();
+    };
+    let (menu, items) = build_menu(initial);
+    // SAFETY: `hwnd` is the live main-window handle from eframe; muda subclasses
+    // it to host the menu bar and forward WM_COMMAND to MenuEvent::receiver().
+    unsafe {
+        let _ = menu.init_for_hwnd(hwnd);
+    }
+    std::mem::forget(menu);
+    items
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn install_menu(
+    _initial: DecodeProfile,
+    _hwnd: Option<isize>,
+) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
     Vec::new()
 }
 
@@ -1279,4 +1555,48 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     ctx.set_fonts(fonts);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annotation_detection() {
+        for t in ["a1", "a7", "a9", "a72", "a31", "?"] {
+            assert!(is_annotation(t), "{t} should be an annotation");
+        }
+        for t in ["CQ", "A7", "FN42", "K1ABC", "RR73", "73", "R-12", "<...>", "<K1ABC>"] {
+            assert!(!is_annotation(t), "{t} should not be an annotation");
+        }
+    }
+
+    #[test]
+    fn clean_message_drops_annotations() {
+        assert_eq!(clean_message("CQ K1ABC FN42 a7"), "CQ K1ABC FN42");
+        assert_eq!(clean_message("K1ABC W1AW R-12 ? a31"), "K1ABC W1AW R-12");
+        assert_eq!(clean_message("CQ BG5ATV PM00"), "CQ BG5ATV PM00");
+    }
+
+    #[test]
+    fn external_with_annotations_matches_local_body() {
+        let local = norm_tokens("CQ K1ABC FN42");
+        let external = norm_tokens("CQ K1ABC FN42 a7"); // WSJT-X AP marker
+        assert!(tokens_compatible(&local, &external));
+    }
+
+    #[test]
+    fn hashed_calls_match_leniently() {
+        let resolved = norm_tokens("PJ4X K1ABC RR73");
+        let hashed = norm_tokens("<...> K1ABC RR73 a2");
+        assert!(tokens_compatible(&resolved, &hashed));
+    }
+
+    #[test]
+    fn different_messages_do_not_match() {
+        assert!(!tokens_compatible(
+            &norm_tokens("CQ K1ABC FN42"),
+            &norm_tokens("CQ W1AW EM73"),
+        ));
+    }
 }
