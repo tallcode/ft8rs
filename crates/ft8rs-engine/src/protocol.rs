@@ -32,7 +32,7 @@ pub enum EngineCommand {
     Shutdown,
 }
 
-/// Which staged decode produced a row (GUI_PLAN.md §4, decision 12). The wsjtx
+/// Which staged decode produced a row (decision 12). The wsjtx
 /// profile emits early partial decodes before the slot ends; other profiles
 /// produce only `Final`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +89,7 @@ pub struct DxContextSnapshot {
 }
 
 /// Migration payload exported from a session before a rebuild and imported into
-/// the new one (GUI_PLAN.md §5.3). Today only hash calls are provably safe to
+/// the new one. Today only hash calls are provably safe to
 /// migrate without touching `lib_*`; deeper buckets (A7/AP/evidence, DX intel)
 /// are added here as the contract grows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

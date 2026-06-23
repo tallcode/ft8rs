@@ -7,15 +7,6 @@ use crate::stream::session::{
 };
 use crate::stream::time::SlotTimestamp;
 
-fn as_regular(rows: Vec<StreamDecodedMessage>) -> Vec<StreamDecodedWithProvenance> {
-    rows.into_iter()
-        .map(|decode| StreamDecodedWithProvenance {
-            decode,
-            provenance: StreamDecodeProvenance::Regular,
-        })
-        .collect()
-}
-
 #[allow(clippy::large_enum_variant)]
 pub enum ProfileStreamDecodeSession {
     Wsjtx(StreamDecodeSession),
@@ -39,8 +30,8 @@ impl ProfileStreamDecodeSession {
     }
 
     /// Seed the learned hash-call book of the underlying session. Used by the
-    /// live engine to migrate hash calls across a session rebuild (GUI_PLAN.md
-    /// §5.3). Hybrid manages its own shared hash book and DX seeds from the
+    /// live engine to migrate hash calls across a session rebuild. Hybrid
+    /// manages its own shared hash book and DX seeds from the
     /// target calls, so both are no-ops here.
     pub fn import_hash_calls(&mut self, calls: &[String]) {
         match self {
@@ -84,27 +75,69 @@ impl ProfileStreamDecodeSession {
         }
     }
 
-    /// Decode a slot, returning rows tagged with provenance (for the GUI's
-    /// `a7`/AP marker). wsjtx and jtdx carry real provenance; hybrid and dx fall
-    /// back to `Regular` (their unified path does not surface per-row provenance).
-    pub fn decode_slot_streaming_with_provenance_at(
+    /// Decode a slot, invoking `on_decode` per row (with provenance for the GUI's
+    /// `a7`/AP marker) and returning the row count.
+    ///
+    /// Hybrid and DX **stream** rows as produced — the WSJT-X pass emits first,
+    /// then the JTDX deep pass — so the front-end shows early decodes without
+    /// waiting for the slow pass to finish (their provenance is `Regular`, the
+    /// unified path doesn't surface per-row provenance). wsjtx and jtdx carry
+    /// real provenance and emit their batch (jtdx has no early sub-results to
+    /// stream, so this costs no latency).
+    pub fn decode_slot_streaming_with_provenance_at<F>(
         &mut self,
         timestamp: &SlotTimestamp,
         samples: &[f32],
-    ) -> Result<Vec<StreamDecodedWithProvenance>, String> {
+        mut on_decode: F,
+    ) -> Result<usize, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
         match self {
             Self::Wsjtx(session) => {
-                session.decode_slot_streaming_with_provenance_at(timestamp, samples, |_| Ok(()))
+                let rows = session.decode_slot_streaming_with_provenance_at(
+                    timestamp,
+                    samples,
+                    |_| Ok(()),
+                )?;
+                for row in &rows {
+                    on_decode(row)?;
+                }
+                Ok(rows.len())
             }
             Self::Jtdx(session) => {
-                session.decode_slot_streaming_with_provenance_at(timestamp, samples, |_| Ok(()))
+                let rows = session.decode_slot_streaming_with_provenance_at(
+                    timestamp,
+                    samples,
+                    |_| Ok(()),
+                )?;
+                for row in &rows {
+                    on_decode(row)?;
+                }
+                Ok(rows.len())
             }
-            Self::Hybrid(session) => Ok(as_regular(
-                session.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))?,
-            )),
-            Self::Dx(session) => Ok(as_regular(
-                session.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))?,
-            )),
+            Self::Hybrid(session) => {
+                let mut count = 0usize;
+                session.decode_slot_streaming_at(timestamp, samples, |decode| {
+                    count += 1;
+                    on_decode(&StreamDecodedWithProvenance {
+                        decode: decode.clone(),
+                        provenance: StreamDecodeProvenance::Regular,
+                    })
+                })?;
+                Ok(count)
+            }
+            Self::Dx(session) => {
+                let mut count = 0usize;
+                session.decode_slot_streaming_at(timestamp, samples, |decode| {
+                    count += 1;
+                    on_decode(&StreamDecodedWithProvenance {
+                        decode: decode.clone(),
+                        provenance: StreamDecodeProvenance::Regular,
+                    })
+                })?;
+                Ok(count)
+            }
         }
     }
 

@@ -111,6 +111,11 @@ pub struct Ft8rsApp {
     logo: Option<egui::TextureHandle>,
     // Running WSJT-X UDP listener (compare mode); None when disabled/stopped.
     udp_in: Option<crate::wsjtx_udp::UdpIn>,
+    // Windows: HWND awaiting menu attachment on the first frame (deferred so the
+    // native menu's client-area resize is processed inside the running event
+    // loop, avoiding a black strip). Taken once, then None.
+    #[cfg(target_os = "windows")]
+    pending_menu_hwnd: Option<isize>,
 }
 
 impl Ft8rsApp {
@@ -138,9 +143,14 @@ impl Ft8rsApp {
         let device = load("device", "");
         let profile =
             DecodeProfile::parse(&load("profile", "wsjtx")).unwrap_or(DecodeProfile::Wsjtx);
-        // Native menu bar: macOS via the system menu, Windows via the window's
-        // HWND (Win32 menu bar), Linux falls back to the in-window menu.
-        let profile_menu = install_menu(profile, window_hwnd(cc));
+        // Native menu bar: macOS via the system menu (attached now), Windows via
+        // the window's HWND (deferred to the first frame), Linux falls back to
+        // the in-window menu.
+        let hwnd = window_hwnd(cc);
+        #[cfg(target_os = "windows")]
+        let profile_menu: Vec<(DecodeProfile, muda::CheckMenuItem)> = Vec::new();
+        #[cfg(not(target_os = "windows"))]
+        let profile_menu = install_menu(profile, hwnd);
 
         // Decode the embedded logo into a texture for the About dialog.
         let logo = image::load_from_memory(crate::LOGO_PNG).ok().map(|img| {
@@ -190,6 +200,8 @@ impl Ft8rsApp {
             last_title: String::new(),
             logo,
             udp_in: None,
+            #[cfg(target_os = "windows")]
+            pending_menu_hwnd: hwnd,
         }
     }
 
@@ -1036,6 +1048,12 @@ impl eframe::App for Ft8rsApp {
             self.styled_theme = theme;
         }
         self.sync_title(ctx);
+        // Windows: attach the native menu on the first frame (see the field doc).
+        #[cfg(target_os = "windows")]
+        if let Some(hwnd) = self.pending_menu_hwnd.take() {
+            self.profile_menu = install_menu(self.profile, Some(hwnd));
+            self.menu_profile_synced = self.profile;
+        }
         self.sync_udp_in();
         self.pump_menu();
         self.pump_events();
@@ -1350,15 +1368,37 @@ fn window_hwnd(_cc: &eframe::CreationContext<'_>) -> Option<isize> {
     None
 }
 
-/// Build the shared muda menu (works on every platform muda supports): an app
-/// menu (About / Settings… / Quit) plus a Profile menu with a checked item per
-/// profile. Returns the menu and the profile items (for checkmark syncing).
+/// The "Profile" submenu with a checked item per profile. Shared by both menu
+/// layouts; returns the submenu plus the items for checkmark syncing.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn build_menu(
+fn build_profile_submenu(
     initial: DecodeProfile,
-) -> (muda::Menu, Vec<(DecodeProfile, muda::CheckMenuItem)>) {
+) -> (muda::Submenu, Vec<(DecodeProfile, muda::CheckMenuItem)>) {
+    use muda::{CheckMenuItem, Submenu};
+    let profile_menu = Submenu::new("Profile", true);
+    let mut items = Vec::new();
+    for profile in MENU_PROFILES {
+        let item = CheckMenuItem::with_id(
+            format!("profile:{}", profile.as_str()),
+            profile.as_str(),
+            true,
+            profile == initial,
+            None,
+        );
+        let _ = profile_menu.append(&item);
+        items.push((profile, item));
+    }
+    (profile_menu, items)
+}
+
+/// macOS layout: an app menu ("ft8.rs" → About / Settings… / Quit) plus Profile.
+#[cfg(target_os = "macos")]
+fn install_menu(
+    initial: DecodeProfile,
+    _hwnd: Option<isize>,
+) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
     use muda::accelerator::Accelerator;
-    use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+    use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 
     let menu = Menu::new();
     let app_menu = Submenu::new("ft8.rs", true);
@@ -1378,43 +1418,34 @@ fn build_menu(
     ]);
     let _ = menu.append(&app_menu);
 
-    let profile_menu = Submenu::new("Profile", true);
-    let mut items = Vec::new();
-    for profile in MENU_PROFILES {
-        let item = CheckMenuItem::with_id(
-            format!("profile:{}", profile.as_str()),
-            profile.as_str(),
-            true,
-            profile == initial,
-            None,
-        );
-        let _ = profile_menu.append(&item);
-        items.push((profile, item));
-    }
+    let (profile_menu, items) = build_profile_submenu(initial);
     let _ = menu.append(&profile_menu);
-    (menu, items)
-}
 
-#[cfg(target_os = "macos")]
-fn install_menu(
-    initial: DecodeProfile,
-    _hwnd: Option<isize>,
-) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
-    let (menu, items) = build_menu(initial);
     menu.init_for_nsapp();
     std::mem::forget(menu);
     items
 }
 
+/// Windows layout: three top-level items side by side — Settings, Profile, About
+/// (Windows has no app menu concept; Quit is the title-bar close button).
 #[cfg(target_os = "windows")]
 fn install_menu(
     initial: DecodeProfile,
     hwnd: Option<isize>,
 ) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
+    use muda::{Menu, MenuItem};
+
     let Some(hwnd) = hwnd else {
         return Vec::new();
     };
-    let (menu, items) = build_menu(initial);
+    let menu = Menu::new();
+    let settings = MenuItem::with_id("settings", "Settings", true, None);
+    let about = MenuItem::with_id("about", "About", true, None);
+    let (profile_menu, items) = build_profile_submenu(initial);
+    let _ = menu.append(&settings);
+    let _ = menu.append(&profile_menu);
+    let _ = menu.append(&about);
+
     // SAFETY: `hwnd` is the live main-window handle from eframe; muda subclasses
     // it to host the menu bar and forward WM_COMMAND to MenuEvent::receiver().
     unsafe {

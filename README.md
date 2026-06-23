@@ -205,8 +205,13 @@ E     -> excluded row
 
 ## Developer Notes
 
-- WSJT-X alignment notes are in `WSJTX.md`.
-- JTDX alignment notes are in `JTDX.md`.
-- Hybrid result-union notes are in `HYBRID.md`.
-- DX chase profile notes are in `DX.md`.
+- Decoder notes live with the decode core in `crates/ft8rs-core/`:
+  - WSJT-X alignment: `crates/ft8rs-core/WSJTX.md`
+  - JTDX alignment: `crates/ft8rs-core/JTDX.md`
+  - Hybrid result-union: `crates/ft8rs-core/HYBRID.md`
+  - DX chase profile: `crates/ft8rs-core/DX.md`
+- Manual acceptance gates (`#[ignore]`d, e.g. `hybrid == 465`, weak DX recovery)
+  are calibrated against the 2022 callsign snapshot. Run them with the calibrated
+  DB via `./scripts/acceptance-gates.sh` (the shipped `ALLCALL7.TXT` is newer and
+  can shift the very weakest DX decode).
 - License: GPL-3.0.
