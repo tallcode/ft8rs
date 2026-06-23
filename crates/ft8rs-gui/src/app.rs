@@ -86,6 +86,8 @@ pub struct Ft8rsApp {
     styled_theme: egui::Theme,
     // Last window title pushed to the OS (only re-sent when it changes).
     last_title: String,
+    // The app logo as an egui texture (None if it failed to decode).
+    logo: Option<egui::TextureHandle>,
 }
 
 impl Ft8rsApp {
@@ -114,6 +116,15 @@ impl Ft8rsApp {
         let profile =
             DecodeProfile::parse(&load("profile", "wsjtx")).unwrap_or(DecodeProfile::Wsjtx);
         let profile_menu = install_menu(profile);
+
+        // Decode the embedded logo into a texture for the About dialog.
+        let logo = image::load_from_memory(crate::LOGO_PNG).ok().map(|img| {
+            let img = img.to_rgba8();
+            let size = [img.width() as usize, img.height() as usize];
+            let color = egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw());
+            cc.egui_ctx
+                .load_texture("logo", color, egui::TextureOptions::LINEAR)
+        });
 
         Self {
             engine,
@@ -148,6 +159,7 @@ impl Ft8rsApp {
             menu_profile_synced: profile,
             styled_theme: theme,
             last_title: String::new(),
+            logo,
         }
     }
 
@@ -525,35 +537,24 @@ impl Ft8rsApp {
             return;
         }
         let mut commit = false;
-        let mut keep_open = true;
-        egui::Window::new("settings")
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .fixed_size(egui::vec2(420.0, 340.0))
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                // One notch smaller font + tighter spacing so the dialog stays
-                // compact and fits the minimum window.
-                ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
-                ui.spacing_mut().item_spacing.y = 5.0;
-                ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-                // Own header (no OS-style title bar): close button, top-right.
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Settings").size(14.0).strong());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if close_button(ui).clicked() {
-                            keep_open = false;
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(6.0);
-                ui.horizontal_top(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width(104.0);
-                        // Full-width, left-aligned tab rows.
+        let mut close = false;
+        // A real OS window (own viewport), fixed size, native title bar. The tabs
+        // live in a left SidePanel whose edge separator spans the full height.
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("settings"),
+            egui::ViewportBuilder::default()
+                .with_title("Settings")
+                .with_inner_size([560.0, 400.0])
+                .with_resizable(false),
+            |vctx, _class| {
+                egui::SidePanel::left("settings_tabs")
+                    .resizable(false)
+                    .exact_width(150.0)
+                    .frame(
+                        egui::Frame::side_top_panel(&vctx.style())
+                            .inner_margin(egui::Margin::symmetric(12.0, 14.0)),
+                    )
+                    .show(vctx, |ui| {
                         ui.with_layout(
                             egui::Layout::top_down_justified(egui::Align::LEFT),
                             |ui| {
@@ -572,16 +573,20 @@ impl Ft8rsApp {
                             },
                         );
                     });
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    ui.vertical(|ui| {
-                        ui.set_min_width(250.0);
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::central_panel(&vctx.style())
+                            .inner_margin(egui::Margin::symmetric(18.0, 14.0)),
+                    )
+                    .show(vctx, |ui| {
                         commit = self.settings_tab_ui(ui);
                     });
-                });
-            });
-        if !keep_open {
+                if vctx.input(|i| i.viewport().close_requested()) {
+                    close = true;
+                }
+            },
+        );
+        if close {
             self.settings_open = false;
         }
         if commit {
@@ -775,30 +780,63 @@ impl Ft8rsApp {
         if !self.about_open {
             return;
         }
-        let mut keep_open = true;
-        egui::Window::new("about")
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("About").size(15.0).strong());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if close_button(ui).clicked() {
-                            keep_open = false;
+        let mut close = false;
+        let logo = self.logo.clone();
+        // A real OS window (own viewport) with a native title bar.
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("about"),
+            egui::ViewportBuilder::default()
+                .with_title("About ft8.rs")
+                .with_inner_size([320.0, 420.0])
+                .with_resizable(false),
+            |vctx, _class| {
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::central_panel(&vctx.style())
+                            .inner_margin(egui::Margin::symmetric(22.0, 14.0)),
+                    )
+                    .show(vctx, |ui| {
+                    ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.add_space(10.0);
+                    ui.vertical_centered(|ui| {
+                        if let Some(tex) = &logo {
+                            ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                tex.id(),
+                                egui::vec2(80.0, 80.0),
+                            )));
+                            ui.add_space(6.0);
                         }
+                        ui.label(RichText::new("ft8.rs").size(18.0).strong());
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(format!("Version {}", env!("FT8RS_VERSION"))).weak(),
+                        );
+                        ui.label(
+                            RichText::new(format!("FFT engine: {}", ft8rs::fft_engine_name()))
+                                .weak(),
+                        );
+                        ui.label(RichText::new("License: GPL-3.0").weak());
                     });
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Acknowledgements").strong());
+                    ui.add_space(4.0);
+                    ui.label("• WSJT-X — original FT8 decoder");
+                    ui.label("• JTDX — deep-decode improvements");
+                    ui.label("• RustFFT — FFT engine");
+                    ui.label("• egui / eframe — user interface");
+                    ui.label("• cpal — audio capture");
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Thanks to the amateur-radio community.").weak());
                 });
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(8.0);
-                ui.label(RichText::new("ft8.rs").strong());
-                ui.label(format!("Version: {}", env!("FT8RS_VERSION")));
-                ui.label(format!("FFT engine: {}", ft8rs::fft_engine_name()));
-                ui.label("License: GPL-3.0");
-            });
-        if !keep_open {
+                if vctx.input(|i| i.viewport().close_requested()) {
+                    close = true;
+                }
+            },
+        );
+        if close {
             self.about_open = false;
         }
     }
@@ -995,13 +1033,6 @@ fn sanitize_grid(input: &str) -> String {
         }
     }
     out
-}
-
-/// A frameless close button using a glyph present in the default fonts (the
-/// fancy ✕ renders as tofu in the monospace/CJK fallback). Kept compact so the
-/// dialog header stays short.
-fn close_button(ui: &mut egui::Ui) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new("×").size(20.0)).frame(false))
 }
 
 /// A bold section heading for the settings content pane.

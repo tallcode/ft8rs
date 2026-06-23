@@ -55,10 +55,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config
 
-      - name: Build default release binary
+      - name: Build CLI release binary
         env:
           FT8RS_RELEASE_TAG: ${{ github.ref_name }}
         run: cargo build --release -p ft8rs-cli
+
+      # The GUI is shipped on Windows this phase (macOS is built locally; Linux
+      # GUI packaging is out of scope).
+      - name: Build GUI release binary (Windows)
+        if: runner.os == 'Windows'
+        env:
+          FT8RS_RELEASE_TAG: ${{ github.ref_name }}
+        run: cargo build --release -p ft8rs-gui
 
       - name: Package Unix release
         if: runner.os != 'Windows'
@@ -79,9 +87,17 @@ jobs:
           $pkg = "${{ matrix.package_name }}"
           New-Item -ItemType Directory -Force -Path "dist\$pkg" | Out-Null
           Copy-Item "target\release\${{ matrix.binary_name }}" "dist\$pkg\"
+          Copy-Item "target\release\ft8rs-gui.exe" "dist\$pkg\"
           Copy-Item "crates\ft8rs-core\ALLCALL7.TXT" "dist\$pkg\"
-          "Run .\ft8rs.exe from this directory. Keep ALLCALL7.TXT next to the binary for JTDX callsign filtering. This build uses rustfft@3840 and has no FFTW runtime dependency." |
-            Out-File -FilePath "dist\$pkg\README.txt" -Encoding utf8
+          @"
+          ft8.rs — FT8 decoder
+
+          - ft8rs-gui.exe  : graphical live monitor (double-click to run)
+          - ft8rs.exe      : command-line decoder (file + monitor modes)
+
+          Keep ALLCALL7.TXT next to the binaries for JTDX callsign filtering.
+          This build uses rustfft@3840 and has no FFTW runtime dependency.
+          "@ | Out-File -FilePath "dist\$pkg\README.txt" -Encoding utf8
           Compress-Archive -Path "dist\$pkg" -DestinationPath "${{ matrix.artifact_name }}" -Force
 
       - name: Upload packaged binary
@@ -115,10 +131,10 @@ jobs:
             Release built from `${{ github.sha }}`.
 
             Assets use the default rustfft@3840 backend and have no FFTW runtime dependency:
-            - `ft8rs-linux-x86_64.tar.gz`
-            - `ft8rs-windows-x86_64.zip`
+            - `ft8rs-linux-x86_64.tar.gz` — CLI
+            - `ft8rs-windows-x86_64.zip` — GUI (`ft8rs-gui.exe`) + CLI (`ft8rs.exe`)
 
-            `ALLCALL7.TXT` is bundled next to the binary for JTDX profile
+            `ALLCALL7.TXT` is bundled next to the binaries for JTDX profile
             callsign filtering and can be updated in place.
 
             macOS release packaging is temporarily disabled while hosted runner
