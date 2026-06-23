@@ -164,11 +164,10 @@ pub fn plan_reconfig(old: &EngineState, new: &EngineState) -> ReconfigOutcome {
                 out.reset.insert(StateBucket::DxOperator);
                 out.confirm_required = true;
             }
-            // Changing the operator call should only reset S5; but until
-            // FrequencyOrigin lands (P4, §6.5) the store cannot separate
-            // mycall-derived candidates, so we conservatively reset both.
+            // Changing the operator call resets only S5 (mycall-derived intel);
+            // FrequencyOrigin lets the DX store keep target-derived candidates,
+            // the observed parity, and the harvested grid (§6.5).
             if changed.contains(&ConfigField::MyCall) {
-                out.reset.insert(StateBucket::DxTarget);
                 out.reset.insert(StateBucket::DxOperator);
             }
         }
@@ -326,8 +325,8 @@ mod tests {
         let out = plan_reconfig(&old, &new);
         assert!(out.rebuild_session);
         assert!(!out.confirm_required);
-        // Conservative until FrequencyOrigin (P4): both DX buckets reset.
-        assert!(out.reset.contains(&StateBucket::DxTarget));
+        // FrequencyOrigin lets us keep target intel (S4); only S5 resets.
+        assert!(!out.reset.contains(&StateBucket::DxTarget));
         assert!(out.reset.contains(&StateBucket::DxOperator));
     }
 

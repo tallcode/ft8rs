@@ -7,9 +7,9 @@ use app::Ft8rsApp;
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 760.0])
-            .with_min_inner_size([720.0, 480.0])
-            .with_title("ft8rs"),
+            .with_inner_size([820.0, 760.0])
+            .with_min_inner_size([480.0, 440.0])
+            .with_title("FT8.RS"),
         ..Default::default()
     };
     eframe::run_native(

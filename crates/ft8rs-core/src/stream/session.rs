@@ -524,6 +524,31 @@ impl StreamDecodeSession {
         self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
     }
 
+    /// Staged early decode that returns the early rows with provenance (for the
+    /// live GUI's `a7`/AP marker). Mirrors `decode_slot_nzhsym41_at` but yields
+    /// the accumulated provenance instead of emitting via a callback.
+    pub fn decode_slot_nzhsym41_with_provenance_at(
+        &mut self,
+        timestamp: Option<&SlotTimestamp>,
+        state: &mut StreamSlotDecodeState,
+        samples: &[f32],
+    ) -> Result<Vec<StreamDecodedWithProvenance>, String> {
+        self.decode_slot_nzhsym41_at(timestamp, state, samples, |_| Ok(()))?;
+        Ok(state.provenance.clone())
+    }
+
+    /// Final staged decode returning ALL slot rows with provenance (early rows
+    /// first, then the new ones). The caller emits the suffix after the early
+    /// count it already showed at nzhsym=41.
+    pub fn decode_slot_nzhsym50_and_finish_with_provenance(
+        &mut self,
+        mut state: StreamSlotDecodeState,
+        samples: &[f32],
+    ) -> Result<Vec<StreamDecodedWithProvenance>, String> {
+        self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, |_| Ok(()))?;
+        Ok(state.provenance)
+    }
+
     fn decode_slot_nzhsym50_and_finish_state<F>(
         &mut self,
         state: &mut StreamSlotDecodeState,

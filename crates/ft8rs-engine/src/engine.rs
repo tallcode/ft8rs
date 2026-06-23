@@ -25,14 +25,16 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ft8rs::input::audio::resample_linear;
 use ft8rs::stream::profile::ProfileStreamDecodeSession;
 use ft8rs::stream::session::{
-    DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage,
+    DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedWithProvenance,
     StreamSlotDecodeState,
 };
-use ft8rs::stream::session::StreamDecodeProvenance;
 use ft8rs::SlotTimestamp;
 
-use crate::protocol::{DecodeRecord, DecodeStage, EngineCommand, EngineEvent, EngineStatus};
-use crate::reconfig::{plan_reconfig, EngineState};
+use crate::protocol::{
+    DecodeRecord, DecodeStage, DxContextSnapshot, EngineCommand, EngineEvent, EngineStatus,
+    HisgridSource,
+};
+use crate::reconfig::{plan_reconfig, EngineState, StateBucket};
 use crate::report::{UdpConfig, UdpOutput};
 use crate::soundcard::{
     drain_pending_audio, list_soundcards, native_samples_for_nzhsym, next_slot_start_unix_seconds,
@@ -117,6 +119,8 @@ enum Flow {
     Ready,
     Stop,
     Shutdown,
+    /// The capture stream died (device unplugged / timed out): try to reconnect.
+    CaptureLost,
 }
 
 fn run_monitor(
@@ -152,7 +156,7 @@ fn run_monitor(
     let mut slot_index: i64 = 0;
     let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
 
-    loop {
+    'monitor: loop {
         let timestamp = SlotTimestamp::from_unix_seconds_utc(slot_start + slot_index * 15);
         let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 8);
         let mut native: Vec<f32> = Vec::new();
@@ -182,6 +186,51 @@ fn run_monitor(
                     drop(stream);
                     return MonitorExit::Shutdown;
                 }
+                Flow::CaptureLost => {
+                    drop(stream);
+                    match reconnect_capture(
+                        cmd_rx,
+                        event_tx,
+                        state.device.as_deref(),
+                        &mut pending,
+                    ) {
+                        Reconnect::Ok(parts) => {
+                            stream = parts.0;
+                            rx = parts.1;
+                            sample_rate = parts.2;
+                            let _ = event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
+                            slot_start = match align(cmd_rx, event_tx, &mut pending) {
+                                AlignResult::Ready(start) => start,
+                                AlignResult::Stop => return teardown(dec_cmd_tx, stream),
+                                AlignResult::Shutdown => {
+                                    let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                                    drop(stream);
+                                    return MonitorExit::Shutdown;
+                                }
+                            };
+                            drain_pending_audio(&rx);
+                            carry.clear();
+                            slot_index = 0;
+                            let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
+                            continue 'monitor;
+                        }
+                        Reconnect::Stop => {
+                            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                            return MonitorExit::Stopped;
+                        }
+                        Reconnect::Shutdown => {
+                            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                            return MonitorExit::Shutdown;
+                        }
+                        Reconnect::Failed => {
+                            let _ = event_tx.send(EngineEvent::Error(
+                                "audio device unavailable; monitoring stopped".to_string(),
+                            ));
+                            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                            return MonitorExit::Stopped;
+                        }
+                    }
+                }
             }
             let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
             if dec_cmd_tx
@@ -206,7 +255,11 @@ fn run_monitor(
                 udp = build_udp(new_state.udp.as_ref(), event_tx);
             }
             if outcome.rebuild_session {
-                let _ = dec_cmd_tx.send(DecodeCmd::Reconfigure(effective_config(&new_state.config)));
+                let _ = dec_cmd_tx.send(DecodeCmd::Reconfigure {
+                    config: effective_config(&new_state.config),
+                    reset_dx_target: outcome.reset.contains(&StateBucket::DxTarget),
+                    reset_dx_operator: outcome.reset.contains(&StateBucket::DxOperator),
+                });
             }
             let mut restarted = false;
             if outcome.restart_capture {
@@ -265,6 +318,41 @@ enum AlignResult {
     Shutdown,
 }
 
+enum Reconnect {
+    Ok((cpal::Stream, Receiver<Vec<f32>>, u32)),
+    Stop,
+    Shutdown,
+    Failed,
+}
+
+/// Try to reopen the capture device after it was lost, keeping the decode actor
+/// (and its session/DX intel) alive. Polls commands between attempts so Stop /
+/// Shutdown stay responsive; gives up after a bounded number of tries.
+fn reconnect_capture(
+    cmd_rx: &Receiver<EngineCommand>,
+    event_tx: &Sender<EngineEvent>,
+    device: Option<&str>,
+    pending: &mut Option<EngineState>,
+) -> Reconnect {
+    let _ = event_tx.send(EngineEvent::Error(
+        "audio device lost; reconnecting…".to_string(),
+    ));
+    for attempt in 0..30 {
+        match drain_commands(cmd_rx, event_tx, pending) {
+            CmdFlow::Continue => {}
+            CmdFlow::Stop => return Reconnect::Stop,
+            CmdFlow::Shutdown => return Reconnect::Shutdown,
+        }
+        if let Ok(parts) = start_input_stream(device) {
+            return Reconnect::Ok(parts);
+        }
+        if attempt + 1 < 30 {
+            thread::sleep(Duration::from_millis(400));
+        }
+    }
+    Reconnect::Failed
+}
+
 /// Sleep (interruptibly) until the next UTC slot boundary, returning its unix
 /// second. Polls the command channel so Stop/Shutdown stay responsive.
 fn align(
@@ -314,20 +402,14 @@ fn pump_until(
         }
         let now = Instant::now();
         if now >= deadline {
-            let _ = event_tx.send(EngineEvent::Error(
-                "timed out collecting soundcard slot".to_string(),
-            ));
-            return Flow::Stop;
+            // No audio for a whole slot+: treat the capture as lost and reconnect.
+            return Flow::CaptureLost;
         }
         let timeout = deadline.saturating_duration_since(now).min(POLL);
         match rx.recv_timeout(timeout) {
             Ok(chunk) => append_with_carry(out, carry, target_len, chunk),
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => {
-                let _ = event_tx
-                    .send(EngineEvent::Error("soundcard input stopped".to_string()));
-                return Flow::Stop;
-            }
+            Err(RecvTimeoutError::Disconnected) => return Flow::CaptureLost,
         }
     }
     forward_decode_events(dec_evt_rx, event_tx, udp);
@@ -448,7 +530,11 @@ enum DecodeCmd {
         timestamp: SlotTimestamp,
         samples_12k: Vec<f32>,
     },
-    Reconfigure(StreamDecodeConfig),
+    Reconfigure {
+        config: StreamDecodeConfig,
+        reset_dx_target: bool,
+        reset_dx_operator: bool,
+    },
     Stop,
 }
 
@@ -468,6 +554,26 @@ fn build_session(config: &StreamDecodeConfig) -> DecodeSession {
     }
 }
 
+/// Rebuild the decode session for a new config, carrying forward DX intel where
+/// valid (dx → dx). wsjtx uses the staged session; everything else the unified
+/// one. The DX carry-over honors the reconfig plan's reset flags.
+fn reconfigure_session(
+    old: DecodeSession,
+    config: StreamDecodeConfig,
+    reset_dx_target: bool,
+    reset_dx_operator: bool,
+) -> DecodeSession {
+    if config.profile == DecodeProfile::Wsjtx {
+        return DecodeSession::Wsjtx(StreamDecodeSession::new(config));
+    }
+    match old {
+        DecodeSession::Profile(profile) => {
+            DecodeSession::Profile(profile.reconfigure(config, reset_dx_target, reset_dx_operator))
+        }
+        DecodeSession::Wsjtx(_) => DecodeSession::Profile(ProfileStreamDecodeSession::new(config)),
+    }
+}
+
 fn export_hash(session: &DecodeSession) -> Vec<String> {
     match session {
         DecodeSession::Wsjtx(s) => s.export_regular_hash_calls(),
@@ -482,22 +588,35 @@ fn import_hash(session: &mut DecodeSession, calls: &[String]) {
     }
 }
 
-fn emit_decode(
+fn map_dx_snapshot(snapshot: ft8rs::decode::dx::DxSnapshot) -> DxContextSnapshot {
+    use ft8rs::decode::dx::HisgridSource as Core;
+    let hisgrid_source = match snapshot.hisgrid_source {
+        Core::None => None,
+        Core::User => Some(HisgridSource::User),
+        Core::Harvested => Some(HisgridSource::Harvested),
+    };
+    DxContextSnapshot {
+        target: snapshot.target,
+        foci: snapshot.foci,
+        tx_parity: snapshot.tx_parity,
+        hisgrid: snapshot.hisgrid,
+        hisgrid_source,
+        dt: snapshot.dt,
+    }
+}
+
+fn send_record(
     evt_tx: &Sender<EngineEvent>,
     timestamp: &SlotTimestamp,
-    row: &StreamDecodedMessage,
+    row: &StreamDecodedWithProvenance,
     stage: DecodeStage,
-) -> Result<(), String> {
-    evt_tx
-        .send(EngineEvent::Decode(DecodeRecord {
-            timestamp: timestamp.clone(),
-            row: row.clone(),
-            // P2: provenance plumbing for the `a7`/AP marker lands later; until
-            // then every row is reported as Regular.
-            provenance: StreamDecodeProvenance::Regular,
-            stage,
-        }))
-        .map_err(|err| err.to_string())
+) {
+    let _ = evt_tx.send(EngineEvent::Decode(DecodeRecord {
+        timestamp: timestamp.clone(),
+        row: row.decode.clone(),
+        provenance: row.provenance,
+        stage,
+    }));
 }
 
 fn spawn_decode_actor(
@@ -511,14 +630,19 @@ fn spawn_decode_actor(
 
 fn decode_actor(config: StreamDecodeConfig, cmd_rx: Receiver<DecodeCmd>, evt_tx: Sender<EngineEvent>) {
     let mut session = build_session(&config);
-    let mut slot_state: Option<StreamSlotDecodeState> = None;
+    // wsjtx staged state plus the count of early rows already emitted at nzhsym=41.
+    let mut slot_state: Option<(StreamSlotDecodeState, usize)> = None;
 
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
             DecodeCmd::Stop => break,
-            DecodeCmd::Reconfigure(new_config) => {
+            DecodeCmd::Reconfigure {
+                config,
+                reset_dx_target,
+                reset_dx_operator,
+            } => {
                 let calls = export_hash(&session);
-                session = build_session(&new_config);
+                session = reconfigure_session(session, config, reset_dx_target, reset_dx_operator);
                 import_hash(&mut session, &calls);
                 slot_state = None;
             }
@@ -529,33 +653,37 @@ fn decode_actor(config: StreamDecodeConfig, cmd_rx: Receiver<DecodeCmd>, evt_tx:
             } => match (&mut session, stage) {
                 (DecodeSession::Wsjtx(s), Stage::N41) => {
                     let mut state = s.start_slot_decode();
-                    let result = s.decode_slot_nzhsym41_at(
+                    match s.decode_slot_nzhsym41_with_provenance_at(
                         Some(&timestamp),
                         &mut state,
                         &samples_12k,
-                        |row| emit_decode(&evt_tx, &timestamp, row, DecodeStage::Early),
-                    );
-                    match result {
-                        Ok(_) => slot_state = Some(state),
+                    ) {
+                        Ok(early) => {
+                            for row in &early {
+                                send_record(&evt_tx, &timestamp, row, DecodeStage::Early);
+                            }
+                            slot_state = Some((state, early.len()));
+                        }
                         Err(err) => {
                             let _ = evt_tx.send(EngineEvent::Error(err));
                         }
                     }
                 }
                 (DecodeSession::Wsjtx(s), Stage::N47) => {
-                    if let Some(state) = slot_state.as_mut() {
+                    if let Some((state, _)) = slot_state.as_mut() {
                         s.subtract_slot_nzhsym47(state, &samples_12k);
                     }
                 }
                 (DecodeSession::Wsjtx(s), Stage::N50) => {
-                    if let Some(state) = slot_state.take() {
-                        match s.decode_slot_nzhsym50_and_finish(state, &samples_12k, |row| {
-                            emit_decode(&evt_tx, &timestamp, row, DecodeStage::Final)
-                        }) {
-                            Ok(results) => {
+                    if let Some((state, early_count)) = slot_state.take() {
+                        match s.decode_slot_nzhsym50_and_finish_with_provenance(state, &samples_12k) {
+                            Ok(all) => {
+                                for row in all.iter().skip(early_count) {
+                                    send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
+                                }
                                 let _ = evt_tx.send(EngineEvent::SlotComplete {
                                     timestamp,
-                                    count: results.len(),
+                                    count: all.len(),
                                 });
                             }
                             Err(err) => {
@@ -567,13 +695,18 @@ fn decode_actor(config: StreamDecodeConfig, cmd_rx: Receiver<DecodeCmd>, evt_tx:
                 (DecodeSession::Profile(_), Stage::N41)
                 | (DecodeSession::Profile(_), Stage::N47) => {}
                 (DecodeSession::Profile(p), Stage::N50) => {
-                    match p.decode_slot_streaming_at(&timestamp, &samples_12k, |row| {
-                        emit_decode(&evt_tx, &timestamp, row, DecodeStage::Final)
-                    }) {
-                        Ok(results) => {
+                    match p.decode_slot_streaming_with_provenance_at(&timestamp, &samples_12k) {
+                        Ok(rows) => {
+                            for row in &rows {
+                                send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
+                            }
+                            if let Some(snapshot) = p.dx_context_snapshot() {
+                                let _ = evt_tx
+                                    .send(EngineEvent::DxContext(map_dx_snapshot(snapshot)));
+                            }
                             let _ = evt_tx.send(EngineEvent::SlotComplete {
                                 timestamp,
-                                count: results.len(),
+                                count: rows.len(),
                             });
                         }
                         Err(err) => {
@@ -648,7 +781,13 @@ mod tests {
         // actor must survive the rebuild and keep producing.
         let mut jtdx = StreamDecodeConfig::default();
         jtdx.profile = DecodeProfile::Jtdx;
-        cmd_tx.send(DecodeCmd::Reconfigure(jtdx)).unwrap();
+        cmd_tx
+            .send(DecodeCmd::Reconfigure {
+                config: jtdx,
+                reset_dx_target: false,
+                reset_dx_operator: false,
+            })
+            .unwrap();
         feed_slot(&cmd_tx, &ts, &s12k);
         let (_d2, count2) = drain_until_slot_complete(&evt_rx);
         assert!(count2 >= 15, "jtdx short slot decoded too few rows: {count2}");

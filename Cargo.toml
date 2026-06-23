@@ -26,3 +26,14 @@ inherits = "release"
 opt-level = 2
 lto = false
 codegen-units = 256
+
+# Make `cargo run` (dev) usable for live decoding: the GUI/engine crates stay at
+# opt-level 0 so the edit→run loop compiles fast, but the decode core and its
+# math dependencies are optimized so decoding keeps up with the 15 s slots
+# without a full release build. opt-level only affects speed, not IEEE float
+# semantics, so decode results match release.
+[profile.dev.package.ft8rs-core]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3

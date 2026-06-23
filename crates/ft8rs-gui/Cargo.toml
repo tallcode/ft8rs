@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 ft8rs-core = { path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
-eframe = "0.29"
+eframe = { version = "0.29", features = ["persistence"] }
 muda = "0.15"
 
 [build-dependencies]
