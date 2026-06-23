@@ -2,6 +2,7 @@ use crate::stream::session::StreamDecodedMessage;
 use crate::stream::time::SlotTimestamp;
 
 use super::filter::{normalize_message_word, DxTarget};
+use super::HisgridSource;
 
 const MAX_FOCI: usize = 5;
 const FOCUS_HALF_WIDTH_HZ: f64 = 25.0;
@@ -13,12 +14,23 @@ const FOX_STREAM_SPACING_HZ: f64 = 60.0;
 /// a multi-stream Fox and switch to the equally-spaced grid (owner's rule: ">= 2").
 const FOX_MULTISTREAM_THRESHOLD: usize = 2;
 
+/// Where a frequency candidate came from, so operator-derived intel can be
+/// dropped on a mycall change while target-derived intel survives (§6.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrequencyOrigin {
+    TargetSender,
+    TargetRecipient,
+    MyCall,
+    UserPinned,
+}
+
 #[derive(Clone, Debug)]
 struct FrequencyCandidate {
     freq: f64,
     confidence: u8,
     last_seen_nutc: u32,
     pinned: bool,
+    origin: FrequencyOrigin,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +52,7 @@ pub(super) struct TargetContextStore {
     frequencies: Vec<FrequencyCandidate>,
     tx_parity: Option<TxParity>,
     hisgrid: Option<String>,
+    hisgrid_source: HisgridSource,
     dt: Option<f64>,
     low_band_prior: bool,
     hound: bool,
@@ -63,14 +76,21 @@ impl TargetContextStore {
             frequencies: Vec::new(),
             tx_parity: None,
             hisgrid: hisgrid.map(|grid| grid.trim().to_ascii_uppercase()),
+            hisgrid_source: if hisgrid.is_some() {
+                HisgridSource::User
+            } else {
+                HisgridSource::None
+            },
             dt: None,
             low_band_prior: true,
             hound,
             nfa,
             nfb,
         };
-        if seed_frequency > 0.0 {
-            store.remember_frequency(seed_frequency, 8, 0, true);
+        // A pinned QSO seed only counts when it falls inside the search band;
+        // 0 / out-of-band means "no nfqso" and must not seed a focus.
+        if seed_frequency >= nfa && seed_frequency <= nfb {
+            store.remember_frequency(seed_frequency, 8, 0, true, FrequencyOrigin::UserPinned);
         }
         store
     }
@@ -216,7 +236,14 @@ impl TargetContextStore {
         let frequency_seed_allowed =
             role.target_sender || (!self.hound && (role.target_recipient || role.contains_mycall));
         if frequency_seed_allowed {
-            self.remember_frequency(row.freq, confidence, timestamp.nutc(), false);
+            let origin = if role.target_sender {
+                FrequencyOrigin::TargetSender
+            } else if role.target_recipient {
+                FrequencyOrigin::TargetRecipient
+            } else {
+                FrequencyOrigin::MyCall
+            };
+            self.remember_frequency(row.freq, confidence, timestamp.nutc(), false, origin);
         }
     }
 
@@ -235,7 +262,14 @@ impl TargetContextStore {
         }
     }
 
-    fn remember_frequency(&mut self, freq: f64, confidence: u8, nutc: u32, pinned: bool) {
+    fn remember_frequency(
+        &mut self,
+        freq: f64,
+        confidence: u8,
+        nutc: u32,
+        pinned: bool,
+        origin: FrequencyOrigin,
+    ) {
         if !(freq.is_finite() && freq >= self.nfa && freq <= self.nfb) {
             return;
         }
@@ -247,6 +281,7 @@ impl TargetContextStore {
             if confidence > existing.confidence {
                 existing.freq = freq;
                 existing.confidence = confidence;
+                existing.origin = origin;
             }
             existing.pinned |= pinned;
             existing.last_seen_nutc = nutc;
@@ -257,6 +292,7 @@ impl TargetContextStore {
             confidence,
             last_seen_nutc: nutc,
             pinned,
+            origin,
         });
     }
 
@@ -265,11 +301,60 @@ impl TargetContextStore {
             .retain(|freq| freq.pinned || slots_between(freq.last_seen_nutc, nutc) <= 16);
     }
 
+    /// Drop mycall-derived intel (for a mycall change), keeping target-derived
+    /// candidates, the observed transmit parity, and the harvested grid (§6.5).
+    pub(super) fn drop_operator_intel(&mut self) {
+        self.frequencies.retain(|candidate| {
+            matches!(
+                candidate.origin,
+                FrequencyOrigin::TargetSender | FrequencyOrigin::UserPinned
+            )
+        });
+        if let Some(parity) = self.tx_parity {
+            if parity.confidence == ParityConfidence::Inferred {
+                self.tx_parity = None;
+            }
+        }
+    }
+
+    pub(super) fn set_mycall(&mut self, mycall: Option<&str>) {
+        self.mycall = mycall.map(DxTarget::new);
+    }
+
+    /// Re-point the passband and prune candidates that fall outside it.
+    pub(super) fn rebind_band(&mut self, nfa: f64, nfb: f64) {
+        self.nfa = nfa;
+        self.nfb = nfb;
+        self.frequencies
+            .retain(|candidate| candidate.freq >= nfa && candidate.freq <= nfb);
+    }
+
+    pub(super) fn seed_pinned(&mut self, freq: f64) {
+        if freq >= self.nfa && freq <= self.nfb {
+            self.remember_frequency(freq, 8, 0, true, FrequencyOrigin::UserPinned);
+        }
+    }
+
     fn harvest_grid(&mut self, msg: &str) {
         let words: Vec<String> = msg.split_whitespace().map(normalize_message_word).collect();
         if let Some(grid) = words.iter().rev().find(|word| is_grid4(word)) {
             self.hisgrid = Some(grid.clone());
+            self.hisgrid_source = HisgridSource::Harvested;
         }
+    }
+
+    /// Read-only snapshot pieces for the GUI DX intel panel (foci, tx parity,
+    /// effective grid + its source, dt).
+    pub(super) fn snapshot_parts(
+        &self,
+    ) -> (Vec<f64>, Option<u8>, Option<String>, HisgridSource, Option<f64>) {
+        (
+            self.selected_foci(),
+            self.tx_parity.map(|parity| parity.parity as u8),
+            self.hisgrid.clone(),
+            self.hisgrid_source,
+            self.dt,
+        )
     }
 
     fn has_hard_grid_contradiction(&self, row: &StreamDecodedMessage) -> bool {

@@ -1,0 +1,5 @@
+[alias]
+# Launch the GUI. Dev profile keeps GUI/engine compiles fast while the decode
+# core runs optimized (see [profile.dev.package.*] in Cargo.toml), so live
+# decoding keeps up without a release build.
+gui = "run -p ft8rs-gui"

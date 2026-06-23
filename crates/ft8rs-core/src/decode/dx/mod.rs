@@ -19,6 +19,26 @@ mod filter;
 use context::TargetContextStore;
 use filter::{normalize_message, DxTarget};
 
+/// Where the currently effective DX grid came from (decision 4, option C).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HisgridSource {
+    #[default]
+    None,
+    User,
+    Harvested,
+}
+
+/// Read-only snapshot of the DX target intel for the GUI panel.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DxSnapshot {
+    pub target: String,
+    pub foci: Vec<f64>,
+    pub tx_parity: Option<u8>,
+    pub hisgrid: Option<String>,
+    pub hisgrid_source: HisgridSource,
+    pub dt: Option<f64>,
+}
+
 pub struct DxStreamDecodeSession {
     base_config: StreamDecodeConfig,
     target: DxTarget,
@@ -48,6 +68,47 @@ impl DxStreamDecodeSession {
             context,
             hash_seed_calls,
             listen,
+        }
+    }
+
+    /// Build the session for `new_config`, carrying forward the still-valid DX
+    /// intel from `self` (GUI_PLAN §6.2/§6.5). The target (hiscall) must be
+    /// unchanged for any carry-over; `reset_operator` drops mycall-derived intel
+    /// (a mycall change). Non-identity changes (nfqso/nfa/nfb/swl/…) keep all
+    /// intel, rebinding the passband and re-pinning the focus.
+    pub fn reconfigured(
+        &self,
+        new_config: StreamDecodeConfig,
+        reset_target: bool,
+        reset_operator: bool,
+    ) -> Self {
+        let same_target = !reset_target
+            && normalize_call(self.base_config.hiscall.as_deref())
+                == normalize_call(new_config.hiscall.as_deref());
+        let mut next = Self::new(new_config);
+        if same_target {
+            let mut context = self.context.clone();
+            if reset_operator {
+                context.drop_operator_intel();
+            }
+            context.set_mycall(next.base_config.mycall.as_deref());
+            context.rebind_band(next.base_config.nfa, next.base_config.nfb);
+            context.seed_pinned(next.base_config.nfqso);
+            next.context = context;
+        }
+        next
+    }
+
+    /// Read-only DX intel snapshot for the GUI panel.
+    pub fn context_snapshot(&self) -> DxSnapshot {
+        let (foci, tx_parity, hisgrid, hisgrid_source, dt) = self.context.snapshot_parts();
+        DxSnapshot {
+            target: self.base_config.hiscall.clone().unwrap_or_default(),
+            foci,
+            tx_parity,
+            hisgrid,
+            hisgrid_source,
+            dt,
         }
     }
 
@@ -269,6 +330,15 @@ fn is_same_signal(a: &StreamDecodedMessage, b: &StreamDecodedMessage) -> bool {
     normalize_message(&a.msg) == normalize_message(&b.msg)
         && (a.freq - b.freq).abs() <= 3.0
         && (a.dt - b.dt).abs() <= 0.3
+}
+
+fn normalize_call(call: Option<&str>) -> Option<String> {
+    let call = call?.trim();
+    if call.is_empty() {
+        None
+    } else {
+        Some(call.to_ascii_uppercase())
+    }
 }
 
 fn push_normalized_call(calls: &mut Vec<String>, call: Option<&str>) {
