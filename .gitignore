@@ -1,3 +1,8 @@
 /target
+/dist
 wsjtx
 jtdx
+.DS_Store
+# Logo design source / root export (the build uses crates/ft8rs-gui/assets/ft8rs.png)
+/ft8rs.afdesign
+/ft8rs.png

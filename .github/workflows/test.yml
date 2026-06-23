@@ -47,3 +47,30 @@ jobs:
 
       - name: Run FFTW long stream test
         run: cargo test --release -p ft8rs-core --features fftw test_stream_decode_long_audio -- --nocapture
+
+  windows-build:
+    name: Windows build (CLI + GUI)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo build data
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-winbuild-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-winbuild-${{ runner.os }}-
+
+      # Compile-only coverage so Windows-specific breakage (cfg paths, the GUI
+      # icon build script, WASAPI audio) is caught before a release tag.
+      - name: Build CLI + GUI (release)
+        run: cargo build --release -p ft8rs-cli -p ft8rs-gui
