@@ -16,6 +16,11 @@ eframe = { version = "0.29", features = ["persistence"] }
 muda = "0.15"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# Windows-only: extract the HWND from eframe's window handle to attach a native
+# Win32 menu bar (muda init_for_hwnd). Version matches eframe's raw-window-handle.
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+
 [build-dependencies]
 ft8rs-build = { path = "../ft8rs-build" }
 
