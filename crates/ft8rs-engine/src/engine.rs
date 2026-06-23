@@ -10,8 +10,8 @@
 //!   and the UDP sink, and applies reconfig plans at slot boundaries.
 //!
 //! Because the Decode actor is separate and long-lived, a device change (L2)
-//! restarts only capture — the session and all decode state survive (GUI_PLAN.md
-//! §6.2, decision 5). Config changes (L1) reconfigure the actor at the next slot
+//! restarts only capture — the session and all decode state survive (decision 5).
+//! Config changes (L1) reconfigure the actor at the next slot
 //! boundary; the control loop polls commands every ~50 ms so Stop/Shutdown are
 //! prompt even mid-slot (decode runs off-thread). The existing blocking CLI path
 //! in `soundcard.rs` is untouched.
@@ -476,7 +476,7 @@ fn build_udp(config: Option<&UdpConfig>, event_tx: &Sender<EngineEvent>) -> Opti
     match UdpOutput::new(config.clone()) {
         Ok(sink) => Some(sink),
         Err(err) => {
-            // Output failure must not stop decode (GUI_PLAN.md §4): disable sink.
+            // Output failure must not stop decode: disable sink.
             let _ = event_tx.send(EngineEvent::Error(format!("UDP disabled: {err}")));
             None
         }
@@ -695,18 +695,23 @@ fn decode_actor(config: StreamDecodeConfig, cmd_rx: Receiver<DecodeCmd>, evt_tx:
                 (DecodeSession::Profile(_), Stage::N41)
                 | (DecodeSession::Profile(_), Stage::N47) => {}
                 (DecodeSession::Profile(p), Stage::N50) => {
-                    match p.decode_slot_streaming_with_provenance_at(&timestamp, &samples_12k) {
-                        Ok(rows) => {
-                            for row in &rows {
-                                send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
-                            }
+                    // Stream rows as the core produces them (hybrid emits the
+                    // WSJT-X pass first, then JTDX) so early decodes show without
+                    // waiting for the deep pass to finish.
+                    let result =
+                        p.decode_slot_streaming_with_provenance_at(&timestamp, &samples_12k, |row| {
+                            send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
+                            Ok(())
+                        });
+                    match result {
+                        Ok(count) => {
                             if let Some(snapshot) = p.dx_context_snapshot() {
                                 let _ = evt_tx
                                     .send(EngineEvent::DxContext(map_dx_snapshot(snapshot)));
                             }
                             let _ = evt_tx.send(EngineEvent::SlotComplete {
                                 timestamp,
-                                count: rows.len(),
+                                count,
                             });
                         }
                         Err(err) => {

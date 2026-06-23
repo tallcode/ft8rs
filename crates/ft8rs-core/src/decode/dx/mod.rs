@@ -72,7 +72,7 @@ impl DxStreamDecodeSession {
     }
 
     /// Build the session for `new_config`, carrying forward the still-valid DX
-    /// intel from `self` (GUI_PLAN §6.2/§6.5). The target (hiscall) must be
+    /// intel from `self`. The target (hiscall) must be
     /// unchanged for any carry-over; `reset_operator` drops mycall-derived intel
     /// (a mycall change). Non-identity changes (nfqso/nfa/nfb/swl/…) keep all
     /// intel, rebinding the passband and re-pinning the focus.

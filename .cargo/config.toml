@@ -3,3 +3,15 @@
 # core runs optimized (see [profile.dev.package.*] in Cargo.toml), so live
 # decoding keeps up without a release build.
 gui = "run -p ft8rs-gui"
+
+# Baseline CPU for the shipped x86_64 builds: x86-64-v3 (AVX2/FMA, ~2015+ CPUs).
+# This auto-vectorizes the hand-written DSP/LDPC/OSD loops (rustfft already does
+# runtime AVX). It is instruction-availability only — Rust does not auto-fuse FMA
+# or reassociate floats, so decode results stay byte-identical (the CI Linux
+# baseline tests build+run under this and verify it). Scoped to the x86_64 CI
+# triples, so local macOS (aarch64) dev/test is unaffected.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

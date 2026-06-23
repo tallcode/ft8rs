@@ -8,13 +8,16 @@ members = [
     "crates/ft8rs-gui",
 ]
 
-# Performance: cross-crate inlining (thin LTO) + a single codegen unit. These
-# are optimization-only and do not change floating-point semantics, so the
-# byte-identical WSJT-X/JTDX baselines are preserved. Use this profile for the
-# shipped binaries and final acceptance runs.
+# Performance: whole-program inlining (fat LTO) + a single codegen unit, and
+# abort-on-panic for the shipped binary (smaller/faster; `cargo test` always
+# unwinds, so tests are unaffected). All optimization-only — they do not change
+# floating-point semantics, so the byte-identical WSJT-X/JTDX baselines are
+# preserved. Use this profile for the shipped binaries and final acceptance runs.
+# (x86_64 CI builds also pin target-cpu=x86-64-v3 via .cargo/config.toml.)
 [profile.release]
 codegen-units = 1
-lto = "thin"
+lto = "fat"
+panic = "abort"
 
 # Fast iteration profile for the test/debug loop. Keeps `debug-assertions = false`
 # (inherited from release, so `assert_release_mode()` and the decode timing budgets

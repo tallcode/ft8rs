@@ -6,9 +6,9 @@
 //! state buckets to reset vs. migrate, and whether the change needs operator
 //! confirmation (DX target switch).
 //!
-//! This is the single source of truth for the dynamic-switch rules in
-//! `GUI_PLAN.md` §6. It has no audio, no threads, no I/O, so it is exhaustively
-//! unit-tested below. The actors (P2) merely execute the plan it returns.
+//! This is the single source of truth for the dynamic-switch rules. It has no
+//! audio, no threads, no I/O, so it is exhaustively unit-tested below. The
+//! actors (P2) merely execute the plan it returns.
 //!
 //! Nothing here touches `lib_wsjtx`/`lib_jtdx`.
 
@@ -18,8 +18,8 @@ use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig};
 
 use crate::report::UdpConfig;
 
-/// Cross-slot state buckets (GUI_PLAN.md §5.2). Used to express what a reconfig
-/// resets vs. preserves/migrates.
+/// Cross-slot state buckets. Used to express what a reconfig resets vs.
+/// preserves/migrates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StateBucket {
     /// S0 capture: cpal stream, resampler carry, sample clock.
@@ -115,7 +115,7 @@ pub fn config_diff(old: &StreamDecodeConfig, new: &StreamDecodeConfig) -> BTreeS
     changed
 }
 
-/// Compute what the engine must do to go from `old` to `new` (GUI_PLAN.md §6).
+/// Compute what the engine must do to go from `old` to `new`.
 ///
 /// When several things change in one submission, the actions combine: a device
 /// change restarts capture *and* a config change rebuilds the session in the
@@ -158,7 +158,7 @@ pub fn plan_reconfig(old: &EngineState, new: &EngineState) -> ReconfigOutcome {
 
         if dx_involved {
             // Changing the target (hiscall) invalidates ALL collected intel and
-            // needs operator confirmation (GUI_PLAN.md §6.1).
+            // needs operator confirmation.
             if changed.contains(&ConfigField::HisCall) {
                 out.reset.insert(StateBucket::DxTarget);
                 out.reset.insert(StateBucket::DxOperator);
