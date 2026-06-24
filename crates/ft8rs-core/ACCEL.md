@@ -123,6 +123,39 @@ Metal；且破字节对齐。
 
 ---
 
+## 7b. lib_wsjtx 路径（标准 WSJT-X 解码器）
+
+上面 §3–§6 针对 lib_jtdx（高灵敏度）。lib_wsjtx 是独立的标准解码器（passes/候选
+更少、OSD `ndeep=2` 无 npre2 box 搜索），热点分布**完全不同**。加同款探针实测
+（长样本，`--profile wsjtx`，commit `d25d72a`）：
+
+| stage | %slot | total | calls |
+|---|--:|--:|--:|
+| slot | 100% | 65933 ms | 19（~3.47s/slot）|
+| sync8 | 3.5% | 2336 ms | 114 |
+| └ spectra (FFT) | 1.8% | 1186 ms | — |
+| └ sync2d | **0.9%** | 574 ms | — |
+| ft8b | 60.8% | 40075 ms | 42784 |
+| └ **osd** | **50.2%** | 33080 ms | 44656 |
+| └ ldpc-bp | 2.8% | 1862 ms | 22939 |
+| subtract | 7.4% | 4862 ms | 697 |
+
+OSD 回退率 194.7%（每次 bp 失败触发 nosd=2 次 osd）。
+
+**结论**：
+- **OSD 一家独大 50.2%**，sync 几乎可忽略（3.5%，sync2d 仅 0.9%）。
+- **路径B（sync2d 去冗余）在 wsjtx 不值得做**——sync2d 只占 0.9%。
+- **唯一高价值 bit-exact 机会 = P2.0（`gf2_row_xor`）迁移到
+  `lib_wsjtx/ft8/osd174_91.rs`**：该文件与 lib_jtdx P2.0 前完全同构
+  （高斯消元 L55、mrbencode L294 都是裸字节 XOR 循环）。直击 50% 大头，预计整体
+  **~5–15%**（jtdx 上 P2.0 给 osd −16%；wsjtx deep-search 更轻，取保守下限）。
+  改动小、低风险、bit-exact（gf2.rs 已存在，直接复用）。
+- subtract 7.4%（逐元素复乘 MAP，Tier-1，可向量化但 FFT 占大头，收益小）；
+  bp 2.8% 跳过。
+- **wsjtx-P2.0 是接下来唯一推荐项。**
+
+---
+
 ## 7. 剩余 backlog（bit-exact，owner 决定是否做）
 
 边际收益均已不大（两个最大头的便宜部分已吃完）：
