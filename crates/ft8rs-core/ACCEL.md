@@ -192,16 +192,18 @@ profile 加 SyncSpectra/Sync2d/SyncExtract 三个子阶段后实测：
 但实测它仅占 **9.3%**，且 `dd8` 在 band 循环里被 `subtractft8` 频繁改写（484 次 /
 1026 sync8 调用），命中率有限 → 净收益预计仅 **3–5%**。低优先。
 
-### 路径 B：sync2d 的 sum_s 去冗余　【强候选，bit-exact，纯标量】
-**已核实**：`compute_sync2d` 内层成本几乎全在 `sum_s(&s, i, i+16, k)`（16 元素滑窗
-和）。但 `k = j + jstrt + nssy·n`，**同一 `(i,k)` 在不同 `(j,n)` 下被重复计算约 6
-次**（j 跨 ~150 dt、n 跨 ~16）。
-→ 预计算 `rs[i][k] = sum_s(i, i+16, k)`（用**完全相同的求和顺序** → 逐位相同），
-cell 内改查表。`t0a += rs[i][k] - s[...]` 的运算与累加顺序不变 → **bit-exact**。
-纯标量、可移植、无 intrinsics，直击 37.3% 的大头，预计收益**远大于路径 A 与 P2.1**。
-注意：plain 路径用 `sum_s`，AGC 路径（`compute_sync2d_agc`）用 `sum_s_stride`
-（step=2）——按实际热路径分别做同款记忆化。
-属性：sync2d 输出与现实现逐位相同 + jtdx 20/20 & 430/431 绿 + profiling 量降幅。
+### 路径 B：sync2d 的 sum_s 去冗余　✅ DONE（bit-exact，纯标量）
+`compute_sync2d` 内层成本几乎全在窗口滑动和。`k = j + jstrt + nssy·n` 使**同一
+`(i,k)` 在不同 `(j,n)` 下被重算约 10 次**。两条路径各预计算一次窗口和表
+（plain 用 `sum_s` 17元素窗；AGC `compute_sync2d_agc` 用 `sum_s_stride` step=2 7元素窗），
+用**完全相同的求和顺序** → 逐位相同；cell 内改查表，`t0a += rs_at(i,k) - s[...]`
+运算与累加顺序不变 → **bit-exact**。纯标量、可移植、无 unsafe、无 intrinsics。
+
+- **结果**（长样本）：sync2d 40851→**9799 ms（−76%）**；sync8 51296→20893（−59%）；
+  **slot 109535→82308 ms（−25%）**。累计相对最初 P0（118243）**整体解码 −30%**。
+- **对齐**：jtdx 20/20 & 430/431 复验绿（字节级一致）。
+- 注：现 spectra(FFT) 升为 sync8 内最大子项（绝对值不变，~10.8s）；若再想压 sync8
+  可回到路径 A（频谱复用，~9%）或路径 C。
 
 ### 路径 C：sync2d 跨频点 SIMD（Tier 2）　【备选，更难】
 若路径 B 后仍想压：每 cell 独立，按频点 i 向量化、每 lane 内求和顺序不变 →
@@ -246,7 +248,8 @@ bit-exact。但需手写 SIMD（滑窗 gather），复杂度高。建议路径 B
 P0    ✅ 仪表 + 实测（done, 5e968e0）
 P2.0  ✅ gf2_row_xor 边界 + 自动向量化（osd −16%, 整体 −8%, bit-exact）
 SYNCP ✅ sync8 子阶段 profiling：spectra 9.3% / sync2d 37.3% / extract 0.2%
-路径B ▶ sync2d sum_s 去冗余（bit-exact 纯标量，攻 37.3%，强候选）
+路径B ✅ sync2d sum_s 去冗余（sync2d −76%, 整体再 −25%, bit-exact）
+       —— 累计相对 P0：整体解码 −30%
 P2.1  ⏸ u64 位打包 OSD（再压 osd ~10–20%；bit-exact；工作量大，待批）
 路径A ⏸ sync8 频谱复用（实测仅 9.3%，净 3–5%，低优先）
 路径C ⏸ sync2d 跨频点 SIMD（更难，路径B 之后再评估）
