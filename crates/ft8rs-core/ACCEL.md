@@ -134,7 +134,18 @@ opt-in、独立后端、默认关闭。**唯一例外是精确（整数/位）�
     1039→870 µs，调用次数 45752 不变；slot 118243→108705 ms（−8.1%）。
   - **对齐**：jtdx 20/20 & 430/431 复验绿；gf2 单测绿。纯 stable / 无 unsafe /
     无运行时探测 / 全平台一致。
-#### P2.1（详细计划）—— u64 位打包 GF(2) 矩阵，仍 bit-exact　【工作量大，待批】
+#### P2.1 —— u64 位打包 GF(2) 矩阵　❌ 尝试并回退（零收益）
+**结果**：实现了 `BitMatrix`（pack/test/set/swap_cols/xor_row）并把**高斯消元**
+改为打包路径（pack→消元→unpack），bit-exact（属性测试 `bitmatrix_gaussian_elim_
+matches_u8` + jtdx 基线均绿）。但 release 实测 **osd 42587→42596/42707 ms，变化
+0~0.3%，纯噪声**。原因：P2.0 已把 mrbencode（深搜里反复调用的行 XOR）与消元的字节
+XOR 自动向量化；高斯消元**根本不是** OSD 的瓶颈——OSD 的 ~42.6s 主要花在深搜的
+**浮点加权和归约**（`xor_weight_sum_*`、`error_weight_sum`，REDUCE，**不可
+bit-exact 重排**）。故打包消元零回报。**已回退**（不给镜像 OSD 文件留无用复杂度）。
+教训：OSD 的剩余成本是浮点归约，bit-exact 手段已到顶；要再快只能动算法/灵敏度
+（owner 红线）。下方原详细计划留档备查。
+
+<details><summary>原详细计划（留档）</summary>
 
 动机与诚实的 ROI 评估：P2.0 已让编译器对**字节** XOR 自动向量化，所以 P2.1 的
 增量收益主要来自**内存带宽**而非计算——高斯消元反复流式扫 `genmrb`（k×n=91×174
@@ -170,6 +181,8 @@ struct BitMatrix { rows: usize, words: Vec<u64> }   // rows*W，行优先
   ②codeword 打包后 weight-sum 的展开顺序要保持。逐位对拍 + 基线为双重护栏。
 - **范围控制**：纯 stable、无 unsafe、无运行时探测、全平台一致（与 P2.0 同档）。
   显式 SIMD intrinsics（原 P2.2）**暂不做**——u64 打包已让编译器向量化，先看够不够。
+
+</details>
 
 ### P3（原 sync8 浮点 SIMD）—— ❌ 不做（会改浮点 → 破对齐）
 owner 决定：不接受任何改变浮点舍入、需要"容差等效"的方案。sync8 的浮点 SIMD /
@@ -250,7 +263,7 @@ P2.0  ✅ gf2_row_xor 边界 + 自动向量化（osd −16%, 整体 −8%, bit-e
 SYNCP ✅ sync8 子阶段 profiling：spectra 9.3% / sync2d 37.3% / extract 0.2%
 路径B ✅ sync2d sum_s 去冗余（sync2d −76%, 整体再 −25%, bit-exact）
        —— 累计相对 P0：整体解码 −30%
-P2.1  ⏸ u64 位打包 OSD（再压 osd ~10–20%；bit-exact；工作量大，待批）
+P2.1  ❌ u64 位打包 OSD：实现+实测=零收益（消元非瓶颈，深搜浮点归约才是）→ 已回退
 路径A ⏸ sync8 频谱复用（实测仅 9.3%，净 3–5%，低优先）
 路径C ⏸ sync2d 跨频点 SIMD（更难，路径B 之后再评估）
 P3    ❌ sync8 浮点 SIMD（破对齐，owner 否决）
