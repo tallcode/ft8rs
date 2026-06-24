@@ -30,10 +30,16 @@ pub enum Stage {
     Osd = 4,
     /// Decoded-signal subtraction (`subtractft8`).
     Subtract = 5,
+    /// sync8 sub-stage: symbol spectra FFTs (`compute_symbol_spectra`).
+    SyncSpectra = 6,
+    /// sync8 sub-stage: 2D correlation (`compute_sync2d`).
+    Sync2d = 7,
+    /// sync8 sub-stage: candidate extraction (`extract_candidates`).
+    SyncExtract = 8,
 }
 
 /// Number of stages; also the length of the accumulator arrays.
-pub const STAGE_COUNT: usize = 6;
+pub const STAGE_COUNT: usize = 9;
 
 #[cfg(feature = "profiling")]
 mod imp {
@@ -41,8 +47,17 @@ mod imp {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Instant;
 
-    const STAGE_NAMES: [&str; STAGE_COUNT] =
-        ["slot", "sync8", "ft8b", "ldpc-bp", "osd", "subtract"];
+    const STAGE_NAMES: [&str; STAGE_COUNT] = [
+        "slot",
+        "sync8",
+        "ft8b",
+        "ldpc-bp",
+        "osd",
+        "subtract",
+        "└spectra",
+        "└sync2d",
+        "└extract",
+    ];
 
     static NANOS: [AtomicU64; STAGE_COUNT] = [const { AtomicU64::new(0) }; STAGE_COUNT];
     static CALLS: [AtomicU64; STAGE_COUNT] = [const { AtomicU64::new(0) }; STAGE_COUNT];
