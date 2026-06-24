@@ -1502,6 +1502,7 @@ dependencies = [
  "image",
  "muda",
  "raw-window-handle",
+ "windows-sys 0.59.0",
  "winresource",
 ]
 

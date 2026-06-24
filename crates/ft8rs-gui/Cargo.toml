@@ -20,6 +20,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # Win32 menu bar (muda init_for_hwnd). Version matches eframe's raw-window-handle.
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
+# Force a frame recalculation after attaching the menu (SetWindowPos +
+# SWP_FRAMECHANGED) so the GL surface resizes to the menu-shrunk client area and
+# no unpainted strip remains. Version matches muda's windows-sys.
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 ft8rs-build = { path = "../ft8rs-build" }
