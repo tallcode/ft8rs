@@ -773,11 +773,14 @@ impl StreamDecodeSession {
             .take()
             .unwrap_or_else(|| self.start_slot_decode());
         state.reset_for_slot();
-        let result = (|| {
-            self.decode_slot_nzhsym41_at(timestamp, &mut state, samples, &mut on_decode)?;
-            self.subtract_slot_nzhsym47(&mut state, samples);
-            self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
-        })();
+        let result = {
+            let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Slot);
+            (|| {
+                self.decode_slot_nzhsym41_at(timestamp, &mut state, samples, &mut on_decode)?;
+                self.subtract_slot_nzhsym47(&mut state, samples);
+                self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
+            })()
+        };
         let provenance = if result.is_ok() {
             std::mem::take(&mut state.provenance)
         } else {
