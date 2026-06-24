@@ -3,6 +3,8 @@
 pub mod bpdecode174_91;
 pub mod chkcrc14a;
 pub mod encode174_91;
+/// ft8rs-specific GF(2) bit kernel (not mirrored). OSD accel boundary.
+pub mod gf2;
 pub mod ldpc_174_91_c_generator;
 pub mod ldpc_174_91_c_reordered_parity;
 pub mod osd174_91;
