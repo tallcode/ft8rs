@@ -20,7 +20,10 @@ use ft8rs_engine::report::UdpConfig;
 use ft8rs_engine::soundcard::SoundcardDeviceInfo;
 use ft8rs_engine::EngineHandle;
 
-const MAX_ROWS: usize = 4000;
+/// Hard cap on retained decode rows. Rendering is virtualized (see `decode_rows`)
+/// so this only bounds memory and the per-decode dedupe scan, not scroll cost;
+/// the oldest rows are dropped once the list grows past it (see `ingest`).
+const MAX_ROWS: usize = 20_000;
 const DECODE_FONT_SIZE: f32 = 12.0;
 /// Internal left padding for the decode table (header + rows go edge-to-edge).
 const TABLE_PAD: f32 = 12.0;
@@ -577,10 +580,13 @@ impl Ft8rsApp {
         const PAD: f32 = TABLE_PAD;
         let font = egui::FontId::monospace(DECODE_FONT_SIZE);
         let row_h = ui.fonts(|f| f.row_height(&font));
+        // Virtualized: only the visible row range is laid out and painted each
+        // frame (via show_rows), so the cost is independent of how many rows have
+        // accumulated — the list can hold the full MAX_ROWS without scroll lag.
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
-            .show(ui, |ui| {
+            .show_rows(ui, row_h, self.rows.len(), |ui, range| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 let width = ui.available_width();
                 let dark = ui.visuals().dark_mode;
@@ -589,7 +595,7 @@ impl Ft8rsApp {
                 // Compare-mode coloring only applies while listening; otherwise
                 // every row is the default color.
                 let comparing = self.udp_in_on;
-                for row in &self.rows {
+                for row in &self.rows[range] {
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
                     // Alternate the slot background: :00/:30 vs :15/:45. The stripe
@@ -1450,6 +1456,29 @@ fn install_menu(
     // it to host the menu bar and forward WM_COMMAND to MenuEvent::receiver().
     unsafe {
         let _ = menu.init_for_hwnd(hwnd);
+    }
+    // Attaching the menu shrinks the client area by the menu-bar height, but the
+    // change never reaches winit/eframe — so the GL surface keeps its old (taller)
+    // size and the menu-height difference shows as an unpainted black strip until
+    // the next resize. Force a frame recalculation: SWP_FRAMECHANGED makes Windows
+    // re-run WM_NCCALCSIZE and emit a WM_SIZE for the now-smaller client area,
+    // which winit forwards to eframe to resize the surface immediately.
+    //
+    // SAFETY: `hwnd` is the live main-window handle; the flags leave position,
+    // size, and Z-order untouched (we only request the frame recompute).
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        };
+        SetWindowPos(
+            hwnd as windows_sys::Win32::Foundation::HWND,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+        );
     }
     std::mem::forget(menu);
     items
