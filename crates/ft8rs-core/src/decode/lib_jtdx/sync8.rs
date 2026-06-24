@@ -161,8 +161,16 @@ impl Sync8Workspace {
     }
 
     fn sync8(&mut self, dd8: &[f32], config: Sync8Config) -> Vec<SyncCandidate> {
-        self.compute_symbol_spectra(dd8, config.metric_mode());
-        self.compute_sync2d(config);
+        use crate::decode::profile::{scope, Stage};
+        {
+            let _p = scope(Stage::SyncSpectra);
+            self.compute_symbol_spectra(dd8, config.metric_mode());
+        }
+        {
+            let _p = scope(Stage::Sync2d);
+            self.compute_sync2d(config);
+        }
+        let _p = scope(Stage::SyncExtract);
         self.extract_candidates(config)
     }
 

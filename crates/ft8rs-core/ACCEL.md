@@ -175,22 +175,37 @@ struct BitMatrix { rows: usize, words: Vec<u64> }   // rows*W，行优先
 owner 决定：不接受任何改变浮点舍入、需要"容差等效"的方案。sync8 的浮点 SIMD /
 批量 FFT / `target-cpu=native` 全部排除。sync8 的提速只能走下方 bit-exact 路径。
 
-### 另寻他法（bit-exact，不动对齐）—— sync8 频谱跨 band 复用　【强候选】
-**已核实事实**：`sync8.rs::compute_symbol_spectra`（sync8 里最贵的部分，每次约
-NHSYM≈372 个 NFFT1=3840 的 r2c FFT）**只依赖 `dd8` 与 metric mode，与
-nfa/nfb（band）无关**；band 只影响其后的 `compute_sync2d` / `extract_candidates`。
-当前 sync8 被调用 1026 次，每次都把这批 FFT 重算一遍。
+### sync8 内部细分（实测，长样本）　✅ DONE
+profile 加 SyncSpectra/Sync2d/SyncExtract 三个子阶段后实测：
 
-→ 用与 `ft8_downsample` 已有的缓存同款套路（脏标记）：只在 `dd8` 变化后才重算
-`s`（symbol spectra），其余调用复用。`dd8` 仅被 `subtractft8` 改写（484 次），
-故约半数 sync8 调用可命中缓存 → **bit-exact**（数值完全不变）地砍掉一大块 sync8
-（sync8 占 ~47%，潜在收益可能**大于 P2.1**）。
+| sync8 子阶段 | %slot | total | 说明 |
+|---|--:|--:|---|
+| └spectra (FFT) | **9.3%** | 10173 ms | 比预期小得多 |
+| └sync2d (2D相关) | **37.3%** | 40851 ms | 真正的大头，≈OSD(36.6%) |
+| └extract | 0.2% | 202 ms | 可忽略 |
 
-落地要点：给 `_state` 加一个 `dd8` 代次计数（subtract 时 +1）；spectra 缓存
-keyed by (代次, mode)；命中则跳过 `compute_symbol_spectra`。需改 sync8.rs 接口
-让 workspace 持有/复用 `s`。属性：候选集与现实现**逐位相同** + jtdx 基线绿。
-建议在 P2.1 之前先做 sync8 内部细分 profiling（FFT vs 2D 相关 vs 排序）确认占比，
-再实施此项。
+**结论修正**：sync8 的成本**不在 FFT，而在 `compute_sync2d` 的 2D 相关**。
+原"频谱复用"假设（以为 FFT 是大头）被推翻——见下。
+
+### 路径 A：sync8 频谱跨 band 复用　【降级为小项】
+`compute_symbol_spectra`（spectra）只依赖 `dd8`+mode，与 band 无关，理论可缓存。
+但实测它仅占 **9.3%**，且 `dd8` 在 band 循环里被 `subtractft8` 频繁改写（484 次 /
+1026 sync8 调用），命中率有限 → 净收益预计仅 **3–5%**。低优先。
+
+### 路径 B：sync2d 的 sum_s 去冗余　【强候选，bit-exact，纯标量】
+**已核实**：`compute_sync2d` 内层成本几乎全在 `sum_s(&s, i, i+16, k)`（16 元素滑窗
+和）。但 `k = j + jstrt + nssy·n`，**同一 `(i,k)` 在不同 `(j,n)` 下被重复计算约 6
+次**（j 跨 ~150 dt、n 跨 ~16）。
+→ 预计算 `rs[i][k] = sum_s(i, i+16, k)`（用**完全相同的求和顺序** → 逐位相同），
+cell 内改查表。`t0a += rs[i][k] - s[...]` 的运算与累加顺序不变 → **bit-exact**。
+纯标量、可移植、无 intrinsics，直击 37.3% 的大头，预计收益**远大于路径 A 与 P2.1**。
+注意：plain 路径用 `sum_s`，AGC 路径（`compute_sync2d_agc`）用 `sum_s_stride`
+（step=2）——按实际热路径分别做同款记忆化。
+属性：sync2d 输出与现实现逐位相同 + jtdx 20/20 & 430/431 绿 + profiling 量降幅。
+
+### 路径 C：sync2d 跨频点 SIMD（Tier 2）　【备选，更难】
+若路径 B 后仍想压：每 cell 独立，按频点 i 向量化、每 lane 内求和顺序不变 →
+bit-exact。但需手写 SIMD（滑窗 gather），复杂度高。建议路径 B 之后再评估。
 
 ### bit-exact SIMD 机会清单（全管线扫描结果，不动对齐）
 判据：**INT**（整数/位）恒精确；**MAP**（逐元素、迭代间无累加）向量化精确
@@ -230,8 +245,11 @@ keyed by (代次, mode)；命中则跳过 `compute_symbol_spectra`。需改 sync
 ```
 P0    ✅ 仪表 + 实测（done, 5e968e0）
 P2.0  ✅ gf2_row_xor 边界 + 自动向量化（osd −16%, 整体 −8%, bit-exact）
-P2.1  ⏸ u64 位打包 OSD（再压 osd ~10–20%；bit-exact；工作量大，详细计划待批）
-SYNC  ⏸ sync8 频谱跨 band 复用（bit-exact，潜在 >P2.1；建议先细分 profiling）
+SYNCP ✅ sync8 子阶段 profiling：spectra 9.3% / sync2d 37.3% / extract 0.2%
+路径B ▶ sync2d sum_s 去冗余（bit-exact 纯标量，攻 37.3%，强候选）
+P2.1  ⏸ u64 位打包 OSD（再压 osd ~10–20%；bit-exact；工作量大，待批）
+路径A ⏸ sync8 频谱复用（实测仅 9.3%，净 3–5%，低优先）
+路径C ⏸ sync2d 跨频点 SIMD（更难，路径B 之后再评估）
 P3    ❌ sync8 浮点 SIMD（破对齐，owner 否决）
 ```
 
