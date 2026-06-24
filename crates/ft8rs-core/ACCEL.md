@@ -192,6 +192,33 @@ keyed by (代次, mode)；命中则跳过 `compute_symbol_spectra`。需改 sync
 建议在 P2.1 之前先做 sync8 内部细分 profiling（FFT vs 2D 相关 vs 排序）确认占比，
 再实施此项。
 
+### bit-exact SIMD 机会清单（全管线扫描结果，不动对齐）
+判据：**INT**（整数/位）恒精确；**MAP**（逐元素、迭代间无累加）向量化精确
+（Rust 默认不做 FMA 收缩，逐元素 IEEE 运算不变）；跨"独立输出"并行的归约精确；
+**重排单个归约的加法顺序 ❌**（改舍入）。
+
+**上限说明**：两个最大阶段已无便宜 SIMD 余量——sync8 的成本在 FFT
+（four2a/rustfft 库码，已优化），OSD 的成本在高斯消元（P2.0 已向量化）+ 加权和
+**归约**（不可 bit-exact 重排）。故剩余 SIMD 收益受限，均为中小项。
+
+- **Tier 1（MAP，便宜，靠自动向量化，全平台，bit-exact）**——做法同 P2.0：
+  干净 slice、消边界检查/别名让 LLVM 自动向量化，必要时 runtime `#[target_feature]`
+  MAP 内核。候选：
+  - `ft8b/mod.rs::normalize_tone_spectra` 逐元素除法（~7×79×7/候选，条件触发）
+  - `sync8.rs::compute_symbol_spectra` 的 `sqrt(re²+im²)`（NH1×NHSYM/次，≈该函数 6%）
+  - `subtractft8.rs` 三个逐元素复乘/相减（151k/180k/151k，上限 subtract 3%）
+  - `ft8_downsample.rs` 窗/移位/平均 MAP 循环（多为 3200/次）
+  - 预计合计整体个位数 %。
+- **Tier 2（归约，bit-exact 但需"跨输出并行"重写，工作量大）**：
+  - `sync8.rs::compute_sync2d` 2D 相关——sync8 内除 FFT 外的大头。每 cell 为固定
+    几项之和，**按频点 i（独立输出）向量化、每 lane 内求和顺序不变 → bit-exact**。
+    收益可观但需手写 SIMD（gather、变长内和）。
+- **Tier 3（不做）**：单归约加权和（osd `xor_weight_sum_*`、bp 变/校验节点更新）
+  无法 bit-exact 重排、个体价值低；bp 的 tanh（2.6%）。
+
+排序：SYNC 频谱复用（算法，最大）> Tier 2 sync2d（大但难）> Tier 1 MAP（便宜小赢）
+> Tier 3 不做。落地前建议加细分 profiling 量准 Tier 1/2 真实占比再投入。
+
 ### 不做（已被数据否决，除非 owner 重新签字）
 - sync8/任何浮点 SIMD（破对齐，owner 否决）
 - BP/tanh 向量化（2.6%）
