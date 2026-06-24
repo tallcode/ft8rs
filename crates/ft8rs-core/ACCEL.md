@@ -134,29 +134,66 @@ opt-in、独立后端、默认关闭。**唯一例外是精确（整数/位）�
     1039→870 µs，调用次数 45752 不变；slot 118243→108705 ms（−8.1%）。
   - **对齐**：jtdx 20/20 & 430/431 复验绿；gf2 单测绿。纯 stable / 无 unsafe /
     无运行时探测 / 全平台一致。
-- **P2.1 标量位打包基线**：把 GF(2) 行向量按 `u64` 字打包（XOR / AND + popcount
-  求奇偶），仍是标量但已是位并行雏形；与原实现 bit-exact 对拍。
-- **P2.2 SIMD 内核**：`feature="simd-osd"` 下用 `std::simd`（portable）实现 XOR /
-  popcount 内核；运行时 `is_x86_feature_detected!` / `is_aarch64_feature_detected!`
-  选 AVX2/AVX-512/NEON，缺失自动回退 P2.1 标量。
-- **P2.3 等价测试**：随机 LLR/apmask 下，SIMD 与标量 OSD 输出（解出的 174-bit
-  码字、是否成功）**逐位相同**的属性测试；再跑完整 jtdx 20/20 & 430/431 基线
-  （feature 开/关都必须绿）。
-- **P2.4 量化收益**：用 P0 的 `--features profiling` 复测 osd 阶段 ms，记录加速比。
-- **验收**：基线字节级不变（开/关均绿）；osd 阶段明显下降；普通无 SIMD 机器走
-  标量回退、结果一致。
-- **风险**：高斯消元的主元选择/行序若与原实现不同会改码字 → 必须严格沿用原
-  顺序；属性测试为护栏。
+#### P2.1（详细计划）—— u64 位打包 GF(2) 矩阵，仍 bit-exact　【工作量大，待批】
 
-### P3（次线）—— sync8 浮点 SIMD / 批量 FFT　【需独立等效验收】
-- 先用 profiling 把 sync8 内部再细分（FFT vs 2D 相关 vs 候选排序），确认子热点。
-- 对 2D 相关累加循环做 `std::simd` 向量化（`feature="simd-sync"`，运行时探测 +
-  标量回退）。
-- 因改浮点舍入 → 设**独立等效验收**：解码集合差异在容差内（而非 byte-identical），
-  与默认 byte-identical 基线分开 CI。
-- 仅当 P2 完成且收益证实后再投入。
+动机与诚实的 ROI 评估：P2.0 已让编译器对**字节** XOR 自动向量化，所以 P2.1 的
+增量收益主要来自**内存带宽**而非计算——高斯消元反复流式扫 `genmrb`（k×n=91×174
+字节）做 k×k 次行 XOR，是内存受限的。把行从"1 bit/字节"打包成 `u64`（每行
+N=174 bit → W=⌈174/64⌉=3 word），带宽降约 7×、行 XOR 3 word/次。预计 osd 再降
+约 **10–20%**（整体约 +4–7%）；`mrbencode` 增益较小（已被 P2.0 向量化）。**若
+P2.1b 实测 <5%，回退仅打包 genmrb（高斯消元）不打包 codeword。**
+
+数据结构（放 `ft8v2/gf2.rs`，ft8rs 自有、非镜像）：
+```
+const W: usize = (N + 63) / 64;          // = 3
+struct BitMatrix { rows: usize, words: Vec<u64> }   // rows*W，行优先
+  fn get(r, c) -> u8 / test_bit(r, c) -> bool         // (word >> bit) & 1
+  fn set(r, c, b)
+  fn swap_cols(c1, c2)            // 跨所有行交换两 bit 列（逐行位翻转）
+  fn copy_row_words(r) -> [u64; W]  // 取出 pivot 行，解别名
+  fn xor_row(dst_r, &pivot_words)   // dst 行 ^= pivot（W 个 word XOR）
+```
+
+实施步骤：
+- **P2.1a** 在 gf2.rs 加 `BitMatrix` + 单测：随机 0/1 矩阵下，get/set/swap_cols/
+  xor_row 与现有 `Vec<u8>` 行优先参考实现**逐位相同**。
+- **P2.1b** 把 osd174_91.rs 的 `genmrb: Vec<u8>` 换成 `BitMatrix`：
+  - 构建（列重排，现 L23–29）→ `set`
+  - 主元搜索 `genmrb[id_row+icol]==1`（现 L36/L49）→ `test_bit`
+  - 列交换 `genmrb.swap(...)`（现 L40）→ `swap_cols`
+  - 行消元（现已是 `gf2_row_xor`）→ `copy_row_words` + `xor_row`
+  - `boxit91_pattern` / `e2 ^= genmrb[...]`（现 L141/L306）→ `test_bit`
+  - `mrbencode91_into`：codeword 也用 W-word 累加；weight-sum 处按位展开
+- **P2.1c** 验收：随机 LLR/apmask 下 OSD 输出码字与 P2.0 **逐位相同**的属性测试；
+  jtdx 20/20 & 430/431 基线绿；`--features profiling` 复测 osd 降幅并记录。
+- **风险**：①列交换的位操作 + 主元行序必须与原实现完全一致（否则码字变）；
+  ②codeword 打包后 weight-sum 的展开顺序要保持。逐位对拍 + 基线为双重护栏。
+- **范围控制**：纯 stable、无 unsafe、无运行时探测、全平台一致（与 P2.0 同档）。
+  显式 SIMD intrinsics（原 P2.2）**暂不做**——u64 打包已让编译器向量化，先看够不够。
+
+### P3（原 sync8 浮点 SIMD）—— ❌ 不做（会改浮点 → 破对齐）
+owner 决定：不接受任何改变浮点舍入、需要"容差等效"的方案。sync8 的浮点 SIMD /
+批量 FFT / `target-cpu=native` 全部排除。sync8 的提速只能走下方 bit-exact 路径。
+
+### 另寻他法（bit-exact，不动对齐）—— sync8 频谱跨 band 复用　【强候选】
+**已核实事实**：`sync8.rs::compute_symbol_spectra`（sync8 里最贵的部分，每次约
+NHSYM≈372 个 NFFT1=3840 的 r2c FFT）**只依赖 `dd8` 与 metric mode，与
+nfa/nfb（band）无关**；band 只影响其后的 `compute_sync2d` / `extract_candidates`。
+当前 sync8 被调用 1026 次，每次都把这批 FFT 重算一遍。
+
+→ 用与 `ft8_downsample` 已有的缓存同款套路（脏标记）：只在 `dd8` 变化后才重算
+`s`（symbol spectra），其余调用复用。`dd8` 仅被 `subtractft8` 改写（484 次），
+故约半数 sync8 调用可命中缓存 → **bit-exact**（数值完全不变）地砍掉一大块 sync8
+（sync8 占 ~47%，潜在收益可能**大于 P2.1**）。
+
+落地要点：给 `_state` 加一个 `dd8` 代次计数（subtract 时 +1）；spectra 缓存
+keyed by (代次, mode)；命中则跳过 `compute_symbol_spectra`。需改 sync8.rs 接口
+让 workspace 持有/复用 `s`。属性：候选集与现实现**逐位相同** + jtdx 基线绿。
+建议在 P2.1 之前先做 sync8 内部细分 profiling（FFT vs 2D 相关 vs 排序）确认占比，
+再实施此项。
 
 ### 不做（已被数据否决，除非 owner 重新签字）
+- sync8/任何浮点 SIMD（破对齐，owner 否决）
 - BP/tanh 向量化（2.6%）
 - GPU（CUDA/Metal/wgpu）
 - Intel MKL/IPP（本机 arm64 不可用）
@@ -164,11 +201,11 @@ opt-in、独立后端、默认关闭。**唯一例外是精确（整数/位）�
 
 ### 里程碑顺序
 ```
-P0   ✅ 仪表 + 实测（done, 5e968e0）
-P2.0 ✅ gf2_row_xor 边界 + 自动向量化（osd −16%, 整体 −8%, bit-exact）
-P2.1 ▶ u64 位打包行（进一步压 osd；仍 bit-exact，更侵入 osd174_91.rs）
-P2.2 ⏸ 显式 SIMD intrinsics（仅当 P2.1 不够；运行时探测 + 标量回退）
-P3   ⏸ sync8 浮点 SIMD（攻 44%，独立等效验收）
+P0    ✅ 仪表 + 实测（done, 5e968e0）
+P2.0  ✅ gf2_row_xor 边界 + 自动向量化（osd −16%, 整体 −8%, bit-exact）
+P2.1  ⏸ u64 位打包 OSD（再压 osd ~10–20%；bit-exact；工作量大，详细计划待批）
+SYNC  ⏸ sync8 频谱跨 band 复用（bit-exact，潜在 >P2.1；建议先细分 profiling）
+P3    ❌ sync8 浮点 SIMD（破对齐，owner 否决）
 ```
 
 ---
