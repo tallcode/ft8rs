@@ -139,6 +139,7 @@ impl JtdxStreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
+        let _prof_slot = crate::decode::profile::scope(crate::decode::profile::Stage::Slot);
         self.last_provenance.clear();
         self._state.dd8.fill(0.0);
         for (dst, src) in self._state.dd8.iter_mut().zip(samples.iter().copied()) {
@@ -222,7 +223,10 @@ impl JtdxStreamDecodeSession {
         sync8_config.nfawide = self._state.nfawide;
         sync8_config.nfbwide = self._state.nfbwide;
 
-        let candidates = sync8::sync8(&self._state.dd8, sync8_config);
+        let candidates = {
+            let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Sync);
+            sync8::sync8(&self._state.dd8, sync8_config)
+        };
         let mut newdat1 = true;
         for candidate in candidates {
             let sd_candidate =
@@ -257,17 +261,21 @@ impl JtdxStreamDecodeSession {
                     .then_some(self._state.lastrxmsg.xdt),
                 last_rx_is_rrr: last_rx_is_rrr(&band_config, &self._state),
             };
-            if let Some(result) = ft8b::ft8b(
-                workspace,
-                &band_config,
-                &self.book,
-                &self.tone8_tables,
-                &self.ft8apset,
-                &mut self._state.dd8,
-                newdat1,
-                candidate,
-                context,
-            ) {
+            let ft8b_result = {
+                let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Ft8b);
+                ft8b::ft8b(
+                    workspace,
+                    &band_config,
+                    &self.book,
+                    &self.tone8_tables,
+                    &self.ft8apset,
+                    &mut self._state.dd8,
+                    newdat1,
+                    candidate,
+                    context,
+                )
+            };
+            if let Some(result) = ft8b_result {
                 if rejects_special_deep_decode(&band_config, &self._state, &result) {
                     newdat1 = false;
                     continue;

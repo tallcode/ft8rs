@@ -16,6 +16,9 @@ path = "src/lib.rs"
 default = []
 # Compile-time: default rustfft@3840. Enable fftw for FFTW@3840 validation.
 fftw = []
+# Per-stage decode timing probes (P0 hardware-accel study). Off => zero-cost
+# no-ops, byte-identical to baseline. See src/decode/profile.rs.
+profiling = []
 
 [dependencies]
 rustfft = "6"

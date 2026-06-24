@@ -93,8 +93,14 @@ pub(super) fn regular_decode(
             for i in 0..N {
                 llrz[i] = 2.83 * llr_source[i];
             }
-            let decoded =
-                bpdecode174_91(&llrz, &apmask, 30).or_else(|| osd174_91(&llrz, &apmask, 3));
+            let decoded = {
+                let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Bp);
+                bpdecode174_91(&llrz, &apmask, 30)
+            }
+            .or_else(|| {
+                let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Osd);
+                osd174_91(&llrz, &apmask, 3)
+            });
             if let Some(decoded) = decoded {
                 if let Some(result) = decoded_to_result(
                     metrics,
@@ -164,7 +170,12 @@ pub(super) fn regular_decode(
                         llrz[i] = apmag * ap.apsym[i] as f32;
                     }
                 }
-                let decoded = bpdecode174_91(&llrz, &ap.apmask, 30).or_else(|| {
+                let decoded = {
+                    let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Bp);
+                    bpdecode174_91(&llrz, &ap.apmask, 30)
+                }
+                .or_else(|| {
+                    let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Osd);
                     osd174_91(
                         &llrz,
                         &ap.apmask,

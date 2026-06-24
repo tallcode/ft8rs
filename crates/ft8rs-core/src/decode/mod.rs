@@ -7,6 +7,7 @@
 pub mod dx;
 pub mod hybrid;
 pub mod lib_jtdx;
+pub mod profile;
 
 #[path = "lib_wsjtx/ft8/bpdecode174_91.rs"]
 pub(crate) mod bpdecode174_91;
