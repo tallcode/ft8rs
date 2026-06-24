@@ -2,7 +2,7 @@
 
 use super::bpdecode174_91::{BpDecodeResult, K, N};
 use super::chkcrc14a::chkcrc14a;
-use super::gf2::gf2_row_xor;
+use crate::decode::gf2::gf2_row_xor;
 use crate::decode::lib_jtdx::indexx::indexx_ascending;
 use std::collections::HashMap;
 use std::sync::OnceLock;

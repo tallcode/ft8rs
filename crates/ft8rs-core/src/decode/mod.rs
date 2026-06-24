@@ -5,6 +5,8 @@
 //! outside this module.
 
 pub mod dx;
+/// ft8rs-specific GF(2) row kernel (not mirrored), shared by both OSD mirrors.
+pub mod gf2;
 pub mod hybrid;
 pub mod lib_jtdx;
 pub mod profile;

@@ -5,6 +5,7 @@
 
 use crate::decode::chkcrc14a::check_crc14;
 use crate::decode::decode174_91::{DecodeResult, KK, N_LDPC};
+use crate::decode::gf2::gf2_row_xor;
 use crate::decode::indexx::indexx_ascending;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -33,6 +34,10 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
 
     // Gaussian elimination
     let max_pivot_col = (k + 20).min(n);
+    // Non-aliasing copy of the pivot row (unchanged during the sweep since ii == id
+    // is skipped), so gf2_row_xor sees two distinct slices it can vectorize —
+    // bit-identical to the original in-place index XOR.
+    let mut pivot = vec![0u8; n];
     for id in 0..k {
         let mut found = false;
         let id_row = id * n;
@@ -45,15 +50,14 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
                     }
                     indices.swap(id, icol);
                 }
+                pivot.copy_from_slice(&genmrb[id_row..id_row + n]);
                 for ii in 0..k {
                     if ii == id {
                         continue;
                     }
                     let ii_row = ii * n;
                     if genmrb[ii_row + id] == 1 {
-                        for c in 0..n {
-                            genmrb[ii_row + c] ^= genmrb[id_row + c];
-                        }
+                        gf2_row_xor(&mut genmrb[ii_row..ii_row + n], &pivot);
                     }
                 }
                 found = true;
@@ -290,9 +294,7 @@ fn mrbencode91_into(message: &[u8], genmrb: &[u8], n: usize, codeword: &mut [u8]
             continue;
         }
         let row = i * n;
-        for j in 0..n {
-            codeword[j] ^= genmrb[row + j];
-        }
+        gf2_row_xor(codeword, &genmrb[row..row + n]);
     }
 }
 
