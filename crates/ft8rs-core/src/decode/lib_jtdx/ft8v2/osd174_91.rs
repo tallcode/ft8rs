@@ -36,28 +36,31 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
     // row is bit-identical to the original in-place index XOR — it just gives the
     // kernel two non-aliasing slices to vectorize.
     let mut pivot = vec![0u8; n];
-    for id in 0..k {
-        let id_row = id * n;
-        for icol in id..max_pivot_col {
-            if genmrb[id_row + icol] == 1 {
-                if icol != id {
-                    for row_idx in 0..k {
-                        let r = row_idx * n;
-                        genmrb.swap(r + id, r + icol);
+    {
+        let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::OsdElim);
+        for id in 0..k {
+            let id_row = id * n;
+            for icol in id..max_pivot_col {
+                if genmrb[id_row + icol] == 1 {
+                    if icol != id {
+                        for row_idx in 0..k {
+                            let r = row_idx * n;
+                            genmrb.swap(r + id, r + icol);
+                        }
+                        indices.swap(id, icol);
                     }
-                    indices.swap(id, icol);
+                    pivot.copy_from_slice(&genmrb[id_row..id_row + n]);
+                    for ii in 0..k {
+                        if ii == id {
+                            continue;
+                        }
+                        let ii_row = ii * n;
+                        if genmrb[ii_row + id] == 1 {
+                            gf2_row_xor(&mut genmrb[ii_row..ii_row + n], &pivot);
+                        }
+                    }
+                    break;
                 }
-                pivot.copy_from_slice(&genmrb[id_row..id_row + n]);
-                for ii in 0..k {
-                    if ii == id {
-                        continue;
-                    }
-                    let ii_row = ii * n;
-                    if genmrb[ii_row + id] == 1 {
-                        gf2_row_xor(&mut genmrb[ii_row..ii_row + n], &pivot);
-                    }
-                }
-                break;
             }
         }
     }
@@ -169,10 +172,13 @@ pub(crate) fn osd174_91(llr: &[f32; N], apmask: &[i8; N], ndeep: usize) -> Optio
 
         if npre2 {
             let mut boxes: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
-            for i1 in (0..k).rev() {
-                for i2 in (0..i1).rev() {
-                    let ipat = boxit91_pattern(&genmrb, n, k, ntau, i1, i2);
-                    boxes.entry(ipat).or_default().push((i1, i2));
+            {
+                let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::OsdBox);
+                for i1 in (0..k).rev() {
+                    for i2 in (0..i1).rev() {
+                        let ipat = boxit91_pattern(&genmrb, n, k, ntau, i1, i2);
+                        boxes.entry(ipat).or_default().push((i1, i2));
+                    }
                 }
             }
 
@@ -270,6 +276,7 @@ fn mrbencode91(message: &[u8], genmrb: &[u8], n: usize) -> Vec<u8> {
 }
 
 fn mrbencode91_into(message: &[u8], genmrb: &[u8], n: usize, codeword: &mut [u8]) {
+    let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::OsdEncode);
     debug_assert_eq!(codeword.len(), n);
     codeword.fill(0);
     for (i, &bit) in message.iter().enumerate() {
@@ -326,6 +333,7 @@ fn fetchit91_pattern(bits: &[u8]) -> usize {
 }
 
 fn xor_weight_sum_message(me: &[u8], hdec: &[i8], absrx: &[f32], k: usize) -> f32 {
+    let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::OsdDist);
     let mut sum = 0.0f32;
     for i in 0..k {
         sum += (me[i] ^ hdec[i] as u8) as f32 * absrx[i];
@@ -334,6 +342,7 @@ fn xor_weight_sum_message(me: &[u8], hdec: &[i8], absrx: &[f32], k: usize) -> f3
 }
 
 fn error_weight_sum(error: &[u8], absrx: &[f32], k: usize) -> f32 {
+    let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::OsdDist);
     let mut sum = 0.0f32;
     for i in 0..error.len() {
         sum += error[i] as f32 * absrx[k + i];
@@ -342,6 +351,7 @@ fn error_weight_sum(error: &[u8], absrx: &[f32], k: usize) -> f32 {
 }
 
 fn xor_weight_sum_codeword(cw: &[u8], hdec: &[i8], absrx: &[f32], n: usize) -> f32 {
+    let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::OsdDist);
     let mut sum = 0.0f32;
     for i in 0..n {
         sum += (cw[i] ^ hdec[i] as u8) as f32 * absrx[i];
