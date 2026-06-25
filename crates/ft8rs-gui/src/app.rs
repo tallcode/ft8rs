@@ -592,49 +592,61 @@ impl Ft8rsApp {
         const PAD: f32 = TABLE_PAD;
         let font = egui::FontId::monospace(DECODE_FONT_SIZE);
         let row_h = ui.fonts(|f| f.row_height(&font));
-        // Virtualized: only the visible row range is laid out and painted each
-        // frame (via show_rows), so the cost is independent of how many rows have
-        // accumulated — the list can hold the full MAX_ROWS without scroll lag.
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .stick_to_bottom(true)
-            .show_rows(ui, row_h, self.rows.len(), |ui, range| {
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                let width = ui.available_width();
-                let dark = ui.visuals().dark_mode;
-                let text_color = ui.visuals().text_color();
-                // Odd-slot stripe. egui's faint_bg_color is too subtle to read, so
-                // we deepen it a touch; even slots keep the plain panel background.
-                let stripe = if dark {
-                    Color32::from_gray(44)
-                } else {
-                    Color32::from_gray(232)
-                };
-                // Compare-mode coloring only applies while listening; otherwise
-                // every row is the default color.
-                let comparing = self.udp_in_on;
-                for row in &self.rows[range] {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
-                    // Alternate the slot background: :00/:30 vs :15/:45. The stripe
-                    // spans the full width; the text is padded inside.
-                    if row.parity == 1 {
-                        ui.painter().rect_filled(rect, 0.0, stripe);
-                    }
-                    let color = if comparing {
-                        source_color(row.source, dark, text_color)
-                    } else {
-                        text_color
-                    };
-                    ui.painter().text(
-                        egui::pos2(rect.left() + PAD, rect.center().y),
-                        egui::Align2::LEFT_CENTER,
-                        &row.text,
-                        font.clone(),
-                        color,
-                    );
+        let total = self.rows.len();
+        let avail_h = ui.available_height();
+        let content_h = total as f32 * row_h;
+
+        let dark = ui.visuals().dark_mode;
+        let text_color = ui.visuals().text_color();
+        // Odd-slot stripe. egui's faint_bg_color is too subtle to read, so we
+        // deepen it a touch; even slots keep the plain panel background.
+        let stripe = if dark { Color32::from_gray(44) } else { Color32::from_gray(232) };
+        // Compare-mode coloring only applies while listening.
+        let comparing = self.udp_in_on;
+        let rows = &self.rows;
+        let paint = |ui: &mut egui::Ui, range: std::ops::Range<usize>| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            let width = ui.available_width();
+            for row in &rows[range] {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+                // Alternate the slot background: :00/:30 vs :15/:45. The stripe
+                // spans the full width; the text is padded inside.
+                if row.parity == 1 {
+                    ui.painter().rect_filled(rect, 0.0, stripe);
                 }
+                let color = if comparing {
+                    source_color(row.source, dark, text_color)
+                } else {
+                    text_color
+                };
+                ui.painter().text(
+                    egui::pos2(rect.left() + PAD, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    &row.text,
+                    font.clone(),
+                    color,
+                );
+            }
+        };
+
+        let scroll = egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .stick_to_bottom(true);
+        if content_h < avail_h {
+            // Not enough rows to fill the panel: pin them to the bottom (newest
+            // just above the controls) with a top spacer, so the list reaches the
+            // bottom edge instead of leaving a gap. Few rows here, so no need to
+            // virtualize.
+            scroll.show(ui, |ui| {
+                ui.add_space(avail_h - content_h);
+                paint(ui, 0..total);
             });
+        } else {
+            // Full: virtualize so the per-frame cost is independent of how many
+            // rows have accumulated (up to MAX_ROWS), and stick to the bottom.
+            scroll.show_rows(ui, row_h, total, paint);
+        }
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
