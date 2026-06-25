@@ -36,10 +36,18 @@ pub enum Stage {
     Sync2d = 7,
     /// sync8 sub-stage: candidate extraction (`extract_candidates`).
     SyncExtract = 8,
+    /// OSD sub-stage: Gaussian elimination.
+    OsdElim = 9,
+    /// OSD sub-stage: `mrbencode91_into` re-encoding (leaf, spans the searches).
+    OsdEncode = 10,
+    /// OSD sub-stage: weighted-sum distance (leaf, spans the searches).
+    OsdDist = 11,
+    /// OSD sub-stage: npre2 box-build loop (`boxit91_pattern` hashing).
+    OsdBox = 12,
 }
 
 /// Number of stages; also the length of the accumulator arrays.
-pub const STAGE_COUNT: usize = 9;
+pub const STAGE_COUNT: usize = 13;
 
 #[cfg(feature = "profiling")]
 mod imp {
@@ -57,6 +65,10 @@ mod imp {
         "└spectra",
         "└sync2d",
         "└extract",
+        "·osd-elim",
+        "·osd-enc",
+        "·osd-dist",
+        "·osd-box",
     ];
 
     static NANOS: [AtomicU64; STAGE_COUNT] = [const { AtomicU64::new(0) }; STAGE_COUNT];
