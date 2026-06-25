@@ -2,7 +2,7 @@
 name = "ft8rs-engine"
 version = "0.0.0"
 edition = "2021"
-license = "GPL-3.0"
+license = "GPL-3.0-only"
 description = "ft8rs live runtime: soundcard capture + UDP reporting"
 
 [dependencies]

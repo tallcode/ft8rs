@@ -1,0 +1,84 @@
+ft8.rs — a streaming FT8 decoder
+Copyright (C) 2026 Tao Xu (BG5ATV)
+
+ft8.rs is a derivative work based on the WSJT-X and JTDX source code and is
+licensed under version 3 of the GNU General Public License.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of version 3 of the GNU General Public License as published by the
+Free Software Foundation.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+The full text of the license is in the bundled LICENSE file, or at
+<https://www.gnu.org/licenses/gpl-3.0.html>.
+
+
+================================================================================
+Derivative work and attributions
+================================================================================
+
+ft8.rs's FT8 decoder is a derivative of the WSJT-X and JTDX decoders: the
+routines under
+
+    crates/ft8rs-core/src/decode/lib_wsjtx/
+    crates/ft8rs-core/src/decode/lib_jtdx/
+
+are a function-by-function Rust port of the corresponding Fortran sources. Each
+ported file carries a "Source mapping" / "Mirrors" header naming the upstream
+file it was translated from. A translation of source code is a derivative work
+under copyright law, so the GNU General Public License applies regardless of the
+change of programming language.
+
+--------------------------------------------------------------------------------
+WSJT-X
+--------------------------------------------------------------------------------
+The FT8 protocol and the original decoder ported here.
+
+    Copyright (C) 2001-2026 Joe Taylor (K1JT), Bill Somerville (G4WJS),
+                            Steven Franke (K9AN), Nico Palermo (IV3NWV),
+                            and the WSJT Development Group
+    License:   GNU GPL version 3
+    Homepage:  https://wsjt.sourceforge.io/
+
+WSJT-X copyright notice:
+
+    "The algorithms, source code, look-and-feel of WSJT-X and related programs,
+    and protocol specifications for the modes FSK441, FST4, FT8, JT4, JT6M, JT9,
+    JT65, JTMS, QRA64, Q65, MSK144 are Copyright (C) 2001-2026 by one or more of
+    the following authors: Joseph Taylor, K1JT; Bill Somerville, G4WJS; Steven
+    Franke, K9AN; Nico Palermo, IV3NWV; Greg Beam, KI7MT; Michael Black, W9MDB;
+    Edson Pereira, PY2SDR; Philip Karn, KA9Q; Uwe Risse, DG2YCB; Brian Moran,
+    N9ADG; Roger Rehr, W3SZ; John Nelson, G4KLA; Charlie Suckling, DL3WDG;
+    Terrell Deppe, KJ5HST; and other members of the WSJT Development Group."
+
+The FT8 mode was designed by Steven Franke (K9AN) and Joseph Taylor (K1JT).
+
+--------------------------------------------------------------------------------
+JTDX
+--------------------------------------------------------------------------------
+Deep-decode improvements. JTDX is itself a derivative of WSJT-X; the
+improvements ported here are credited to its authors.
+
+    Copyright (C) 2016-2022 Igor Chernikov (UA3DJY) and Arvo Järve (ES1JA),
+                            with contributions from the JTDX community
+    License:   GNU GPL version 3
+    Homepage:  https://www.jtdx.tech/
+
+================================================================================
+Other open-source components
+================================================================================
+
+ft8.rs also links the following third-party Rust crates, used under their own
+(permissive) licenses; see each crate for its terms:
+
+    RustFFT          fast Fourier transform engine
+    egui / eframe    graphical user interface
+    cpal             cross-platform audio capture
+    image            icon/logo decoding
+    muda             native menu bar
+
+This NOTICE file is informational; the governing terms are those of version 3
+of the GNU General Public License in the LICENSE file.

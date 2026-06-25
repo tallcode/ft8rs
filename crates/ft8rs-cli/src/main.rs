@@ -34,6 +34,8 @@ enum Command {
     File(FileArgs),
     /// List or monitor live audio input devices
     Monitor(MonitorArgs),
+    /// Show copyright, license, and attribution information
+    License,
 }
 
 #[derive(Args)]
@@ -146,6 +148,10 @@ fn run() -> Result<(), String> {
     match cli.command {
         Command::File(args) => run_file(args),
         Command::Monitor(args) => run_monitor(args),
+        Command::License => {
+            print!("{}", ft8rs::about::notice(VERSION));
+            Ok(())
+        }
     }
 }
 

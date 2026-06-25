@@ -101,6 +101,8 @@ pub struct Ft8rsApp {
 
     settings_open: bool,
     about_open: bool,
+    // The (mandatory) WSJT-X copyright notice, shown in its own popup from About.
+    copyright_open: bool,
     tab: SettingsTab,
 
     // Native Profile menu checkmarks (macOS); empty elsewhere.
@@ -203,6 +205,7 @@ impl Ft8rsApp {
             pending_confirm: None,
             settings_open: false,
             about_open: false,
+            copyright_open: false,
             tab: SettingsTab::Station,
             profile_menu,
             menu_profile_synced: profile,
@@ -1075,19 +1078,24 @@ impl Ft8rsApp {
             egui::ViewportId::from_hash_of("about"),
             egui::ViewportBuilder::default()
                 .with_title("About ft8.rs")
-                .with_inner_size([320.0, 420.0])
+                .with_inner_size([440.0, 500.0])
                 .with_resizable(false)
                 .with_minimize_button(false)
                 .with_maximize_button(false),
             |vctx, _class| {
                 egui::CentralPanel::default()
-                    .frame(
-                        egui::Frame::central_panel(&vctx.style())
-                            .inner_margin(egui::Margin::symmetric(22.0, 14.0)),
-                    )
+                    // No panel margin: the scroll area reaches the window edge so
+                    // its scrollbar sits flush to the right. Content padding is
+                    // applied inside the scroll area instead (the inner Frame).
+                    .frame(egui::Frame::central_panel(&vctx.style()).inner_margin(0.0))
                     .show(vctx, |ui| {
                     ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
                     ui.spacing_mut().item_spacing.y = 4.0;
+                    // Scroll the credits in case fonts/translations overflow the window.
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Frame::none()
+                        .inner_margin(egui::Margin::symmetric(22.0, 14.0))
+                        .show(ui, |ui| {
                     ui.add_space(10.0);
                     ui.vertical_centered(|ui| {
                         if let Some(tex) = &logo {
@@ -1097,7 +1105,7 @@ impl Ft8rsApp {
                             )));
                             ui.add_space(6.0);
                         }
-                        ui.label(RichText::new("ft8.rs").size(18.0).strong());
+                        ui.label(RichText::new(ft8rs::about::NAME).size(18.0).strong());
                         ui.add_space(4.0);
                         ui.label(
                             RichText::new(format!("Version {}", env!("FT8RS_VERSION"))).weak(),
@@ -1106,20 +1114,55 @@ impl Ft8rsApp {
                             RichText::new(format!("FFT engine: {}", ft8rs::fft_engine_name()))
                                 .weak(),
                         );
-                        ui.label(RichText::new("License: GPL-3.0").weak());
+                        ui.label(RichText::new(ft8rs::about::COPYRIGHT).weak());
+                        ui.label(RichText::new(format!("License: {}", ft8rs::about::LICENSE)).weak());
+                    });
+                    ui.add_space(10.0);
+                    // No-warranty / redistribution notice (GPL §“interactive”).
+                    ui.label(RichText::new(ft8rs::about::WARRANTY_NOTICE).weak().size(11.0));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(RichText::new("Full license: ").weak().size(11.0));
+                        ui.hyperlink_to(
+                            RichText::new(ft8rs::about::LICENSE_URL).size(11.0),
+                            ft8rs::about::LICENSE_URL,
+                        );
                     });
                     ui.add_space(12.0);
                     ui.separator();
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Acknowledgements").strong());
+                    // Derivative-work credits: the decoder is a port of these GPL works.
+                    ui.label(RichText::new("Derived from").strong());
                     ui.add_space(4.0);
-                    ui.label("• WSJT-X — original FT8 decoder");
-                    ui.label("• JTDX — deep-decode improvements");
-                    ui.label("• RustFFT — FFT engine");
-                    ui.label("• egui / eframe — user interface");
-                    ui.label("• cpal — audio capture");
+                    for a in ft8rs::about::ATTRIBUTIONS {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            ui.hyperlink_to(RichText::new(a.name).strong(), a.url);
+                            ui.label(format!(" — {}", a.detail));
+                        });
+                        ui.label(RichText::new(format!("  {}", a.copyright)).weak().size(11.0));
+                        ui.label(RichText::new(format!("  {}", a.license)).weak().size(11.0));
+                        ui.add_space(4.0);
+                    }
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Also built with").strong());
+                    ui.add_space(4.0);
+                    for (name, role) in ft8rs::about::LIBRARIES {
+                        ui.label(format!("• {name} — {role}"));
+                    }
                     ui.add_space(6.0);
                     ui.label(RichText::new("Thanks to the amateur-radio community.").weak());
+                    // The WSJT-X notice is long; keep it behind a button that
+                    // opens it in its own popup.
+                    ui.add_space(10.0);
+                    if ui
+                        .button(RichText::new("WSJT-X copyright notice").size(11.0))
+                        .clicked()
+                    {
+                        self.copyright_open = true;
+                    }
+                    }); // content Frame
+                    }); // ScrollArea
                 });
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;
@@ -1128,6 +1171,49 @@ impl Ft8rsApp {
         );
         if close {
             self.about_open = false;
+        }
+    }
+
+    /// The mandatory WSJT-X copyright notice, in its own popup window (opened
+    /// from the About dialog). WSJT-X's license requires it to be shown.
+    fn copyright_window(&mut self, ctx: &egui::Context) {
+        if !self.copyright_open {
+            return;
+        }
+        let mut close = false;
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("copyright"),
+            egui::ViewportBuilder::default()
+                .with_title("WSJT-X Copyright Notice")
+                .with_inner_size([460.0, 280.0])
+                .with_resizable(false)
+                .with_minimize_button(false)
+                .with_maximize_button(false),
+            |vctx, _class| {
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::central_panel(&vctx.style())
+                            .inner_margin(egui::Margin::symmetric(18.0, 14.0)),
+                    )
+                    .show(vctx, |ui| {
+                        ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
+                        ui.label(
+                            RichText::new("ft8.rs's FT8 decoder is based on WSJT-X:")
+                                .weak()
+                                .size(11.0),
+                        );
+                        ui.add_space(8.0);
+                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                            ui.label(ft8rs::about::WSJTX_COPYRIGHT_NOTICE);
+                        });
+                    });
+                if vctx.input(|i| i.viewport().close_requested()) {
+                    close = true;
+                }
+            },
+        );
+        if close {
+            self.copyright_open = false;
         }
     }
 }
@@ -1214,6 +1300,7 @@ impl eframe::App for Ft8rsApp {
 
         self.settings_window(ctx);
         self.about_window(ctx);
+        self.copyright_window(ctx);
         self.confirm_window(ctx);
 
         // Keep pumping engine events even without user input.
