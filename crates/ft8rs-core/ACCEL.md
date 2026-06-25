@@ -158,6 +158,54 @@ OSD 回退率 194.7%（每次 bp 失败触发 nosd=2 次 osd）。
 
 ---
 
+## 7c. OSD 内部剖析（探针实测，决定后续开发）
+
+OSD 是两个解码器的最大单项（jtdx 40~52%，wsjtx 42~50%）。曾用临时子探针
+（OsdElim/Encode/Dist/Box + 机器级 OsdCount/OsdArr）量过其内部构成，**结论确凿后
+探针已撤除**（它们处于 per-pattern 热路径、开启时严重失真），数据留档于此。
+
+**jtdx OSD 内部**（osd=52.2% slot，40.4s）：
+
+| 子项 | 占 OSD | 说明 |
+|---|--:|---|
+| osd-box（npre2 box 构建）| 23.5% | boxit91 哈希配对（ndeep=3 特有）|
+| osd-enc（mrbencode）| ~12% | 重编码 |
+| osd-dist（加权和距离）| ~4.5% | 浮点归约 |
+| osd-elim（高斯消元）| ~4% | |
+| **其余（搜索机器）** | **~56%** | 图样枚举/数组拷贝/HashMap/e2 更新 |
+
+**wsjtx OSD 内部**（osd=42.5% slot，22.8s；ndeep=2，无 box）：
+
+| 子项 | 占 OSD | 说明 |
+|---|--:|---|
+| osd-elim | ~7% | |
+| osd-enc | ~6% | |
+| osd-dist | **0.2%** | 几乎为零 |
+| osd-box | 0% | 确认无 npre2 |
+| **其余（搜索机器）** | **~87%** | 同上 |
+
+**wsjtx 机器再细分**（per-n1 探针，含测量地板高估，绝对 ms vs 真实 OSD 22.8s）：
+
+| 机器子项 | ≈占 OSD | bit-exact 可优化 |
+|---|--:|---|
+| osd-arr（`e2.copy` + `e2 ^= genmrb行`）| ~35%（高估）| ✅ 打包 u64 → 2-word XOR/copy |
+| osd-cnt（`filter().take(40).count()`）| ~17%（高估）| ✅ `popcount(word & mask)` |
+| 其余（nextpat91 枚举/mi/me/setup/控制流）| ~另一半 | ❌ 只能换算法 |
+
+**关键结论**：
+1. **OSD 没有"SIMD 算术"的优化空间**：dist（曾设想的 SIMD 目标）仅 0.2~4.5%，废案。
+   OSD 的成本是**搜索结构本身**（机器），不是紧致数值循环。
+2. **但约 20~30% 的 OSD 是 bit-exact 可打包的**（osd-arr + osd-cnt，扣除探针地板后
+   的保守估计）：把 `e2/e2sub` 打包成 `u64` + genmrb 校验列打包 → 行 XOR/拷贝
+   collapse；`filter().count()` → `popcount`。结果逐位相同（GF(2)/整数），不丢解码。
+3. 这是**后续开发的目标**（暂称 OSD-PACK）：潜在 OSD −20~30%（整体 wsjtx ~−10% /
+   jtdx ~−8%），bit-exact、零正确性风险（基线兜底），但是镜像 OSD 内循环的 fiddly
+   重写，且有 P2.1 式"被另一半机器 + 打包开销吃掉收益"的不确定性。
+4. 再大的提速只能**换算法**（减少调用/降搜索深度/砍 npre2）= 拿灵敏度换，对 DX 追台
+   不利，须开独立实验 profile + 独立验收。
+
+---
+
 ## 7. 剩余 backlog（bit-exact，owner 决定是否做）
 
 边际收益均已不大（两个最大头的便宜部分已吃完）：
@@ -176,15 +224,18 @@ OSD 回退率 194.7%（每次 bp 失败触发 nosd=2 次 osd）。
 ## 里程碑
 
 ```
-P0    ✅ 仪表 + 实测（5e968e0）
-P2.0  ✅ gf2_row_xor 向量化（osd −16%, 整体 −8%）          bit-exact
-SYNCP ✅ sync8 子阶段 profiling：spectra 9.3% / sync2d 37.3%
-路径B ✅ sync2d 窗口和去冗余（sync2d −76%, 整体再 −25%）   bit-exact
-      —— 累计相对 P0：整体解码 −30%
-P2.1  ❌ u64 打包 OSD：实测零收益 → 已回退
-路径A ⏸ sync8 频谱复用（净 3–5%，低优先）
-路径C ⏸ sync2d 跨频点 SIMD（更难）
-P3    ❌ sync8 浮点 SIMD（破对齐，owner 否决）
+P0       ✅ 仪表 + 实测（5e968e0）
+P2.0     ✅ gf2_row_xor 向量化 jtdx OSD（osd −16%, 整体 −8%）   bit-exact
+路径B    ✅ sync2d 窗口和去冗余（sync2d −76%, 整体再 −25%）     bit-exact
+         —— jtdx 累计相对 P0：整体解码 −30%
+wsjtx-P2.0 ✅ gf2_row_xor wsjtx OSD（osd −27.9%, 整体 −14.5%）  bit-exact
+OSD剖析  ✅ OSD 内部探测完成（§7c）：dist 仅 0.2~4.5%、机器主导；
+            探索性 per-pattern 探针已撤、数据留档；保留 6 个粗粒度阶段探针
+OSD-PACK ▶ 【下一步开发】e2/e2sub 打包 u64 + popcount，攻 OSD 机器 ~20-30%；
+            bit-exact、零正确性风险；fiddly 镜像内循环重写，P2.1 式不确定性
+P2.1     ❌ u64 打包 OSD 高斯消元：实测零收益 → 已回退（消元非瓶颈）
+路径A/C  ⏸ sync8 频谱复用（净 3–5%）/ sync2d 跨频点 SIMD（更难）
+P3       ❌ sync8 浮点 SIMD（破对齐，owner 否决）
 ```
 
 ---

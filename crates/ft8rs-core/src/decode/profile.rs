@@ -30,24 +30,15 @@ pub enum Stage {
     Osd = 4,
     /// Decoded-signal subtraction (`subtractft8`).
     Subtract = 5,
-    /// sync8 sub-stage: symbol spectra FFTs (`compute_symbol_spectra`).
-    SyncSpectra = 6,
-    /// sync8 sub-stage: 2D correlation (`compute_sync2d`).
-    Sync2d = 7,
-    /// sync8 sub-stage: candidate extraction (`extract_candidates`).
-    SyncExtract = 8,
-    /// OSD sub-stage: Gaussian elimination.
-    OsdElim = 9,
-    /// OSD sub-stage: `mrbencode91_into` re-encoding (leaf, spans the searches).
-    OsdEncode = 10,
-    /// OSD sub-stage: weighted-sum distance (leaf, spans the searches).
-    OsdDist = 11,
-    /// OSD sub-stage: npre2 box-build loop (`boxit91_pattern` hashing).
-    OsdBox = 12,
 }
 
 /// Number of stages; also the length of the accumulator arrays.
-pub const STAGE_COUNT: usize = 13;
+///
+/// Only these coarse, low-frequency orchestration boundaries are instrumented.
+/// The exploratory per-pattern sub-stages (sync spectra/sync2d, OSD
+/// elim/encode/dist/box) were removed after their findings were recorded in
+/// ACCEL.md — they sat in hot loops and distorted timing when enabled.
+pub const STAGE_COUNT: usize = 6;
 
 #[cfg(feature = "profiling")]
 mod imp {
@@ -55,21 +46,8 @@ mod imp {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Instant;
 
-    const STAGE_NAMES: [&str; STAGE_COUNT] = [
-        "slot",
-        "sync8",
-        "ft8b",
-        "ldpc-bp",
-        "osd",
-        "subtract",
-        "└spectra",
-        "└sync2d",
-        "└extract",
-        "·osd-elim",
-        "·osd-enc",
-        "·osd-dist",
-        "·osd-box",
-    ];
+    const STAGE_NAMES: [&str; STAGE_COUNT] =
+        ["slot", "sync8", "ft8b", "ldpc-bp", "osd", "subtract"];
 
     static NANOS: [AtomicU64; STAGE_COUNT] = [const { AtomicU64::new(0) }; STAGE_COUNT];
     static CALLS: [AtomicU64; STAGE_COUNT] = [const { AtomicU64::new(0) }; STAGE_COUNT];
