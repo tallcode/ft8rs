@@ -91,23 +91,20 @@ pub(super) fn sync8(
         candidate0.clear();
         savg.fill(0.0);
 
-        {
-            let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::SyncSpectra);
-            for j in 0..NHSYM {
-                let ia = j * NSTEP;
-                x_re[..fft_size].fill(0.0);
-                x_im[..fft_size].fill(0.0);
-                let end = (ia + NSPS).min(dd.len());
-                for i in ia..end {
-                    x_re[i - ia] = fac * dd[i];
-                }
-                four2a_r2c(x_re, x_im);
-                let row_offset = j;
-                for i in 0..half_size {
-                    let val = x_re[i] * x_re[i] + x_im[i] * x_im[i];
-                    s[i * NHSYM + row_offset] = val;
-                    savg[i] += val;
-                }
+        for j in 0..NHSYM {
+            let ia = j * NSTEP;
+            x_re[..fft_size].fill(0.0);
+            x_im[..fft_size].fill(0.0);
+            let end = (ia + NSPS).min(dd.len());
+            for i in ia..end {
+                x_re[i - ia] = fac * dd[i];
+            }
+            four2a_r2c(x_re, x_im);
+            let row_offset = j;
+            for i in 0..half_size {
+                let val = x_re[i] * x_re[i] + x_im[i] * x_im[i];
+                s[i * NHSYM + row_offset] = val;
+                savg[i] += val;
             }
         }
 
@@ -120,7 +117,6 @@ pub(super) fn sync8(
         let sync2d_len = (ib - ia + 1) * width;
         sync2d[..sync2d_len].fill(0.0);
 
-        let sync2d_scope = crate::decode::profile::scope(crate::decode::profile::Stage::Sync2d);
         for i in ia..=ib {
             for jj in (-(jz as isize)..=(jz as isize)).step_by(1) {
                 let mut ta = 0.0;
@@ -183,7 +179,6 @@ pub(super) fn sync8(
                 sync2d[(i - ia) * width + (jj + jz as isize) as usize] = sync_val.max(sync_bc);
             }
         }
-        drop(sync2d_scope);
 
         // Red + red2 per frequency bin (matching WSJT-X)
         let mlag: isize = 13;

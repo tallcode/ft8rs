@@ -38,7 +38,6 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
     // is skipped), so gf2_row_xor sees two distinct slices it can vectorize —
     // bit-identical to the original in-place index XOR.
     let mut pivot = vec![0u8; n];
-    let osd_elim_scope = crate::decode::profile::scope(crate::decode::profile::Stage::OsdElim);
     for id in 0..k {
         let mut found = false;
         let id_row = id * n;
@@ -69,7 +68,6 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
             return None;
         }
     }
-    drop(osd_elim_scope);
 
     // Hard decisions on reordered received word
     let mut hdec = vec![0i8; n];
@@ -163,22 +161,18 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
                         if n1 != flag {
                             mrbencode91_into(&me, &genmrb, n, &mut ce);
                         }
-                        let dd = {
-                            let _prof =
-                                crate::decode::profile::scope(crate::decode::profile::Stage::OsdDist);
-                            if n1 == flag {
-                                d1 + e2sub
-                                    .iter()
+                        let dd = if n1 == flag {
+                            d1 + e2sub
+                                .iter()
+                                .zip(absrx.iter().skip(k))
+                                .map(|(&e, &a)| e as f32 * a)
+                                .sum::<f32>()
+                        } else {
+                            d1 + (ce[n1] ^ hdec[n1] as u8) as f32 * absrx[n1]
+                                + e2.iter()
                                     .zip(absrx.iter().skip(k))
                                     .map(|(&e, &a)| e as f32 * a)
                                     .sum::<f32>()
-                            } else {
-                                d1 + (ce[n1] ^ hdec[n1] as u8) as f32 * absrx[n1]
-                                    + e2.iter()
-                                        .zip(absrx.iter().skip(k))
-                                        .map(|(&e, &a)| e as f32 * a)
-                                        .sum::<f32>()
-                            }
                         };
                         if dd < dmin {
                             dmin = dd;
@@ -192,7 +186,6 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
 
         if npre2 {
             let mut boxes: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
-            let _prof_box = crate::decode::profile::scope(crate::decode::profile::Stage::OsdBox);
             for i1 in (0..k).rev() {
                 for i2 in (0..i1).rev() {
                     let ipat = boxit91_pattern(&genmrb, n, k, ntau, i1, i2);
@@ -294,7 +287,6 @@ fn mrbencode91(message: &[u8], genmrb: &[u8], n: usize) -> Vec<u8> {
 }
 
 fn mrbencode91_into(message: &[u8], genmrb: &[u8], n: usize, codeword: &mut [u8]) {
-    let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::OsdEncode);
     debug_assert_eq!(codeword.len(), n);
     codeword.fill(0);
     for (i, &bit) in message.iter().enumerate() {
