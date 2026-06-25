@@ -119,6 +119,13 @@ pub struct Ft8rsApp {
     // loop, avoiding a black strip). Taken once, then None.
     #[cfg(target_os = "windows")]
     pending_menu_hwnd: Option<isize>,
+    // Windows: after the menu attaches it shrinks the client area, but winit never
+    // resizes the GL surface to match (leaving an unpainted strip and a layout
+    // that overshoots the window bottom). We nudge the inner size by 1px the frame
+    // after attaching, then restore it here — two distinct sizes force winit to
+    // resize the surface, exactly as a manual window resize does. Some => restore.
+    #[cfg(target_os = "windows")]
+    restore_inner_size: Option<egui::Vec2>,
 }
 
 impl Ft8rsApp {
@@ -205,6 +212,8 @@ impl Ft8rsApp {
             udp_in: None,
             #[cfg(target_os = "windows")]
             pending_menu_hwnd: hwnd,
+            #[cfg(target_os = "windows")]
+            restore_inner_size: None,
         }
     }
 
@@ -591,7 +600,13 @@ impl Ft8rsApp {
                 let width = ui.available_width();
                 let dark = ui.visuals().dark_mode;
                 let text_color = ui.visuals().text_color();
-                let stripe = ui.visuals().faint_bg_color;
+                // Odd-slot stripe. egui's faint_bg_color is too subtle to read, so
+                // we deepen it a touch; even slots keep the plain panel background.
+                let stripe = if dark {
+                    Color32::from_gray(44)
+                } else {
+                    Color32::from_gray(232)
+                };
                 // Compare-mode coloring only applies while listening; otherwise
                 // every row is the default color.
                 let comparing = self.udp_in_on;
@@ -1054,11 +1069,18 @@ impl eframe::App for Ft8rsApp {
             self.styled_theme = theme;
         }
         self.sync_title(ctx);
-        // Windows: attach the native menu on the first frame (see the field doc).
+        // Windows: attach the native menu on the first frame (see the field doc),
+        // then force a real surface resize so no black strip remains and the layout
+        // fits the menu-shrunk client (see `restore_inner_size`).
         #[cfg(target_os = "windows")]
         if let Some(hwnd) = self.pending_menu_hwnd.take() {
             self.profile_menu = install_menu(self.profile, Some(hwnd));
             self.menu_profile_synced = self.profile;
+            let size = ctx.screen_rect().size();
+            self.restore_inner_size = Some(size);
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size + egui::vec2(0.0, 1.0)));
+        } else if let Some(size) = self.restore_inner_size.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         }
         self.sync_udp_in();
         self.pump_menu();
@@ -1457,29 +1479,6 @@ fn install_menu(
     unsafe {
         let _ = menu.init_for_hwnd(hwnd);
     }
-    // Attaching the menu shrinks the client area by the menu-bar height, but the
-    // change never reaches winit/eframe — so the GL surface keeps its old (taller)
-    // size and the menu-height difference shows as an unpainted black strip until
-    // the next resize. Force a frame recalculation: SWP_FRAMECHANGED makes Windows
-    // re-run WM_NCCALCSIZE and emit a WM_SIZE for the now-smaller client area,
-    // which winit forwards to eframe to resize the surface immediately.
-    //
-    // SAFETY: `hwnd` is the live main-window handle; the flags leave position,
-    // size, and Z-order untouched (we only request the frame recompute).
-    unsafe {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SetWindowPos, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-        };
-        SetWindowPos(
-            hwnd as windows_sys::Win32::Foundation::HWND,
-            std::ptr::null_mut(),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
-        );
-    }
     std::mem::forget(menu);
     items
 }
@@ -1595,9 +1594,9 @@ fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
     if let Some(bytes) = read_first(MONO) {
-        fonts
-            .font_data
-            .insert("mono".to_string(), egui::FontData::from_owned(bytes));
+        // Compute the centering tweak from the bytes before they move into FontData.
+        let data = egui::FontData::from_owned(bytes.clone()).tweak(center_tweak(&bytes));
+        fonts.font_data.insert("mono".to_string(), data);
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts
                 .families
@@ -1607,14 +1606,37 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     if let Some(bytes) = read_first(CJK) {
-        fonts
-            .font_data
-            .insert("cjk".to_string(), egui::FontData::from_owned(bytes));
+        let data = egui::FontData::from_owned(bytes.clone()).tweak(center_tweak(&bytes));
+        fonts.font_data.insert("cjk".to_string(), data);
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts.families.entry(family).or_default().push("cjk".to_string());
         }
     }
     ctx.set_fonts(fonts);
+}
+
+/// Vertical-centering tweak for a font face. egui sizes each text row from the
+/// primary font's `ascent - descent + line_gap` and draws the baseline at
+/// `ascent` from the row top, so the line gap becomes dead space at the *bottom*
+/// of the row and the ink sits high — text looks shifted up (notably Consolas on
+/// Windows; Monaco/macOS has ~no line gap, so this is a no-op there). We read the
+/// gap from the font and push glyphs down half of it, centering the ink in the
+/// row box without changing the row height. Returns the default tweak if the font
+/// can't be parsed (keeps startup robust).
+fn center_tweak(bytes: &[u8]) -> egui::FontTweak {
+    use ab_glyph::Font as _;
+    let mut tweak = egui::FontTweak::default();
+    // index 0 handles both single faces (.ttf/.otf) and the first face of a
+    // collection (.ttc), e.g. Menlo / PingFang / YaHei.
+    if let Ok(font) = ab_glyph::FontRef::try_from_slice_and_index(bytes, 0) {
+        if let Some(upem) = font.units_per_em() {
+            if upem > 0.0 {
+                let gap_fraction = font.line_gap_unscaled() / upem;
+                tweak.y_offset_factor = gap_fraction / 2.0;
+            }
+        }
+    }
+    tweak
 }
 
 #[cfg(test)]

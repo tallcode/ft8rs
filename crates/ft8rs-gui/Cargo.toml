@@ -14,16 +14,16 @@ ft8rs-core = { path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
 eframe = { version = "0.29", features = ["persistence"] }
 muda = "0.15"
+# Read a font's vertical metrics (line gap) at load time so we can re-center its
+# glyphs in the row box — fixes the top-shifted text with large-line-gap faces
+# like Windows Consolas. Version matches epaint's ab_glyph.
+ab_glyph = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Windows-only: extract the HWND from eframe's window handle to attach a native
 # Win32 menu bar (muda init_for_hwnd). Version matches eframe's raw-window-handle.
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-# Force a frame recalculation after attaching the menu (SetWindowPos +
-# SWP_FRAMECHANGED) so the GL surface resizes to the menu-shrunk client area and
-# no unpainted strip remains. Version matches muda's windows-sys.
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 ft8rs-build = { path = "../ft8rs-build" }
