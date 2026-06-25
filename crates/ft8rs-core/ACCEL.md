@@ -248,16 +248,52 @@ P3       ❌ sync8 浮点 SIMD（破对齐，owner 否决）
 
 ---
 
-## 附：复现实验命令
+## 附 A：性能数据汇总（所有实测，留档）
 
+**测量条件**：Apple Silicon 笔记本，fat-LTO release，长样本
+`tests/ft8/230208_140300.wav`（19 slot），曾用 feature-gated `profiling` 探针
+逐阶段计时。**全流程解码计时对热节流/电池敏感（同代码跨时间可差 ±25%）**；
+里程碑 delta 一律用**受控 A/B**（`git stash` 切换 → 重建 → 各跑 3 次取 min，AC 电）。
+**探针子系统已于收官后整体移除**（见附 B），数据归档于此。
+
+### jtdx（`--profile jtdx`）
+
+| 里程碑 | slot(ms) | osd(ms) | 关键 delta |
+|---|--:|--:|---|
+| P0 baseline | 118243 | 47557 (40%) | — |
+| +P2.0（OSD gf2_row_xor）| 108705 | 39793 | osd **−16%**, 整体 −8% |
+| +路径B（sync2d 记忆化）| 82308 | ~40000 | sync2d **−76%**, 累计 **−30%** |
+| +OSD-PACK（A/B）| — | 40554 vs 40989 | osd **−1.1%** |
+
+- sync8 内部：spectra(FFT) 9.3% / **sync2d 37.3%** / extract 0.2%（占 slot）
+- OSD 内部：**box 23.5%** / enc 12% / dist 4.5% / elim 4% / 机器 ~56%（占 OSD）
+
+### wsjtx（`--profile wsjtx`）
+
+| 里程碑 | slot(ms) | osd(ms) | 关键 delta |
+|---|--:|--:|---|
+| original | 65933 | 33080 (50%) | — |
+| +wsjtx-P2.0（OSD gf2_row_xor）| 56351 | 23847 | osd **−27.9%**, 整体 **−14.5%** |
+| +OSD-PACK（A/B）| 54215 vs 55785 | 23041 vs 24411 | osd **−5.6%**, 整体 −2.8% |
+
+- sync8 内部：spectra 1.8% / sync2d **0.9%** / extract 0%（→ 路径B 在 wsjtx 无用）
+- OSD 内部：elim 7% / enc 6% / **dist 0.2%** / box 0% / **机器 ~87%**（占 OSD）
+- 机器再细分（探针地板高估）：osd-arr(e2 XOR/copy) ~35% / osd-cnt(count) ~17%
+
+### 累计（全部 bit-exact，对齐零改动）
+
+| 解码器 | 优化栈 | 整体 |
+|---|---|--:|
+| **lib_jtdx** | P2.0 + 路径B + OSD-PACK | **~−31%** |
+| **lib_wsjtx** | wsjtx-P2.0 + OSD-PACK | **~−17%** |
+
+## 附 B：再测量方法（探针已移除）
+
+profiling 子系统（`profiling` feature + `profile.rs` + 探针）收官后已移除，热路径
+回到与上游对齐的形态。若后续要再量 OSD-PACK-2 等：**建议建独立微基准**（Dev-0：
+dump 真实 `(llr, apmask, ndeep)` 入参，criterion 紧循环跑 `osd_decode174_91`），
+比全流程解码稳定得多，免受热节流干扰。对齐复验仍用基线：
 ```
-# 构建带探针的 release
-cargo build --release -p ft8rs-cli --features profiling
-
-# 长样本逐阶段报告
-./target/release/ft8rs file crates/ft8rs-core/tests/ft8/230208_140300.wav \
-  --profile jtdx --start-time 230208_140300 >/dev/null
-
-# 对齐复验（feature 关闭 = no-op 路径；应 2 passed）
-cargo test --profile fast -p ft8rs-core test_jtdx_profile -- --ignored
+cargo test --profile fast -p ft8rs-core test_jtdx_profile -- --ignored   # 2 passed
+cargo test --profile fast -p ft8rs-core test_stream_decode                # 3 passed (wsjtx 19/424)
 ```

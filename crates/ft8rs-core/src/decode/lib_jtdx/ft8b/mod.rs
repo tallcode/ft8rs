@@ -99,11 +99,7 @@ pub(crate) fn ft8b(
         if let Some(result) = outcome.decoded {
             if context.lsubtract {
                 let xdt3 = refined_subtract_dt(&cd0, &result.itone, outcome.state.ibest);
-                {
-                    let _prof =
-                        crate::decode::profile::scope(crate::decode::profile::Stage::Subtract);
-                    subtractft8(dd8, &result.itone, result.freq, xdt3 as f32, config.swl);
-                }
+                subtractft8(dd8, &result.itone, result.freq, xdt3 as f32, config.swl);
                 workspace.lsubtracted = true;
                 if workspace.npos < workspace.freqsub.len() {
                     workspace.freqsub[workspace.npos] = result.freq;

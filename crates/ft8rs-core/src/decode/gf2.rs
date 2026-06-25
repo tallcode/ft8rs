@@ -1,7 +1,7 @@
 //! GF(2) row primitives — ft8rs-specific, **not** a mirror of any upstream source.
 //!
-//! Shared by both decoder mirrors (`lib_jtdx` and `lib_wsjtx`), like
-//! [`crate::decode::profile`]. The OSD decoder spends a large share of decode time
+//! Shared by both decoder mirrors (`lib_jtdx` and `lib_wsjtx`). The OSD decoder
+//! spends a large share of decode time
 //! XOR-ing length-N GF(2) rows (Gaussian elimination + `mrbencode`). Routing those
 //! through a single non-aliasing slice kernel lets each `osd174_91.rs` stay
 //! byte-for-byte equivalent while the implementation is swapped underneath.

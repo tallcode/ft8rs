@@ -20,6 +20,3 @@ ft8rs-build = { path = "../ft8rs-build" }
 [features]
 default = []
 fftw = ["ft8rs-core/fftw", "ft8rs-engine/fftw"]
-# Print a per-stage decode timing report after `ft8rs file`. See
-# ft8rs-core/src/decode/profile.rs.
-profiling = ["ft8rs-core/profiling"]
