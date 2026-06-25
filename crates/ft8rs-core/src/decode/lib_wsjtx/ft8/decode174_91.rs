@@ -28,17 +28,14 @@ pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeR
         (maxosd as usize, maxosd as usize, false)
     };
 
-    let bp = {
-        let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Bp);
-        bp_decode174_91_with_posteriors(
-            llr,
-            apmask,
-            max_iterations,
-            nosd,
-            bp_save_limit,
-            channel_llr_osd,
-        )
-    };
+    let bp = bp_decode174_91_with_posteriors(
+        llr,
+        apmask,
+        max_iterations,
+        nosd,
+        bp_save_limit,
+        channel_llr_osd,
+    );
 
     if let Some(result) = bp.decoded {
         return Some(result);
@@ -47,7 +44,6 @@ pub fn decode174_91(llr: &[f64], apmask: &[i8], maxosd: isize) -> Option<DecodeR
     // Try OSD with accumulated BP posteriors (WSJT-X approach)
     if nosd >= 1 {
         for i in 0..nosd {
-            let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Osd);
             if let Some(mut result) = osd_decode174_91(&bp.zsave[i], apmask, 2) {
                 result.nharderrors = channel_hard_errors(llr, &result.cw);
                 if result.nharderrors > 0 {

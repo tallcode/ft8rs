@@ -162,21 +162,13 @@ fn run_file(args: FileArgs) -> Result<(), String> {
 
     let config = stream_decode_config(&args.decode)?;
 
-    #[cfg(feature = "profiling")]
-    ft8rs::decode::profile::reset();
-
     let outputs = RefCell::new(Outputs::new(None)?);
-    let result = decode_wav_file_streaming_decodes(
+    decode_wav_file_streaming_decodes(
         &args.input,
         FileDecodeOptions { start_time, config },
         |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
         |timestamp, count| outputs.borrow_mut().on_slot_complete(timestamp, count),
-    );
-
-    #[cfg(feature = "profiling")]
-    eprintln!("\n{}", ft8rs::decode::profile::report());
-
-    result
+    )
 }
 
 fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String> {

@@ -313,10 +313,7 @@ fn decode_from_f64(
             (nfa, nfb)
         };
 
-        let (candidates, pass_sbase) = {
-            let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Sync);
-            sync8(&residual, ifa, ifb, pass_syncmin, nfqso, ncand)
-        };
+        let (candidates, pass_sbase) = sync8(&residual, ifa, ifb, pass_syncmin, nfqso, ncand);
         sbase = pass_sbase;
 
         // WSJT-X ft8_decode.f90: pass 1 uses imetric=1, passes 2/3 use imetric=2.
@@ -326,31 +323,23 @@ fn decode_from_f64(
         // Candidate decoding is sequential so each accepted signal updates the residual
         // before later candidates are evaluated.
         for cand in &candidates {
-            let decoded_cand = {
-                let _prof = crate::decode::profile::scope(crate::decode::profile::Stage::Ft8b);
-                ft8b(
-                    &residual,
-                    &cx_re,
-                    &cx_im,
-                    cand.freq,
-                    cand.dt,
-                    &sbase,
-                    ndepth,
-                    pass_imetric,
-                    nagain,
-                    &ap_options,
-                    &book,
-                    None,
-                    &mut cand_ws,
-                )
-            };
-            if let Some(r) = decoded_cand {
+            if let Some(r) = ft8b(
+                &residual,
+                &cx_re,
+                &cx_im,
+                cand.freq,
+                cand.dt,
+                &sbase,
+                ndepth,
+                pass_imetric,
+                nagain,
+                &ap_options,
+                &book,
+                None,
+                &mut cand_ws,
+            ) {
                 let message_key = normalize_message_key(&r.msg);
-                {
-                    let _prof =
-                        crate::decode::profile::scope(crate::decode::profile::Stage::Subtract);
-                    crate::decode::subtractft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
-                }
+                crate::decode::subtractft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
                 if seen_messages.contains(&message_key) {
                     continue;
                 }
