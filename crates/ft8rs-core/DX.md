@@ -133,13 +133,17 @@ single-target store (used for slot N+1 and same-parity slots):
   **Reliability differs by role:** a row where the target is the *sender* gives
   the target's own TX frequency — exact, and the only reliable source under FH
   (where the Fox transmits low and hunters call high, so a hunter's frequency is
-  *not* the Fox's). A row where the target is the *addressee*, or a `mycall`-as-
-  addressee row (another station working us), gives the *QSO* frequency, which
-  equals the target's only in **simplex** — keep these as weaker hints outside
-  Hound mode. In Hound mode, recipient/`mycall` rows inform parity only; they do
-  **not** seed focus frequencies, because hunter TX frequency is not Fox TX
-  frequency. (This is why `1152 Hz` is harvestable from `140630 F1MLZ RA3ABG` in
-  the Validation Target: that exchange is simplex.)
+  *not* the Fox's). A row where the target is the *addressee* (`BG7XWF JK1QAY …`)
+  carries the **caller's** TX frequency, not the target's — the two coincide only
+  in pure simplex, which modern FT8 rarely is, and focusing the caller's pocket
+  never finds the target — so such a row informs tx **parity** only and does
+  **not** seed a focus. A `mycall`-neighbourhood row (another station working us,
+  e.g. `F1MLZ RA3ABG …`) still seeds a weaker focus outside Hound mode: it pins
+  the pocket where stations are calling *us*, where the target is likely answering
+  too. In Hound mode, `mycall` rows inform parity only and never seed focus,
+  because hunter TX frequency is not Fox TX frequency. (This is why `1152 Hz` is
+  harvestable from `140630 F1MLZ RA3ABG` in the Validation Target: `F1MLZ` is our
+  `mycall`, not via the target-addressee path.)
 - **FH multi-stream grid (Hound mode).** A Fox does not sit on one frequency — it
   transmits up to five simultaneous streams and **changes that count dynamically**
   mid-pileup. Upstream `foxgen.f90` places stream *n* at `nfreq + 60·(n-1)` (fixed

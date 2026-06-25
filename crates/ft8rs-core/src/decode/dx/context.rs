@@ -19,7 +19,6 @@ const FOX_MULTISTREAM_THRESHOLD: usize = 2;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FrequencyOrigin {
     TargetSender,
-    TargetRecipient,
     MyCall,
     UserPinned,
 }
@@ -223,8 +222,6 @@ impl TargetContextStore {
 
         let confidence = if role.target_sender {
             10
-        } else if role.target_recipient && !self.hound {
-            5
         } else if role.contains_mycall && !self.hound {
             3
         } else if listen {
@@ -233,13 +230,14 @@ impl TargetContextStore {
             1
         };
 
-        let frequency_seed_allowed =
-            role.target_sender || (!self.hound && (role.target_recipient || role.contains_mycall));
+        // A row where the target is the *recipient* ("BG7XWF JK1QAY ...") carries
+        // the caller's TX frequency, not the target's, so it must not seed a focus
+        // (it still informs tx parity above). Only the target's own transmissions
+        // and mycall-neighbourhood rows pin where we actually look for the target.
+        let frequency_seed_allowed = role.target_sender || (!self.hound && role.contains_mycall);
         if frequency_seed_allowed {
             let origin = if role.target_sender {
                 FrequencyOrigin::TargetSender
-            } else if role.target_recipient {
-                FrequencyOrigin::TargetRecipient
             } else {
                 FrequencyOrigin::MyCall
             };
@@ -509,6 +507,30 @@ mod tests {
         store.harvest_listen(&ts, &[row(1154.0, "F1MLZ UA3QNA -04")]);
 
         assert_eq!(store.selected_foci(), vec![1154.0]);
+    }
+
+    #[test]
+    fn non_hound_recipient_row_does_not_seed_focus() {
+        // "BG7XWF JK1QAY PM95" decoded at 505 Hz: that 505 is JK1QAY's TX
+        // frequency (the caller), not BG7XWF's, so chasing BG7XWF we must not
+        // turn it into a focus.
+        let mut store = TargetContextStore::new(
+            DxTarget::new("BG7XWF"),
+            Some("BG5ATV"),
+            0.0,
+            None,
+            false,
+            200.0,
+            3000.0,
+        );
+        let ts = SlotTimestamp::parse("140630").unwrap();
+
+        store.harvest_listen(&ts, &[row(505.0, "BG7XWF JK1QAY PM95")]);
+        assert!(store.selected_foci().is_empty());
+
+        // The target's own CQ still seeds its real TX frequency.
+        store.harvest_listen(&ts, &[row(1621.0, "CQ BG7XWF OL99")]);
+        assert_eq!(store.selected_foci(), vec![1621.0]);
     }
 
     #[test]
