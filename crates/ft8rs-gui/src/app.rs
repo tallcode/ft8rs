@@ -779,10 +779,11 @@ impl Ft8rsApp {
                                 .unwrap_or_else(|| "Default".to_string()),
                         )
                         .show_ui(ui, |ui| {
-                            // The popup forces TextWrapMode::Extend (items grow the
-                            // menu to fit); override to Truncate and cap the width.
-                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                            ui.set_max_width(230.0);
+                            // Let items size to their content (default Extend) so the
+                            // selection highlight hugs the text instead of leaving a
+                            // blank strip, and the full name is visible. Cap the width
+                            // so a pathologically long name can't make a giant menu.
+                            ui.set_max_width(440.0);
                             ui.selectable_value(&mut self.selected_device, None, "Default");
                             for dev in &self.devices {
                                 ui.selectable_value(
@@ -1265,11 +1266,14 @@ fn section_heading(ui: &mut egui::Ui, text: &str) {
 /// control's commit signal.
 fn setting_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
     let mut commit = false;
-    // Pin the row height to the input-field height (body text + its 4px vertical
-    // padding) so the label and the control share one centered baseline. Without
-    // this the short label sets the row height and the taller field overflows
-    // downward, making the label sit ~4px too high.
-    let row_h = ui.text_style_height(&egui::TextStyle::Body) + 8.0;
+    // Pin the row height to the tallest control (a combo/button is body text +
+    // 2·button_padding.y, taller than a text field's +2·4) so the label and the
+    // control share one centered baseline. If the row were only as tall as the
+    // text field, a combo box would overflow downward and the label would sit
+    // too high (the label is centered once, not re-centered when the row grows).
+    let pad_y = ui.spacing().button_padding.y;
+    let min_h = ui.spacing().interact_size.y;
+    let row_h = (ui.text_style_height(&egui::TextStyle::Body) + 2.0 * pad_y).max(min_h);
     ui.horizontal(|ui| {
         ui.set_min_height(row_h);
         ui.label(label);
