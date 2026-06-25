@@ -1494,6 +1494,7 @@ dependencies = [
 name = "ft8rs-gui"
 version = "0.0.0"
 dependencies = [
+ "ab_glyph",
  "eframe",
  "ft8rs-build",
  "ft8rs-core",
@@ -1502,7 +1503,6 @@ dependencies = [
  "image",
  "muda",
  "raw-window-handle",
- "windows-sys 0.59.0",
  "winresource",
 ]
 
