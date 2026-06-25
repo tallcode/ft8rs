@@ -148,13 +148,15 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
                             .map(|((&m, &h), &a)| (m ^ h as u8) as f32 * a)
                             .sum();
                         e2.copy_from_slice(&e2sub);
-                        e2sub.iter().take(nt).filter(|&&b| b == 1).count() + 1
+                        // e2sub holds 0/1, so the set-bit count == the byte sum.
+                        // Branchless sum auto-vectorizes; bit-identical to filter().count().
+                        e2sub.iter().take(nt).map(|&b| b as usize).sum::<usize>() + 1
                     } else {
                         e2.copy_from_slice(&e2sub);
-                        for j in k..n {
-                            e2[j - k] ^= genmrb[n1 * n + j];
-                        }
-                        e2.iter().take(nt).filter(|&&b| b == 1).count() + 2
+                        // e2[..] ^= row n1's parity columns. Clean non-aliasing slices
+                        // let gf2_row_xor auto-vectorize (P2.0 pattern); bit-identical.
+                        gf2_row_xor(&mut e2, &genmrb[n1 * n + k..n1 * n + n]);
+                        e2.iter().take(nt).map(|&b| b as usize).sum::<usize>() + 2
                     };
 
                     if nd1kpt <= ntheta {
