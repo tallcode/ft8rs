@@ -766,39 +766,7 @@ impl Ft8rsApp {
         match self.tab {
             SettingsTab::Audio => {
                 section_heading(ui, "Audio");
-                commit |= setting_row(ui, "Input device", |ui| {
-                    let before = self.selected_device.clone();
-                    // Device names can be long; cap the button/menu width and
-                    // truncate with an ellipsis, with the full name on hover.
-                    let resp = egui::ComboBox::from_id_salt("device")
-                        .width(190.0)
-                        .truncate()
-                        .selected_text(
-                            self.selected_device
-                                .clone()
-                                .unwrap_or_else(|| "Default".to_string()),
-                        )
-                        .show_ui(ui, |ui| {
-                            // Let items size to their content (default Extend) so the
-                            // selection highlight hugs the text instead of leaving a
-                            // blank strip, and the full name is visible. Cap the width
-                            // so a pathologically long name can't make a giant menu.
-                            ui.set_max_width(440.0);
-                            ui.selectable_value(&mut self.selected_device, None, "Default");
-                            for dev in &self.devices {
-                                ui.selectable_value(
-                                    &mut self.selected_device,
-                                    Some(dev.name.clone()),
-                                    &dev.name,
-                                )
-                                .on_hover_text(&dev.name);
-                            }
-                        });
-                    if let Some(name) = &self.selected_device {
-                        resp.response.on_hover_text(name);
-                    }
-                    self.selected_device != before
-                });
+                commit |= setting_row(ui, "Input device", |ui| self.device_combo(ui));
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if ui.button("Refresh").clicked() {
@@ -911,6 +879,126 @@ impl Ft8rsApp {
             }
         }
         commit
+    }
+
+    /// The input-device picker. A combo-styled trigger (truncated text + ▼) whose
+    /// dropdown is *right*-aligned to the trigger and grows leftward, hugging its
+    /// content within [trigger width, half the window]. egui's ComboBox always
+    /// left-aligns its popup and lays items out justified, so we render both the
+    /// trigger and the popup ourselves. Returns true when the selection changed.
+    fn device_combo(&mut self, ui: &mut egui::Ui) -> bool {
+        const TRIGGER_W: f32 = 190.0;
+        let before = self.selected_device.clone();
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let names: Vec<String> = self.devices.iter().map(|d| d.name.clone()).collect();
+
+        // Menu width: fit the longest item, clamped to [trigger, half window].
+        let measure = |ui: &egui::Ui, s: String| {
+            ui.fonts(|f| f.layout_no_wrap(s, font.clone(), egui::Color32::WHITE).size().x)
+        };
+        let mut content_w = measure(ui, "Default".to_string());
+        for name in &names {
+            content_w = content_w.max(measure(ui, name.clone()));
+        }
+        let pad_x = ui.spacing().button_padding.x;
+        let icon_w = ui.spacing().icon_width;
+        let menu_w = (content_w + 2.0 * pad_x + icon_w + 8.0)
+            .clamp(TRIGGER_W, ui.ctx().screen_rect().width() * 0.5);
+
+        // Combo-styled trigger button.
+        let h = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
+        let (rect, trigger) = ui.allocate_exact_size(egui::vec2(TRIGGER_W, h), egui::Sense::click());
+        let popup_id = ui.make_persistent_id("device_popup");
+        if trigger.clicked() {
+            ui.memory_mut(|m| m.toggle_popup(popup_id));
+        }
+        let open = ui.memory(|m| m.is_popup_open(popup_id));
+        if ui.is_rect_visible(rect) {
+            let visuals = if open {
+                ui.visuals().widgets.open
+            } else {
+                *ui.style().interact(&trigger)
+            };
+            ui.painter()
+                .rect(rect, visuals.rounding, visuals.weak_bg_fill, visuals.bg_stroke);
+            // Selected text, truncated with an ellipsis to leave room for the icon.
+            let selected = self.selected_device.clone().unwrap_or_else(|| "Default".to_string());
+            let mut job = egui::text::LayoutJob::single_section(
+                selected,
+                egui::TextFormat {
+                    font_id: font.clone(),
+                    color: visuals.text_color(),
+                    ..Default::default()
+                },
+            );
+            job.wrap.max_width = (TRIGGER_W - 2.0 * pad_x - icon_w).max(0.0);
+            job.wrap.max_rows = 1;
+            job.wrap.break_anywhere = true;
+            job.wrap.overflow_character = Some('…');
+            let galley = ui.fonts(|f| f.layout_job(job));
+            let text_pos = egui::Align2::LEFT_CENTER
+                .align_size_within_rect(galley.size(), rect.shrink2(egui::vec2(pad_x, 0.0)))
+                .min;
+            ui.painter().galley(text_pos, galley, visuals.text_color());
+            // ▼ at the right.
+            let c = egui::pos2(rect.right() - pad_x - icon_w * 0.5, rect.center().y);
+            let r = icon_w * 0.3;
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![
+                    egui::pos2(c.x - r, c.y - r * 0.6),
+                    egui::pos2(c.x + r, c.y - r * 0.6),
+                    egui::pos2(c.x, c.y + r * 0.7),
+                ],
+                visuals.text_color(),
+                egui::Stroke::NONE,
+            ));
+        }
+        if let Some(name) = &self.selected_device {
+            trigger.clone().on_hover_text(name);
+        }
+
+        // Right-aligned popup: top-right corner pinned to the trigger's
+        // bottom-right, so it grows leftward and its right edge stays flush.
+        if open {
+            let inner = egui::Area::new(popup_id)
+                .order(egui::Order::Foreground)
+                .constrain(true)
+                .fixed_pos(rect.right_bottom())
+                .pivot(egui::Align2::RIGHT_TOP)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_max_width(menu_w);
+                        ui.set_min_width(TRIGGER_W.min(menu_w));
+                        egui::ScrollArea::vertical()
+                            .max_height(ui.spacing().combo_height)
+                            .show(ui, |ui| {
+                                ui.with_layout(
+                                    egui::Layout::top_down_justified(egui::Align::LEFT),
+                                    |ui| {
+                                        let cur = self.selected_device.clone();
+                                        if ui.selectable_label(cur.is_none(), "Default").clicked() {
+                                            self.selected_device = None;
+                                            ui.memory_mut(|m| m.close_popup());
+                                        }
+                                        for name in &names {
+                                            let sel = cur.as_deref() == Some(name.as_str());
+                                            if ui.selectable_label(sel, name).on_hover_text(name).clicked() {
+                                                self.selected_device = Some(name.clone());
+                                                ui.memory_mut(|m| m.close_popup());
+                                            }
+                                        }
+                                    },
+                                );
+                            });
+                    });
+                });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape))
+                || (trigger.clicked_elsewhere() && inner.response.clicked_elsewhere())
+            {
+                ui.memory_mut(|m| m.close_popup());
+            }
+        }
+        self.selected_device != before
     }
 
     fn current_device_info(&self) -> Option<&SoundcardDeviceInfo> {
@@ -1266,14 +1354,15 @@ fn section_heading(ui: &mut egui::Ui, text: &str) {
 /// control's commit signal.
 fn setting_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
     let mut commit = false;
-    // Pin the row height to the tallest control (a combo/button is body text +
-    // 2·button_padding.y, taller than a text field's +2·4) so the label and the
-    // control share one centered baseline. If the row were only as tall as the
-    // text field, a combo box would overflow downward and the label would sit
-    // too high (the label is centered once, not re-centered when the row grows).
-    let pad_y = ui.spacing().button_padding.y;
-    let min_h = ui.spacing().interact_size.y;
-    let row_h = (ui.text_style_height(&egui::TextStyle::Body) + 2.0 * pad_y).max(min_h);
+    // Make every control the same height as a text field so they all center on
+    // the label's baseline. A combo box / drag value defaults to a taller
+    // vertical button_padding (8 vs a field's 4px margin) and — because the combo
+    // lays itself out via button_frame rather than the standard centered add —
+    // ends up sitting below the label. Pinning button_padding.y to 4 here makes
+    // those controls field-height, so the proven label↔field alignment applies
+    // to them too. Row height is then just the field height.
+    ui.spacing_mut().button_padding.y = 4.0;
+    let row_h = ui.text_style_height(&egui::TextStyle::Body) + 8.0;
     ui.horizontal(|ui| {
         ui.set_min_height(row_h);
         ui.label(label);
