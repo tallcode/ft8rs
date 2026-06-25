@@ -234,8 +234,13 @@ OSD剖析  ✅ OSD 内部探测完成（§7c）：dist 仅 0.2~4.5%、机器主�
 OSD-PACK-1 ✅ wsjtx 机器自动向量化（e2 XOR→gf2_row_xor，count→无分支 sum）
             受控 A/B(AC,min×3)：osd 24411→23041ms（−5.6%），整体 wsjtx −2.8%，
             bit-exact（53e4a55）。组内波动 <1%，信号真实。
-OSD-PACK-2 ⏸ 显式 u64 打包 + popcount（榨更多机器）；再评估是否值得 fiddly 重写
-OSD-PACK-3 ⏸ 移植到 jtdx OSD（含 npre2 box 机器，surface 更大）
+OSD-PACK-3 ✅ 移植到 jtdx OSD（A/B AC,min×3）：osd 40989→40554ms（−1.1%）
+            bit-exact（5fdfa21）。比 wsjtx 小——jtdx OSD 被 npre2 box 主导，
+            order-1 机器只是小头。
+OSD-PACK-2 ❌ 显式 u64 打包：不做。phase 1 已吃掉"标量→向量化"那一跳，
+            打包的边际（count→popcount ~1-3%）撑不起 fiddly 重写 + P2.1 风险。
+→ OSD bit-exact 自动向量化到此收官：wsjtx OSD −5.6% / jtdx OSD −1.1%。
+  再大的 OSD 提速只能动 npre2 box / 算法（换灵敏度，对 DX 不利，须独立 profile）。
 P2.1     ❌ u64 打包 OSD 高斯消元：实测零收益 → 已回退（消元非瓶颈）
 路径A/C  ⏸ sync8 频谱复用（净 3–5%）/ sync2d 跨频点 SIMD（更难）
 P3       ❌ sync8 浮点 SIMD（破对齐，owner 否决）
