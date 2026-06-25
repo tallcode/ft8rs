@@ -231,8 +231,11 @@ P2.0     ✅ gf2_row_xor 向量化 jtdx OSD（osd −16%, 整体 −8%）   bit-
 wsjtx-P2.0 ✅ gf2_row_xor wsjtx OSD（osd −27.9%, 整体 −14.5%）  bit-exact
 OSD剖析  ✅ OSD 内部探测完成（§7c）：dist 仅 0.2~4.5%、机器主导；
             探索性 per-pattern 探针已撤、数据留档；保留 6 个粗粒度阶段探针
-OSD-PACK ▶ 【下一步开发】e2/e2sub 打包 u64 + popcount，攻 OSD 机器 ~20-30%；
-            bit-exact、零正确性风险；fiddly 镜像内循环重写，P2.1 式不确定性
+OSD-PACK-1 ✅ wsjtx 机器自动向量化（e2 XOR→gf2_row_xor，count→无分支 sum）
+            受控 A/B(AC,min×3)：osd 24411→23041ms（−5.6%），整体 wsjtx −2.8%，
+            bit-exact（53e4a55）。组内波动 <1%，信号真实。
+OSD-PACK-2 ⏸ 显式 u64 打包 + popcount（榨更多机器）；再评估是否值得 fiddly 重写
+OSD-PACK-3 ⏸ 移植到 jtdx OSD（含 npre2 box 机器，surface 更大）
 P2.1     ❌ u64 打包 OSD 高斯消元：实测零收益 → 已回退（消元非瓶颈）
 路径A/C  ⏸ sync8 频谱复用（净 3–5%）/ sync2d 跨频点 SIMD（更难）
 P3       ❌ sync8 浮点 SIMD（破对齐，owner 否决）
