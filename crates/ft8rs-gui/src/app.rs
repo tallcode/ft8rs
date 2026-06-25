@@ -768,23 +768,34 @@ impl Ft8rsApp {
                 section_heading(ui, "Audio");
                 commit |= setting_row(ui, "Input device", |ui| {
                     let before = self.selected_device.clone();
-                    egui::ComboBox::from_id_salt("device")
-                        .width(150.0)
+                    // Device names can be long; cap the button/menu width and
+                    // truncate with an ellipsis, with the full name on hover.
+                    let resp = egui::ComboBox::from_id_salt("device")
+                        .width(190.0)
+                        .truncate()
                         .selected_text(
                             self.selected_device
                                 .clone()
                                 .unwrap_or_else(|| "Default".to_string()),
                         )
                         .show_ui(ui, |ui| {
+                            // The popup forces TextWrapMode::Extend (items grow the
+                            // menu to fit); override to Truncate and cap the width.
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                            ui.set_max_width(230.0);
                             ui.selectable_value(&mut self.selected_device, None, "Default");
                             for dev in &self.devices {
                                 ui.selectable_value(
                                     &mut self.selected_device,
                                     Some(dev.name.clone()),
                                     &dev.name,
-                                );
+                                )
+                                .on_hover_text(&dev.name);
                             }
                         });
+                    if let Some(name) = &self.selected_device {
+                        resp.response.on_hover_text(name);
+                    }
                     self.selected_device != before
                 });
                 ui.add_space(2.0);
@@ -1254,7 +1265,13 @@ fn section_heading(ui: &mut egui::Ui, text: &str) {
 /// control's commit signal.
 fn setting_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
     let mut commit = false;
+    // Pin the row height to the input-field height (body text + its 4px vertical
+    // padding) so the label and the control share one centered baseline. Without
+    // this the short label sets the row height and the taller field overflows
+    // downward, making the label sit ~4px too high.
+    let row_h = ui.text_style_height(&egui::TextStyle::Body) + 8.0;
     ui.horizontal(|ui| {
+        ui.set_min_height(row_h);
         ui.label(label);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             commit = add(ui);
@@ -1626,6 +1643,10 @@ fn install_fonts(ctx: &egui::Context) {
 fn center_tweak(bytes: &[u8]) -> egui::FontTweak {
     use ab_glyph::Font as _;
     let mut tweak = egui::FontTweak::default();
+    // A small constant downward bias: centering the typographic block leaves text
+    // looking a hair high (ascenders/descenders are rarely all used), so nudge it
+    // down ~1px for optical centering. Applies to every face and platform.
+    tweak.y_offset = 1.0;
     // index 0 handles both single faces (.ttf/.otf) and the first face of a
     // collection (.ttc), e.g. Menlo / PingFang / YaHei.
     if let Ok(font) = ab_glyph::FontRef::try_from_slice_and_index(bytes, 0) {
