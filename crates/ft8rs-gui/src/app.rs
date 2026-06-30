@@ -992,7 +992,6 @@ impl Ft8rsApp {
                         }
                     });
             });
-        let _ = open;
         self.selected_device != before
     }
 
