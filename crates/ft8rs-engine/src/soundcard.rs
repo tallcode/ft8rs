@@ -441,7 +441,7 @@ pub(crate) fn start_input_stream(
             info.name
         )
     })?;
-    let sample_rate = supported_config.sample_rate().0;
+    let sample_rate = supported_config.sample_rate();
     let channels = supported_config.channels() as usize;
 
     let (tx, rx) = mpsc::channel();
@@ -449,19 +449,19 @@ pub(crate) fn start_input_stream(
     let err_fn = |err| eprintln!("soundcard input stream error: {err}");
     let stream = match supported_config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
-            &stream_config,
+            stream_config,
             move |data: &[f32], _| send_f32_mono(data, channels, &tx),
             err_fn,
             None,
         ),
         cpal::SampleFormat::I16 => device.build_input_stream(
-            &stream_config,
+            stream_config,
             move |data: &[i16], _| send_i16_mono(data, channels, &tx),
             err_fn,
             None,
         ),
         cpal::SampleFormat::U16 => device.build_input_stream(
-            &stream_config,
+            stream_config,
             move |data: &[u16], _| send_u16_mono(data, channels, &tx),
             err_fn,
             None,
@@ -491,14 +491,15 @@ fn input_devices_with_info() -> Result<Vec<(cpal::Device, SoundcardDeviceInfo)>,
         let host_name = format!("{host_id:?}");
         let default_input = host
             .default_input_device()
-            .and_then(|device| device.name().ok());
+            .and_then(|device| device.description().ok().map(|d| d.name().to_string()));
 
         for device in host
             .input_devices()
             .map_err(|err| format!("failed to enumerate {host_name} audio input devices: {err}"))?
         {
             let name = device
-                .name()
+                .description()
+                .map(|d| d.name().to_string())
                 .unwrap_or_else(|_| "<unknown device>".to_string());
             let Some(input) = default_input_config(&device) else {
                 continue;
@@ -526,7 +527,7 @@ fn default_input_config(device: &cpal::Device) -> Option<SoundcardFormatInfo> {
     let config = device.default_input_config().ok()?;
     Some(SoundcardFormatInfo {
         channels: config.channels(),
-        sample_rate: config.sample_rate().0,
+        sample_rate: config.sample_rate(),
         sample_format: config.sample_format().to_string(),
     })
 }
