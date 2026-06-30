@@ -667,7 +667,7 @@ impl Ft8rsApp {
             ui.label("RX");
             // A normal text field (typeable, same tailwind style as the others) +
             // a tight ▲/▼ stepper, then the unit label.
-            let r = rx_text_field(ui, &mut self.nfqso, 40.0);
+            let r = rx_text_field(ui, &mut self.nfqso, 52.0);
             commit |= r.lost_focus();
             ui.spacing_mut().item_spacing.x = 1.0;
             commit |= rx_stepper(ui, &mut self.nfqso, r.rect.height());
@@ -914,9 +914,6 @@ impl Ft8rsApp {
         let h = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
         let (rect, trigger) = ui.allocate_exact_size(egui::vec2(TRIGGER_W, h), egui::Sense::click());
         let popup_id = ui.make_persistent_id("device_popup");
-        if trigger.clicked() {
-            egui::Popup::toggle_id(ui.ctx(), popup_id);
-        }
         let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
         if ui.is_rect_visible(rect) {
             let visuals = if open {
@@ -967,47 +964,35 @@ impl Ft8rsApp {
             trigger.clone().on_hover_text(name);
         }
 
-        // Right-aligned popup: top-right corner pinned to the trigger's
-        // bottom-right, so it grows leftward and its right edge stays flush.
-        if open {
-            let inner = egui::Area::new(popup_id)
-                .order(egui::Order::Foreground)
-                .constrain(true)
-                .fixed_pos(rect.right_bottom())
-                .pivot(egui::Align2::RIGHT_TOP)
-                .show(ui.ctx(), |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.set_max_width(menu_w);
-                        ui.set_min_width(TRIGGER_W.min(menu_w));
-                        egui::ScrollArea::vertical()
-                            .max_height(ui.spacing().combo_height)
-                            .show(ui, |ui| {
-                                ui.with_layout(
-                                    egui::Layout::top_down_justified(egui::Align::LEFT),
-                                    |ui| {
-                                        let cur = self.selected_device.clone();
-                                        if ui.selectable_label(cur.is_none(), "Default").clicked() {
-                                            self.selected_device = None;
-                                            egui::Popup::close_id(ui.ctx(), popup_id);
-                                        }
-                                        for name in &names {
-                                            let sel = cur.as_deref() == Some(name.as_str());
-                                            if ui.selectable_label(sel, name).on_hover_text(name).clicked() {
-                                                self.selected_device = Some(name.clone());
-                                                egui::Popup::close_id(ui.ctx(), popup_id);
-                                            }
-                                        }
-                                    },
-                                );
-                            });
+        // Right-aligned dropdown via the egui 0.35 Popup API. `Popup::menu`
+        // toggles open on the trigger's click and carries the "just-opened" guard
+        // that prevents the immediate self-close (the flicker the old raw-Area
+        // approach caused). RectAlign::BOTTOM_END puts the menu's right edge under
+        // the trigger's right edge; CloseOnClick closes it when an item is picked.
+        egui::Popup::menu(&trigger)
+            .id(popup_id)
+            .align(egui::RectAlign::BOTTOM_END)
+            .gap(2.0)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+            .show(|ui| {
+                ui.set_max_width(menu_w);
+                ui.set_min_width(TRIGGER_W.min(menu_w));
+                egui::ScrollArea::vertical()
+                    .max_height(ui.spacing().combo_height)
+                    .show(ui, |ui| {
+                        let cur = self.selected_device.clone();
+                        if ui.selectable_label(cur.is_none(), "Default").clicked() {
+                            self.selected_device = None;
+                        }
+                        for name in &names {
+                            let sel = cur.as_deref() == Some(name.as_str());
+                            if ui.selectable_label(sel, name).on_hover_text(name).clicked() {
+                                self.selected_device = Some(name.clone());
+                            }
+                        }
                     });
-                });
-            if ui.input(|i| i.key_pressed(egui::Key::Escape))
-                || (trigger.clicked_elsewhere() && inner.response.clicked_elsewhere())
-            {
-                egui::Popup::close_id(ui.ctx(), popup_id);
-            }
-        }
+            });
+        let _ = open;
         self.selected_device != before
     }
 
