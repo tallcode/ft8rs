@@ -556,7 +556,7 @@ impl Ft8rsApp {
 
     /// Pixel height of one decode line (used to size the header panel and rows).
     fn row_height(ctx: &egui::Context) -> f32 {
-        ctx.fonts(|f| f.row_height(&egui::FontId::monospace(DECODE_FONT_SIZE)))
+        ctx.fonts_mut(|f| f.row_height(&egui::FontId::monospace(DECODE_FONT_SIZE)))
     }
 
     /// The column header, drawn in its own fixed top panel: vertically-centered
@@ -590,7 +590,7 @@ impl Ft8rsApp {
     fn decode_rows(&mut self, ui: &mut egui::Ui) {
         const PAD: f32 = TABLE_PAD;
         let font = egui::FontId::monospace(DECODE_FONT_SIZE);
-        let row_h = ui.fonts(|f| f.row_height(&font));
+        let row_h = ui.ctx().fonts_mut(|f| f.row_height(&font));
         let dark = ui.visuals().dark_mode;
         let text_color = ui.visuals().text_color();
         // Odd-slot stripe. egui's faint_bg_color is too subtle to read, so we
@@ -718,12 +718,12 @@ impl Ft8rsApp {
                 .with_minimize_button(false)
                 .with_maximize_button(false),
             |vctx, _class| {
-                egui::SidePanel::left("settings_tabs")
+                egui::Panel::left("settings_tabs")
                     .resizable(false)
-                    .exact_width(150.0)
+                    .exact_size(150.0)
                     .frame(
-                        egui::Frame::side_top_panel(&vctx.style())
-                            .inner_margin(egui::Margin::symmetric(12.0, 14.0)),
+                        egui::Frame::side_top_panel(&vctx.global_style())
+                            .inner_margin(egui::Margin::symmetric(12, 14)),
                     )
                     .show(vctx, |ui| {
                         ui.with_layout(
@@ -747,8 +747,8 @@ impl Ft8rsApp {
                     });
                 egui::CentralPanel::default()
                     .frame(
-                        egui::Frame::central_panel(&vctx.style())
-                            .inner_margin(egui::Margin::symmetric(18.0, 14.0)),
+                        egui::Frame::central_panel(&vctx.global_style())
+                            .inner_margin(egui::Margin::symmetric(18, 14)),
                     )
                     .show(vctx, |ui| {
                         commit = self.settings_tab_ui(ui);
@@ -899,7 +899,7 @@ impl Ft8rsApp {
 
         // Menu width: fit the longest item, clamped to [trigger, half window].
         let measure = |ui: &egui::Ui, s: String| {
-            ui.fonts(|f| f.layout_no_wrap(s, font.clone(), egui::Color32::WHITE).size().x)
+            ui.ctx().fonts_mut(|f| f.layout_no_wrap(s, font.clone(), egui::Color32::WHITE).size().x)
         };
         let mut content_w = measure(ui, "Default".to_string());
         for name in &names {
@@ -908,24 +908,29 @@ impl Ft8rsApp {
         let pad_x = ui.spacing().button_padding.x;
         let icon_w = ui.spacing().icon_width;
         let menu_w = (content_w + 2.0 * pad_x + icon_w + 8.0)
-            .clamp(TRIGGER_W, ui.ctx().screen_rect().width() * 0.5);
+            .clamp(TRIGGER_W, ui.ctx().content_rect().width() * 0.5);
 
         // Combo-styled trigger button.
         let h = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
         let (rect, trigger) = ui.allocate_exact_size(egui::vec2(TRIGGER_W, h), egui::Sense::click());
         let popup_id = ui.make_persistent_id("device_popup");
         if trigger.clicked() {
-            ui.memory_mut(|m| m.toggle_popup(popup_id));
+            egui::Popup::toggle_id(ui.ctx(), popup_id);
         }
-        let open = ui.memory(|m| m.is_popup_open(popup_id));
+        let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
         if ui.is_rect_visible(rect) {
             let visuals = if open {
                 ui.visuals().widgets.open
             } else {
                 *ui.style().interact(&trigger)
             };
-            ui.painter()
-                .rect(rect, visuals.rounding, visuals.weak_bg_fill, visuals.bg_stroke);
+            ui.painter().rect(
+                rect,
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
             // Selected text, truncated with an ellipsis to leave room for the icon.
             let selected = self.selected_device.clone().unwrap_or_else(|| "Default".to_string());
             let mut job = egui::text::LayoutJob::single_section(
@@ -940,7 +945,7 @@ impl Ft8rsApp {
             job.wrap.max_rows = 1;
             job.wrap.break_anywhere = true;
             job.wrap.overflow_character = Some('…');
-            let galley = ui.fonts(|f| f.layout_job(job));
+            let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
             let text_pos = egui::Align2::LEFT_CENTER
                 .align_size_within_rect(galley.size(), rect.shrink2(egui::vec2(pad_x, 0.0)))
                 .min;
@@ -983,13 +988,13 @@ impl Ft8rsApp {
                                         let cur = self.selected_device.clone();
                                         if ui.selectable_label(cur.is_none(), "Default").clicked() {
                                             self.selected_device = None;
-                                            ui.memory_mut(|m| m.close_popup());
+                                            egui::Popup::close_id(ui.ctx(), popup_id);
                                         }
                                         for name in &names {
                                             let sel = cur.as_deref() == Some(name.as_str());
                                             if ui.selectable_label(sel, name).on_hover_text(name).clicked() {
                                                 self.selected_device = Some(name.clone());
-                                                ui.memory_mut(|m| m.close_popup());
+                                                egui::Popup::close_id(ui.ctx(), popup_id);
                                             }
                                         }
                                     },
@@ -1000,7 +1005,7 @@ impl Ft8rsApp {
             if ui.input(|i| i.key_pressed(egui::Key::Escape))
                 || (trigger.clicked_elsewhere() && inner.response.clicked_elsewhere())
             {
-                ui.memory_mut(|m| m.close_popup());
+                egui::Popup::close_id(ui.ctx(), popup_id);
             }
         }
         self.selected_device != before
@@ -1089,14 +1094,14 @@ impl Ft8rsApp {
                     // No panel margin: the scroll area reaches the window edge so
                     // its scrollbar sits flush to the right. Content padding is
                     // applied inside the scroll area instead (the inner Frame).
-                    .frame(egui::Frame::central_panel(&vctx.style()).inner_margin(0.0))
+                    .frame(egui::Frame::central_panel(&vctx.global_style()).inner_margin(0.0))
                     .show(vctx, |ui| {
                     ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
                     ui.spacing_mut().item_spacing.y = 4.0;
                     // Scroll the credits in case fonts/translations overflow the window.
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    egui::Frame::none()
-                        .inner_margin(egui::Margin::symmetric(22.0, 14.0))
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(22, 14))
                         .show(ui, |ui| {
                     ui.add_space(10.0);
                     ui.vertical_centered(|ui| {
@@ -1194,8 +1199,8 @@ impl Ft8rsApp {
             |vctx, _class| {
                 egui::CentralPanel::default()
                     .frame(
-                        egui::Frame::central_panel(&vctx.style())
-                            .inner_margin(egui::Margin::symmetric(18.0, 14.0)),
+                        egui::Frame::central_panel(&vctx.global_style())
+                            .inner_margin(egui::Margin::symmetric(18, 14)),
                     )
                     .show(vctx, |ui| {
                         ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
@@ -1249,14 +1254,18 @@ impl eframe::App for Ft8rsApp {
         );
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    // eframe 0.35: the root entry point is `ui` (a `&mut Ui` with no margin),
+    // not `update(ctx)`. Panels now `.show(ui, …)` into that ui; the Context is
+    // reached via `ui.ctx()`.
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         // Follow the OS light/dark theme: re-apply the custom style when it flips.
         let theme = ctx.theme();
         if theme != self.styled_theme {
-            apply_style(ctx, theme);
+            apply_style(&ctx, theme);
             self.styled_theme = theme;
         }
-        self.sync_title(ctx);
+        self.sync_title(&ctx);
         // Windows: attach the native menu on the first frame (see the field doc),
         // then force a real surface resize so no black strip remains (see
         // `restore_inner_size`).
@@ -1264,7 +1273,7 @@ impl eframe::App for Ft8rsApp {
         if let Some(hwnd) = self.pending_menu_hwnd.take() {
             self.profile_menu = install_menu(self.profile, Some(hwnd));
             self.menu_profile_synced = self.profile;
-            let size = ctx.screen_rect().size();
+            let size = ctx.content_rect().size();
             self.restore_inner_size = Some(size);
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size + egui::vec2(0.0, 1.0)));
         } else if let Some(size) = self.restore_inner_size.take() {
@@ -1277,33 +1286,33 @@ impl eframe::App for Ft8rsApp {
         // macOS and Windows use a native menu bar; only the fallback platforms
         // (Linux) get an in-window top menu panel.
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu_bar(ui));
-        egui::TopBottomPanel::bottom("controls")
-            .exact_height(42.0)
-            .show(ctx, |ui| self.bottom_bar(ui));
+        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::bottom("controls")
+            .exact_size(42.0)
+            .show(ui, |ui| self.bottom_bar(ui));
         if self.profile == DecodeProfile::Dx {
-            egui::SidePanel::right("dx_panel")
+            egui::Panel::right("dx_panel")
                 .resizable(false)
-                .default_width(232.0)
-                .show(ctx, |ui| self.dx_panel(ui));
+                .default_size(232.0)
+                .show(ui, |ui| self.dx_panel(ui));
         }
         // Fixed header in its own top panel (so it never scrolls and owns its
         // divider line), then the scrolling rows in the central panel. Both use a
         // zero inner margin so they reach the window edge; padding is internal.
-        let zero = egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin::same(0.0));
-        egui::TopBottomPanel::top("table_header")
-            .exact_height(Self::row_height(ctx) + 8.0)
+        let zero = egui::Frame::central_panel(&ctx.global_style()).inner_margin(egui::Margin::same(0));
+        egui::Panel::top("table_header")
+            .exact_size(Self::row_height(&ctx) + 8.0)
             .frame(zero)
             .show_separator_line(false) // we draw our own thin divider
-            .show(ctx, |ui| self.table_header(ui));
+            .show(ui, |ui| self.table_header(ui));
         egui::CentralPanel::default()
             .frame(zero)
-            .show(ctx, |ui| self.decode_rows(ui));
+            .show(ui, |ui| self.decode_rows(ui));
 
-        self.settings_window(ctx);
-        self.about_window(ctx);
-        self.copyright_window(ctx);
-        self.confirm_window(ctx);
+        self.settings_window(&ctx);
+        self.about_window(&ctx);
+        self.copyright_window(&ctx);
+        self.confirm_window(&ctx);
 
         // Keep pumping engine events even without user input.
         ctx.request_repaint_after(Duration::from_millis(150));
@@ -1319,7 +1328,7 @@ fn rx_text_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Res
     let resp = ui.add(
         egui::TextEdit::singleline(value)
             .desired_width(width)
-            .margin(egui::Margin::symmetric(8.0, 4.0)),
+            .margin(egui::Margin::symmetric(8, 4)),
     );
     if resp.changed() {
         value.retain(|c| c.is_ascii_digit());
@@ -1342,20 +1351,20 @@ fn rx_stepper(ui: &mut egui::Ui, value: &mut String, height: f32) -> bool {
     let up = ui.interact(up_rect, ui.id().with("rx_up"), Sense::click());
     let dn = ui.interact(dn_rect, ui.id().with("rx_dn"), Sense::click());
 
-    let (fg, hover_bg, rounding) = {
+    let (fg, hover_bg, corner_radius) = {
         let v = ui.visuals();
         (
             v.text_color(),
             v.widgets.hovered.weak_bg_fill,
-            v.widgets.inactive.rounding,
+            v.widgets.inactive.corner_radius,
         )
     };
     let p = ui.painter();
     if up.hovered() {
-        p.rect_filled(up_rect, rounding, hover_bg);
+        p.rect_filled(up_rect, corner_radius, hover_bg);
     }
     if dn.hovered() {
-        p.rect_filled(dn_rect, rounding, hover_bg);
+        p.rect_filled(dn_rect, corner_radius, hover_bg);
     }
     let tri = |c: Pos2, pointing_up: bool| {
         let (hw, hh) = (3.0, 2.0);
@@ -1390,7 +1399,7 @@ fn callsign_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Re
     let resp = ui.add(
         egui::TextEdit::singleline(value)
             .desired_width(width)
-            .margin(egui::Margin::symmetric(8.0, 4.0)),
+            .margin(egui::Margin::symmetric(8, 4)),
     );
     if resp.changed() && value.chars().any(|c| c.is_ascii_lowercase()) {
         *value = value.to_ascii_uppercase();
@@ -1404,7 +1413,7 @@ fn grid_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Respon
     let resp = ui.add(
         egui::TextEdit::singleline(value)
             .desired_width(width)
-            .margin(egui::Margin::symmetric(8.0, 4.0)),
+            .margin(egui::Margin::symmetric(8, 4)),
     );
     if resp.changed() {
         let cleaned = sanitize_grid(value);
@@ -1469,7 +1478,7 @@ fn text_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> bool {
     ui.add(
         egui::TextEdit::singleline(value)
             .desired_width(width)
-            .margin(egui::Margin::symmetric(8.0, 4.0)),
+            .margin(egui::Margin::symmetric(8, 4)),
     )
     .lost_focus()
 }
@@ -1692,9 +1701,9 @@ fn install_menu(
 
 /// Apply the custom style for the given OS theme. Colors come from egui's
 /// adaptive light/dark visuals (so the app follows the system appearance); we
-/// only customize rounding, spacing, a blue accent, and the monospace fonts.
+/// only customize corner_radius, spacing, a blue accent, and the monospace fonts.
 fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
-    use egui::{FontFamily::Monospace, FontId, Margin, Rounding, Stroke, TextStyle};
+    use egui::{FontFamily::Monospace, FontId, Margin, CornerRadius, Stroke, TextStyle};
 
     let dark = theme == egui::Theme::Dark;
     let accent = if dark {
@@ -1703,19 +1712,19 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
         Color32::from_rgb(0x25, 0x63, 0xeb) // blue-600
     };
 
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     let mut v = if dark {
         egui::Visuals::dark()
     } else {
         egui::Visuals::light()
     };
 
-    let rounding = Rounding::same(2.0);
-    v.widgets.noninteractive.rounding = rounding;
-    v.widgets.inactive.rounding = rounding;
-    v.widgets.hovered.rounding = rounding;
-    v.widgets.active.rounding = rounding;
-    v.widgets.open.rounding = rounding;
+    let corner_radius = CornerRadius::same(2);
+    v.widgets.noninteractive.corner_radius = corner_radius;
+    v.widgets.inactive.corner_radius = corner_radius;
+    v.widgets.hovered.corner_radius = corner_radius;
+    v.widgets.active.corner_radius = corner_radius;
+    v.widgets.open.corner_radius = corner_radius;
 
     // No outline and no size change on interaction — hover/press only shift the
     // fill brightness (tailwind gray ramp, with a clear hover step).
@@ -1744,14 +1753,14 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
     v.widgets.active.expansion = 0.0;
     v.selection.stroke = Stroke::new(1.0, accent);
     v.hyperlink_color = accent;
-    v.window_rounding = Rounding::same(4.0);
-    v.menu_rounding = Rounding::same(4.0);
+    v.window_corner_radius = CornerRadius::same(4);
+    v.menu_corner_radius = CornerRadius::same(4);
 
     style.visuals = v;
     style.spacing.item_spacing = egui::vec2(10.0, 8.0);
     style.spacing.button_padding = egui::vec2(14.0, 8.0);
-    style.spacing.window_margin = Margin::same(12.0);
-    style.spacing.menu_margin = Margin::same(8.0);
+    style.spacing.window_margin = Margin::same(12);
+    style.spacing.menu_margin = Margin::same(8);
     style.spacing.interact_size.y = 24.0;
 
     // Monospace everywhere (matching the decode table).
@@ -1764,7 +1773,8 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
     ]
     .into();
 
-    ctx.set_style(style);
+    // eframe 0.35: Context::set_style is gone; set the same style for all themes.
+    ctx.all_styles_mut(move |s| *s = style.clone());
 }
 
 /// Install a single monospace font (Monaco-like) as the primary face for BOTH
@@ -1795,7 +1805,7 @@ fn install_fonts(ctx: &egui::Context) {
     if let Some(bytes) = read_first(MONO) {
         // Compute the centering tweak from the bytes before they move into FontData.
         let data = egui::FontData::from_owned(bytes.clone()).tweak(center_tweak(&bytes));
-        fonts.font_data.insert("mono".to_string(), data);
+        fonts.font_data.insert("mono".to_string(), std::sync::Arc::new(data));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts
                 .families
@@ -1806,7 +1816,7 @@ fn install_fonts(ctx: &egui::Context) {
     }
     if let Some(bytes) = read_first(CJK) {
         let data = egui::FontData::from_owned(bytes.clone()).tweak(center_tweak(&bytes));
-        fonts.font_data.insert("cjk".to_string(), data);
+        fonts.font_data.insert("cjk".to_string(), std::sync::Arc::new(data));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts.families.entry(family).or_default().push("cjk".to_string());
         }

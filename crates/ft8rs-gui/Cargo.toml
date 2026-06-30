@@ -12,8 +12,8 @@ path = "src/main.rs"
 [dependencies]
 ft8rs-core = { path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
-eframe = { version = "0.29", features = ["persistence"] }
-muda = "0.15"
+eframe = { version = "0.35", features = ["persistence"] }
+muda = "0.19"
 # Read a font's vertical metrics (line gap) at load time so we can re-center its
 # glyphs in the row box — fixes the top-shifted text with large-line-gap faces
 # like Windows Consolas. Version matches epaint's ab_glyph.
