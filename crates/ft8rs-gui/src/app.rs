@@ -172,7 +172,7 @@ impl Ft8rsApp {
                 .load_texture("logo", color, egui::TextureOptions::LINEAR)
         });
 
-        let mut app = Self {
+        Self {
             engine,
             mycall: load("mycall", ""),
             hiscall: load("hiscall", ""),
@@ -216,55 +216,8 @@ impl Ft8rsApp {
             pending_menu_hwnd: hwnd,
             #[cfg(target_os = "windows")]
             restore_inner_size: None,
-        };
-
-        // ===== DEBUG TEST SEED — remove this line and `seed_test_rows` below =====
-        app.seed_test_rows(100);
-        // ========================================================================
-
-        app
-    }
-
-    // ===== DEBUG TEST SEED — remove this whole method before release =====
-    /// Fill the decode list with `n` synthetic rows so the scrolling/layout can be
-    /// tested without a live signal. Rows are grouped into 15-second "slots" (≈10
-    /// rows each) so the alternating stripe and the bottom-stick behaviour show up.
-    /// Deterministic pseudo-randomness (index-hashed), so no rng dependency.
-    fn seed_test_rows(&mut self, n: usize) {
-        const CALLS: &[&str] = &[
-            "BG5ATV", "BD4XGP", "JH0MUE", "K6TQ", "VR2VGM", "YC8UXI", "HS4QKN", "BA4IAW",
-            "ZL1RPC", "JA3KZN", "UN8FR", "BI6PWL", "YB2NDH", "V85T", "HL2LRN", "BD1AV",
-        ];
-        const GRIDS: &[&str] = &["PM00", "OM91", "PM95", "OI52", "ON80", "QM07", "RR73", "73"];
-        let rng = |i: usize, salt: usize| (i.wrapping_mul(2654435761).wrapping_add(salt) >> 11) as usize;
-        for i in 0..n {
-            let slot_key = (i / 10) as u32; // ~10 decodes per 15 s slot
-            let parity = (slot_key % 2) as u8;
-            let snr = (rng(i, 1) % 45) as i32 - 24; // -24..+20 dB
-            let dt = (rng(i, 2) % 30) as f64 / 10.0 - 0.5; // -0.5..+2.4 s
-            let freq = 200 + (rng(i, 3) % 2600) as i64; // 200..2800 Hz
-            let secs = slot_key * 15;
-            let time = format!("14{:02}{:02}", (secs / 60) % 60, secs % 60);
-            let a = CALLS[rng(i, 4) % CALLS.len()];
-            let b = CALLS[rng(i, 5) % CALLS.len()];
-            let tail = GRIDS[rng(i, 6) % GRIDS.len()];
-            let msg = if rng(i, 7) % 3 == 0 {
-                format!("CQ {a} {tail}")
-            } else {
-                format!("{a} {b} {tail}")
-            };
-            let text = format!("{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}", time, snr, dt, freq, msg, "");
-            self.rows.push(Row {
-                text,
-                parity,
-                slot_key,
-                freq: freq as f64,
-                tokens: Vec::new(),
-                source: DecodeSource::Local,
-            });
         }
     }
-    // ===== END DEBUG TEST SEED =====
 
     /// Window title: `FT8.RS - {MyCallsign} - {Profile}` (callsign omitted when
     /// unset). Pushed to the OS only when it changes.
