@@ -50,9 +50,11 @@ enum DecodeSource {
 struct Row {
     text: String,
     parity: u8,
-    // Merge keys (compare mode): same slot + freq within tolerance + compatible
-    // message tokens identify the same transmission across the two decoders.
-    slot_key: u32,
+    // Merge keys (compare mode): same real slot + freq within tolerance +
+    // compatible message tokens identify the same transmission across the two
+    // decoders. `gen` is a monotonic batch id for the real slot (the raw
+    // time-of-day slot wraps every 24 h, so it can't be a stable fold key).
+    gen: u64,
     freq: f64,
     tokens: Vec<String>,
     source: DecodeSource,
@@ -95,6 +97,11 @@ pub struct Ft8rsApp {
     status: EngineStatus,
     applied: Option<EngineState>,
     rows: Vec<Row>,
+    // Dedupe batch tracking: `merge_gen` advances each time decodes for a new
+    // real slot start arriving, so `ingest` only folds within the current slot
+    // and never collapses a same-time-of-day row from a previous day.
+    merge_slot_key: Option<u32>,
+    merge_gen: u64,
     error: Option<String>,
     dx: Option<DxContextSnapshot>,
     pending_confirm: Option<EngineState>,
@@ -199,6 +206,8 @@ impl Ft8rsApp {
             status: EngineStatus::Idle,
             applied: None,
             rows: Vec::new(),
+            merge_slot_key: None,
+            merge_gen: 0,
             error: None,
             dx: None,
             pending_confirm: None,
@@ -392,10 +401,16 @@ impl Ft8rsApp {
         );
     }
 
-    /// Merge a decode into the row list. A match (same slot + freq within
+    /// Merge a decode into the row list. A match (same real slot + freq within
     /// tolerance + compatible message) from the other source upgrades the
     /// existing row to `Both`; any match keeps the first row (dedupe). No match
     /// appends a new row.
+    ///
+    /// The fold is scoped to the current slot batch (`merge_gen`): `slot_key` is
+    /// time-of-day only and wraps every 24 h, so without this a recurring signal
+    /// at the same time-of-day/freq on a later day would be folded into a stale
+    /// row still in the buffer and silently dropped. Decodes arrive in slot
+    /// order, so a change in `slot_key` marks a new real slot and bumps the gen.
     fn ingest(
         &mut self,
         slot_key: u32,
@@ -404,9 +419,15 @@ impl Ft8rsApp {
         tokens: Vec<String>,
         source: DecodeSource,
     ) {
+        if self.merge_slot_key != Some(slot_key) {
+            self.merge_slot_key = Some(slot_key);
+            self.merge_gen += 1;
+        }
+        let gen = self.merge_gen;
+
         let tol = self.udp_in_tol;
         for row in self.rows.iter_mut() {
-            if row.slot_key == slot_key
+            if row.gen == gen
                 && (row.freq - freq).abs() <= tol
                 && tokens_compatible(&row.tokens, &tokens)
             {
@@ -420,7 +441,7 @@ impl Ft8rsApp {
         self.rows.push(Row {
             text,
             parity,
-            slot_key,
+            gen,
             freq,
             tokens,
             source,
