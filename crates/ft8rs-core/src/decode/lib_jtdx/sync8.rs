@@ -126,8 +126,28 @@ pub fn candidate_sort_metric(candidate: &SyncCandidate, config: Sync8Config) -> 
 }
 
 pub fn sync8(dd8: &[f32], config: Sync8Config) -> Vec<SyncCandidate> {
-    let mut workspace = Sync8Workspace::new(config.jzb, config.jzt);
-    workspace.sync8(dd8, config)
+    // Reuse a persistent per-thread workspace instead of allocating (and
+    // zero-initialising) several MB — `s` is NH1*NHSYM, plus the sync2d/syncq
+    // grids and the window-sum memo — on every call (~passes*bands per slot).
+    // Every buffer is fully (re)written or `.fill()`-ed before any read on each
+    // call, so this is byte-identical to a fresh workspace; it also matches the
+    // JTDX Fortran model, where these are module arrays that persist across
+    // calls rather than being reallocated. Mirrors the wsjtx `SYNC8_BUFS`
+    // pattern. Bit-exactness is guarded by the jtdx 20/20 & 430/431 baselines.
+    SYNC8_WS.with(|ws| {
+        let mut ws = ws.borrow_mut();
+        ws.ensure(config.jzb, config.jzt);
+        ws.sync8(dd8, config)
+    })
+}
+
+/// Grow a reusable buffer to at least `len` (never shrinks). New tail cells are
+/// filled with `fill`; callers still fully overwrite or `.fill()` the region
+/// they read, so the reused prefix carries no value between calls.
+fn resize_at_least<T: Clone>(buf: &mut Vec<T>, len: usize, fill: T) {
+    if buf.len() < len {
+        buf.resize(len, fill);
+    }
 }
 
 struct Sync8Workspace {
@@ -139,25 +159,44 @@ struct Sync8Workspace {
     red: Vec<f32>,
     redcq: Vec<bool>,
     jpeak: Vec<i32>,
+    /// Per-call window-sum memo shared by the plain and AGC sync2d paths (they
+    /// are mutually exclusive within a call); fully overwritten before read.
+    rs_table: Vec<f32>,
     jzb: i32,
     jzt: i32,
 }
 
+thread_local! {
+    static SYNC8_WS: std::cell::RefCell<Sync8Workspace> = const {
+        std::cell::RefCell::new(Sync8Workspace {
+            s: Vec::new(),
+            x_re: Vec::new(),
+            x_im: Vec::new(),
+            sync2d: Vec::new(),
+            syncq: Vec::new(),
+            red: Vec::new(),
+            redcq: Vec::new(),
+            jpeak: Vec::new(),
+            rs_table: Vec::new(),
+            jzb: 0,
+            jzt: 0,
+        })
+    };
+}
+
 impl Sync8Workspace {
-    fn new(jzb: i32, jzt: i32) -> Self {
+    fn ensure(&mut self, jzb: i32, jzt: i32) {
         let width = (jzt - jzb + 1).max(0) as usize;
-        Self {
-            s: vec![0.0; NH1 * NHSYM],
-            x_re: vec![0.0; NFFT1],
-            x_im: vec![0.0; NFFT1],
-            sync2d: vec![0.0; NH1 * width],
-            syncq: vec![false; NH1 * width],
-            red: vec![0.0; NH1],
-            redcq: vec![false; NH1],
-            jpeak: vec![0; NH1],
-            jzb,
-            jzt,
-        }
+        self.jzb = jzb;
+        self.jzt = jzt;
+        resize_at_least(&mut self.s, NH1 * NHSYM, 0.0);
+        resize_at_least(&mut self.x_re, NFFT1, 0.0);
+        resize_at_least(&mut self.x_im, NFFT1, 0.0);
+        resize_at_least(&mut self.sync2d, NH1 * width, 0.0);
+        resize_at_least(&mut self.syncq, NH1 * width, false);
+        resize_at_least(&mut self.red, NH1, 0.0);
+        resize_at_least(&mut self.redcq, NH1, false);
+        resize_at_least(&mut self.jpeak, NH1, 0);
     }
 
     fn sync8(&mut self, dd8: &[f32], config: Sync8Config) -> Vec<SyncCandidate> {
@@ -232,16 +271,16 @@ impl Sync8Workspace {
         // Precompute the 17-wide window sum once per (i, k). `sum_s(&s, i, i+nfos6, k)`
         // is otherwise recomputed ~10x for the same (i, k) across the (j, n) loops
         // (k = j + jstrt + nssy*n collides for many (j, n)). The table is built with
-        // the identical element order, so rs_at(i, k) is bit-identical to the original
+        // the identical element order, so self.rs_table[rs_idx(i, k)] is bit-identical to the original
         // sum_s — pure memoization, alignment unchanged.
-        let mut rs = vec![0.0f32; (ibw - iaw + 1) * NHSYM];
+        resize_at_least(&mut self.rs_table, (ibw - iaw + 1) * NHSYM, 0.0);
         for i in iaw..=ibw {
             let base = (i - iaw) * NHSYM;
             for k in 1..=NHSYM {
-                rs[base + (k - 1)] = sum_s(&self.s, i, i + nfos6, k);
+                self.rs_table[base + (k - 1)] = sum_s(&self.s, i, i + nfos6, k);
             }
         }
-        let rs_at = |i: usize, k: usize| rs[(i - iaw) * NHSYM + (k - 1)];
+        let rs_idx = |i: usize, k: usize| (i - iaw) * NHSYM + (k - 1);
 
         for j in config.jzb..=config.jzt {
             for i in iaw..=ibw {
@@ -260,19 +299,19 @@ impl Sync8Workspace {
                     if k > 0 && k <= NHSYM as isize {
                         let k = k as usize;
                         ta += self.s[s_idx(i_costas, k)];
-                        t0a += rs_at(i, k) - self.s[s_idx(i_costas + 1, k)];
+                        t0a += self.rs_table[rs_idx(i, k)] - self.s[s_idx(i_costas + 1, k)];
                     }
                     let k36 = k + nssy36;
                     if k36 > 0 && k36 <= NHSYM as isize {
                         let k36 = k36 as usize;
                         tb += self.s[s_idx(i_costas, k36)];
-                        t0b += rs_at(i, k36) - self.s[s_idx(i_costas + 1, k36)];
+                        t0b += self.rs_table[rs_idx(i, k36)] - self.s[s_idx(i_costas + 1, k36)];
                     }
                     let k72 = k + nssy72;
                     if k72 > 0 && k72 <= NHSYM as isize {
                         let k72 = k72 as usize;
                         tc += self.s[s_idx(i_costas, k72)];
-                        t0c += rs_at(i, k72) - self.s[s_idx(i_costas + 1, k72)];
+                        t0c += self.rs_table[rs_idx(i, k72)] - self.s[s_idx(i_costas + 1, k72)];
                     }
                 }
 
@@ -282,10 +321,10 @@ impl Sync8Workspace {
                         let k = k as usize;
                         if n < 15 {
                             tcq += self.s[s_idx(i, k)];
-                            t0cq += rs_at(i, k) - self.s[s_idx(i, k + 1)];
+                            t0cq += self.rs_table[rs_idx(i, k)] - self.s[s_idx(i, k + 1)];
                         } else {
                             tcq += self.s[s_idx(i + 2, k)];
-                            t0cq += rs_at(i, k) - self.s[s_idx(i, k + 3)];
+                            t0cq += self.rs_table[rs_idx(i, k)] - self.s[s_idx(i, k + 3)];
                         }
                     }
                 }
@@ -319,14 +358,14 @@ impl Sync8Workspace {
         // Same memoization as the plain path: precompute the strided window sum
         // (step nfos) once per (i, k), bit-identical to sum_s_stride (same elements,
         // same order). Eliminates the ~10x recompute across the (j, n) loops.
-        let mut rss = vec![0.0f32; (ibw - iaw + 1) * NHSYM];
+        resize_at_least(&mut self.rs_table, (ibw - iaw + 1) * NHSYM, 0.0);
         for i in iaw..=ibw {
             let base = (i - iaw) * NHSYM;
             for k in 1..=NHSYM {
-                rss[base + (k - 1)] = sum_s_stride(&self.s, i, i + nfos6, nfos, k);
+                self.rs_table[base + (k - 1)] = sum_s_stride(&self.s, i, i + nfos6, nfos, k);
             }
         }
-        let rss_at = |i: usize, k: usize| rss[(i - iaw) * NHSYM + (k - 1)];
+        let rss_idx = |i: usize, k: usize| (i - iaw) * NHSYM + (k - 1);
 
         for j in config.jzb..=config.jzt {
             for i in iaw..=ibw {
@@ -338,7 +377,7 @@ impl Sync8Workspace {
                         let k = k as usize;
                         let ta = self.s[s_idx(i_costas, k)];
                         tall[n] = if ta > 1e-9 {
-                            ta * 6.0 / (rss_at(i, k) - ta)
+                            ta * 6.0 / (self.rs_table[rss_idx(i, k)] - ta)
                         } else {
                             0.0
                         };
@@ -348,7 +387,7 @@ impl Sync8Workspace {
                         let k36 = k36 as usize;
                         let tb = self.s[s_idx(i_costas, k36)];
                         tall[n + 16] = if tb > 1e-9 {
-                            tb * 6.0 / (rss_at(i, k36) - tb)
+                            tb * 6.0 / (self.rs_table[rss_idx(i, k36)] - tb)
                         } else {
                             0.0
                         };
@@ -358,7 +397,7 @@ impl Sync8Workspace {
                         let k72 = k72 as usize;
                         let tc = self.s[s_idx(i_costas, k72)];
                         tall[n + 23] = if tc > 1e-9 {
-                            tc * 6.0 / (rss_at(i, k72) - tc)
+                            tc * 6.0 / (self.rs_table[rss_idx(i, k72)] - tc)
                         } else {
                             0.0
                         };
@@ -373,7 +412,7 @@ impl Sync8Workspace {
                             let k = k as usize;
                             let tone_i = if n < 15 { i } else { i + 2 };
                             let sig = self.s[s_idx(tone_i, k)];
-                            tall[n] = sig * 6.0 / (rss_at(i, k) - sig);
+                            tall[n] = sig * 6.0 / (self.rs_table[rss_idx(i, k)] - sig);
                         }
                     }
                     let sya = sum_tall(&tall, 0, 7);
