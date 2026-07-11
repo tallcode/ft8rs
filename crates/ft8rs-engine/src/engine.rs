@@ -18,7 +18,9 @@
 //!
 //! Nothing here touches `lib_wsjtx`/`lib_jtdx`.
 
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::mpsc::{
+    self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError, TrySendError,
+};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -38,7 +40,7 @@ use crate::reconfig::{plan_reconfig, EngineState, StateBucket};
 use crate::report::{UdpConfig, UdpOutput};
 use crate::soundcard::{
     drain_pending_audio, list_soundcards, native_samples_for_nzhsym, next_slot_start_unix_seconds,
-    start_input_stream,
+    now_unix_millis, start_input_stream, wall_clock_slot_index,
 };
 
 const TARGET_SAMPLE_RATE: u32 = 12_000;
@@ -47,6 +49,11 @@ const SLOT_SECONDS: u64 = 15;
 const DX_MONITOR_WATCHDOG_MS: u64 = 12_000;
 /// Command/event polling granularity inside the capture loop.
 const POLL: Duration = Duration::from_millis(50);
+/// Bound on the decode actor's staged-command backlog (~2.5 slots of the three
+/// staged messages). If the decoder can't keep up with real time the producer
+/// sheds whole slots rather than growing this queue without bound (each N50
+/// stage carries a full ~720 KB slot buffer).
+const DECODE_QUEUE_CAP: usize = 8;
 
 /// Handle the GUI holds to drive the engine. Dropping it shuts the engine down.
 pub struct EngineHandle {
@@ -153,13 +160,38 @@ fn run_monitor(
     };
     drain_pending_audio(&rx);
     let mut carry: Vec<f32> = Vec::new();
-    let mut slot_index: i64 = 0;
     let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
 
     'monitor: loop {
-        let timestamp = SlotTimestamp::from_unix_seconds_utc(slot_start + slot_index * 15);
+        // Re-lock this slot's window start to the true UTC boundary (see
+        // `wall_clock_slot_index`): counting `sample_rate * 15` samples per slot
+        // lets soundcard drift / clock steps slide the decode window against real
+        // transmissions until decodes are silently lost over long runs.
+        let boundary = match now_unix_millis() {
+            Ok(now_ms) => slot_start + wall_clock_slot_index(slot_start, now_ms).max(0) * 15,
+            Err(err) => {
+                let _ = event_tx.send(EngineEvent::Error(err));
+                return teardown(dec_cmd_tx, stream);
+            }
+        };
+        match wait_until_boundary(cmd_rx, event_tx, &mut pending, boundary) {
+            CmdFlow::Continue => {}
+            CmdFlow::Stop => return teardown(dec_cmd_tx, stream),
+            CmdFlow::Shutdown => {
+                let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                drop(stream);
+                return MonitorExit::Shutdown;
+            }
+        }
+        drain_pending_audio(&rx);
+        carry.clear();
+
+        let timestamp = SlotTimestamp::from_unix_seconds_utc(boundary);
         let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 8);
         let mut native: Vec<f32> = Vec::new();
+        // Set when the decode actor's bounded queue is full: shed the rest of this
+        // slot's stages instead of blocking capture or growing the backlog.
+        let mut slot_overrun = false;
 
         for (nzhsym, stage) in [(41, Stage::N41), (47, Stage::N47), (50, Stage::N50)] {
             let target = if nzhsym == 50 {
@@ -210,7 +242,6 @@ fn run_monitor(
                             };
                             drain_pending_audio(&rx);
                             carry.clear();
-                            slot_index = 0;
                             let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
                             continue 'monitor;
                         }
@@ -232,25 +263,36 @@ fn run_monitor(
                     }
                 }
             }
+            if slot_overrun {
+                // Still pumped the audio above (keeps capture real-time); just
+                // don't enqueue more work for the fallen-behind decoder.
+                continue;
+            }
             let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
-            if dec_cmd_tx
-                .send(DecodeCmd::Stage {
-                    stage,
-                    timestamp: timestamp.clone(),
-                    samples_12k,
-                })
-                .is_err()
-            {
-                drop(stream);
-                return MonitorExit::Stopped;
+            match dec_cmd_tx.try_send(DecodeCmd::Stage {
+                stage,
+                timestamp: timestamp.clone(),
+                samples_12k,
+            }) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    slot_overrun = true;
+                    let _ = event_tx.send(EngineEvent::Error(format!(
+                        "decode falling behind real time; dropping slot {timestamp}"
+                    )));
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    drop(stream);
+                    return MonitorExit::Stopped;
+                }
             }
         }
 
         forward_decode_events(&dec_evt_rx, event_tx, &mut udp);
 
         // Apply a queued reconfiguration at the slot boundary.
-        if let Some(new_state) = pending.take() {
-            let outcome = plan_reconfig(&state, &new_state);
+        if let Some(mut new_state) = pending.take() {
+            let mut outcome = plan_reconfig(&state, &new_state);
             if outcome.rebuild_output {
                 udp = build_udp(new_state.udp.as_ref(), event_tx);
             }
@@ -261,52 +303,50 @@ fn run_monitor(
                     reset_dx_operator: outcome.reset.contains(&StateBucket::DxOperator),
                 });
             }
-            let mut restarted = false;
             if outcome.restart_capture {
-                drop(stream);
+                // Open the new device *before* dropping the working one: if it
+                // can't open (busy / unplugged / unsupported format) keep the
+                // current capture and session running instead of tearing the
+                // whole monitor session down.
                 match start_input_stream(new_state.device.as_deref()) {
                     Ok((new_stream, new_rx, new_rate)) => {
+                        drop(stream);
                         stream = new_stream;
                         rx = new_rx;
                         sample_rate = new_rate;
+                        let _ = event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
+                        slot_start = match align(cmd_rx, event_tx, &mut pending) {
+                            AlignResult::Ready(start) => start,
+                            AlignResult::Stop => return teardown(dec_cmd_tx, stream),
+                            AlignResult::Shutdown => {
+                                let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                                drop(stream);
+                                return MonitorExit::Shutdown;
+                            }
+                        };
+                        drain_pending_audio(&rx);
+                        carry.clear();
+                        let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
                     }
                     Err(err) => {
-                        let _ = event_tx.send(EngineEvent::Error(err));
-                        let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-                        return MonitorExit::Stopped;
+                        let _ = event_tx.send(EngineEvent::Error(format!(
+                            "device switch failed, keeping current input: {err}"
+                        )));
+                        // Stay on the current device and report no capture restart.
+                        new_state.device = state.device.clone();
+                        outcome.restart_capture = false;
+                        outcome.reset.remove(&StateBucket::Capture);
                     }
                 }
-                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
-                slot_start = match align(cmd_rx, event_tx, &mut pending) {
-                    AlignResult::Ready(start) => start,
-                    AlignResult::Stop => return teardown(dec_cmd_tx, stream),
-                    AlignResult::Shutdown => {
-                        let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-                        drop(stream);
-                        return MonitorExit::Shutdown;
-                    }
-                };
-                drain_pending_audio(&rx);
-                carry.clear();
-                slot_index = 0;
-                restarted = true;
-                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
             }
             let _ = event_tx.send(EngineEvent::Reconfigured(outcome));
             state = new_state;
-            // The reconfig path `continue`s past the normal end-of-loop advance,
-            // so advance here — unless a capture restart already reset to slot 0.
-            if !restarted {
-                slot_index += 1;
-            }
             continue;
         }
-
-        slot_index += 1;
     }
 }
 
-fn teardown(dec_cmd_tx: Sender<DecodeCmd>, stream: cpal::Stream) -> MonitorExit {
+fn teardown(dec_cmd_tx: SyncSender<DecodeCmd>, stream: cpal::Stream) -> MonitorExit {
     let _ = dec_cmd_tx.send(DecodeCmd::Stop);
     drop(stream);
     MonitorExit::Stopped
@@ -351,6 +391,27 @@ fn reconnect_capture(
         }
     }
     Reconnect::Failed
+}
+
+/// Sleep (interruptibly) until a specific unix-second boundary, polling commands
+/// so Stop/Shutdown stay responsive. Returns immediately if the boundary is
+/// already in the past (slow device / decode lag). Used to re-lock each slot's
+/// window to UTC without dropping whole slots in steady state.
+fn wait_until_boundary(
+    cmd_rx: &Receiver<EngineCommand>,
+    event_tx: &Sender<EngineEvent>,
+    pending: &mut Option<EngineState>,
+    boundary_secs: i64,
+) -> CmdFlow {
+    let target = UNIX_EPOCH + Duration::from_secs(boundary_secs.max(0) as u64);
+    while let Ok(remaining) = target.duration_since(SystemTime::now()) {
+        match drain_commands(cmd_rx, event_tx, pending) {
+            CmdFlow::Continue => {}
+            other => return other,
+        }
+        thread::sleep(remaining.min(POLL));
+    }
+    CmdFlow::Continue
 }
 
 /// Sleep (interruptibly) until the next UTC slot boundary, returning its unix
@@ -621,8 +682,12 @@ fn send_record(
 
 fn spawn_decode_actor(
     config: StreamDecodeConfig,
-) -> (Sender<DecodeCmd>, Receiver<EngineEvent>) {
-    let (cmd_tx, cmd_rx) = mpsc::channel::<DecodeCmd>();
+) -> (SyncSender<DecodeCmd>, Receiver<EngineEvent>) {
+    // Bounded so a decoder that falls behind real time sheds slots (see the
+    // producer's `try_send`) instead of growing an unbounded backlog of slot
+    // buffers. Stop/Reconfigure use a blocking `send`; they are rare and must
+    // not be dropped, and only ever wait for one in-flight slot to drain.
+    let (cmd_tx, cmd_rx) = mpsc::sync_channel::<DecodeCmd>(DECODE_QUEUE_CAP);
     let (evt_tx, evt_rx) = mpsc::channel::<EngineEvent>();
     thread::spawn(move || decode_actor(config, cmd_rx, evt_tx));
     (cmd_tx, evt_rx)
@@ -741,7 +806,7 @@ mod tests {
         Some(resample_linear(&audio.samples, audio.sample_rate, TARGET_SAMPLE_RATE))
     }
 
-    fn feed_slot(cmd_tx: &Sender<DecodeCmd>, ts: &SlotTimestamp, s12k: &[f32]) {
+    fn feed_slot(cmd_tx: &SyncSender<DecodeCmd>, ts: &SlotTimestamp, s12k: &[f32]) {
         let slice = |n: usize| s12k[..(n * NZHSYM_STRIDE).min(s12k.len())].to_vec();
         for (n, stage) in [(41, Stage::N41), (47, Stage::N47), (50, Stage::N50)] {
             let samples = if n == 50 { s12k.to_vec() } else { slice(n) };

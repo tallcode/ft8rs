@@ -68,22 +68,30 @@ where
     let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
     let (cmd_tx, event_rx) = start_decode_worker(options.config);
 
-    let first_slot_start = next_slot_start_unix_seconds()?;
-    sleep_until_unix_seconds(first_slot_start)?;
+    // Fixed phase anchor (a UTC 15 s boundary). Each slot re-derives its window
+    // from the wall clock relative to this anchor so soundcard sample-rate drift
+    // and clock steps cannot accumulate into a decode-window offset.
+    let slot_start = next_slot_start_unix_seconds()?;
+    sleep_until_unix_seconds(slot_start)?;
     drain_pending_audio(&rx);
 
     let mut collector = NativeSampleCollector::new(&rx);
-    let mut slot_index = 0usize;
+    let mut slots_done = 0usize;
     loop {
         if options
             .max_slots
-            .is_some_and(|max_slots| slot_index >= max_slots)
+            .is_some_and(|max_slots| slots_done >= max_slots)
         {
             break;
         }
 
-        let timestamp =
-            SlotTimestamp::from_unix_seconds_utc(first_slot_start + slot_index as i64 * 15);
+        // Re-lock this slot's window start to the true UTC boundary.
+        let boundary = slot_start + wall_clock_slot_index(slot_start, now_unix_millis()?).max(0) * 15;
+        sleep_until_unix_seconds(boundary)?;
+        drain_pending_audio(&rx);
+        collector.clear_carry();
+
+        let timestamp = SlotTimestamp::from_unix_seconds_utc(boundary);
         let mut native = Vec::with_capacity(sample_rate as usize * SLOT_SECONDS as usize);
         let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 8);
 
@@ -142,7 +150,7 @@ where
         )?;
 
         drain_decode_events_until_slot_complete(&event_rx, &mut on_decode, &mut on_slot_complete)?;
-        slot_index += 1;
+        slots_done += 1;
     }
 
     let _ = cmd_tx.send(DecodeWorkerCommand::Stop);
@@ -162,29 +170,35 @@ where
     let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
     let samples_per_slot = sample_rate as usize * SLOT_SECONDS as usize;
 
-    let first_slot_start = next_slot_start_unix_seconds()?;
-    sleep_until_unix_seconds(first_slot_start)?;
+    // Fixed phase anchor; each slot re-locks to the wall clock (see
+    // `wall_clock_slot_index`) so soundcard drift cannot accumulate.
+    let slot_start = next_slot_start_unix_seconds()?;
+    sleep_until_unix_seconds(slot_start)?;
     drain_pending_audio(&rx);
 
     let mut decoder = ProfileStreamDecodeSession::new(options.config);
     let mut collector = NativeSampleCollector::new(&rx);
-    let mut slot_index = 0usize;
+    let mut slots_done = 0usize;
     loop {
         if options
             .max_slots
-            .is_some_and(|max_slots| slot_index >= max_slots)
+            .is_some_and(|max_slots| slots_done >= max_slots)
         {
             break;
         }
 
-        let timestamp =
-            SlotTimestamp::from_unix_seconds_utc(first_slot_start + slot_index as i64 * 15);
+        let boundary = slot_start + wall_clock_slot_index(slot_start, now_unix_millis()?).max(0) * 15;
+        sleep_until_unix_seconds(boundary)?;
+        drain_pending_audio(&rx);
+        collector.clear_carry();
+
+        let timestamp = SlotTimestamp::from_unix_seconds_utc(boundary);
         let mut native = Vec::with_capacity(samples_per_slot);
         let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 5);
         collector.collect_until(&mut native, samples_per_slot, deadline)?;
         let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
         on_slot(&mut decoder, timestamp, &samples_12k)?;
-        slot_index += 1;
+        slots_done += 1;
     }
 
     drop(stream);
@@ -630,6 +644,13 @@ impl<'a> NativeSampleCollector<'a> {
         }
     }
 
+    /// Drop any samples carried past the previous slot's target. Used when a slot
+    /// re-locks to its UTC boundary so the next window starts from post-boundary
+    /// audio rather than stale leftovers.
+    fn clear_carry(&mut self) {
+        self.carry.clear();
+    }
+
     fn collect_until(
         &mut self,
         out: &mut Vec<f32>,
@@ -744,10 +765,85 @@ pub(crate) fn next_slot_start_unix_seconds() -> Result<i64, String> {
     Ok(((now_millis / 15_000) + 1) * 15)
 }
 
+pub(crate) fn now_unix_millis() -> Result<i64, String> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("system time is before Unix epoch: {err}"))?
+        .as_millis() as i64)
+}
+
+/// Re-derive, from the wall clock, the index of the 15 s UTC slot whose start
+/// boundary should be filled next, relative to the fixed phase anchor
+/// `slot_start_secs` (a unix second that is a multiple of 15).
+///
+/// The monitor loops must recompute this every slot instead of a free-running
+/// `+1` sample counter: the soundcard delivers samples at its *true* rate, which
+/// differs from the nominal `sample_rate` by tens of ppm, so counting
+/// `sample_rate * 15` samples per slot lets the decode window slide against UTC
+/// (~4 s/day at ±50 ppm) until real transmissions fall outside the sync-search
+/// window and decodes are silently lost. Deriving the index from the clock and
+/// re-locking to the boundary each slot bounds the offset to a single slot's
+/// processing lag, so drift and NTP clock steps cannot accumulate.
+///
+/// Rounds to the nearest boundary so being a hair early (fast device) or late
+/// (slow device / decode lag) never mislabels a slot. Returns a negative index
+/// only if the clock stepped back before the anchor; callers clamp/re-anchor.
+pub(crate) fn wall_clock_slot_index(slot_start_secs: i64, now_ms: i64) -> i64 {
+    let delta_ms = now_ms - slot_start_secs * 1_000;
+    (delta_ms + 7_500).div_euclid(15_000)
+}
+
 pub(crate) fn sleep_until_unix_seconds(unix_seconds: i64) -> Result<(), String> {
     let target = UNIX_EPOCH + Duration::from_secs(unix_seconds as u64);
     if let Ok(duration) = target.duration_since(SystemTime::now()) {
         std::thread::sleep(duration);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wall_clock_slot_index;
+
+    const ANCHOR: i64 = 1_700_000_010; // a unix second that is a multiple of 15
+
+    #[test]
+    fn exact_boundary_maps_to_its_index() {
+        for k in 0..10 {
+            let now_ms = (ANCHOR + k * 15) * 1_000;
+            assert_eq!(wall_clock_slot_index(ANCHOR, now_ms), k);
+        }
+    }
+
+    #[test]
+    fn slightly_early_or_late_rounds_to_nearest_boundary() {
+        for k in 1..10 {
+            let boundary_ms = (ANCHOR + k * 15) * 1_000;
+            // Fast device: finished a hair before the boundary.
+            assert_eq!(wall_clock_slot_index(ANCHOR, boundary_ms - 200), k);
+            // Slow device / decode lag: a hair after the boundary.
+            assert_eq!(wall_clock_slot_index(ANCHOR, boundary_ms + 200), k);
+        }
+    }
+
+    #[test]
+    fn accumulated_half_slot_drift_advances_the_index_once() {
+        // ~7.4 s past boundary k still fills slot k; past the half-slot it jumps
+        // to k+1 (a clean resync rather than unbounded silent drift).
+        let boundary_ms = (ANCHOR + 4 * 15) * 1_000;
+        assert_eq!(wall_clock_slot_index(ANCHOR, boundary_ms + 7_400), 4);
+        assert_eq!(wall_clock_slot_index(ANCHOR, boundary_ms + 7_600), 5);
+    }
+
+    #[test]
+    fn clock_step_forward_skips_the_uncaptured_slots() {
+        let now_ms = (ANCHOR + 5 * 15) * 1_000; // jumped ahead 5 slots
+        assert_eq!(wall_clock_slot_index(ANCHOR, now_ms), 5);
+    }
+
+    #[test]
+    fn clock_before_anchor_is_negative_for_caller_to_clamp() {
+        let now_ms = (ANCHOR - 30) * 1_000;
+        assert!(wall_clock_slot_index(ANCHOR, now_ms) < 0);
+    }
 }
