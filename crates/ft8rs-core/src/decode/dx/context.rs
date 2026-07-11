@@ -345,7 +345,13 @@ impl TargetContextStore {
     /// effective grid + its source, dt).
     pub(super) fn snapshot_parts(
         &self,
-    ) -> (Vec<f64>, Option<u8>, Option<String>, HisgridSource, Option<f64>) {
+    ) -> (
+        Vec<f64>,
+        Option<u8>,
+        Option<String>,
+        HisgridSource,
+        Option<f64>,
+    ) {
         (
             self.selected_foci(),
             self.tx_parity.map(|parity| parity.parity as u8),
@@ -611,8 +617,15 @@ mod tests {
 
     #[test]
     fn fox_multistream_pre_places_full_60hz_grid_from_lowest() {
-        let mut store =
-            TargetContextStore::new(DxTarget::new("DX1AAA"), Some("MY1AAA"), 0.0, None, true, 200.0, 3000.0);
+        let mut store = TargetContextStore::new(
+            DxTarget::new("DX1AAA"),
+            Some("MY1AAA"),
+            0.0,
+            None,
+            true,
+            200.0,
+            3000.0,
+        );
         let ts = SlotTimestamp::parse("140630").unwrap();
 
         // One observed Fox stream is not enough — stays a single focus.
@@ -630,8 +643,15 @@ mod tests {
 
     #[test]
     fn fox_multistream_anchor_re_adjusts_to_dynamic_lowest() {
-        let mut store =
-            TargetContextStore::new(DxTarget::new("DX1AAA"), Some("MY1AAA"), 0.0, None, true, 200.0, 3000.0);
+        let mut store = TargetContextStore::new(
+            DxTarget::new("DX1AAA"),
+            Some("MY1AAA"),
+            0.0,
+            None,
+            true,
+            200.0,
+            3000.0,
+        );
         let ts = SlotTimestamp::parse("140630").unwrap();
 
         store.harvest_listen(&ts, &[row(360.0, "MY1AAA DX1AAA -10")]);
@@ -652,8 +672,15 @@ mod tests {
 
     #[test]
     fn fox_multistream_grid_is_clipped_to_passband_top() {
-        let mut store =
-            TargetContextStore::new(DxTarget::new("DX1AAA"), Some("MY1AAA"), 0.0, None, true, 200.0, 1000.0);
+        let mut store = TargetContextStore::new(
+            DxTarget::new("DX1AAA"),
+            Some("MY1AAA"),
+            0.0,
+            None,
+            true,
+            200.0,
+            1000.0,
+        );
         let ts = SlotTimestamp::parse("140630").unwrap();
 
         store.harvest_listen(&ts, &[row(900.0, "MY1AAA DX1AAA -10")]);
@@ -668,8 +695,15 @@ mod tests {
     fn multistream_grid_is_hound_only() {
         // Same two streams but not in Hound mode: keep the plain harvested foci,
         // never the Fox grid (a non-FH target does not transmit a spaced block).
-        let mut store =
-            TargetContextStore::new(DxTarget::new("DX1AAA"), Some("MY1AAA"), 0.0, None, false, 200.0, 3000.0);
+        let mut store = TargetContextStore::new(
+            DxTarget::new("DX1AAA"),
+            Some("MY1AAA"),
+            0.0,
+            None,
+            false,
+            200.0,
+            3000.0,
+        );
         let ts = SlotTimestamp::parse("140630").unwrap();
 
         store.harvest_listen(&ts, &[row(300.0, "MY1AAA DX1AAA -10")]);

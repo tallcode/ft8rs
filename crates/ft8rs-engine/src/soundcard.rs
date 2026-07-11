@@ -86,7 +86,8 @@ where
         }
 
         // Re-lock this slot's window start to the true UTC boundary.
-        let boundary = slot_start + wall_clock_slot_index(slot_start, now_unix_millis()?).max(0) * 15;
+        let boundary =
+            slot_start + wall_clock_slot_index(slot_start, now_unix_millis()?).max(0) * 15;
         sleep_until_unix_seconds(boundary)?;
         drain_pending_audio(&rx);
         collector.clear_carry();
@@ -187,7 +188,8 @@ where
             break;
         }
 
-        let boundary = slot_start + wall_clock_slot_index(slot_start, now_unix_millis()?).max(0) * 15;
+        let boundary =
+            slot_start + wall_clock_slot_index(slot_start, now_unix_millis()?).max(0) * 15;
         sleep_until_unix_seconds(boundary)?;
         drain_pending_audio(&rx);
         collector.clear_carry();
