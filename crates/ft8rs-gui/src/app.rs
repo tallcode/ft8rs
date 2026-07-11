@@ -619,6 +619,11 @@ impl Ft8rsApp {
         let stripe = if dark { Color32::from_gray(44) } else { Color32::from_gray(232) };
         // Compare-mode coloring only applies while listening.
         let comparing = self.udp_in_on;
+        // Row interactions, collected inside the (immutably borrowed) closure and
+        // applied after it: double-click fills the bottom-bar QSO context, the
+        // right-click menu clears the list.
+        let mut fill: Option<(Vec<String>, f64)> = None;
+        let mut clear = false;
         let rows = &self.rows;
         // Zero the row spacing *before* show_rows: it derives both the content
         // height and each row's position from `row_height + item_spacing.y`, so if
@@ -637,8 +642,8 @@ impl Ft8rsApp {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 let width = ui.available_width();
                 for row in &rows[range] {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+                    let (rect, resp) =
+                        ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::click());
                     // Alternate the slot background: :00/:30 vs :15/:45. The stripe
                     // spans the full width; the text is padded inside.
                     if row.parity == 1 {
@@ -656,8 +661,39 @@ impl Ft8rsApp {
                         font.clone(),
                         color,
                     );
+                    if resp.double_clicked() {
+                        fill = Some((row.tokens.clone(), row.freq));
+                    }
+                    resp.context_menu(|ui| {
+                        // A button inside a context menu auto-closes it on click.
+                        if ui.button("Clear list").clicked() {
+                            clear = true;
+                        }
+                    });
                 }
             });
+
+        if clear {
+            self.rows.clear();
+        }
+        if let Some((tokens, freq)) = fill {
+            self.apply_double_click_fill(&tokens, freq);
+        }
+    }
+
+    /// Double-clicking a decode row loads its QSO context into the bottom bar:
+    /// the DX callsign, its grid (when the message carries one), and the RX
+    /// frequency, then applies it to a running session (like editing the fields).
+    fn apply_double_click_fill(&mut self, tokens: &[String], freq: f64) {
+        let (call, grid) = dx_call_and_grid(tokens);
+        if let Some(call) = call {
+            self.hiscall = call;
+        }
+        if let Some(grid) = grid {
+            self.hisgrid = grid;
+        }
+        self.nfqso = format!("{}", freq.round() as i64);
+        self.apply_if_changed();
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
@@ -1526,6 +1562,71 @@ fn norm_tokens(msg: &str) -> Vec<String> {
         .collect()
 }
 
+/// A 4-character Maidenhead grid locator (`AA00`..`RR99`).
+fn is_grid4(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 4
+        && (b'A'..=b'R').contains(&b[0])
+        && (b'A'..=b'R').contains(&b[1])
+        && b[2].is_ascii_digit()
+        && b[3].is_ascii_digit()
+}
+
+/// A report/marker token that is never a callsign: signal reports (`-08`, `R+00`),
+/// acks (`RR73`/`RRR`/`73`/`R`), CQ directional/marker words, or a pure-digit
+/// directed-CQ frequency like `CQ 072 ...`.
+fn is_report_or_marker(s: &str) -> bool {
+    matches!(
+        s,
+        "RR73" | "RRR" | "73" | "R" | "RR" | "TU" | "DX" | "QRZ" | "TEST" | "POTA" | "SOTA"
+    ) || s.starts_with(['+', '-'])
+        || (s.starts_with('R') && s.get(1..2).is_some_and(|c| c == "+" || c == "-"))
+        || s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Extract a callsign from a token (stripping `<>` hash braces), or `None` if it
+/// is a grid, a report/marker, or too short to be a call.
+fn call_candidate(tok: &str) -> Option<String> {
+    let t = tok.trim_matches(['<', '>']);
+    if t.len() < 3 || t == "..." || is_grid4(t) || is_report_or_marker(t) {
+        return None;
+    }
+    let has_digit = t.bytes().any(|b| b.is_ascii_digit());
+    let has_alpha = t.bytes().any(|b| b.is_ascii_alphabetic());
+    (has_digit && has_alpha).then(|| t.to_string())
+}
+
+/// The DX callsign and grid to load from a decode's tokens on double-click. For a
+/// `CQ` message it is the first real callsign after `CQ` (skipping `DX`/directional
+/// markers) and the grid following it; otherwise the message is directed
+/// (`TO FROM ...`) and the DX is the sender — the second token — with a grid only
+/// if the third token is a grid4.
+fn dx_call_and_grid(tokens: &[String]) -> (Option<String>, Option<String>) {
+    if tokens.is_empty() {
+        return (None, None);
+    }
+    if tokens[0] == "CQ" {
+        for i in 1..tokens.len() {
+            if let Some(call) = call_candidate(&tokens[i]) {
+                return (Some(call), grid_after(tokens, i + 1));
+            }
+        }
+        (None, None)
+    } else {
+        let call = tokens.get(1).and_then(|t| call_candidate(t));
+        (call, grid_after(tokens, 2))
+    }
+}
+
+/// The token at `idx` as a grid, or `None`. `is_grid4` is purely structural, so
+/// `RR73` (the ack) matches it — exclude report/marker tokens here.
+fn grid_after(tokens: &[String], idx: usize) -> Option<String> {
+    tokens
+        .get(idx)
+        .filter(|g| is_grid4(g) && !is_report_or_marker(g))
+        .map(|g| g.to_string())
+}
+
 /// The message body with WSJT-X trailing annotations removed (for display of
 /// external decodes, so they read like the local ones).
 fn clean_message(msg: &str) -> String {
@@ -1898,5 +1999,52 @@ mod tests {
             &norm_tokens("CQ K1ABC FN42"),
             &norm_tokens("CQ W1AW EM73"),
         ));
+    }
+
+    fn dx(msg: &str) -> (Option<String>, Option<String>) {
+        dx_call_and_grid(&norm_tokens(msg))
+    }
+
+    #[test]
+    fn double_click_extracts_cq_call_and_grid() {
+        let both = (Some("F5BZB".to_string()), Some("IN94".to_string()));
+        assert_eq!(dx("CQ F5BZB IN94"), both);
+        // Directional CQ: skip DX / the pure-digit frequency, take the callsign.
+        assert_eq!(dx("CQ DX F5BZB IN94"), both);
+        assert_eq!(dx("CQ 072 F5BZB IN94"), both);
+        // No grid present.
+        assert_eq!(dx("CQ F5BZB"), (Some("F5BZB".to_string()), None));
+    }
+
+    #[test]
+    fn double_click_extracts_sender_from_directed_message() {
+        // "TO FROM ..." — the DX is the sender (second token).
+        let both = (Some("F5BZB".to_string()), Some("IN94".to_string()));
+        assert_eq!(dx("W1FC F5BZB IN94"), both);
+        assert_eq!(dx("W1FC F5BZB -08"), (Some("F5BZB".to_string()), None));
+        assert_eq!(dx("W1FC F5BZB RR73"), (Some("F5BZB".to_string()), None));
+    }
+
+    #[test]
+    fn double_click_resolves_hash_braces_and_skips_unresolved() {
+        assert_eq!(dx("K1ABC <F5BZB> RR73"), (Some("F5BZB".to_string()), None));
+        // Unresolved hash: no callsign to load (freq still fills at the call site).
+        assert_eq!(dx("K1ABC <...> RR73"), (None, None));
+    }
+
+    #[test]
+    fn grid4_is_structural_but_extraction_excludes_the_rr73_ack() {
+        assert!(is_grid4("IN94"));
+        assert!(is_grid4("RR99"));
+        // Structurally not grid4.
+        for t in ["-08", "R-12", "73", "F5BZB", "IN9", "IS94"] {
+            assert!(!is_grid4(t), "{t} is not a grid4");
+        }
+        // RR73 is structurally grid4, but the ack must never load as a grid.
+        assert!(is_grid4("RR73"));
+        let rr73 = ["X".to_string(), "RR73".to_string()];
+        let in94 = ["X".to_string(), "IN94".to_string()];
+        assert_eq!(grid_after(&rr73, 1), None);
+        assert_eq!(grid_after(&in94, 1), Some("IN94".to_string()));
     }
 }
