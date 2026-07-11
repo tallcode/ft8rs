@@ -102,7 +102,10 @@ pub struct SessionSnapshot {
 pub enum EngineEvent {
     Status(EngineStatus),
     Decode(DecodeRecord),
-    SlotComplete { timestamp: SlotTimestamp, count: usize },
+    SlotComplete {
+        timestamp: SlotTimestamp,
+        count: usize,
+    },
     DevicesRefreshed(Vec<SoundcardDeviceInfo>),
     DxContext(DxContextSnapshot),
     /// What a just-applied `ApplyState` actually did (level + reset/migrate buckets).

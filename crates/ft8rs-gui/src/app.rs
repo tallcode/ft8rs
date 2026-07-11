@@ -243,7 +243,10 @@ impl Ft8rsApp {
     }
 
     fn is_monitoring(&self) -> bool {
-        matches!(self.status, EngineStatus::Aligning | EngineStatus::Monitoring)
+        matches!(
+            self.status,
+            EngineStatus::Aligning | EngineStatus::Monitoring
+        )
     }
 
     fn dx_needs_hiscall(&self) -> bool {
@@ -310,7 +313,11 @@ impl Ft8rsApp {
         self.error = None;
         self.rows.clear();
         self.dx = None;
-        if self.engine.send(EngineCommand::StartMonitor(state.clone())).is_ok() {
+        if self
+            .engine
+            .send(EngineCommand::StartMonitor(state.clone()))
+            .is_ok()
+        {
             self.applied = Some(state);
             self.status = EngineStatus::Aligning;
         }
@@ -338,7 +345,11 @@ impl Ft8rsApp {
             self.pending_confirm = Some(desired);
             return;
         }
-        if self.engine.send(EngineCommand::ApplyState(desired.clone())).is_ok() {
+        if self
+            .engine
+            .send(EngineCommand::ApplyState(desired.clone()))
+            .is_ok()
+        {
             self.applied = Some(desired);
         }
     }
@@ -376,7 +387,13 @@ impl Ft8rsApp {
             row.msg,
             provenance_tag(record.provenance),
         );
-        self.ingest(slot_key, row.freq, text, norm_tokens(&row.msg), DecodeSource::Local);
+        self.ingest(
+            slot_key,
+            row.freq,
+            text,
+            norm_tokens(&row.msg),
+            DecodeSource::Local,
+        );
     }
 
     fn merge_external(&mut self, decode: crate::wsjtx_udp::ExternalDecode) {
@@ -539,7 +556,11 @@ impl Ft8rsApp {
             ui.label(RichText::new("no data yet").weak());
             return;
         };
-        let target = if dx.target.is_empty() { "—" } else { &dx.target };
+        let target = if dx.target.is_empty() {
+            "—"
+        } else {
+            &dx.target
+        };
         ui.label(format!("Target: {target}"));
         ui.add_space(6.0);
 
@@ -589,7 +610,10 @@ impl Ft8rsApp {
         painter.text(
             egui::pos2(rect.left() + PAD, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            format!("{:<6} {:>3} {:>5} {:>5}  {}", "UTC", "dB", "DT", "Freq", "Message"),
+            format!(
+                "{:<6} {:>3} {:>5} {:>5}  {}",
+                "UTC", "dB", "DT", "Freq", "Message"
+            ),
             egui::FontId::monospace(DECODE_FONT_SIZE),
             ui.visuals().strong_text_color(),
         );
@@ -616,7 +640,11 @@ impl Ft8rsApp {
         let text_color = ui.visuals().text_color();
         // Odd-slot stripe. egui's faint_bg_color is too subtle to read, so we
         // deepen it a touch; even slots keep the plain panel background.
-        let stripe = if dark { Color32::from_gray(44) } else { Color32::from_gray(232) };
+        let stripe = if dark {
+            Color32::from_gray(44)
+        } else {
+            Color32::from_gray(232)
+        };
         // Compare-mode coloring only applies while listening.
         let comparing = self.udp_in_on;
         // Row interactions, collected inside the (immutably borrowed) closure and
@@ -783,24 +811,21 @@ impl Ft8rsApp {
                             .inner_margin(egui::Margin::symmetric(12, 14)),
                     )
                     .show(vctx, |ui| {
-                        ui.with_layout(
-                            egui::Layout::top_down_justified(egui::Align::LEFT),
-                            |ui| {
-                                for (tab, label) in [
-                                    (SettingsTab::Station, "Station"),
-                                    (SettingsTab::Audio, "Audio"),
-                                    (SettingsTab::Decode, "Decode"),
-                                    (SettingsTab::Frequency, "Frequency"),
-                                    (SettingsTab::Output, "Output"),
-                                    (SettingsTab::Compare, "Compare"),
-                                    (SettingsTab::Advanced, "Advanced"),
-                                ] {
-                                    if ui.selectable_label(self.tab == tab, label).clicked() {
-                                        self.tab = tab;
-                                    }
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                            for (tab, label) in [
+                                (SettingsTab::Station, "Station"),
+                                (SettingsTab::Audio, "Audio"),
+                                (SettingsTab::Decode, "Decode"),
+                                (SettingsTab::Frequency, "Frequency"),
+                                (SettingsTab::Output, "Output"),
+                                (SettingsTab::Compare, "Compare"),
+                                (SettingsTab::Advanced, "Advanced"),
+                            ] {
+                                if ui.selectable_label(self.tab == tab, label).clicked() {
+                                    self.tab = tab;
                                 }
-                            },
-                        );
+                            }
+                        });
                     });
                 egui::CentralPanel::default()
                     .frame(
@@ -880,8 +905,12 @@ impl Ft8rsApp {
             }
             SettingsTab::Frequency => {
                 section_heading(ui, "Frequency");
-                commit |= setting_row(ui, "Low (nfa) Hz", |ui| text_field(ui, &mut self.nfa, 140.0));
-                commit |= setting_row(ui, "High (nfb) Hz", |ui| text_field(ui, &mut self.nfb, 140.0));
+                commit |= setting_row(ui, "Low (nfa) Hz", |ui| {
+                    text_field(ui, &mut self.nfa, 140.0)
+                });
+                commit |= setting_row(ui, "High (nfb) Hz", |ui| {
+                    text_field(ui, &mut self.nfb, 140.0)
+                });
             }
             SettingsTab::Station => {
                 section_heading(ui, "Station");
@@ -895,7 +924,8 @@ impl Ft8rsApp {
             SettingsTab::Output => {
                 section_heading(ui, "Output");
                 commit |= setting_row(ui, "UDP reports", |ui| {
-                    ui.add(egui::Checkbox::without_text(&mut self.udp_on)).changed()
+                    ui.add(egui::Checkbox::without_text(&mut self.udp_on))
+                        .changed()
                 });
                 commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_host, 160.0));
                 commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_port, 100.0));
@@ -903,22 +933,39 @@ impl Ft8rsApp {
             SettingsTab::Compare => {
                 section_heading(ui, "Compare");
                 commit |= setting_row(ui, "Listen to WSJT-X (UDP)", |ui| {
-                    ui.add(egui::Checkbox::without_text(&mut self.udp_in_on)).changed()
-                });
-                commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_in_host, 160.0));
-                commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_in_port, 100.0));
-                commit |= setting_row(ui, "Match ± Hz", |ui| {
-                    ui.add(egui::DragValue::new(&mut self.udp_in_tol).speed(0.25).range(0.0..=10.0))
+                    ui.add(egui::Checkbox::without_text(&mut self.udp_in_on))
                         .changed()
                 });
+                commit |= setting_row(ui, "Host", |ui| {
+                    text_field(ui, &mut self.udp_in_host, 160.0)
+                });
+                commit |= setting_row(ui, "Port", |ui| {
+                    text_field(ui, &mut self.udp_in_port, 100.0)
+                });
+                commit |= setting_row(ui, "Match ± Hz", |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.udp_in_tol)
+                            .speed(0.25)
+                            .range(0.0..=10.0),
+                    )
+                    .changed()
+                });
                 ui.add_space(10.0);
-                ui.label(RichText::new("Merges WSJT-X decodes with the local ones to compare").weak());
+                ui.label(
+                    RichText::new("Merges WSJT-X decodes with the local ones to compare").weak(),
+                );
                 ui.label(RichText::new("sensitivity. Color shows the source:").weak());
                 ui.add_space(4.0);
                 let dark = ui.visuals().dark_mode;
                 let default = ui.visuals().text_color();
-                ui.colored_label(source_color(DecodeSource::External, dark, default), "■ only WSJT-X");
-                ui.colored_label(source_color(DecodeSource::Local, dark, default), "■ only ft8.rs");
+                ui.colored_label(
+                    source_color(DecodeSource::External, dark, default),
+                    "■ only WSJT-X",
+                );
+                ui.colored_label(
+                    source_color(DecodeSource::Local, dark, default),
+                    "■ only ft8.rs",
+                );
                 ui.colored_label(default, "■ both decoders");
             }
             SettingsTab::Advanced => {
@@ -956,7 +1003,11 @@ impl Ft8rsApp {
 
         // Menu width: fit the longest item, clamped to [trigger, half window].
         let measure = |ui: &egui::Ui, s: String| {
-            ui.ctx().fonts_mut(|f| f.layout_no_wrap(s, font.clone(), egui::Color32::WHITE).size().x)
+            ui.ctx().fonts_mut(|f| {
+                f.layout_no_wrap(s, font.clone(), egui::Color32::WHITE)
+                    .size()
+                    .x
+            })
         };
         let mut content_w = measure(ui, "Default".to_string());
         for name in &names {
@@ -968,8 +1019,10 @@ impl Ft8rsApp {
             .clamp(TRIGGER_W, ui.ctx().content_rect().width() * 0.5);
 
         // Combo-styled trigger button.
-        let h = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
-        let (rect, trigger) = ui.allocate_exact_size(egui::vec2(TRIGGER_W, h), egui::Sense::click());
+        let h =
+            ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
+        let (rect, trigger) =
+            ui.allocate_exact_size(egui::vec2(TRIGGER_W, h), egui::Sense::click());
         let popup_id = ui.make_persistent_id("device_popup");
         let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
         if ui.is_rect_visible(rect) {
@@ -986,7 +1039,10 @@ impl Ft8rsApp {
                 egui::StrokeKind::Inside,
             );
             // Selected text, truncated with an ellipsis to leave room for the icon.
-            let selected = self.selected_device.clone().unwrap_or_else(|| "Default".to_string());
+            let selected = self
+                .selected_device
+                .clone()
+                .unwrap_or_else(|| "Default".to_string());
             let mut job = egui::text::LayoutJob::single_section(
                 selected,
                 egui::TextFormat {
@@ -1137,81 +1193,124 @@ impl Ft8rsApp {
                     // applied inside the scroll area instead (the inner Frame).
                     .frame(egui::Frame::central_panel(&vctx.global_style()).inner_margin(0.0))
                     .show(vctx, |ui| {
-                    ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    // Scroll the credits in case fonts/translations overflow the window.
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(22, 14))
-                        .show(ui, |ui| {
-                    ui.add_space(10.0);
-                    ui.vertical_centered(|ui| {
-                        if let Some(tex) = &logo {
-                            ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                                tex.id(),
-                                egui::vec2(80.0, 80.0),
-                            )));
-                            ui.add_space(6.0);
-                        }
-                        ui.label(RichText::new(ft8rs::about::NAME).size(18.0).strong());
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!("Version {}", env!("FT8RS_VERSION"))).weak(),
-                        );
-                        ui.label(
-                            RichText::new(format!("FFT engine: {}", ft8rs::fft_engine_name()))
-                                .weak(),
-                        );
-                        ui.label(RichText::new(ft8rs::about::COPYRIGHT).weak());
-                        ui.label(RichText::new(format!("License: {}", ft8rs::about::LICENSE)).weak());
+                        ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        // Scroll the credits in case fonts/translations overflow the window.
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                egui::Frame::NONE
+                                    .inner_margin(egui::Margin::symmetric(22, 14))
+                                    .show(ui, |ui| {
+                                        ui.add_space(10.0);
+                                        ui.vertical_centered(|ui| {
+                                            if let Some(tex) = &logo {
+                                                ui.add(egui::Image::new(
+                                                    egui::load::SizedTexture::new(
+                                                        tex.id(),
+                                                        egui::vec2(80.0, 80.0),
+                                                    ),
+                                                ));
+                                                ui.add_space(6.0);
+                                            }
+                                            ui.label(
+                                                RichText::new(ft8rs::about::NAME)
+                                                    .size(18.0)
+                                                    .strong(),
+                                            );
+                                            ui.add_space(4.0);
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "Version {}",
+                                                    env!("FT8RS_VERSION")
+                                                ))
+                                                .weak(),
+                                            );
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "FFT engine: {}",
+                                                    ft8rs::fft_engine_name()
+                                                ))
+                                                .weak(),
+                                            );
+                                            ui.label(RichText::new(ft8rs::about::COPYRIGHT).weak());
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "License: {}",
+                                                    ft8rs::about::LICENSE
+                                                ))
+                                                .weak(),
+                                            );
+                                        });
+                                        ui.add_space(10.0);
+                                        // No-warranty / redistribution notice (GPL §“interactive”).
+                                        ui.label(
+                                            RichText::new(ft8rs::about::WARRANTY_NOTICE)
+                                                .weak()
+                                                .size(11.0),
+                                        );
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 0.0;
+                                            ui.label(
+                                                RichText::new("Full license: ").weak().size(11.0),
+                                            );
+                                            ui.hyperlink_to(
+                                                RichText::new(ft8rs::about::LICENSE_URL).size(11.0),
+                                                ft8rs::about::LICENSE_URL,
+                                            );
+                                        });
+                                        ui.add_space(12.0);
+                                        ui.separator();
+                                        ui.add_space(8.0);
+                                        // Derivative-work credits: the decoder is a port of these GPL works.
+                                        ui.label(RichText::new("Derived from").strong());
+                                        ui.add_space(4.0);
+                                        for a in ft8rs::about::ATTRIBUTIONS {
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 0.0;
+                                                ui.hyperlink_to(
+                                                    RichText::new(a.name).strong(),
+                                                    a.url,
+                                                );
+                                                ui.label(format!(" — {}", a.detail));
+                                            });
+                                            ui.label(
+                                                RichText::new(format!("  {}", a.copyright))
+                                                    .weak()
+                                                    .size(11.0),
+                                            );
+                                            ui.label(
+                                                RichText::new(format!("  {}", a.license))
+                                                    .weak()
+                                                    .size(11.0),
+                                            );
+                                            ui.add_space(4.0);
+                                        }
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Also built with").strong());
+                                        ui.add_space(4.0);
+                                        for (name, role) in ft8rs::about::LIBRARIES {
+                                            ui.label(format!("• {name} — {role}"));
+                                        }
+                                        ui.add_space(6.0);
+                                        ui.label(
+                                            RichText::new("Thanks to the amateur-radio community.")
+                                                .weak(),
+                                        );
+                                        // The WSJT-X notice is long; keep it behind a button that
+                                        // opens it in its own popup.
+                                        ui.add_space(10.0);
+                                        if ui
+                                            .button(
+                                                RichText::new("WSJT-X copyright notice").size(11.0),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.copyright_open = true;
+                                        }
+                                    }); // content Frame
+                            }); // ScrollArea
                     });
-                    ui.add_space(10.0);
-                    // No-warranty / redistribution notice (GPL §“interactive”).
-                    ui.label(RichText::new(ft8rs::about::WARRANTY_NOTICE).weak().size(11.0));
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.label(RichText::new("Full license: ").weak().size(11.0));
-                        ui.hyperlink_to(
-                            RichText::new(ft8rs::about::LICENSE_URL).size(11.0),
-                            ft8rs::about::LICENSE_URL,
-                        );
-                    });
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    // Derivative-work credits: the decoder is a port of these GPL works.
-                    ui.label(RichText::new("Derived from").strong());
-                    ui.add_space(4.0);
-                    for a in ft8rs::about::ATTRIBUTIONS {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            ui.hyperlink_to(RichText::new(a.name).strong(), a.url);
-                            ui.label(format!(" — {}", a.detail));
-                        });
-                        ui.label(RichText::new(format!("  {}", a.copyright)).weak().size(11.0));
-                        ui.label(RichText::new(format!("  {}", a.license)).weak().size(11.0));
-                        ui.add_space(4.0);
-                    }
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Also built with").strong());
-                    ui.add_space(4.0);
-                    for (name, role) in ft8rs::about::LIBRARIES {
-                        ui.label(format!("• {name} — {role}"));
-                    }
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("Thanks to the amateur-radio community.").weak());
-                    // The WSJT-X notice is long; keep it behind a button that
-                    // opens it in its own popup.
-                    ui.add_space(10.0);
-                    if ui
-                        .button(RichText::new("WSJT-X copyright notice").size(11.0))
-                        .clicked()
-                    {
-                        self.copyright_open = true;
-                    }
-                    }); // content Frame
-                    }); // ScrollArea
-                });
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;
                 }
@@ -1251,9 +1350,11 @@ impl Ft8rsApp {
                                 .size(11.0),
                         );
                         ui.add_space(8.0);
-                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                            ui.label(ft8rs::about::WSJTX_COPYRIGHT_NOTICE);
-                        });
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.label(ft8rs::about::WSJTX_COPYRIGHT_NOTICE);
+                            });
                     });
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;
@@ -1289,10 +1390,7 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("udp_in_host", self.udp_in_host.clone());
         storage.set_string("udp_in_port", self.udp_in_port.clone());
         storage.set_string("udp_in_tol", self.udp_in_tol.to_string());
-        storage.set_string(
-            "device",
-            self.selected_device.clone().unwrap_or_default(),
-        );
+        storage.set_string("device", self.selected_device.clone().unwrap_or_default());
     }
 
     // eframe 0.35: the root entry point is `ui` (a `&mut Ui` with no margin),
@@ -1316,7 +1414,9 @@ impl eframe::App for Ft8rsApp {
             self.menu_profile_synced = self.profile;
             let size = ctx.content_rect().size();
             self.restore_inner_size = Some(size);
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size + egui::vec2(0.0, 1.0)));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
+                size + egui::vec2(0.0, 1.0),
+            ));
         } else if let Some(size) = self.restore_inner_size.take() {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         }
@@ -1340,7 +1440,8 @@ impl eframe::App for Ft8rsApp {
         // Fixed header in its own top panel (so it never scrolls and owns its
         // divider line), then the scrolling rows in the central panel. Both use a
         // zero inner margin so they reach the window edge; padding is internal.
-        let zero = egui::Frame::central_panel(&ctx.global_style()).inner_margin(egui::Margin::same(0));
+        let zero =
+            egui::Frame::central_panel(&ctx.global_style()).inner_margin(egui::Margin::same(0));
         egui::Panel::top("table_header")
             .exact_size(Self::row_height(&ctx) + 8.0)
             .frame(zero)
@@ -1410,13 +1511,29 @@ fn rx_stepper(ui: &mut egui::Ui, value: &mut String, height: f32) -> bool {
     let tri = |c: Pos2, pointing_up: bool| {
         let (hw, hh) = (3.0, 2.0);
         if pointing_up {
-            vec![pos2(c.x - hw, c.y + hh), pos2(c.x + hw, c.y + hh), pos2(c.x, c.y - hh)]
+            vec![
+                pos2(c.x - hw, c.y + hh),
+                pos2(c.x + hw, c.y + hh),
+                pos2(c.x, c.y - hh),
+            ]
         } else {
-            vec![pos2(c.x - hw, c.y - hh), pos2(c.x + hw, c.y - hh), pos2(c.x, c.y + hh)]
+            vec![
+                pos2(c.x - hw, c.y - hh),
+                pos2(c.x + hw, c.y - hh),
+                pos2(c.x, c.y + hh),
+            ]
         }
     };
-    p.add(Shape::convex_polygon(tri(up_rect.center(), true), fg, Stroke::NONE));
-    p.add(Shape::convex_polygon(tri(dn_rect.center(), false), fg, Stroke::NONE));
+    p.add(Shape::convex_polygon(
+        tri(up_rect.center(), true),
+        fg,
+        Stroke::NONE,
+    ));
+    p.add(Shape::convex_polygon(
+        tri(dn_rect.center(), false),
+        fg,
+        Stroke::NONE,
+    ));
 
     let step = |value: &mut String, delta: f64| {
         let v = (value.trim().parse::<f64>().unwrap_or(0.0) + delta).clamp(0.0, 3000.0);
@@ -1809,7 +1926,7 @@ fn install_menu(
 /// adaptive light/dark visuals (so the app follows the system appearance); we
 /// only customize corner_radius, spacing, a blue accent, and the monospace fonts.
 fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
-    use egui::{FontFamily::Monospace, FontId, Margin, CornerRadius, Stroke, TextStyle};
+    use egui::{CornerRadius, FontFamily::Monospace, FontId, Margin, Stroke, TextStyle};
 
     let dark = theme == egui::Theme::Dark;
     let accent = if dark {
@@ -1911,7 +2028,9 @@ fn install_fonts(ctx: &egui::Context) {
     if let Some(bytes) = read_first(MONO) {
         // Compute the centering tweak from the bytes before they move into FontData.
         let data = egui::FontData::from_owned(bytes.clone()).tweak(center_tweak(&bytes));
-        fonts.font_data.insert("mono".to_string(), std::sync::Arc::new(data));
+        fonts
+            .font_data
+            .insert("mono".to_string(), std::sync::Arc::new(data));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts
                 .families
@@ -1922,9 +2041,15 @@ fn install_fonts(ctx: &egui::Context) {
     }
     if let Some(bytes) = read_first(CJK) {
         let data = egui::FontData::from_owned(bytes.clone()).tweak(center_tweak(&bytes));
-        fonts.font_data.insert("cjk".to_string(), std::sync::Arc::new(data));
+        fonts
+            .font_data
+            .insert("cjk".to_string(), std::sync::Arc::new(data));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts.families.entry(family).or_default().push("cjk".to_string());
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .push("cjk".to_string());
         }
     }
     ctx.set_fonts(fonts);
@@ -1967,7 +2092,9 @@ mod tests {
         for t in ["a1", "a7", "a9", "a72", "a31", "?"] {
             assert!(is_annotation(t), "{t} should be an annotation");
         }
-        for t in ["CQ", "A7", "FN42", "K1ABC", "RR73", "73", "R-12", "<...>", "<K1ABC>"] {
+        for t in [
+            "CQ", "A7", "FN42", "K1ABC", "RR73", "73", "R-12", "<...>", "<K1ABC>",
+        ] {
             assert!(!is_annotation(t), "{t} should not be an annotation");
         }
     }

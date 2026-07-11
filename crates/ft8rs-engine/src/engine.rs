@@ -220,12 +220,8 @@ fn run_monitor(
                 }
                 Flow::CaptureLost => {
                     drop(stream);
-                    match reconnect_capture(
-                        cmd_rx,
-                        event_tx,
-                        state.device.as_deref(),
-                        &mut pending,
-                    ) {
+                    match reconnect_capture(cmd_rx, event_tx, state.device.as_deref(), &mut pending)
+                    {
                         Reconnect::Ok(parts) => {
                             stream = parts.0;
                             rx = parts.1;
@@ -693,7 +689,11 @@ fn spawn_decode_actor(
     (cmd_tx, evt_rx)
 }
 
-fn decode_actor(config: StreamDecodeConfig, cmd_rx: Receiver<DecodeCmd>, evt_tx: Sender<EngineEvent>) {
+fn decode_actor(
+    config: StreamDecodeConfig,
+    cmd_rx: Receiver<DecodeCmd>,
+    evt_tx: Sender<EngineEvent>,
+) {
     let mut session = build_session(&config);
     // wsjtx staged state plus the count of early rows already emitted at nzhsym=41.
     let mut slot_state: Option<(StreamSlotDecodeState, usize)> = None;
@@ -741,7 +741,8 @@ fn decode_actor(config: StreamDecodeConfig, cmd_rx: Receiver<DecodeCmd>, evt_tx:
                 }
                 (DecodeSession::Wsjtx(s), Stage::N50) => {
                     if let Some((state, early_count)) = slot_state.take() {
-                        match s.decode_slot_nzhsym50_and_finish_with_provenance(state, &samples_12k) {
+                        match s.decode_slot_nzhsym50_and_finish_with_provenance(state, &samples_12k)
+                        {
                             Ok(all) => {
                                 for row in all.iter().skip(early_count) {
                                     send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
@@ -763,21 +764,21 @@ fn decode_actor(config: StreamDecodeConfig, cmd_rx: Receiver<DecodeCmd>, evt_tx:
                     // Stream rows as the core produces them (hybrid emits the
                     // WSJT-X pass first, then JTDX) so early decodes show without
                     // waiting for the deep pass to finish.
-                    let result =
-                        p.decode_slot_streaming_with_provenance_at(&timestamp, &samples_12k, |row| {
+                    let result = p.decode_slot_streaming_with_provenance_at(
+                        &timestamp,
+                        &samples_12k,
+                        |row| {
                             send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
                             Ok(())
-                        });
+                        },
+                    );
                     match result {
                         Ok(count) => {
                             if let Some(snapshot) = p.dx_context_snapshot() {
-                                let _ = evt_tx
-                                    .send(EngineEvent::DxContext(map_dx_snapshot(snapshot)));
+                                let _ =
+                                    evt_tx.send(EngineEvent::DxContext(map_dx_snapshot(snapshot)));
                             }
-                            let _ = evt_tx.send(EngineEvent::SlotComplete {
-                                timestamp,
-                                count,
-                            });
+                            let _ = evt_tx.send(EngineEvent::SlotComplete { timestamp, count });
                         }
                         Err(err) => {
                             let _ = evt_tx.send(EngineEvent::Error(err));
@@ -803,7 +804,11 @@ mod tests {
             return None;
         }
         let audio = ft8rs::input::audio::read_wav_mono_f32(SHORT_FIXTURE).ok()?;
-        Some(resample_linear(&audio.samples, audio.sample_rate, TARGET_SAMPLE_RATE))
+        Some(resample_linear(
+            &audio.samples,
+            audio.sample_rate,
+            TARGET_SAMPLE_RATE,
+        ))
     }
 
     fn feed_slot(cmd_tx: &SyncSender<DecodeCmd>, ts: &SlotTimestamp, s12k: &[f32]) {
@@ -845,7 +850,10 @@ mod tests {
         // wsjtx staged decode of the short fixture.
         feed_slot(&cmd_tx, &ts, &s12k);
         let (_early_or_final, count) = drain_until_slot_complete(&evt_rx);
-        assert!(count >= 15, "wsjtx short slot decoded too few rows: {count}");
+        assert!(
+            count >= 15,
+            "wsjtx short slot decoded too few rows: {count}"
+        );
 
         // Reconfigure to jtdx in place (hash migrated) and decode again — the
         // actor must survive the rebuild and keep producing.
@@ -860,7 +868,10 @@ mod tests {
             .unwrap();
         feed_slot(&cmd_tx, &ts, &s12k);
         let (_d2, count2) = drain_until_slot_complete(&evt_rx);
-        assert!(count2 >= 15, "jtdx short slot decoded too few rows: {count2}");
+        assert!(
+            count2 >= 15,
+            "jtdx short slot decoded too few rows: {count2}"
+        );
 
         cmd_tx.send(DecodeCmd::Stop).unwrap();
     }

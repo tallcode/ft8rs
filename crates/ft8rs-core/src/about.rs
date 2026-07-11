@@ -93,7 +93,9 @@ pub fn notice(version: &str) -> String {
     // Header: who, what, license, where.
     out.push_str(&format!("{NAME} {version} — {DESCRIPTION}\n"));
     out.push_str(&format!("{COPYRIGHT}\n"));
-    out.push_str(&format!("License:  {LICENSE}  (see LICENSE, or {LICENSE_URL})\n"));
+    out.push_str(&format!(
+        "License:  {LICENSE}  (see LICENSE, or {LICENSE_URL})\n"
+    ));
     out.push_str(&format!("Homepage: {HOMEPAGE}\n\n"));
     out.push_str(WARRANTY_NOTICE);
     out.push('\n');

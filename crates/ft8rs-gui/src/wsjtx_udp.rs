@@ -149,15 +149,18 @@ impl<'a> Cursor<'a> {
     }
 
     fn u32(&mut self) -> Option<u32> {
-        self.take(4).map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+        self.take(4)
+            .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
     }
 
     fn i32(&mut self) -> Option<i32> {
-        self.take(4).map(|b| i32::from_be_bytes(b.try_into().unwrap()))
+        self.take(4)
+            .map(|b| i32::from_be_bytes(b.try_into().unwrap()))
     }
 
     fn f64(&mut self) -> Option<f64> {
-        self.take(8).map(|b| f64::from_be_bytes(b.try_into().unwrap()))
+        self.take(8)
+            .map(|b| f64::from_be_bytes(b.try_into().unwrap()))
     }
 
     /// A WSJT-X utf8 string: u32 length (0xffffffff = null) + bytes.

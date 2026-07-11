@@ -95,22 +95,18 @@ impl ProfileStreamDecodeSession {
     {
         match self {
             Self::Wsjtx(session) => {
-                let rows = session.decode_slot_streaming_with_provenance_at(
-                    timestamp,
-                    samples,
-                    |_| Ok(()),
-                )?;
+                let rows =
+                    session
+                        .decode_slot_streaming_with_provenance_at(timestamp, samples, |_| Ok(()))?;
                 for row in &rows {
                     on_decode(row)?;
                 }
                 Ok(rows.len())
             }
             Self::Jtdx(session) => {
-                let rows = session.decode_slot_streaming_with_provenance_at(
-                    timestamp,
-                    samples,
-                    |_| Ok(()),
-                )?;
+                let rows =
+                    session
+                        .decode_slot_streaming_with_provenance_at(timestamp, samples, |_| Ok(()))?;
                 for row in &rows {
                     on_decode(row)?;
                 }
