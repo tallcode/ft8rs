@@ -63,7 +63,7 @@ agccft8.f90          -> agccft8.rs
 partintft8.f90       -> partintft8.rs
 twkfreq1.f90         -> twkfreq1.rs
 four2a wrapper       -> four2a.rs
-chkfalse8.f90        -> chkfalse8.rs
+chkfalse8.f90        -> chkfalse8.rs   (name map only; see provenance note)
 chkspecial8.f90      -> chkspecial8.rs
 call_q.f90           -> call_q.rs
 callsign_q.f90       -> callsign_q.rs
@@ -185,6 +185,23 @@ diagnostic run.
 - `chkgrid` remains intentionally partial. Full JTDX callsign-to-grid geography
   validation is mostly false-positive reduction and is deferred unless it
   blocks a real target.
+- `chkfalse8.rs` **does not match the pinned `chkfalse8.f90`** and cannot be
+  byte-verified against it (verified 2026-07-12). The Rust filter adds
+  `msg37_2`/`lcall2hash` args and a `FilterContext { quality, xsnr, rxdt }` with
+  a `primary_false_check` gate (`quality<0.39 || xsnr<-20.5 || rxdt<-0.5 ||
+  rxdt>1.9 || iaptype∈{1,2,3,11,21,40,41}`); the pinned Fortran is the 6-arg
+  `chkfalse8(msg37,i3,n3,nbadcrc,iaptype,lcall1hash)` with no quality/SNR/DT
+  gating. That newer form is absent from **every** ref of the checked-out JTDX
+  tree (HEAD 2022-03-01 is the newest; `git log --all -S quality`/`-S msg37_2`
+  on `lib/chkfalse8.f90` finds nothing), so this file targets either a
+  post-2022 JTDX release not in the checkout or a local enhancement on the 2022
+  logic — no longer remembered, so no target version can be cited. It is a
+  false-decode filter (only rejects, never adds decodes); the 20/20 & 430/431
+  baselines are green with it as-is. **Do not** revert it to the 6-arg version
+  to "restore alignment": that drops the gating the baselines are calibrated
+  against and can shift decodes. If the upstream source is ever identified, pin
+  that `chkfalse8.f90` to make this file diff-verifiable again. Full detail is in
+  the `chkfalse8.rs` header.
 - `ALLCALL7.TXT` version changes can change output. The pinned source-tree
   copy recovered RA3ABG-related extra rows but did not change the remaining
   no-context miss.

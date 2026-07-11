@@ -1,4 +1,31 @@
-//! Mirrors JTDX `lib/chkfalse8.f90`.
+//! JTDX `chkfalse8` false-decode filter.
+//!
+//! PROVENANCE (verified 2026-07-12): this file does NOT match the
+//! `chkfalse8.f90` in the pinned JTDX reference tree. Its filter takes extra
+//! inputs and gates most checks behind them:
+//!   - extra args `msg37_2`, `lcall2hash`, and a `FilterContext { quality, xsnr,
+//!     rxdt }` (built in `ft8b/decode_helpers.rs`);
+//!   - `primary_false_check = quality < 0.39 || xsnr < -20.5 || rxdt < -0.5
+//!     || rxdt > 1.9 || iaptype in {1,2,3,11,21,40,41}`.
+//! None of that exists in the pinned Fortran, whose signature is the 6-arg
+//! `chkfalse8(msg37,i3,n3,nbadcrc,iaptype,lcall1hash)` and which has no
+//! quality/SNR/DT gating. The pinned reference HEAD (2022-03-01) is the newest
+//! ref in that checkout, and `git log --all -S quality`/`-S msg37_2` on
+//! `lib/chkfalse8.f90` finds nothing — so the newer form is absent from every
+//! ref there.
+//!
+//! Therefore this file targets either a JTDX release newer than that checkout or
+//! is a local enhancement layered on the 2022 logic. Which one is no longer
+//! remembered, so it CANNOT be byte-verified against the pinned reference and no
+//! target version can be cited. The `->` mapping in `JTDX.md` is a name mapping
+//! only, not a byte-alignment claim, for this file.
+//!
+//! It is a false-decode filter: it only rejects candidates, never creates
+//! decodes, and the jtdx baselines (20/20 short, 430/431 long) are green with it
+//! as-is. Do NOT "restore alignment" by reverting to the 6-arg version — that
+//! drops the quality/xsnr/rxdt gating the baselines are calibrated against and
+//! can shift decodes. If the upstream source it targets is ever identified, pin
+//! that `chkfalse8.f90` so this file becomes diff-verifiable again.
 
 use super::call_q::call_q_pair_reject;
 use super::callsign_q::callsign_q_reject;
