@@ -464,10 +464,14 @@ deduplicated decoded messages only. Debug/test tooling may expose
 
 ## Threading Model & File-Mode Reproducibility
 
-File mode: read WAV → split into slots → run both workers per slot → merge →
-output deduplicated rows. Monitor mode: capture audio → close slot on wall-clock
-boundary → start both workers → stream WSJT-X progressive rows immediately →
-emit JTDX-unique rows after JTDX finishes → emit slot summary after both finish.
+File mode (one-shot): read WAV → split into slots → run both workers on the full
+slot per slot → merge → output deduplicated rows. Monitor mode is **staged**: the
+WSJT-X worker runs its real upstream `nzhsym=41/47` early decode and streams those
+rows *before* the slot boundary; at the boundary (`nzhsym=50`, full audio) it
+finishes the WSJT-X pass and runs JTDX, then emits JTDX-unique rows after JTDX
+finishes and a slot summary after both finish. JTDX has no early sub-results, so
+it only runs at `nzhsym=50`. The staged and one-shot paths emit the **identical
+row set** — only the timing differs — asserted by `test_hybrid_staged_matches_oneshot`.
 
 Use shared input ownership (`Arc<[f32]>`) to avoid duplicating buffers. Each
 worker owns its own FFT, residual, AP, odd/even, and duplicate state. Hash-call
@@ -488,10 +492,11 @@ Reproducibility rules (must hold so file-mode tests are not flaky):
 Implemented / shipped this milestone:
 
 - `profile=hybrid` selectable; one WSJT-X + one JTDX session owned by the runner;
-  file/full-slot decode runs both workers in parallel per slot; monitor mode
-  selects hybrid at the full-slot boundary; WSJT-X progressive `nzhsym=41/47/50`
-  events forwarded immediately while JTDX runs; only JTDX-unique rows emitted
-  after JTDX finishes;
+  file mode runs both workers on the full slot per slot (one-shot). Monitor mode
+  drives the WSJT-X worker's staged `nzhsym=41/47/50` decode so early WSJT-X rows
+  stream *before* the slot boundary, with JTDX run once at `nzhsym=50`; JTDX-unique
+  rows emit after JTDX finishes. Both paths emit the same row set
+  (`test_hybrid_staged_matches_oneshot`);
 - session-long `SharedHashCallBook`: only adapter-local regular full-call
   evidence is exported, collisions suppressed, safe calls imported into each
   decoder's private book at slot boundaries;
@@ -640,7 +645,9 @@ profile=wsjtx short: 21/21
 profile=wsjtx long:  WSJT-X baseline 424/424, total 434/458
 profile=jtdx short:  20/20, elapsed 5.9s
 profile=jtdx long:   JTDX baseline 430/431, total 446/458, each segment <15s
-hybrid file mode:    repeated long-file output identical
+hybrid file mode:    repeated long-file output identical; total 465
+hybrid staged==file: test_hybrid_staged_matches_oneshot (monitor staging emits
+                     the identical per-slot row set as the one-shot file path)
 ```
 
 Baseline row selection: WSJT-X profile uses `Extra=blank/W` (ignores `J/E`);

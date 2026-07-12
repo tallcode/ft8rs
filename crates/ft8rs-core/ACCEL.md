@@ -206,13 +206,32 @@ OSD 是两个解码器的最大单项（jtdx 40~52%，wsjtx 42~50%）。曾用�
 
 ---
 
+## 6b. jtdx sync8 workspace 复用　✅（分配去冗余，bit-exact）
+
+`lib_jtdx/sync8.rs::sync8()` 过去每次调用都 `Sync8Workspace::new()` 重新分配并
+零初始化整块 workspace（`s` = NH1·NHSYM ≈ 2.8 MB，加 sync2d/syncq 网格；两条
+sync2d 路径各自还 `vec!` 一块窗口和 memo `rs`/`rss`，满带宽时又达 ~2.8 MB），
+调用频次 ≈ passes×bands ≈ 90 次/slot → 长跑上千次「几 MB alloc+memset 即弃」。
+
+改为 thread-local 常驻 workspace + `ensure()` 只增长，并把窗口和 memo 折进共享
+`rs_table` 字段。所有被读的 cell 每次调用前都被全覆写或 `.fill()`（`s` 全网格
+覆写、x_re/x_im 逐符号 fill、sync2d/syncq/red/redcq 逐 slot fill、rs_table 用前
+全覆写）→ **逐位相同**；形态上更贴近 JTDX 原版（`ft8_mod1` 本就是跨调用常驻的
+module 数组）。这正是 wsjtx `SYNC8_BUFS` 早已用的同款模式。
+
+- **对齐**：jtdx 20/20 & 430/431、wsjtx 21/424 复验 byte-identical。
+- **delta**：**未做受控 A/B 计时**（全流程计时热敏，且探针子系统已移除）；按去掉
+  的每调用 alloc+memset 量级估 ~1–1.5% 整体 jtdx，正确性由基线兜底、零风险。
+
+---
+
 ## 7. 剩余 backlog（bit-exact，owner 决定是否做）
 
 边际收益均已不大（两个最大头的便宜部分已吃完）：
 
 | 项 | 预计收益 | 难度 | 说明 |
 |---|---|---|---|
-| 路径 A：sync8 频谱跨 band 复用 | 净 3–5% | 中 | spectra 仅 9.3%，且 dd8 被 subtract 频繁改写，命中率有限 |
+| 路径 A：sync8 频谱跨 band 复用 | 净 3–5% | 中 | spectra 仅 9.3%，且 dd8 被 subtract 频繁改写，命中率有限；注意分配开销已由 §6b 的 workspace 复用吃掉，路径 A 只剩频谱**值**跨 band 复用（更难，subtract 改写 dd8 后失效） |
 | 路径 C：sync2d 跨频点 SIMD | 中 | 高 | 每 cell 独立，按频点 i 向量化、每 lane 内求和顺序不变 → bit-exact；需手写 SIMD（gather） |
 | Tier-1 MAP 自动向量化 | 个位数 % | 低 | `normalize_tone_spectra` 除法、`compute_symbol_spectra` 幅值、`subtractft8`/`ft8_downsample` 逐元素循环 |
 
@@ -242,7 +261,10 @@ OSD-PACK-2 ❌ 显式 u64 打包：不做。phase 1 已吃掉"标量→向量化
 → OSD bit-exact 自动向量化到此收官：wsjtx OSD −5.6% / jtdx OSD −1.1%。
   再大的 OSD 提速只能动 npre2 box / 算法（换灵敏度，对 DX 不利，须独立 profile）。
 P2.1     ❌ u64 打包 OSD 高斯消元：实测零收益 → 已回退（消元非瓶颈）
-路径A/C  ⏸ sync8 频谱复用（净 3–5%）/ sync2d 跨频点 SIMD（更难）
+sync8-WS ✅ jtdx sync8 workspace 复用（§6b）：常驻 thread-local + rs memo 折入，
+            去掉每调用几 MB alloc+memset，bit-exact（基线 byte-identical）；
+            delta 未 A/B 计时，估 ~1–1.5% 整体 jtdx
+路径A/C  ⏸ sync8 频谱**值**复用（净 3–5%，分配部分已由 sync8-WS 吃掉）/ sync2d 跨频点 SIMD（更难）
 P3       ❌ sync8 浮点 SIMD（破对齐，owner 否决）
 ```
 
