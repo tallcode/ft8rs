@@ -17,7 +17,7 @@ use ft8rs_engine::protocol::{
 };
 use ft8rs_engine::reconfig::{plan_reconfig, EngineState};
 use ft8rs_engine::report::UdpConfig;
-use ft8rs_engine::soundcard::SoundcardDeviceInfo;
+use ft8rs_engine::soundcard::{InputChannel, SoundcardDeviceInfo};
 use ft8rs_engine::EngineHandle;
 
 /// Hard cap on retained decode rows. Rendering is virtualized (see `decode_rows`)
@@ -92,6 +92,7 @@ pub struct Ft8rsApp {
 
     devices: Vec<SoundcardDeviceInfo>,
     selected_device: Option<String>, // device name; None = default
+    input_channel: InputChannel,      // which channel of a multi-channel device to decode
 
     // Runtime.
     status: EngineStatus,
@@ -203,6 +204,7 @@ impl Ft8rsApp {
             udp_in_tol: load("udp_in_tol", "7").trim().parse().unwrap_or(7.0),
             devices: Vec::new(),
             selected_device: (!device.is_empty()).then_some(device),
+            input_channel: InputChannel::parse(&load("input_channel", "left")).unwrap_or_default(),
             status: EngineStatus::Idle,
             applied: None,
             rows: Vec::new(),
@@ -283,6 +285,7 @@ impl Ft8rsApp {
         };
         EngineState {
             device: self.selected_device.clone(),
+            channel: self.input_channel,
             config,
             udp: self.udp_config(),
         }
@@ -849,6 +852,30 @@ impl Ft8rsApp {
             SettingsTab::Audio => {
                 section_heading(ui, "Audio");
                 commit |= setting_row(ui, "Input device", |ui| self.device_combo(ui));
+                commit |= setting_row(ui, "Channel", |ui| {
+                    let before = self.input_channel;
+                    egui::ComboBox::from_id_salt("input_channel")
+                        .width(140.0)
+                        .selected_text(match self.input_channel {
+                            InputChannel::Left => "Left",
+                            InputChannel::Right => "Right",
+                            InputChannel::Mono => "Mono (mix)",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.input_channel, InputChannel::Left, "Left");
+                            ui.selectable_value(
+                                &mut self.input_channel,
+                                InputChannel::Right,
+                                "Right",
+                            );
+                            ui.selectable_value(
+                                &mut self.input_channel,
+                                InputChannel::Mono,
+                                "Mono (mix)",
+                            );
+                        });
+                    self.input_channel != before
+                });
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if ui.button("Refresh").clicked() {
@@ -864,6 +891,16 @@ impl Ft8rsApp {
                         );
                     }
                 });
+                if self.input_channel == InputChannel::Mono {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(
+                            "Mono averages L+R. If a virtual cable (e.g. FlexRadio DAX) \
+                             puts audio on one channel, use Left/Right instead.",
+                        )
+                        .weak(),
+                    );
+                }
             }
             SettingsTab::Decode => {
                 section_heading(ui, "Decode");
@@ -1386,6 +1423,7 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("udp_in_port", self.udp_in_port.clone());
         storage.set_string("udp_in_tol", self.udp_in_tol.to_string());
         storage.set_string("device", self.selected_device.clone().unwrap_or_default());
+        storage.set_string("input_channel", self.input_channel.as_str().to_string());
     }
 
     // eframe 0.35: the root entry point is `ui` (a `&mut Ui` with no margin),

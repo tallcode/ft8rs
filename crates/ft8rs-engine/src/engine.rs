@@ -24,6 +24,8 @@ use std::sync::mpsc::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use ft8rs::input::audio::downsample_12k;
+#[cfg(test)]
 use ft8rs::input::audio::resample_linear;
 use ft8rs::stream::profile::{ProfileSlotState, ProfileStreamDecodeSession};
 use ft8rs::stream::session::{
@@ -40,9 +42,12 @@ use crate::reconfig::{plan_reconfig, EngineState, StateBucket};
 use crate::report::{UdpConfig, UdpOutput};
 use crate::soundcard::{
     drain_pending_audio, list_soundcards, native_samples_for_nzhsym, next_slot_start_unix_seconds,
-    now_unix_millis, start_input_stream, wall_clock_slot_index,
+    now_unix_millis, start_input_stream, wall_clock_slot_index, InputChannel,
 };
 
+// Only the test helpers reference this now; production goes through
+// `downsample_12k`, which knows the 12 kHz target itself.
+#[cfg(test)]
 const TARGET_SAMPLE_RATE: u32 = 12_000;
 const SLOT_SECONDS: u64 = 15;
 /// Mirrors the CLI's per-slot focused-decode budget for DX live (`main.rs`).
@@ -147,7 +152,10 @@ fn run_monitor(
 ) -> MonitorExit {
     let mut udp = build_udp(state.udp.as_ref(), event_tx);
 
-    let (mut stream, mut rx, mut sample_rate) = match start_input_stream(state.device.as_deref()) {
+    let (mut stream, mut rx, mut sample_rate) = match start_input_stream(
+        state.device.as_deref(),
+        state.channel,
+    ) {
         Ok(parts) => parts,
         Err(err) => {
             let _ = event_tx.try_send(EngineEvent::Error(err));
@@ -230,8 +238,13 @@ fn run_monitor(
                 }
                 Flow::CaptureLost => {
                     drop(stream);
-                    match reconnect_capture(cmd_rx, event_tx, state.device.as_deref(), &mut pending)
-                    {
+                    match reconnect_capture(
+                        cmd_rx,
+                        event_tx,
+                        state.device.as_deref(),
+                        state.channel,
+                        &mut pending,
+                    ) {
                         Reconnect::Ok(parts) => {
                             stream = parts.0;
                             rx = parts.1;
@@ -275,7 +288,7 @@ fn run_monitor(
                 // don't enqueue more work for the fallen-behind decoder.
                 continue;
             }
-            let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+            let samples_12k = downsample_12k(&native, sample_rate);
             match dec_cmd_tx.try_send(DecodeCmd::Stage {
                 stage,
                 timestamp: timestamp.clone(),
@@ -315,7 +328,7 @@ fn run_monitor(
                 // can't open (busy / unplugged / unsupported format) keep the
                 // current capture and session running instead of tearing the
                 // whole monitor session down.
-                match start_input_stream(new_state.device.as_deref()) {
+                match start_input_stream(new_state.device.as_deref(), new_state.channel) {
                     Ok((new_stream, new_rx, new_rate)) => {
                         drop(stream);
                         stream = new_stream;
@@ -339,8 +352,9 @@ fn run_monitor(
                         let _ = event_tx.try_send(EngineEvent::Error(format!(
                             "device switch failed, keeping current input: {err}"
                         )));
-                        // Stay on the current device and report no capture restart.
+                        // Stay on the current device/channel and report no restart.
                         new_state.device = state.device.clone();
+                        new_state.channel = state.channel;
                         outcome.restart_capture = false;
                         outcome.reset.remove(&StateBucket::Capture);
                     }
@@ -379,6 +393,7 @@ fn reconnect_capture(
     cmd_rx: &Receiver<EngineCommand>,
     event_tx: &SyncSender<EngineEvent>,
     device: Option<&str>,
+    channel: InputChannel,
     pending: &mut Option<EngineState>,
 ) -> Reconnect {
     let _ = event_tx.try_send(EngineEvent::Error(
@@ -390,7 +405,7 @@ fn reconnect_capture(
             CmdFlow::Stop => return Reconnect::Stop,
             CmdFlow::Shutdown => return Reconnect::Shutdown,
         }
-        if let Ok(parts) = start_input_stream(device) {
+        if let Ok(parts) = start_input_stream(device, channel) {
             return Reconnect::Ok(parts);
         }
         if attempt + 1 < 30 {

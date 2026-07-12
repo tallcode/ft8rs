@@ -12,7 +12,7 @@ use ft8rs::input::{
 use ft8rs::stream::{DecodeProfile, StreamDecodeConfig};
 use ft8rs::SlotTimestamp;
 use ft8rs_engine::{
-    decode_soundcard_streaming_decodes, list_soundcards, SoundcardDecodeOptions,
+    decode_soundcard_streaming_decodes, list_soundcards, InputChannel, SoundcardDecodeOptions,
     SoundcardFormatInfo,
 };
 
@@ -109,6 +109,12 @@ struct MonitorArgs {
     /// Omit this option to list input devices.
     #[arg(short = 'i', long, help_heading = "Input")]
     device: Option<String>,
+
+    /// Which channel of a multi-channel input to decode: left (default), right, or
+    /// mono (average). Matches WSJT-X — pick left/right for FlexRadio DAX and other
+    /// virtual cables whose stereo channels aren't an in-phase copy.
+    #[arg(long, default_value = "left", help_heading = "Input")]
+    channel: String,
 
     #[command(flatten, next_help_heading = "Decode context")]
     decode: DecodeArgs,
@@ -237,6 +243,8 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
         return run_monitor_ls();
     }
 
+    let channel = InputChannel::parse(&args.channel)
+        .ok_or_else(|| format!("invalid --channel '{}': use left, right, or mono", args.channel))?;
     let udp = args.udp.then_some(UdpConfig {
         host: args.udp_host,
         port: args.udp_port,
@@ -249,6 +257,7 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
     decode_soundcard_streaming_decodes(
         SoundcardDecodeOptions {
             device: args.device,
+            channel,
             config,
             max_slots: args.slots,
         },
