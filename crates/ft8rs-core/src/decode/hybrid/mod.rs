@@ -10,7 +10,7 @@ use std::thread;
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::stream::session::{
     StreamDecodeConfig, StreamDecodeProvenance, StreamDecodeSession, StreamDecodedMessage,
-    StreamDecodedWithProvenance,
+    StreamDecodedWithProvenance, StreamSlotDecodeState,
 };
 use crate::stream::time::SlotTimestamp;
 
@@ -69,6 +69,12 @@ impl HybridStreamDecodeSession {
         self.active_call_context.hints()
     }
 
+    /// One-shot slot decode (file mode / tests): run both workers on the full
+    /// slot audio, streaming WSJT-X rows live and JTDX-unique rows after the
+    /// merge. Monitor mode uses the staged `start_slot`/`decode_slot_nzhsym41`/
+    /// `subtract_slot_nzhsym47`/`decode_slot_nzhsym50` path instead, which emits
+    /// the same row set (so file-mode output is unchanged) but streams WSJT-X
+    /// early decodes before the slot boundary.
     pub fn decode_slot_streaming_at<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -104,6 +110,104 @@ impl HybridStreamDecodeSession {
 
             Ok::<_, String>((wsjtx_tagged, jtdx_tagged))
         })?;
+
+        self.finish_slot(&wsjtx_tagged, &jtdx_tagged, on_decode)
+    }
+
+    /// Begin a staged (monitor) slot: inject shared knowledge at the boundary
+    /// before decode, and return the WSJT-X early-decode state.
+    pub fn start_slot(&mut self) -> StreamSlotDecodeState {
+        let shared_hash_calls = self.shared_hash_book.safe_calls();
+        self.wsjtx.import_hash_calls(&shared_hash_calls);
+        self.jtdx.import_hash_calls(&shared_hash_calls);
+        self.wsjtx.start_slot_decode()
+    }
+
+    /// `nzhsym=41` early decode: stream the WSJT-X early rows immediately (before
+    /// the slot boundary) and return how many were emitted, so `nzhsym=50` can
+    /// skip re-emitting them. JTDX has no early sub-results, so it does not run
+    /// here.
+    pub fn decode_slot_nzhsym41<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        state: &mut StreamSlotDecodeState,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<usize, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        let early =
+            self.wsjtx
+                .decode_slot_nzhsym41_with_provenance_at(Some(timestamp), state, samples)?;
+        for row in &early {
+            on_decode(&row.decode)?;
+        }
+        Ok(early.len())
+    }
+
+    /// `nzhsym=47`: subtract the selected WSJT-X early decodes from the cleaned
+    /// prefix (WSJT-X staging only).
+    pub fn subtract_slot_nzhsym47(&mut self, state: &mut StreamSlotDecodeState, samples: &[f32]) {
+        self.wsjtx.subtract_slot_nzhsym47(state, samples);
+    }
+
+    /// `nzhsym=50` final decode: finish the WSJT-X pass (streaming only the rows
+    /// not already emitted at `nzhsym=41`, per `early_count`) concurrently with
+    /// the JTDX pass, then merge and stream JTDX-unique rows. Same row set as the
+    /// one-shot path.
+    pub fn decode_slot_nzhsym50<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        state: StreamSlotDecodeState,
+        early_count: usize,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        let (wsjtx_tagged, jtdx_tagged) = thread::scope(|scope| {
+            let jtdx_session = &mut self.jtdx;
+            let jtdx_handle = scope.spawn(|| {
+                jtdx_session.decode_slot_streaming_with_provenance_at(
+                    timestamp,
+                    samples,
+                    |_| Ok(()),
+                )
+            });
+
+            // WSJT-X final decode returns ALL rows (including the early ones
+            // already streamed at nzhsym=41); emit only the newly-added ones.
+            let wsjtx_tagged = self
+                .wsjtx
+                .decode_slot_nzhsym50_and_finish_with_provenance(state, samples)?;
+            for row in wsjtx_tagged.iter().skip(early_count) {
+                on_decode(&row.decode)?;
+            }
+
+            let jtdx_tagged = jtdx_handle
+                .join()
+                .map_err(|_| "hybrid JTDX worker panicked".to_string())??;
+
+            Ok::<_, String>((wsjtx_tagged, jtdx_tagged))
+        })?;
+
+        self.finish_slot(&wsjtx_tagged, &jtdx_tagged, on_decode)
+    }
+
+    /// Shared slot tail: update shared hash book / evidence / active context from
+    /// the two workers' tagged rows, then merge and stream JTDX-unique rows.
+    /// `on_decode` has already received every WSJT-X row by the time this runs.
+    fn finish_slot<F>(
+        &mut self,
+        wsjtx_tagged: &[StreamDecodedWithProvenance],
+        jtdx_tagged: &[StreamDecodedWithProvenance],
+        mut on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
         let wsjtx_results: Vec<StreamDecodedMessage> =
             wsjtx_tagged.iter().map(|row| row.decode.clone()).collect();
         let jtdx: Vec<StreamDecodedMessage> =
@@ -115,7 +219,7 @@ impl HybridStreamDecodeSession {
             .import_regular_calls(self.jtdx.export_regular_hash_calls());
 
         self.last_evidence_store =
-            build_passive_evidence_store_from_tagged(&wsjtx_tagged, &jtdx_tagged);
+            build_passive_evidence_store_from_tagged(wsjtx_tagged, jtdx_tagged);
         self.active_call_context
             .update_from_evidence(&self.last_evidence_store);
 

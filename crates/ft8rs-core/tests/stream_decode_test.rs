@@ -608,6 +608,71 @@ fn test_hybrid_profile_long_audio_count() {
     );
 }
 
+/// The staged (monitor) hybrid path must emit exactly the same row set as the
+/// one-shot (file) path — only the timing differs (WSJT-X early rows stream at
+/// nzhsym=41 instead of nzhsym=50). This guards the monitor early-decode change.
+#[test]
+#[ignore = "manual hybrid staged-vs-one-shot equivalence gate; run with --release --ignored"]
+fn test_hybrid_staged_matches_oneshot() {
+    assert_release_mode();
+    let samples = samples_12k_from_wav("tests/ft8/230208_140300.wav");
+    let sps = 15 * 12000;
+    let nseg = samples.len().div_ceil(sps);
+    let new_hybrid = || {
+        ProfileStreamDecodeSession::new(StreamDecodeConfig {
+            profile: DecodeProfile::Hybrid,
+            ..Default::default()
+        })
+    };
+    let mut oneshot = new_hybrid();
+    let mut staged = new_hybrid();
+    let start = SlotTimestamp::parse("230208_140300").unwrap();
+    let key = |row: &ft8rs::stream::StreamDecodedMessage| {
+        format!("{}|{}|{:.2}|{:.1}", row.msg, row.snr, row.dt, row.freq)
+    };
+
+    for seg in 0..nseg {
+        let timestamp = start.add_seconds((seg * 15) as i64);
+        let data = slot_samples(&samples, seg * sps, sps);
+
+        let mut a = Vec::new();
+        oneshot
+            .decode_slot_streaming_with_provenance_at(&timestamp, &data, |row| {
+                a.push(key(&row.decode));
+                Ok(())
+            })
+            .unwrap();
+
+        let mut b = Vec::new();
+        let mut state = staged.start_slot();
+        let n41 = &data[..(41 * 3456).min(data.len())];
+        let early = staged
+            .decode_slot_nzhsym41_streaming_with_provenance(&timestamp, &mut state, n41, |row| {
+                b.push(key(&row.decode));
+                Ok(())
+            })
+            .unwrap();
+        let n47 = &data[..(47 * 3456).min(data.len())];
+        staged.subtract_slot_nzhsym47(&mut state, n47);
+        staged
+            .decode_slot_nzhsym50_streaming_with_provenance(
+                &timestamp,
+                state,
+                early,
+                &data,
+                |row| {
+                    b.push(key(&row.decode));
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+        a.sort();
+        b.sort();
+        assert_eq!(a, b, "slot {seg}: staged emit set differs from one-shot");
+    }
+}
+
 #[test]
 #[ignore = "manual JTDX profile gate; run with --release --ignored"]
 fn test_jtdx_profile_long_audio() {
