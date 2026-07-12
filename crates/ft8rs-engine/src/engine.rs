@@ -915,4 +915,93 @@ mod tests {
 
         cmd_tx.send(DecodeCmd::Stop).unwrap();
     }
+
+    /// The hybrid decode actor (staged N41/N47/N50), over the LONG fixture where
+    /// hybrid genuinely exceeds the WSJT-X baseline (jtdx-unique rows exist), must
+    /// emit the same total as a one-shot hybrid decode — i.e. it must not drop
+    /// jtdx-unique rows. The short fixture can't catch this (there hybrid==wsjtx,
+    /// jtdx fully overlaps). Slow; run with --ignored.
+    #[test]
+    #[ignore = "slow long-fixture actor gate; run with --release --ignored"]
+    fn decode_actor_hybrid_long_emits_jtdx_unique() {
+        use ft8rs::stream::profile::ProfileStreamDecodeSession;
+        const LONG_FIXTURE: &str = "../ft8rs-core/tests/ft8/230208_140300.wav";
+        if !Path::new(LONG_FIXTURE).exists() {
+            return;
+        }
+        let audio = ft8rs::input::audio::read_wav_mono_f32(LONG_FIXTURE).unwrap();
+        let s12k = resample_linear(&audio.samples, audio.sample_rate, TARGET_SAMPLE_RATE);
+        let sps = 15 * TARGET_SAMPLE_RATE as usize;
+        let nseg = s12k.len().div_ceil(sps);
+        let start = SlotTimestamp::parse("230208_140300").unwrap();
+        let hyb = || {
+            let mut c = StreamDecodeConfig::default();
+            c.profile = DecodeProfile::Hybrid;
+            c
+        };
+
+        let mut oneshot = ProfileStreamDecodeSession::new(hyb());
+        let mut oneshot_total = 0usize;
+        for seg in 0..nseg {
+            let ts = start.add_seconds((seg * 15) as i64);
+            let data = &s12k[seg * sps..((seg + 1) * sps).min(s12k.len())];
+            oneshot_total += oneshot.decode_slot_at(&ts, data).len();
+        }
+
+        let (cmd_tx, evt_rx) = spawn_decode_actor(hyb());
+        let mut actor_emitted = 0usize;
+        for seg in 0..nseg {
+            let ts = start.add_seconds((seg * 15) as i64);
+            let data = &s12k[seg * sps..((seg + 1) * sps).min(s12k.len())];
+            feed_slot(&cmd_tx, &ts, data);
+            let (emitted, _count) = drain_until_slot_complete(&evt_rx);
+            actor_emitted += emitted;
+        }
+        cmd_tx.send(DecodeCmd::Stop).unwrap();
+
+        assert!(
+            oneshot_total > 424,
+            "sanity: long hybrid should exceed wsjtx baseline (jtdx-unique exists), got {oneshot_total}"
+        );
+        assert_eq!(
+            actor_emitted, oneshot_total,
+            "hybrid actor emitted {actor_emitted} rows over the long fixture but one-shot has {oneshot_total} (jtdx-unique dropped in the staged engine path?)"
+        );
+    }
+
+    /// The hybrid decode actor (staged N41/N47/N50) must emit the same rows as a
+    /// one-shot hybrid decode of the same slot — in particular it must not drop
+    /// JTDX-unique rows. Guards the monitor early-decode staging.
+    #[test]
+    fn decode_actor_hybrid_matches_oneshot() {
+        use ft8rs::stream::profile::ProfileStreamDecodeSession;
+        let Some(s12k) = load_fixture_12k() else {
+            return;
+        };
+        let ts = SlotTimestamp::parse("210703_133430").unwrap();
+        let hybrid_cfg = || {
+            let mut c = StreamDecodeConfig::default();
+            c.profile = DecodeProfile::Hybrid;
+            c
+        };
+
+        // Reference: one-shot hybrid decode (file path) of the whole slot.
+        let mut oneshot = ProfileStreamDecodeSession::new(hybrid_cfg());
+        let oneshot_count = oneshot.decode_slot_at(&ts, &s12k).len();
+
+        // Actor: staged N41/N47/N50 exactly as the monitor engine drives it.
+        let (cmd_tx, evt_rx) = spawn_decode_actor(hybrid_cfg());
+        feed_slot(&cmd_tx, &ts, &s12k);
+        let (emitted, count) = drain_until_slot_complete(&evt_rx);
+        cmd_tx.send(DecodeCmd::Stop).unwrap();
+
+        assert_eq!(
+            count, oneshot_count,
+            "hybrid actor slot count {count} != one-shot {oneshot_count} (jtdx-unique dropped?)"
+        );
+        assert_eq!(
+            emitted, oneshot_count,
+            "hybrid actor emitted {emitted} rows but slot count is {oneshot_count}"
+        );
+    }
 }

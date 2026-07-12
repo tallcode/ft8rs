@@ -40,7 +40,7 @@ enum SettingsTab {
 }
 
 /// Where a decode row came from, for the compare-mode coloring.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DecodeSource {
     Local,
     External,
@@ -418,16 +418,20 @@ impl Ft8rsApp {
         );
     }
 
-    /// Merge a decode into the row list. A match (same real slot + freq within
-    /// tolerance + compatible message) from the other source upgrades the
-    /// existing row to `Both`; any match keeps the first row (dedupe). No match
-    /// appends a new row.
+    /// Merge a decode into the row list. In compare mode a local and an external
+    /// decode of the same signal (same slot + freq within tolerance + compatible
+    /// message) collapse to one `Both` row. **Same-source rows are never folded:**
+    /// each source is already deduplicated upstream (the engine merges hybrid's
+    /// WSJT-X + JTDX output; WSJT-X UDP sends each decode once), so folding
+    /// same-source would drop genuinely distinct rows — e.g. a jtdx-unique hybrid
+    /// decode that differs from a WSJT-X row only in dt (the fold key has no dt
+    /// term). No match appends a new row.
     ///
     /// The fold is scoped to the current slot batch (`merge_gen`): `slot_key` is
     /// time-of-day only and wraps every 24 h, so without this a recurring signal
     /// at the same time-of-day/freq on a later day would be folded into a stale
-    /// row still in the buffer and silently dropped. Decodes arrive in slot
-    /// order, so a change in `slot_key` marks a new real slot and bumps the gen.
+    /// row still in the buffer. Decodes arrive in slot order, so a change in
+    /// `slot_key` marks a new real slot and bumps the gen.
     fn ingest(
         &mut self,
         slot_key: u32,
@@ -442,17 +446,8 @@ impl Ft8rsApp {
         }
         let gen = self.merge_gen;
 
-        let tol = self.udp_in_tol;
-        for row in self.rows.iter_mut() {
-            if row.gen == gen
-                && (row.freq - freq).abs() <= tol
-                && tokens_compatible(&row.tokens, &tokens)
-            {
-                if row.source != source && row.source != DecodeSource::Both {
-                    row.source = DecodeSource::Both;
-                }
-                return; // keep the first row
-            }
+        if fold_into_cross_source(&mut self.rows, gen, freq, self.udp_in_tol, &tokens, source) {
+            return;
         }
         let parity = (slot_key % 2) as u8;
         self.rows.push(Row {
@@ -1672,6 +1667,33 @@ fn format_ms_time(ms: u32) -> String {
 
 /// Normalize a decode message for merge matching: drop WSJT-X annotations, then
 /// uppercase the remaining tokens (the actual message body).
+/// Fold `(freq, tokens)` into an existing **cross-source** row of the current
+/// batch (`gen`), upgrading it to `Both`; returns true if folded. Same-source
+/// rows are never folded: each source is already deduplicated upstream (the
+/// engine merges hybrid's WSJT-X + JTDX output), so folding same-source would
+/// drop genuinely distinct rows (e.g. a jtdx-unique decode that differs from a
+/// WSJT-X row only in dt, which this fold key does not consider).
+fn fold_into_cross_source(
+    rows: &mut [Row],
+    gen: u64,
+    freq: f64,
+    tol: f64,
+    tokens: &[String],
+    source: DecodeSource,
+) -> bool {
+    for row in rows.iter_mut() {
+        if row.source != source
+            && row.gen == gen
+            && (row.freq - freq).abs() <= tol
+            && tokens_compatible(&row.tokens, tokens)
+        {
+            row.source = DecodeSource::Both;
+            return true;
+        }
+    }
+    false
+}
+
 fn norm_tokens(msg: &str) -> Vec<String> {
     msg.split_whitespace()
         .filter(|t| !is_annotation(t))
@@ -2125,6 +2147,53 @@ mod tests {
         assert!(!tokens_compatible(
             &norm_tokens("CQ K1ABC FN42"),
             &norm_tokens("CQ W1AW EM73"),
+        ));
+    }
+
+    #[test]
+    fn same_source_rows_never_fold_but_cross_source_merges_to_both() {
+        let mk = |source, freq, msg: &str| Row {
+            text: String::new(),
+            parity: 0,
+            gen: 1,
+            freq,
+            tokens: norm_tokens(msg),
+            source,
+        };
+        let mut rows = vec![mk(DecodeSource::Local, 1000.0, "CQ K1ABC FN42")];
+
+        // A second LOCAL decode of the "same" signal (within tol) must NOT fold —
+        // the engine already deduplicated local output, so this is a genuinely
+        // distinct row (e.g. jtdx-unique differing only in dt). It appends.
+        assert!(!fold_into_cross_source(
+            &mut rows,
+            1,
+            1002.0,
+            7.0,
+            &norm_tokens("CQ K1ABC FN42"),
+            DecodeSource::Local,
+        ));
+        assert_eq!(rows[0].source, DecodeSource::Local);
+
+        // An EXTERNAL decode of the same signal folds into the local row → Both.
+        assert!(fold_into_cross_source(
+            &mut rows,
+            1,
+            1001.0,
+            7.0,
+            &norm_tokens("CQ K1ABC FN42"),
+            DecodeSource::External,
+        ));
+        assert_eq!(rows[0].source, DecodeSource::Both);
+
+        // A different gen (different slot) never folds.
+        assert!(!fold_into_cross_source(
+            &mut rows,
+            2,
+            1000.0,
+            7.0,
+            &norm_tokens("CQ K1ABC FN42"),
+            DecodeSource::External,
         ));
     }
 
