@@ -1,5 +1,5 @@
 use ft8rs::input::audio::resample_linear;
-use ft8rs::stream::profile::ProfileStreamDecodeSession;
+use ft8rs::stream::profile::{ProfileSlotState, ProfileStreamDecodeSession};
 use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig};
 use ft8rs::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
 
@@ -336,29 +336,71 @@ fn run_profile_worker(
     event_tx: Sender<DecodeWorkerEvent>,
 ) {
     let mut decoder = ProfileStreamDecodeSession::new(config);
+    // Staged so hybrid streams early WSJT-X rows before the slot boundary (jtdx/dx
+    // are stateless no-ops at nzhsym=41/47 and decode fully at nzhsym=50).
+    let mut slot_state: Option<(ProfileSlotState, usize)> = None;
     while let Ok(command) = cmd_rx.recv() {
         let result = match command {
-            DecodeWorkerCommand::Nzhsym41 { .. } | DecodeWorkerCommand::Nzhsym47 { .. } => Ok(None),
+            DecodeWorkerCommand::Nzhsym41 {
+                timestamp,
+                samples_12k,
+            } => {
+                let mut state = decoder.start_slot();
+                let event_tx = event_tx.clone();
+                match decoder.decode_slot_nzhsym41_streaming_with_provenance(
+                    &timestamp,
+                    &mut state,
+                    &samples_12k,
+                    |row| {
+                        event_tx
+                            .send(DecodeWorkerEvent::Decode {
+                                timestamp: timestamp.clone(),
+                                decode: row.decode.clone(),
+                            })
+                            .map_err(|err| err.to_string())
+                    },
+                ) {
+                    Ok(early_count) => {
+                        slot_state = Some((state, early_count));
+                        Ok(None)
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+            DecodeWorkerCommand::Nzhsym47 {
+                timestamp: _,
+                samples_12k,
+            } => {
+                if let Some((state, _)) = slot_state.as_mut() {
+                    decoder.subtract_slot_nzhsym47(state, &samples_12k);
+                }
+                Ok(None)
+            }
             DecodeWorkerCommand::Nzhsym50 {
                 timestamp,
                 samples_12k,
             } => {
-                let event_tx = event_tx.clone();
-                decoder
-                    .decode_slot_streaming_at(&timestamp, &samples_12k, |decode| {
-                        event_tx
-                            .send(DecodeWorkerEvent::Decode {
-                                timestamp: timestamp.clone(),
-                                decode: decode.clone(),
-                            })
-                            .map_err(|err| err.to_string())
-                    })
-                    .map(|results| {
-                        Some(DecodeWorkerEvent::SlotComplete {
-                            timestamp,
-                            count: results.len(),
-                        })
-                    })
+                if let Some((state, early_count)) = slot_state.take() {
+                    let event_tx = event_tx.clone();
+                    decoder
+                        .decode_slot_nzhsym50_streaming_with_provenance(
+                            &timestamp,
+                            state,
+                            early_count,
+                            &samples_12k,
+                            |row| {
+                                event_tx
+                                    .send(DecodeWorkerEvent::Decode {
+                                        timestamp: timestamp.clone(),
+                                        decode: row.decode.clone(),
+                                    })
+                                    .map_err(|err| err.to_string())
+                            },
+                        )
+                        .map(|count| Some(DecodeWorkerEvent::SlotComplete { timestamp, count }))
+                } else {
+                    Ok(None)
+                }
             }
             DecodeWorkerCommand::Stop => break,
         };

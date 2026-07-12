@@ -3,9 +3,17 @@ use crate::decode::hybrid::HybridStreamDecodeSession;
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::stream::session::{
     DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodeSession,
-    StreamDecodedMessage, StreamDecodedWithProvenance,
+    StreamDecodedMessage, StreamDecodedWithProvenance, StreamSlotDecodeState,
 };
 use crate::stream::time::SlotTimestamp;
+
+/// Per-slot state for the staged (monitor) decode path. Only hybrid carries
+/// WSJT-X early-decode state; the other profiles decode in one shot at
+/// `nzhsym=50` and need no cross-stage state.
+pub enum ProfileSlotState {
+    Hybrid(StreamSlotDecodeState),
+    Stateless,
+}
 
 #[allow(clippy::large_enum_variant)]
 pub enum ProfileStreamDecodeSession {
@@ -144,6 +152,93 @@ impl ProfileStreamDecodeSession {
     ) -> Vec<StreamDecodedMessage> {
         self.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))
             .expect("in-memory profile decode callback cannot fail")
+    }
+
+    // ── Staged (monitor) decode ─────────────────────────────────────────────
+    //
+    // Monitor mode feeds partial-slot stages so the WSJT-X pass can emit early
+    // decodes before the slot boundary. Only hybrid has early sub-results; jtdx
+    // and dx are stateless no-ops at nzhsym=41/47 and run their full decode at
+    // nzhsym=50 (identical to the one-shot path). wsjtx uses its own staged
+    // session directly in the engine, not this wrapper.
+
+    /// Begin a staged slot; returns the per-stage state.
+    pub fn start_slot(&mut self) -> ProfileSlotState {
+        match self {
+            Self::Hybrid(session) => ProfileSlotState::Hybrid(session.start_slot()),
+            _ => ProfileSlotState::Stateless,
+        }
+    }
+
+    /// `nzhsym=41` early decode. Hybrid streams early WSJT-X rows and returns the
+    /// count emitted; the other profiles have no early sub-results (returns 0).
+    pub fn decode_slot_nzhsym41_streaming_with_provenance<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        state: &mut ProfileSlotState,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<usize, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
+        match (self, state) {
+            (Self::Hybrid(session), ProfileSlotState::Hybrid(state)) => session
+                .decode_slot_nzhsym41(timestamp, state, samples, |decode| {
+                    on_decode(&StreamDecodedWithProvenance {
+                        decode: decode.clone(),
+                        provenance: StreamDecodeProvenance::Regular,
+                    })
+                }),
+            _ => Ok(0),
+        }
+    }
+
+    /// `nzhsym=47`: WSJT-X subtract stage (hybrid only; no-op otherwise).
+    pub fn subtract_slot_nzhsym47(&mut self, state: &mut ProfileSlotState, samples: &[f32]) {
+        if let (Self::Hybrid(session), ProfileSlotState::Hybrid(state)) = (self, state) {
+            session.subtract_slot_nzhsym47(state, samples);
+        }
+    }
+
+    /// `nzhsym=50` final decode. Hybrid finishes the WSJT-X pass (streaming only
+    /// the rows not already emitted at `nzhsym=41`) plus JTDX and merge; the
+    /// other profiles run their full slot decode here (unchanged). Returns the
+    /// total row count.
+    pub fn decode_slot_nzhsym50_streaming_with_provenance<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        state: ProfileSlotState,
+        early_count: usize,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<usize, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
+        match self {
+            Self::Hybrid(session) => {
+                let ProfileSlotState::Hybrid(state) = state else {
+                    return Err("hybrid nzhsym=50 without hybrid slot state".to_string());
+                };
+                let merged = session.decode_slot_nzhsym50(
+                    timestamp,
+                    state,
+                    early_count,
+                    samples,
+                    |decode| {
+                        on_decode(&StreamDecodedWithProvenance {
+                            decode: decode.clone(),
+                            provenance: StreamDecodeProvenance::Regular,
+                        })
+                    },
+                )?;
+                Ok(merged.len())
+            }
+            session => {
+                session.decode_slot_streaming_with_provenance_at(timestamp, samples, on_decode)
+            }
+        }
     }
 
     pub fn decode_slot_streaming_at<F>(

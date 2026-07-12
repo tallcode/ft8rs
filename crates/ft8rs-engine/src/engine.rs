@@ -25,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ft8rs::input::audio::resample_linear;
-use ft8rs::stream::profile::ProfileStreamDecodeSession;
+use ft8rs::stream::profile::{ProfileSlotState, ProfileStreamDecodeSession};
 use ft8rs::stream::session::{
     DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedWithProvenance,
     StreamSlotDecodeState,
@@ -708,6 +708,9 @@ fn decode_actor(
     let mut session = build_session(&config);
     // wsjtx staged state plus the count of early rows already emitted at nzhsym=41.
     let mut slot_state: Option<(StreamSlotDecodeState, usize)> = None;
+    // The same, for the unified Profile path (hybrid streams early WSJT-X rows;
+    // jtdx/dx are stateless and decode fully at nzhsym=50).
+    let mut profile_slot: Option<(ProfileSlotState, usize)> = None;
 
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
@@ -721,6 +724,7 @@ fn decode_actor(
                 session = reconfigure_session(session, config, reset_dx_target, reset_dx_operator);
                 import_hash(&mut session, &calls);
                 slot_state = None;
+                profile_slot = None;
             }
             DecodeCmd::Stage {
                 stage,
@@ -769,30 +773,55 @@ fn decode_actor(
                         }
                     }
                 }
-                (DecodeSession::Profile(_), Stage::N41)
-                | (DecodeSession::Profile(_), Stage::N47) => {}
-                (DecodeSession::Profile(p), Stage::N50) => {
-                    // Stream rows as the core produces them (hybrid emits the
-                    // WSJT-X pass first, then JTDX) so early decodes show without
-                    // waiting for the deep pass to finish.
-                    let result = p.decode_slot_streaming_with_provenance_at(
+                (DecodeSession::Profile(p), Stage::N41) => {
+                    // Hybrid streams early WSJT-X rows here (before the slot
+                    // boundary); jtdx/dx are no-ops that just open a stateless slot.
+                    let mut state = p.start_slot();
+                    match p.decode_slot_nzhsym41_streaming_with_provenance(
                         &timestamp,
+                        &mut state,
                         &samples_12k,
                         |row| {
-                            send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
+                            send_record(&evt_tx, &timestamp, row, DecodeStage::Early);
                             Ok(())
                         },
-                    );
-                    match result {
-                        Ok(count) => {
-                            if let Some(snapshot) = p.dx_context_snapshot() {
-                                let _ =
-                                    evt_tx.send(EngineEvent::DxContext(map_dx_snapshot(snapshot)));
-                            }
-                            let _ = evt_tx.send(EngineEvent::SlotComplete { timestamp, count });
-                        }
+                    ) {
+                        Ok(early_count) => profile_slot = Some((state, early_count)),
                         Err(err) => {
                             let _ = evt_tx.send(EngineEvent::Error(err));
+                        }
+                    }
+                }
+                (DecodeSession::Profile(p), Stage::N47) => {
+                    if let Some((state, _)) = profile_slot.as_mut() {
+                        p.subtract_slot_nzhsym47(state, &samples_12k);
+                    }
+                }
+                (DecodeSession::Profile(p), Stage::N50) => {
+                    // Finish the slot: hybrid emits the remaining WSJT-X rows then
+                    // JTDX-unique rows; jtdx/dx run their full decode here.
+                    if let Some((state, early_count)) = profile_slot.take() {
+                        let result = p.decode_slot_nzhsym50_streaming_with_provenance(
+                            &timestamp,
+                            state,
+                            early_count,
+                            &samples_12k,
+                            |row| {
+                                send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
+                                Ok(())
+                            },
+                        );
+                        match result {
+                            Ok(count) => {
+                                if let Some(snapshot) = p.dx_context_snapshot() {
+                                    let _ = evt_tx
+                                        .send(EngineEvent::DxContext(map_dx_snapshot(snapshot)));
+                                }
+                                let _ = evt_tx.send(EngineEvent::SlotComplete { timestamp, count });
+                            }
+                            Err(err) => {
+                                let _ = evt_tx.send(EngineEvent::Error(err));
+                            }
                         }
                     }
                 }
