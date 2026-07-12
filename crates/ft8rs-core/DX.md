@@ -656,13 +656,16 @@ they are deliberate, not forgotten.
   cancellation). It bounds the *number* of passes started, not total wall-clock.
   Acceptable because focused passes are seconds; documented under *Monitor
   latency*.
-- **Harvested `hisgrid` can be poisoned by a hash collision.** A ~1/1024 10-bit
-  collision that mislabels another station as `<hiscall>` in a sender position
-  with a different grid would lock the wrong `hisgrid`, after which
-  `has_hard_grid_contradiction` could suppress the *real* target's rows. Only
-  applies to harvested (not user-provided) grids. Future: trust only a
-  user-supplied `hisgrid` for the contradiction gate, or require grid
-  corroboration across ≥2 slots before locking.
+- **Harvested `hisgrid` poisoning — fixed.** A ~1/1024 10-bit collision that
+  mislabels another station as `<hiscall>` in a sender position with a different
+  grid could lock the wrong harvested `hisgrid`, after which
+  `has_hard_grid_contradiction` would suppress the *real* target's rows — a
+  silent miss on the one station we chase. Fixed: the contradiction gate now
+  trusts **only a user-supplied `hisgrid`**; a harvested grid still drives a8d
+  recovery but never suppresses (`has_hard_grid_contradiction` returns early
+  unless `hisgrid_source == User`). Guarded by
+  `harvested_grid_never_suppresses_the_real_target`; the 140700 recovery gate is
+  unchanged (recovery uses the harvested grid, not the suppression path).
 
 ## Do Not Do
 

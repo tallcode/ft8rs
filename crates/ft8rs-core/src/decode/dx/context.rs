@@ -362,6 +362,16 @@ impl TargetContextStore {
     }
 
     fn has_hard_grid_contradiction(&self, row: &StreamDecodedMessage) -> bool {
+        // Only a user-supplied grid may suppress a target-sender row. A harvested
+        // grid can be poisoned by a ~1/1024 10-bit hash collision (a non-target
+        // `<hash>` matching the target in a sender position but carrying a
+        // different grid): locking that wrong grid would then suppress the *real*
+        // target's rows — a silent miss on the one station we chase. Harvested
+        // grids still drive a8d recovery; they just never suppress. (DX.md
+        // "Known Limitations / Future Hardening".)
+        if self.hisgrid_source != HisgridSource::User {
+            return false;
+        }
         let Some(hisgrid) = self.hisgrid.as_deref() else {
             return false;
         };
@@ -553,6 +563,29 @@ mod tests {
 
         assert!(!store.should_emit_target_row(&row(1000.0, "CQ BG5ATV FN42")));
         assert!(store.should_emit_target_row(&row(1000.0, "BG5ATV K1JT FN42")));
+        assert!(store.should_emit_target_row(&row(1000.0, "CQ BG5ATV PM00")));
+    }
+
+    #[test]
+    fn harvested_grid_never_suppresses_the_real_target() {
+        // A harvested grid can be poisoned by a hash collision, so it must never
+        // suppress a target-sender row (only a user grid may). Here the target
+        // sends PM00, and a harvested KO95 (e.g. a collision) must not drop the
+        // real PM00 row — otherwise the one station we chase goes silently missing.
+        let mut store = TargetContextStore::new(
+            DxTarget::new("BG5ATV"),
+            Some("K1JT"),
+            1000.0,
+            None, // no user grid; grid comes only from harvest
+            false,
+            200.0,
+            3000.0,
+        );
+        let ts = SlotTimestamp::parse("140630").unwrap();
+        store.harvest_listen(&ts, &[row(1000.0, "CQ BG5ATV KO95")]);
+        assert_eq!(store.hisgrid(), Some("KO95"));
+        // The real target's PM00 row contradicts the harvested KO95, but a
+        // harvested grid must not suppress it.
         assert!(store.should_emit_target_row(&row(1000.0, "CQ BG5ATV PM00")));
     }
 
