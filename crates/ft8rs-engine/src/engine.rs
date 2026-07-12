@@ -54,6 +54,14 @@ const POLL: Duration = Duration::from_millis(50);
 /// sheds whole slots rather than growing this queue without bound (each N50
 /// stage carries a full ~720 KB slot buffer).
 const DECODE_QUEUE_CAP: usize = 8;
+/// Bound on the engine→GUI event queue (~34 slots of decodes; ~200 KB worst
+/// case). The GUI drains it every frame (~150 ms), so this only fills if the GUI
+/// stops draining for many seconds (e.g. minimized on a platform that suspends
+/// the loop). The control thread must never block on the GUI, so it `try_send`s
+/// and drops on full: dropped rows are cosmetic (Status/DX/Error/devices are
+/// superseded by later events; the GUI ignores Reconfigured/SlotComplete), and
+/// the backlog self-heals when the GUI resumes.
+const GUI_EVENT_QUEUE_CAP: usize = 1024;
 
 /// Handle the GUI holds to drive the engine. Dropping it shuts the engine down.
 pub struct EngineHandle {
@@ -66,7 +74,9 @@ impl EngineHandle {
     /// Spawn the engine thread (starts Idle).
     pub fn spawn() -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel();
-        let (event_tx, event_rx) = mpsc::channel();
+        // Bounded so a paused/stalled GUI can't grow this without bound; the
+        // engine control thread never blocks on it (see `GUI_EVENT_QUEUE_CAP`).
+        let (event_tx, event_rx) = mpsc::sync_channel(GUI_EVENT_QUEUE_CAP);
         let join = thread::spawn(move || engine_loop(cmd_rx, event_tx));
         Self {
             cmd_tx,
@@ -97,8 +107,8 @@ impl Drop for EngineHandle {
 
 // ── Engine control thread ───────────────────────────────────────────────────
 
-fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: Sender<EngineEvent>) {
-    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Idle));
+fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: SyncSender<EngineEvent>) {
+    let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Idle));
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
             EngineCommand::Shutdown => return,
@@ -108,7 +118,7 @@ fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: Sender<EngineEvent>) {
             EngineCommand::RefreshDevices => refresh_devices(&event_tx),
             EngineCommand::StartMonitor(state) => match run_monitor(&cmd_rx, &event_tx, state) {
                 MonitorExit::Stopped => {
-                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Idle));
+                    let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Idle));
                 }
                 MonitorExit::Shutdown => return,
             },
@@ -132,7 +142,7 @@ enum Flow {
 
 fn run_monitor(
     cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &Sender<EngineEvent>,
+    event_tx: &SyncSender<EngineEvent>,
     mut state: EngineState,
 ) -> MonitorExit {
     let mut udp = build_udp(state.udp.as_ref(), event_tx);
@@ -140,7 +150,7 @@ fn run_monitor(
     let (mut stream, mut rx, mut sample_rate) = match start_input_stream(state.device.as_deref()) {
         Ok(parts) => parts,
         Err(err) => {
-            let _ = event_tx.send(EngineEvent::Error(err));
+            let _ = event_tx.try_send(EngineEvent::Error(err));
             return MonitorExit::Stopped;
         }
     };
@@ -148,7 +158,7 @@ fn run_monitor(
     let (dec_cmd_tx, dec_evt_rx) = spawn_decode_actor(effective_config(&state.config));
 
     let mut pending: Option<EngineState> = None;
-    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
+    let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Aligning));
     let mut slot_start = match align(cmd_rx, event_tx, &mut pending) {
         AlignResult::Ready(start) => start,
         AlignResult::Stop => return teardown(dec_cmd_tx, stream),
@@ -160,7 +170,7 @@ fn run_monitor(
     };
     drain_pending_audio(&rx);
     let mut carry: Vec<f32> = Vec::new();
-    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
+    let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
 
     'monitor: loop {
         // Re-lock this slot's window start to the true UTC boundary (see
@@ -170,7 +180,7 @@ fn run_monitor(
         let boundary = match now_unix_millis() {
             Ok(now_ms) => slot_start + wall_clock_slot_index(slot_start, now_ms).max(0) * 15,
             Err(err) => {
-                let _ = event_tx.send(EngineEvent::Error(err));
+                let _ = event_tx.try_send(EngineEvent::Error(err));
                 return teardown(dec_cmd_tx, stream);
             }
         };
@@ -226,7 +236,7 @@ fn run_monitor(
                             stream = parts.0;
                             rx = parts.1;
                             sample_rate = parts.2;
-                            let _ = event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
+                            let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Aligning));
                             slot_start = match align(cmd_rx, event_tx, &mut pending) {
                                 AlignResult::Ready(start) => start,
                                 AlignResult::Stop => return teardown(dec_cmd_tx, stream),
@@ -238,7 +248,8 @@ fn run_monitor(
                             };
                             drain_pending_audio(&rx);
                             carry.clear();
-                            let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
+                            let _ =
+                                event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
                             continue 'monitor;
                         }
                         Reconnect::Stop => {
@@ -250,7 +261,7 @@ fn run_monitor(
                             return MonitorExit::Shutdown;
                         }
                         Reconnect::Failed => {
-                            let _ = event_tx.send(EngineEvent::Error(
+                            let _ = event_tx.try_send(EngineEvent::Error(
                                 "audio device unavailable; monitoring stopped".to_string(),
                             ));
                             let _ = dec_cmd_tx.send(DecodeCmd::Stop);
@@ -273,7 +284,7 @@ fn run_monitor(
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) => {
                     slot_overrun = true;
-                    let _ = event_tx.send(EngineEvent::Error(format!(
+                    let _ = event_tx.try_send(EngineEvent::Error(format!(
                         "decode falling behind real time; dropping slot {timestamp}"
                     )));
                 }
@@ -310,7 +321,7 @@ fn run_monitor(
                         stream = new_stream;
                         rx = new_rx;
                         sample_rate = new_rate;
-                        let _ = event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
+                        let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Aligning));
                         slot_start = match align(cmd_rx, event_tx, &mut pending) {
                             AlignResult::Ready(start) => start,
                             AlignResult::Stop => return teardown(dec_cmd_tx, stream),
@@ -322,10 +333,10 @@ fn run_monitor(
                         };
                         drain_pending_audio(&rx);
                         carry.clear();
-                        let _ = event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
+                        let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
                     }
                     Err(err) => {
-                        let _ = event_tx.send(EngineEvent::Error(format!(
+                        let _ = event_tx.try_send(EngineEvent::Error(format!(
                             "device switch failed, keeping current input: {err}"
                         )));
                         // Stay on the current device and report no capture restart.
@@ -335,7 +346,7 @@ fn run_monitor(
                     }
                 }
             }
-            let _ = event_tx.send(EngineEvent::Reconfigured(outcome));
+            let _ = event_tx.try_send(EngineEvent::Reconfigured(outcome));
             state = new_state;
             continue;
         }
@@ -366,11 +377,11 @@ enum Reconnect {
 /// Shutdown stay responsive; gives up after a bounded number of tries.
 fn reconnect_capture(
     cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &Sender<EngineEvent>,
+    event_tx: &SyncSender<EngineEvent>,
     device: Option<&str>,
     pending: &mut Option<EngineState>,
 ) -> Reconnect {
-    let _ = event_tx.send(EngineEvent::Error(
+    let _ = event_tx.try_send(EngineEvent::Error(
         "audio device lost; reconnecting…".to_string(),
     ));
     for attempt in 0..30 {
@@ -395,7 +406,7 @@ fn reconnect_capture(
 /// window to UTC without dropping whole slots in steady state.
 fn wait_until_boundary(
     cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &Sender<EngineEvent>,
+    event_tx: &SyncSender<EngineEvent>,
     pending: &mut Option<EngineState>,
     boundary_secs: i64,
 ) -> CmdFlow {
@@ -414,13 +425,13 @@ fn wait_until_boundary(
 /// second. Polls the command channel so Stop/Shutdown stay responsive.
 fn align(
     cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &Sender<EngineEvent>,
+    event_tx: &SyncSender<EngineEvent>,
     pending: &mut Option<EngineState>,
 ) -> AlignResult {
     let start = match next_slot_start_unix_seconds() {
         Ok(start) => start,
         Err(err) => {
-            let _ = event_tx.send(EngineEvent::Error(err));
+            let _ = event_tx.try_send(EngineEvent::Error(err));
             return AlignResult::Stop;
         }
     };
@@ -445,7 +456,7 @@ fn pump_until(
     deadline: Instant,
     cmd_rx: &Receiver<EngineCommand>,
     dec_evt_rx: &Receiver<EngineEvent>,
-    event_tx: &Sender<EngineEvent>,
+    event_tx: &SyncSender<EngineEvent>,
     udp: &mut Option<UdpOutput>,
     pending: &mut Option<EngineState>,
 ) -> Flow {
@@ -481,7 +492,7 @@ enum CmdFlow {
 
 fn drain_commands(
     cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &Sender<EngineEvent>,
+    event_tx: &SyncSender<EngineEvent>,
     pending: &mut Option<EngineState>,
 ) -> CmdFlow {
     loop {
@@ -504,7 +515,7 @@ fn drain_commands(
 /// Sink failures are isolated (logged-and-dropped), never stopping decode.
 fn forward_decode_events(
     dec_evt_rx: &Receiver<EngineEvent>,
-    event_tx: &Sender<EngineEvent>,
+    event_tx: &SyncSender<EngineEvent>,
     udp: &mut Option<UdpOutput>,
 ) {
     while let Ok(evt) = dec_evt_rx.try_recv() {
@@ -513,28 +524,28 @@ fn forward_decode_events(
                 let _ = sink.on_decode(record.timestamp.clone(), &record.row);
             }
         }
-        let _ = event_tx.send(evt);
+        let _ = event_tx.try_send(evt);
     }
 }
 
-fn refresh_devices(event_tx: &Sender<EngineEvent>) {
+fn refresh_devices(event_tx: &SyncSender<EngineEvent>) {
     match list_soundcards() {
         Ok(devices) => {
-            let _ = event_tx.send(EngineEvent::DevicesRefreshed(devices));
+            let _ = event_tx.try_send(EngineEvent::DevicesRefreshed(devices));
         }
         Err(err) => {
-            let _ = event_tx.send(EngineEvent::Error(err));
+            let _ = event_tx.try_send(EngineEvent::Error(err));
         }
     }
 }
 
-fn build_udp(config: Option<&UdpConfig>, event_tx: &Sender<EngineEvent>) -> Option<UdpOutput> {
+fn build_udp(config: Option<&UdpConfig>, event_tx: &SyncSender<EngineEvent>) -> Option<UdpOutput> {
     let config = config?;
     match UdpOutput::new(config.clone()) {
         Ok(sink) => Some(sink),
         Err(err) => {
             // Output failure must not stop decode: disable sink.
-            let _ = event_tx.send(EngineEvent::Error(format!("UDP disabled: {err}")));
+            let _ = event_tx.try_send(EngineEvent::Error(format!("UDP disabled: {err}")));
             None
         }
     }
