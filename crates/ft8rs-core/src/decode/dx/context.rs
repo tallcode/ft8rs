@@ -367,8 +367,7 @@ impl TargetContextStore {
         // `<hash>` matching the target in a sender position but carrying a
         // different grid): locking that wrong grid would then suppress the *real*
         // target's rows — a silent miss on the one station we chase. Harvested
-        // grids still drive a8d recovery; they just never suppress. (DX.md
-        // "Known Limitations / Future Hardening".)
+        // grids still drive a8d recovery; they just never suppress.
         if self.hisgrid_source != HisgridSource::User {
             return false;
         }
