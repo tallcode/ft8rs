@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig};
 
 use crate::report::UdpConfig;
+use crate::soundcard::InputChannel;
 
 /// Cross-slot state buckets. Used to express what a reconfig resets vs.
 /// preserves/migrates.
@@ -44,6 +45,8 @@ pub enum StateBucket {
 pub struct EngineState {
     /// Soundcard selector (index or name), or `None` for the default device.
     pub device: Option<String>,
+    /// Which physical channel of a multi-channel device feeds the decoder.
+    pub channel: InputChannel,
     pub config: StreamDecodeConfig,
     pub udp: Option<UdpConfig>,
 }
@@ -129,9 +132,11 @@ pub fn plan_reconfig(old: &EngineState, new: &EngineState) -> ReconfigOutcome {
         out.reset.insert(StateBucket::Output);
     }
 
-    // L2 — capture path (device). Decode session and all decode state (S1..S6)
-    // are preserved: only the capture path restarts and re-aligns.
-    if old.device != new.device {
+    // L2 — capture path (device or channel selection). Decode session and all
+    // decode state (S1..S6) are preserved: only the capture path restarts and
+    // re-aligns. The channel selection lives here because it can only change by
+    // reopening the cpal stream (its extractor is baked into the input callback).
+    if old.device != new.device || old.channel != new.channel {
         out.restart_capture = true;
         out.reset.insert(StateBucket::Capture);
     }
@@ -183,6 +188,7 @@ mod tests {
     fn base() -> EngineState {
         EngineState {
             device: Some("0".to_string()),
+            channel: InputChannel::Left,
             config: StreamDecodeConfig::default(),
             udp: None,
         }
@@ -204,6 +210,17 @@ mod tests {
     fn no_change_is_noop() {
         let s = base();
         assert!(plan_reconfig(&s, &s).is_noop());
+    }
+
+    #[test]
+    fn channel_change_restarts_capture_only() {
+        let old = base();
+        let mut new = base();
+        new.channel = InputChannel::Right;
+        let out = plan_reconfig(&old, &new);
+        assert!(out.restart_capture);
+        assert!(!out.rebuild_session);
+        assert_eq!(out.reset, buckets(&[StateBucket::Capture]));
     }
 
     #[test]

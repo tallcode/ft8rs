@@ -1,4 +1,4 @@
-use ft8rs::input::audio::resample_linear;
+use ft8rs::input::audio::downsample_12k;
 use ft8rs::stream::profile::{ProfileSlotState, ProfileStreamDecodeSession};
 use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig};
 use ft8rs::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
@@ -16,8 +16,47 @@ const NZHSYM_STRIDE: usize = 3456;
 #[derive(Clone, Debug)]
 pub struct SoundcardDecodeOptions {
     pub device: Option<String>,
+    pub channel: InputChannel,
     pub config: StreamDecodeConfig,
     pub max_slots: Option<usize>,
+}
+
+/// Which physical channel of a multi-channel capture device feeds the decoder.
+///
+/// WSJT-X never averages a stereo input — it opens the device mono or picks a
+/// single channel (`Audio/AudioDevice.hpp`). We mirror that: some rigs' virtual
+/// cables (notably FlexRadio DAX) put the receive audio on one channel and
+/// silence / an anti-phase copy / a different slice on the other, so averaging
+/// `(L+R)/2` cancels or corrupts the signal and nothing decodes. Defaulting to
+/// the left channel matches WSJT-X's out-of-the-box behavior.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputChannel {
+    /// Left channel only (frame index 0). WSJT-X's default single-channel capture.
+    #[default]
+    Left,
+    /// Right channel only (frame index 1).
+    Right,
+    /// Average all channels into one (legacy downmix; kept for genuine stereo mixes).
+    Mono,
+}
+
+impl InputChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InputChannel::Left => "left",
+            InputChannel::Right => "right",
+            InputChannel::Mono => "mono",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "left" => Some(InputChannel::Left),
+            "right" => Some(InputChannel::Right),
+            "mono" => Some(InputChannel::Mono),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -65,7 +104,7 @@ where
     F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
     G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
 {
-    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
+    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref(), options.channel)?;
     let (cmd_tx, event_rx) = start_decode_worker(options.config);
 
     // Fixed phase anchor (a UTC 15 s boundary). Each slot re-derives its window
@@ -105,7 +144,7 @@ where
             &mut on_decode,
             &mut on_slot_complete,
         )?;
-        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+        let samples_12k = downsample_12k(&native, sample_rate);
         send_worker_command(
             &cmd_tx,
             DecodeWorkerCommand::Nzhsym41 {
@@ -123,7 +162,7 @@ where
             &mut on_decode,
             &mut on_slot_complete,
         )?;
-        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+        let samples_12k = downsample_12k(&native, sample_rate);
         send_worker_command(
             &cmd_tx,
             DecodeWorkerCommand::Nzhsym47 {
@@ -141,7 +180,7 @@ where
             &mut on_decode,
             &mut on_slot_complete,
         )?;
-        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+        let samples_12k = downsample_12k(&native, sample_rate);
         send_worker_command(
             &cmd_tx,
             DecodeWorkerCommand::Nzhsym50 {
@@ -168,7 +207,7 @@ fn decode_soundcard_slots<F>(options: SoundcardDecodeOptions, mut on_slot: F) ->
 where
     F: FnMut(&mut ProfileStreamDecodeSession, SlotTimestamp, &[f32]) -> Result<(), String>,
 {
-    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref())?;
+    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref(), options.channel)?;
     let samples_per_slot = sample_rate as usize * SLOT_SECONDS as usize;
 
     // Fixed phase anchor; each slot re-locks to the wall clock (see
@@ -198,7 +237,7 @@ where
         let mut native = Vec::with_capacity(samples_per_slot);
         let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 5);
         collector.collect_until(&mut native, samples_per_slot, deadline)?;
-        let samples_12k = resample_linear(&native, sample_rate, TARGET_SAMPLE_RATE);
+        let samples_12k = downsample_12k(&native, sample_rate);
         on_slot(&mut decoder, timestamp, &samples_12k)?;
         slots_done += 1;
     }
@@ -490,6 +529,7 @@ where
 
 pub(crate) fn start_input_stream(
     selector: Option<&str>,
+    channel: InputChannel,
 ) -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), String> {
     let selector = selector.unwrap_or("default");
     let (device, info) = select_input_device(selector)?;
@@ -508,19 +548,19 @@ pub(crate) fn start_input_stream(
     let stream = match supported_config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             stream_config,
-            move |data: &[f32], _| send_f32_mono(data, channels, &tx),
+            move |data: &[f32], _| send_f32(data, channels, channel, &tx),
             err_fn,
             None,
         ),
         cpal::SampleFormat::I16 => device.build_input_stream(
             stream_config,
-            move |data: &[i16], _| send_i16_mono(data, channels, &tx),
+            move |data: &[i16], _| send_i16(data, channels, channel, &tx),
             err_fn,
             None,
         ),
         cpal::SampleFormat::U16 => device.build_input_stream(
             stream_config,
-            move |data: &[u16], _| send_u16_mono(data, channels, &tx),
+            move |data: &[u16], _| send_u16(data, channels, channel, &tx),
             err_fn,
             None,
         ),
@@ -634,25 +674,29 @@ fn select_input_device(selector: &str) -> Result<(cpal::Device, SoundcardDeviceI
     ))
 }
 
-fn send_f32_mono(data: &[f32], channels: usize, tx: &mpsc::Sender<Vec<f32>>) {
-    let _ = tx.send(fold_channels(data.iter().copied(), channels));
+fn send_f32(data: &[f32], channels: usize, channel: InputChannel, tx: &mpsc::Sender<Vec<f32>>) {
+    let _ = tx.send(fold_channels(data.iter().copied(), channels, channel));
 }
 
-fn send_i16_mono(data: &[i16], channels: usize, tx: &mpsc::Sender<Vec<f32>>) {
+fn send_i16(data: &[i16], channels: usize, channel: InputChannel, tx: &mpsc::Sender<Vec<f32>>) {
     let _ = tx.send(fold_channels(
         data.iter().map(|sample| *sample as f32 / 32768.0),
         channels,
+        channel,
     ));
 }
 
-fn send_u16_mono(data: &[u16], channels: usize, tx: &mpsc::Sender<Vec<f32>>) {
+fn send_u16(data: &[u16], channels: usize, channel: InputChannel, tx: &mpsc::Sender<Vec<f32>>) {
     let _ = tx.send(fold_channels(
         data.iter().map(|sample| *sample as f32 / 32768.0 - 1.0),
         channels,
+        channel,
     ));
 }
 
-fn fold_channels<I>(samples: I, channels: usize) -> Vec<f32>
+/// Reduce an interleaved multi-channel frame stream to one channel per the
+/// selected `InputChannel` (see its doc for why averaging is *not* the default).
+fn fold_channels<I>(samples: I, channels: usize, channel: InputChannel) -> Vec<f32>
 where
     I: IntoIterator<Item = f32>,
 {
@@ -660,19 +704,36 @@ where
         return samples.into_iter().collect();
     }
 
-    let mut out = Vec::new();
-    let mut acc = 0.0f32;
-    let mut pos = 0usize;
-    for sample in samples {
-        acc += sample;
-        pos += 1;
-        if pos == channels {
-            out.push(acc / channels as f32);
-            acc = 0.0;
-            pos = 0;
+    match channel {
+        InputChannel::Mono => {
+            let mut out = Vec::new();
+            let mut acc = 0.0f32;
+            let mut pos = 0usize;
+            for sample in samples {
+                acc += sample;
+                pos += 1;
+                if pos == channels {
+                    out.push(acc / channels as f32);
+                    acc = 0.0;
+                    pos = 0;
+                }
+            }
+            out
+        }
+        InputChannel::Left | InputChannel::Right => {
+            // Right clamps to the last channel on mono-but-reported-multichannel
+            // edge cases so we never silently emit an empty buffer.
+            let target = match channel {
+                InputChannel::Right => (channels - 1).min(1),
+                _ => 0,
+            };
+            samples
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, sample)| (i % channels == target).then_some(sample))
+                .collect()
         }
     }
-    out
 }
 
 struct NativeSampleCollector<'a> {
@@ -847,7 +908,35 @@ pub(crate) fn sleep_until_unix_seconds(unix_seconds: i64) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    use super::wall_clock_slot_index;
+    use super::{fold_channels, wall_clock_slot_index, InputChannel};
+
+    // Interleaved stereo where the right channel is the left, inverted — the
+    // shape FlexRadio DAX can present. Averaging cancels it to silence; picking a
+    // single channel recovers the real audio. This is the whole point of the fix.
+    #[test]
+    fn antiphase_stereo_cancels_under_mono_but_survives_single_channel() {
+        let left = [0.1f32, -0.2, 0.3, -0.4];
+        let interleaved: Vec<f32> = left.iter().flat_map(|&l| [l, -l]).collect();
+
+        let mono = fold_channels(interleaved.iter().copied(), 2, InputChannel::Mono);
+        assert!(
+            mono.iter().all(|&s| s.abs() < 1e-6),
+            "anti-phase average should cancel to ~0, got {mono:?}"
+        );
+
+        let l = fold_channels(interleaved.iter().copied(), 2, InputChannel::Left);
+        assert_eq!(l, left);
+        let r = fold_channels(interleaved.iter().copied(), 2, InputChannel::Right);
+        assert_eq!(r, left.iter().map(|&s| -s).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn mono_device_passes_through_regardless_of_selection() {
+        let samples = [0.5f32, -0.25, 0.125];
+        for ch in [InputChannel::Left, InputChannel::Right, InputChannel::Mono] {
+            assert_eq!(fold_channels(samples.iter().copied(), 1, ch), samples);
+        }
+    }
 
     const ANCHOR: i64 = 1_700_000_010; // a unix second that is a multiple of 15
 
