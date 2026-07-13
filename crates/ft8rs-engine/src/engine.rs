@@ -42,7 +42,7 @@ use crate::reconfig::{plan_reconfig, EngineState, StateBucket};
 use crate::report::{UdpConfig, UdpOutput};
 use crate::soundcard::{
     drain_pending_audio, list_soundcards, native_samples_for_nzhsym, next_slot_start_unix_seconds,
-    now_unix_millis, start_input_stream, wall_clock_slot_index, InputChannel,
+    now_unix_millis, peak_level, start_input_stream, wall_clock_slot_index, InputChannel,
 };
 
 // Only the test helpers reference this now; production goes through
@@ -307,6 +307,11 @@ fn run_monitor(
                 }
             }
         }
+
+        // `native` holds the whole slot now (it's pumped even on overrun). Report
+        // its peak so the GUI can show an input level: a dead capture (silent
+        // virtual driver) shows ~-inf here even while "monitoring".
+        let _ = event_tx.try_send(EngineEvent::InputLevel(peak_level(&native)));
 
         forward_decode_events(&dec_evt_rx, event_tx, &mut udp);
 

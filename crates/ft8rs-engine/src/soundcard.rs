@@ -31,13 +31,15 @@ pub struct SoundcardDecodeOptions {
 /// the left channel matches WSJT-X's out-of-the-box behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InputChannel {
-    /// Left channel only (frame index 0). WSJT-X's default single-channel capture.
+    /// Downmix all channels into one by averaging — the default, matching WSJT-X's
+    /// out-of-the-box "Mono". If a virtual cable puts the audio on a single channel
+    /// (or the two are anti-phase), pick Left/Right instead.
     #[default]
+    Mono,
+    /// Left channel only (frame index 0).
     Left,
     /// Right channel only (frame index 1).
     Right,
-    /// Average all channels into one (legacy downmix; kept for genuine stereo mixes).
-    Mono,
 }
 
 impl InputChannel {
@@ -533,12 +535,7 @@ pub(crate) fn start_input_stream(
 ) -> Result<(cpal::Stream, Receiver<Vec<f32>>, u32), String> {
     let selector = selector.unwrap_or("default");
     let (device, info) = select_input_device(selector)?;
-    let supported_config = device.default_input_config().map_err(|err| {
-        format!(
-            "failed to read default input config for {}: {err}",
-            info.name
-        )
-    })?;
+    let supported_config = select_input_config(&device, &info)?;
     let sample_rate = supported_config.sample_rate();
     let channels = supported_config.channels() as usize;
 
@@ -578,6 +575,50 @@ pub(crate) fn start_input_stream(
         .map_err(|err| format!("failed to start input stream for {}: {err}", info.name))?;
 
     Ok((stream, rx, sample_rate))
+}
+
+/// Choose the capture format, preferring 48 kHz / f32. FlexRadio DAX (and many
+/// virtual cables) advertise that as their only real format and, in shared mode,
+/// won't resample or reformat. `default_input_config()` returns whatever Windows
+/// currently reports as the endpoint's mix format — which the operator can change
+/// (Sound → device → Advanced → Default Format) and which need not be the rate the
+/// driver actually streams; opening a mismatched format there yields a *silent*
+/// stream rather than an error. Explicitly matching a device-supported f32/48k
+/// config (per the DAX guidance) avoids that. Falls back to the device default for
+/// ordinary cards and other platforms.
+fn select_input_config(
+    device: &cpal::Device,
+    info: &SoundcardDeviceInfo,
+) -> Result<cpal::SupportedStreamConfig, String> {
+    const PREFERRED_RATE: u32 = 48_000;
+    if let Ok(configs) = device.supported_input_configs() {
+        let configs: Vec<_> = configs.collect();
+        // 1) f32 @ 48 kHz — DAX's native format. (cpal's SampleRate is a u32 alias.)
+        if let Some(range) = configs.iter().find(|c| {
+            c.sample_format() == cpal::SampleFormat::F32
+                && c.min_sample_rate() <= PREFERRED_RATE
+                && c.max_sample_rate() >= PREFERRED_RATE
+        }) {
+            return Ok(range.clone().with_sample_rate(PREFERRED_RATE));
+        }
+        // 2) Any f32 config (still avoids an int format the driver may not stream).
+        if let Some(range) = configs
+            .iter()
+            .find(|c| c.sample_format() == cpal::SampleFormat::F32)
+        {
+            return Ok(range.clone().with_max_sample_rate());
+        }
+    }
+    // 3) Fall back to the device default.
+    device
+        .default_input_config()
+        .map_err(|err| format!("failed to read input config for {}: {err}", info.name))
+}
+
+/// Peak absolute amplitude of a sample buffer (0.0 when empty) — feeds the GUI
+/// input-level readout so the operator can tell silence (dead capture) from signal.
+pub(crate) fn peak_level(samples: &[f32]) -> f32 {
+    samples.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
 }
 
 fn input_devices_with_info() -> Result<Vec<(cpal::Device, SoundcardDeviceInfo)>, String> {
