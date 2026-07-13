@@ -24,6 +24,9 @@ use ft8rs_engine::EngineHandle;
 /// so this only bounds memory and the per-decode dedupe scan, not scroll cost;
 /// the oldest rows are dropped once the list grows past it (see `ingest`).
 const MAX_ROWS: usize = 20_000;
+/// Frames to keep re-sending `ViewportCommand::Focus` after a dialog opens, so it
+/// reliably comes to the front even if the WM ignores the first request.
+const DIALOG_FOCUS_FRAMES: u8 = 3;
 const DECODE_FONT_SIZE: f32 = 12.0;
 /// Internal left padding for the decode table (header + rows go edge-to-edge).
 const TABLE_PAD: f32 = 12.0;
@@ -93,6 +96,7 @@ pub struct Ft8rsApp {
     devices: Vec<SoundcardDeviceInfo>,
     selected_device: Option<String>, // device name; None = default
     input_channel: InputChannel,      // which channel of a multi-channel device to decode
+    input_peak: Option<f32>,          // last per-slot captured peak (0..1); None until first slot
 
     // Runtime.
     status: EngineStatus,
@@ -108,6 +112,11 @@ pub struct Ft8rsApp {
     pending_confirm: Option<EngineState>,
 
     settings_open: bool,
+    // Frames left to keep re-issuing a Focus command after a dialog is (re)opened,
+    // so it reliably rises to the front despite window-manager focus timing.
+    settings_focus_frames: u8,
+    about_focus_frames: u8,
+    copyright_focus_frames: u8,
     about_open: bool,
     // The (mandatory) WSJT-X copyright notice, shown in its own popup from About.
     copyright_open: bool,
@@ -204,7 +213,10 @@ impl Ft8rsApp {
             udp_in_tol: load("udp_in_tol", "7").trim().parse().unwrap_or(7.0),
             devices: Vec::new(),
             selected_device: (!device.is_empty()).then_some(device),
-            input_channel: InputChannel::parse(&load("input_channel", "left")).unwrap_or_default(),
+            // New key (v0.0.19) so v0.0.18's stored "left" doesn't override the new
+            // Mono default — Left turned out wrong for DAX and shouldn't stick.
+            input_channel: InputChannel::parse(&load("audio_channel", "mono")).unwrap_or_default(),
+            input_peak: None,
             status: EngineStatus::Idle,
             applied: None,
             rows: Vec::new(),
@@ -214,6 +226,9 @@ impl Ft8rsApp {
             dx: None,
             pending_confirm: None,
             settings_open: false,
+            settings_focus_frames: 0,
+            about_focus_frames: 0,
+            copyright_focus_frames: 0,
             about_open: false,
             copyright_open: false,
             tab: SettingsTab::Station,
@@ -362,6 +377,7 @@ impl Ft8rsApp {
             match event {
                 EngineEvent::Status(status) => self.status = status,
                 EngineEvent::DevicesRefreshed(devices) => self.devices = devices,
+                EngineEvent::InputLevel(peak) => self.input_peak = Some(peak),
                 EngineEvent::Decode(record) => self.push_decode(record),
                 EngineEvent::SlotComplete { .. } => {}
                 EngineEvent::Reconfigured(_) => {}
@@ -502,8 +518,18 @@ impl Ft8rsApp {
     fn pump_menu(&mut self) {
         while let Ok(event) = muda::MenuEvent::receiver().try_recv() {
             match event.id.0.as_str() {
-                "settings" => self.settings_open = true,
-                "about" => self.about_open = true,
+                // Re-arm the focus request on every click, not just the first: the
+                // dialog may already be open but sitting behind the main window
+                // (native menu clicks don't raise an existing viewport), so a
+                // second click must still bring it to the front.
+                "settings" => {
+                    self.settings_open = true;
+                    self.settings_focus_frames = DIALOG_FOCUS_FRAMES;
+                }
+                "about" => {
+                    self.about_open = true;
+                    self.about_focus_frames = DIALOG_FOCUS_FRAMES;
+                }
                 id => {
                     if let Some(name) = id.strip_prefix("profile:") {
                         if let Ok(profile) = DecodeProfile::parse(name) {
@@ -538,9 +564,11 @@ impl Ft8rsApp {
         ui.horizontal(|ui| {
             if ui.button("Settings").clicked() {
                 self.settings_open = true;
+                self.settings_focus_frames = DIALOG_FOCUS_FRAMES;
             }
             if ui.button("About").clicked() {
                 self.about_open = true;
+                self.about_focus_frames = DIALOG_FOCUS_FRAMES;
             }
         });
     }
@@ -799,8 +827,10 @@ impl Ft8rsApp {
                 .with_inner_size([560.0, 400.0])
                 .with_resizable(false)
                 .with_minimize_button(false)
-                .with_maximize_button(false),
+                .with_maximize_button(false)
+                .with_active(true),
             |vctx, _class| {
+                focus_dialog_viewport(vctx, &mut self.settings_focus_frames);
                 egui::Panel::left("settings_tabs")
                     .resizable(false)
                     .exact_size(150.0)
@@ -857,21 +887,17 @@ impl Ft8rsApp {
                     egui::ComboBox::from_id_salt("input_channel")
                         .width(140.0)
                         .selected_text(match self.input_channel {
+                            InputChannel::Mono => "Mono",
                             InputChannel::Left => "Left",
                             InputChannel::Right => "Right",
-                            InputChannel::Mono => "Mono (mix)",
                         })
                         .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.input_channel, InputChannel::Mono, "Mono");
                             ui.selectable_value(&mut self.input_channel, InputChannel::Left, "Left");
                             ui.selectable_value(
                                 &mut self.input_channel,
                                 InputChannel::Right,
                                 "Right",
-                            );
-                            ui.selectable_value(
-                                &mut self.input_channel,
-                                InputChannel::Mono,
-                                "Mono (mix)",
                             );
                         });
                     self.input_channel != before
@@ -884,11 +910,40 @@ impl Ft8rsApp {
                     if let Some(dev) = self.current_device_info() {
                         ui.label(
                             RichText::new(format!(
-                                "{} · {}ch / {} Hz",
-                                dev.host, dev.input.channels, dev.input.sample_rate
+                                "{} · {}ch / {} Hz / {}",
+                                dev.host,
+                                dev.input.channels,
+                                dev.input.sample_rate,
+                                dev.input.sample_format
                             ))
                             .weak(),
                         );
+                    }
+                });
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label("Input level");
+                    match self.input_peak {
+                        Some(peak) if peak > 0.0 => {
+                            let dbfs = 20.0 * peak.log10();
+                            // Green if we're clearly getting signal; red near silence
+                            // (a dead capture — e.g. a virtual driver handing back zeros).
+                            let color = if dbfs > -60.0 {
+                                Color32::from_rgb(0x16, 0xa3, 0x4a)
+                            } else {
+                                Color32::from_rgb(0xdc, 0x26, 0x26)
+                            };
+                            ui.label(RichText::new(format!("{dbfs:.1} dBFS")).color(color));
+                        }
+                        Some(_) => {
+                            ui.label(
+                                RichText::new("silent (−inf dBFS)")
+                                    .color(Color32::from_rgb(0xdc, 0x26, 0x26)),
+                            );
+                        }
+                        None => {
+                            ui.label(RichText::new("— (start monitoring)").weak());
+                        }
                     }
                 });
                 if self.input_channel == InputChannel::Mono {
@@ -1217,8 +1272,10 @@ impl Ft8rsApp {
                 .with_inner_size([440.0, 500.0])
                 .with_resizable(false)
                 .with_minimize_button(false)
-                .with_maximize_button(false),
+                .with_maximize_button(false)
+                .with_active(true),
             |vctx, _class| {
+                focus_dialog_viewport(vctx, &mut self.about_focus_frames);
                 egui::CentralPanel::default()
                     // No panel margin: the scroll area reaches the window edge so
                     // its scrollbar sits flush to the right. Content padding is
@@ -1339,6 +1396,7 @@ impl Ft8rsApp {
                                             .clicked()
                                         {
                                             self.copyright_open = true;
+                                            self.copyright_focus_frames = DIALOG_FOCUS_FRAMES;
                                         }
                                     }); // content Frame
                             }); // ScrollArea
@@ -1367,8 +1425,10 @@ impl Ft8rsApp {
                 .with_inner_size([460.0, 280.0])
                 .with_resizable(false)
                 .with_minimize_button(false)
-                .with_maximize_button(false),
+                .with_maximize_button(false)
+                .with_active(true),
             |vctx, _class| {
+                focus_dialog_viewport(vctx, &mut self.copyright_focus_frames);
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::central_panel(&vctx.global_style())
@@ -1423,7 +1483,7 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("udp_in_port", self.udp_in_port.clone());
         storage.set_string("udp_in_tol", self.udp_in_tol.to_string());
         storage.set_string("device", self.selected_device.clone().unwrap_or_default());
-        storage.set_string("input_channel", self.input_channel.as_str().to_string());
+        storage.set_string("audio_channel", self.input_channel.as_str().to_string());
     }
 
     // eframe 0.35: the root entry point is `ui` (a `&mut Ui` with no margin),
@@ -1841,6 +1901,18 @@ fn is_hash_token(token: &str) -> bool {
 
 /// Compare-mode row color: external-only = sky, local-only = rose (tailwind,
 /// lighter -300 on dark themes / darker -900 on light), both = default.
+/// Raise a dialog viewport to the front for the first few frames after it opens.
+/// One `Focus` is often dropped by the window manager (the window may not be
+/// realized yet), so we re-send it for `DIALOG_FOCUS_FRAMES` frames and pump a
+/// repaint to guarantee those frames actually run while the app is otherwise idle.
+fn focus_dialog_viewport(vctx: &egui::Context, frames: &mut u8) {
+    if *frames > 0 {
+        vctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        *frames -= 1;
+        vctx.request_repaint();
+    }
+}
+
 fn source_color(source: DecodeSource, dark: bool, default: Color32) -> Color32 {
     match source {
         DecodeSource::Both => default,

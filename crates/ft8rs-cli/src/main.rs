@@ -110,10 +110,10 @@ struct MonitorArgs {
     #[arg(short = 'i', long, help_heading = "Input")]
     device: Option<String>,
 
-    /// Which channel of a multi-channel input to decode: left (default), right, or
-    /// mono (average). Matches WSJT-X — pick left/right for FlexRadio DAX and other
+    /// Which channel of a multi-channel input to decode: mono (default, averages
+    /// L+R like WSJT-X), left, or right. Pick left/right for FlexRadio DAX and other
     /// virtual cables whose stereo channels aren't an in-phase copy.
-    #[arg(long, default_value = "left", help_heading = "Input")]
+    #[arg(long, default_value = "mono", help_heading = "Input")]
     channel: String,
 
     #[command(flatten, next_help_heading = "Decode context")]

@@ -107,6 +107,9 @@ pub enum EngineEvent {
         count: usize,
     },
     DevicesRefreshed(Vec<SoundcardDeviceInfo>),
+    /// Per-slot captured-audio peak amplitude (0.0..=1.0) so the GUI can show an
+    /// input level and the operator can tell silence (dead capture) from signal.
+    InputLevel(f32),
     DxContext(DxContextSnapshot),
     /// What a just-applied `ApplyState` actually did (level + reset/migrate buckets).
     Reconfigured(ReconfigOutcome),
