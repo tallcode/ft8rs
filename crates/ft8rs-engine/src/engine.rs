@@ -22,9 +22,8 @@ use std::sync::mpsc::{
     self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError, TrySendError,
 };
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use ft8rs::input::audio::downsample_12k;
 #[cfg(test)]
 use ft8rs::input::audio::resample_linear;
 use ft8rs::stream::profile::{ProfileSlotState, ProfileStreamDecodeSession};
@@ -41,8 +40,7 @@ use crate::protocol::{
 use crate::reconfig::{plan_reconfig, EngineState, StateBucket};
 use crate::report::{UdpConfig, UdpOutput};
 use crate::soundcard::{
-    drain_pending_audio, list_soundcards, native_samples_for_nzhsym, next_slot_start_unix_seconds,
-    now_unix_millis, peak_level, start_input_stream, wall_clock_slot_index, InputChannel,
+    list_soundcards, start_input_stream, InputChannel, PeriodAccumulator, SlotStage,
 };
 
 // Only the test helpers reference this now; production goes through
@@ -136,15 +134,6 @@ enum MonitorExit {
     Shutdown,
 }
 
-#[derive(Clone, Copy)]
-enum Flow {
-    Ready,
-    Stop,
-    Shutdown,
-    /// The capture stream died (device unplugged / timed out): try to reconnect.
-    CaptureLost,
-}
-
 fn run_monitor(
     cmd_rx: &Receiver<EngineCommand>,
     event_tx: &SyncSender<EngineEvent>,
@@ -152,47 +141,29 @@ fn run_monitor(
 ) -> MonitorExit {
     let mut udp = build_udp(state.udp.as_ref(), event_tx);
 
-    let (mut stream, mut rx, mut sample_rate) = match start_input_stream(
-        state.device.as_deref(),
-        state.channel,
-    ) {
-        Ok(parts) => parts,
-        Err(err) => {
-            let _ = event_tx.try_send(EngineEvent::Error(err));
-            return MonitorExit::Stopped;
-        }
-    };
+    let (mut stream, mut rx, mut sample_rate) =
+        match start_input_stream(state.device.as_deref(), state.channel) {
+            Ok(parts) => parts,
+            Err(err) => {
+                let _ = event_tx.try_send(EngineEvent::Error(err));
+                return MonitorExit::Stopped;
+            }
+        };
 
     let (dec_cmd_tx, dec_evt_rx) = spawn_decode_actor(effective_config(&state.config));
 
+    // WSJT-X-style capture alignment: no sleep-to-boundary or drain. The
+    // accumulator grids every captured block onto the UTC 15 s slot by its capture
+    // timestamp (splitting the straddling block at the exact sample), so the decode
+    // window no longer jitters by a whole driver block on high-latency / bursty
+    // virtual drivers like FlexRadio DAX.
+    let mut acc = PeriodAccumulator::new(sample_rate);
     let mut pending: Option<EngineState> = None;
-    let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Aligning));
-    let mut slot_start = match align(cmd_rx, event_tx, &mut pending) {
-        AlignResult::Ready(start) => start,
-        AlignResult::Stop => return teardown(dec_cmd_tx, stream),
-        AlignResult::Shutdown => {
-            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-            drop(stream);
-            return MonitorExit::Shutdown;
-        }
-    };
-    drain_pending_audio(&rx);
-    let mut carry: Vec<f32> = Vec::new();
+    let mut last_audio = Instant::now();
     let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
 
-    'monitor: loop {
-        // Re-lock this slot's window start to the true UTC boundary (see
-        // `wall_clock_slot_index`): counting `sample_rate * 15` samples per slot
-        // lets soundcard drift / clock steps slide the decode window against real
-        // transmissions until decodes are silently lost over long runs.
-        let boundary = match now_unix_millis() {
-            Ok(now_ms) => slot_start + wall_clock_slot_index(slot_start, now_ms).max(0) * 15,
-            Err(err) => {
-                let _ = event_tx.try_send(EngineEvent::Error(err));
-                return teardown(dec_cmd_tx, stream);
-            }
-        };
-        match wait_until_boundary(cmd_rx, event_tx, &mut pending, boundary) {
+    loop {
+        match drain_commands(cmd_rx, event_tx, &mut pending) {
             CmdFlow::Continue => {}
             CmdFlow::Stop => return teardown(dec_cmd_tx, stream),
             CmdFlow::Shutdown => {
@@ -201,173 +172,131 @@ fn run_monitor(
                 return MonitorExit::Shutdown;
             }
         }
-        drain_pending_audio(&rx);
-        carry.clear();
-
-        let timestamp = SlotTimestamp::from_unix_seconds_utc(boundary);
-        let deadline = Instant::now() + Duration::from_secs(SLOT_SECONDS + 8);
-        let mut native: Vec<f32> = Vec::new();
-        // Set when the decode actor's bounded queue is full: shed the rest of this
-        // slot's stages instead of blocking capture or growing the backlog.
-        let mut slot_overrun = false;
-
-        for (nzhsym, stage) in [(41, Stage::N41), (47, Stage::N47), (50, Stage::N50)] {
-            let target = if nzhsym == 50 {
-                sample_rate as usize * SLOT_SECONDS as usize
-            } else {
-                native_samples_for_nzhsym(sample_rate, nzhsym)
-            };
-            match pump_until(
-                &rx,
-                &mut carry,
-                &mut native,
-                target,
-                deadline,
-                cmd_rx,
-                &dec_evt_rx,
-                event_tx,
-                &mut udp,
-                &mut pending,
-            ) {
-                Flow::Ready => {}
-                Flow::Stop => return teardown(dec_cmd_tx, stream),
-                Flow::Shutdown => {
-                    let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-                    drop(stream);
-                    return MonitorExit::Shutdown;
-                }
-                Flow::CaptureLost => {
-                    drop(stream);
-                    match reconnect_capture(
-                        cmd_rx,
-                        event_tx,
-                        state.device.as_deref(),
-                        state.channel,
-                        &mut pending,
-                    ) {
-                        Reconnect::Ok(parts) => {
-                            stream = parts.0;
-                            rx = parts.1;
-                            sample_rate = parts.2;
-                            let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Aligning));
-                            slot_start = match align(cmd_rx, event_tx, &mut pending) {
-                                AlignResult::Ready(start) => start,
-                                AlignResult::Stop => return teardown(dec_cmd_tx, stream),
-                                AlignResult::Shutdown => {
-                                    let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-                                    drop(stream);
-                                    return MonitorExit::Shutdown;
-                                }
-                            };
-                            drain_pending_audio(&rx);
-                            carry.clear();
-                            let _ =
-                                event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
-                            continue 'monitor;
-                        }
-                        Reconnect::Stop => {
-                            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-                            return MonitorExit::Stopped;
-                        }
-                        Reconnect::Shutdown => {
-                            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-                            return MonitorExit::Shutdown;
-                        }
-                        Reconnect::Failed => {
-                            let _ = event_tx.try_send(EngineEvent::Error(
-                                "audio device unavailable; monitoring stopped".to_string(),
-                            ));
-                            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-                            return MonitorExit::Stopped;
-                        }
-                    }
-                }
-            }
-            if slot_overrun {
-                // Still pumped the audio above (keeps capture real-time); just
-                // don't enqueue more work for the fallen-behind decoder.
-                continue;
-            }
-            let samples_12k = downsample_12k(&native, sample_rate);
-            match dec_cmd_tx.try_send(DecodeCmd::Stage {
-                stage,
-                timestamp: timestamp.clone(),
-                samples_12k,
-            }) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) => {
-                    slot_overrun = true;
-                    let _ = event_tx.try_send(EngineEvent::Error(format!(
-                        "decode falling behind real time; dropping slot {timestamp}"
-                    )));
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    drop(stream);
-                    return MonitorExit::Stopped;
-                }
-            }
-        }
-
-        // `native` holds the whole slot now (it's pumped even on overrun). Report
-        // its peak so the GUI can show an input level: a dead capture (silent
-        // virtual driver) shows ~-inf here even while "monitoring".
-        let _ = event_tx.try_send(EngineEvent::InputLevel(peak_level(&native)));
-
         forward_decode_events(&dec_evt_rx, event_tx, &mut udp);
 
-        // Apply a queued reconfiguration at the slot boundary.
-        if let Some(mut new_state) = pending.take() {
-            let mut outcome = plan_reconfig(&state, &new_state);
-            if outcome.rebuild_output {
-                udp = build_udp(new_state.udp.as_ref(), event_tx);
-            }
-            if outcome.rebuild_session {
-                let _ = dec_cmd_tx.send(DecodeCmd::Reconfigure {
-                    config: effective_config(&new_state.config),
-                    reset_dx_target: outcome.reset.contains(&StateBucket::DxTarget),
-                    reset_dx_operator: outcome.reset.contains(&StateBucket::DxOperator),
-                });
-            }
-            if outcome.restart_capture {
-                // Open the new device *before* dropping the working one: if it
-                // can't open (busy / unplugged / unsupported format) keep the
-                // current capture and session running instead of tearing the
-                // whole monitor session down.
-                match start_input_stream(new_state.device.as_deref(), new_state.channel) {
-                    Ok((new_stream, new_rx, new_rate)) => {
-                        drop(stream);
-                        stream = new_stream;
-                        rx = new_rx;
-                        sample_rate = new_rate;
-                        let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Aligning));
-                        slot_start = match align(cmd_rx, event_tx, &mut pending) {
-                            AlignResult::Ready(start) => start,
-                            AlignResult::Stop => return teardown(dec_cmd_tx, stream),
-                            AlignResult::Shutdown => {
-                                let _ = dec_cmd_tx.send(DecodeCmd::Stop);
-                                drop(stream);
-                                return MonitorExit::Shutdown;
-                            }
-                        };
-                        drain_pending_audio(&rx);
-                        carry.clear();
-                        let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
-                    }
-                    Err(err) => {
-                        let _ = event_tx.try_send(EngineEvent::Error(format!(
-                            "device switch failed, keeping current input: {err}"
-                        )));
-                        // Stay on the current device/channel and report no restart.
-                        new_state.device = state.device.clone();
-                        new_state.channel = state.channel;
-                        outcome.restart_capture = false;
-                        outcome.reset.remove(&StateBucket::Capture);
+        match rx.recv_timeout(POLL) {
+            Ok((chunk, capture_ms)) => {
+                last_audio = Instant::now();
+                let out = acc.push(&chunk, capture_ms);
+                for (stage, timestamp, samples_12k) in out.stages {
+                    // Wait for decode-queue space rather than dropping the slot (the
+                    // old shedding could drop *every* slot on DAX). Command handling
+                    // stays responsive while waiting; capture buffers in the channel.
+                    match send_stage(
+                        &dec_cmd_tx,
+                        DecodeCmd::Stage {
+                            stage,
+                            timestamp,
+                            samples_12k,
+                        },
+                        cmd_rx,
+                        &dec_evt_rx,
+                        event_tx,
+                        &mut udp,
+                        &mut pending,
+                    ) {
+                        StageSend::Sent => {}
+                        StageSend::Stop => return teardown(dec_cmd_tx, stream),
+                        StageSend::Shutdown => {
+                            let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                            drop(stream);
+                            return MonitorExit::Shutdown;
+                        }
+                        StageSend::ActorGone => {
+                            drop(stream);
+                            return MonitorExit::Stopped;
+                        }
                     }
                 }
+                if let Some((_ts, peak)) = out.completed {
+                    // Input level for the GUI (silence vs signal), and the natural
+                    // point to apply a queued reconfiguration.
+                    let _ = event_tx.try_send(EngineEvent::InputLevel(peak));
+                    if let Some(mut new_state) = pending.take() {
+                        let mut outcome = plan_reconfig(&state, &new_state);
+                        if outcome.rebuild_output {
+                            udp = build_udp(new_state.udp.as_ref(), event_tx);
+                        }
+                        if outcome.rebuild_session {
+                            let _ = dec_cmd_tx.send(DecodeCmd::Reconfigure {
+                                config: effective_config(&new_state.config),
+                                reset_dx_target: outcome.reset.contains(&StateBucket::DxTarget),
+                                reset_dx_operator: outcome.reset.contains(&StateBucket::DxOperator),
+                            });
+                        }
+                        if outcome.restart_capture {
+                            // Open the new device *before* dropping the working one, so
+                            // a failed switch keeps the current capture running.
+                            match start_input_stream(new_state.device.as_deref(), new_state.channel)
+                            {
+                                Ok((new_stream, new_rx, new_rate)) => {
+                                    drop(stream);
+                                    stream = new_stream;
+                                    rx = new_rx;
+                                    sample_rate = new_rate;
+                                    acc = PeriodAccumulator::new(sample_rate);
+                                    last_audio = Instant::now();
+                                }
+                                Err(err) => {
+                                    let _ = event_tx.try_send(EngineEvent::Error(format!(
+                                        "device switch failed, keeping current input: {err}"
+                                    )));
+                                    new_state.device = state.device.clone();
+                                    new_state.channel = state.channel;
+                                    outcome.restart_capture = false;
+                                    outcome.reset.remove(&StateBucket::Capture);
+                                }
+                            }
+                        }
+                        let _ = event_tx.try_send(EngineEvent::Reconfigured(outcome));
+                        state = new_state;
+                    }
+                }
+                continue;
             }
-            let _ = event_tx.try_send(EngineEvent::Reconfigured(outcome));
-            state = new_state;
-            continue;
+            Err(RecvTimeoutError::Timeout) => {
+                // A live device keeps delivering; a slot-plus of silence means the
+                // capture died (unplugged / a virtual driver that stopped) — fall
+                // through to reconnect. Otherwise just poll again.
+                if last_audio.elapsed() < Duration::from_secs(SLOT_SECONDS + 8) {
+                    continue;
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {} // stream died → reconnect
+        }
+
+        // Capture lost: reopen and re-arm the accumulator (it self-aligns).
+        drop(stream);
+        match reconnect_capture(
+            cmd_rx,
+            event_tx,
+            state.device.as_deref(),
+            state.channel,
+            &mut pending,
+        ) {
+            Reconnect::Ok((new_stream, new_rx, new_rate)) => {
+                stream = new_stream;
+                rx = new_rx;
+                sample_rate = new_rate;
+                acc = PeriodAccumulator::new(sample_rate);
+                last_audio = Instant::now();
+                let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
+            }
+            Reconnect::Stop => {
+                let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                return MonitorExit::Stopped;
+            }
+            Reconnect::Shutdown => {
+                let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                return MonitorExit::Shutdown;
+            }
+            Reconnect::Failed => {
+                let _ = event_tx.try_send(EngineEvent::Error(
+                    "audio device unavailable; monitoring stopped".to_string(),
+                ));
+                let _ = dec_cmd_tx.send(DecodeCmd::Stop);
+                return MonitorExit::Stopped;
+            }
         }
     }
 }
@@ -378,14 +307,8 @@ fn teardown(dec_cmd_tx: SyncSender<DecodeCmd>, stream: cpal::Stream) -> MonitorE
     MonitorExit::Stopped
 }
 
-enum AlignResult {
-    Ready(i64),
-    Stop,
-    Shutdown,
-}
-
 enum Reconnect {
-    Ok((cpal::Stream, Receiver<Vec<f32>>, u32)),
+    Ok((cpal::Stream, Receiver<(Vec<f32>, i64)>, u32)),
     Stop,
     Shutdown,
     Failed,
@@ -420,88 +343,48 @@ fn reconnect_capture(
     Reconnect::Failed
 }
 
-/// Sleep (interruptibly) until a specific unix-second boundary, polling commands
-/// so Stop/Shutdown stay responsive. Returns immediately if the boundary is
-/// already in the past (slow device / decode lag). Used to re-lock each slot's
-/// window to UTC without dropping whole slots in steady state.
-fn wait_until_boundary(
-    cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &SyncSender<EngineEvent>,
-    pending: &mut Option<EngineState>,
-    boundary_secs: i64,
-) -> CmdFlow {
-    let target = UNIX_EPOCH + Duration::from_secs(boundary_secs.max(0) as u64);
-    while let Ok(remaining) = target.duration_since(SystemTime::now()) {
-        match drain_commands(cmd_rx, event_tx, pending) {
-            CmdFlow::Continue => {}
-            other => return other,
-        }
-        thread::sleep(remaining.min(POLL));
-    }
-    CmdFlow::Continue
+/// Outcome of handing a staged decode command to the actor.
+enum StageSend {
+    Sent,
+    Stop,
+    Shutdown,
+    /// The decode actor thread is gone (channel disconnected).
+    ActorGone,
 }
 
-/// Sleep (interruptibly) until the next UTC slot boundary, returning its unix
-/// second. Polls the command channel so Stop/Shutdown stay responsive.
-fn align(
-    cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &SyncSender<EngineEvent>,
-    pending: &mut Option<EngineState>,
-) -> AlignResult {
-    let start = match next_slot_start_unix_seconds() {
-        Ok(start) => start,
-        Err(err) => {
-            let _ = event_tx.try_send(EngineEvent::Error(err));
-            return AlignResult::Stop;
-        }
-    };
-    let target = UNIX_EPOCH + Duration::from_secs(start as u64);
-    while let Ok(remaining) = target.duration_since(SystemTime::now()) {
-        match drain_commands(cmd_rx, event_tx, pending) {
-            CmdFlow::Continue => {}
-            CmdFlow::Stop => return AlignResult::Stop,
-            CmdFlow::Shutdown => return AlignResult::Shutdown,
-        }
-        thread::sleep(remaining.min(POLL));
-    }
-    AlignResult::Ready(start)
-}
-
+/// Enqueue a decode stage, waiting for queue space if the actor is momentarily
+/// behind rather than dropping the slot. While waiting it keeps forwarding decode
+/// events and processing control commands, so Stop/Shutdown/reconfig stay
+/// responsive and the GUI keeps updating. Capture audio keeps buffering in the
+/// cpal channel meanwhile and is re-synced at the next slot boundary's drain, so
+/// the backlog can't grow without bound.
 #[allow(clippy::too_many_arguments)]
-fn pump_until(
-    rx: &Receiver<Vec<f32>>,
-    carry: &mut Vec<f32>,
-    out: &mut Vec<f32>,
-    target_len: usize,
-    deadline: Instant,
+fn send_stage(
+    dec_cmd_tx: &SyncSender<DecodeCmd>,
+    cmd: DecodeCmd,
     cmd_rx: &Receiver<EngineCommand>,
     dec_evt_rx: &Receiver<EngineEvent>,
     event_tx: &SyncSender<EngineEvent>,
     udp: &mut Option<UdpOutput>,
     pending: &mut Option<EngineState>,
-) -> Flow {
-    take_from_carry(carry, out, target_len);
-    while out.len() < target_len {
-        forward_decode_events(dec_evt_rx, event_tx, udp);
-        match drain_commands(cmd_rx, event_tx, pending) {
-            CmdFlow::Continue => {}
-            CmdFlow::Stop => return Flow::Stop,
-            CmdFlow::Shutdown => return Flow::Shutdown,
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            // No audio for a whole slot+: treat the capture as lost and reconnect.
-            return Flow::CaptureLost;
-        }
-        let timeout = deadline.saturating_duration_since(now).min(POLL);
-        match rx.recv_timeout(timeout) {
-            Ok(chunk) => append_with_carry(out, carry, target_len, chunk),
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return Flow::CaptureLost,
+) -> StageSend {
+    let mut cmd = cmd;
+    loop {
+        match dec_cmd_tx.try_send(cmd) {
+            Ok(()) => return StageSend::Sent,
+            Err(TrySendError::Disconnected(_)) => return StageSend::ActorGone,
+            Err(TrySendError::Full(returned)) => {
+                cmd = returned;
+                forward_decode_events(dec_evt_rx, event_tx, udp);
+                match drain_commands(cmd_rx, event_tx, pending) {
+                    CmdFlow::Continue => {}
+                    CmdFlow::Stop => return StageSend::Stop,
+                    CmdFlow::Shutdown => return StageSend::Shutdown,
+                }
+                thread::sleep(POLL);
+            }
         }
     }
-    forward_decode_events(dec_evt_rx, event_tx, udp);
-    Flow::Ready
 }
 
 enum CmdFlow {
@@ -579,42 +462,11 @@ fn effective_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
     config
 }
 
-fn take_from_carry(carry: &mut Vec<f32>, out: &mut Vec<f32>, target_len: usize) {
-    if carry.is_empty() || out.len() >= target_len {
-        return;
-    }
-    let needed = target_len - out.len();
-    if carry.len() <= needed {
-        out.extend_from_slice(carry);
-        carry.clear();
-    } else {
-        out.extend_from_slice(&carry[..needed]);
-        carry.drain(..needed);
-    }
-}
-
-fn append_with_carry(out: &mut Vec<f32>, carry: &mut Vec<f32>, target_len: usize, chunk: Vec<f32>) {
-    let remaining = target_len - out.len();
-    if chunk.len() <= remaining {
-        out.extend_from_slice(&chunk);
-    } else {
-        out.extend_from_slice(&chunk[..remaining]);
-        carry.extend_from_slice(&chunk[remaining..]);
-    }
-}
-
 // ── Decode actor ────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy)]
-enum Stage {
-    N41,
-    N47,
-    N50,
-}
 
 enum DecodeCmd {
     Stage {
-        stage: Stage,
+        stage: SlotStage,
         timestamp: SlotTimestamp,
         samples_12k: Vec<f32>,
     },
@@ -751,7 +603,7 @@ fn decode_actor(
                 timestamp,
                 samples_12k,
             } => match (&mut session, stage) {
-                (DecodeSession::Wsjtx(s), Stage::N41) => {
+                (DecodeSession::Wsjtx(s), SlotStage::N41) => {
                     let mut state = s.start_slot_decode();
                     match s.decode_slot_nzhsym41_with_provenance_at(
                         Some(&timestamp),
@@ -769,12 +621,12 @@ fn decode_actor(
                         }
                     }
                 }
-                (DecodeSession::Wsjtx(s), Stage::N47) => {
+                (DecodeSession::Wsjtx(s), SlotStage::N47) => {
                     if let Some((state, _)) = slot_state.as_mut() {
                         s.subtract_slot_nzhsym47(state, &samples_12k);
                     }
                 }
-                (DecodeSession::Wsjtx(s), Stage::N50) => {
+                (DecodeSession::Wsjtx(s), SlotStage::N50) => {
                     if let Some((state, early_count)) = slot_state.take() {
                         match s.decode_slot_nzhsym50_and_finish_with_provenance(state, &samples_12k)
                         {
@@ -793,7 +645,7 @@ fn decode_actor(
                         }
                     }
                 }
-                (DecodeSession::Profile(p), Stage::N41) => {
+                (DecodeSession::Profile(p), SlotStage::N41) => {
                     // Hybrid streams early WSJT-X rows here (before the slot
                     // boundary); jtdx/dx are no-ops that just open a stateless slot.
                     let mut state = p.start_slot();
@@ -812,12 +664,12 @@ fn decode_actor(
                         }
                     }
                 }
-                (DecodeSession::Profile(p), Stage::N47) => {
+                (DecodeSession::Profile(p), SlotStage::N47) => {
                     if let Some((state, _)) = profile_slot.as_mut() {
                         p.subtract_slot_nzhsym47(state, &samples_12k);
                     }
                 }
-                (DecodeSession::Profile(p), Stage::N50) => {
+                (DecodeSession::Profile(p), SlotStage::N50) => {
                     // Finish the slot: hybrid emits the remaining WSJT-X rows then
                     // JTDX-unique rows; jtdx/dx run their full decode here.
                     if let Some((state, early_count)) = profile_slot.take() {
@@ -873,7 +725,7 @@ mod tests {
 
     fn feed_slot(cmd_tx: &SyncSender<DecodeCmd>, ts: &SlotTimestamp, s12k: &[f32]) {
         let slice = |n: usize| s12k[..(n * NZHSYM_STRIDE).min(s12k.len())].to_vec();
-        for (n, stage) in [(41, Stage::N41), (47, Stage::N47), (50, Stage::N50)] {
+        for (n, stage) in [(41, SlotStage::N41), (47, SlotStage::N47), (50, SlotStage::N50)] {
             let samples = if n == 50 { s12k.to_vec() } else { slice(n) };
             cmd_tx
                 .send(DecodeCmd::Stage {

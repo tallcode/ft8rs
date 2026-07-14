@@ -13,7 +13,6 @@ pub mod soundcard;
 pub use engine::EngineHandle;
 
 pub use soundcard::{
-    decode_soundcard_streaming, decode_soundcard_streaming_decodes, list_soundcards,
-    open_soundcard_stream, InputChannel, SoundcardDecodeOptions, SoundcardDeviceInfo,
-    SoundcardFormatInfo,
+    decode_soundcard_streaming_decodes, list_soundcards, InputChannel, SoundcardDecodeOptions,
+    SoundcardDeviceInfo, SoundcardFormatInfo,
 };
