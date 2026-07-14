@@ -97,6 +97,10 @@ pub struct Ft8rsApp {
     selected_device: Option<String>, // device name; None = default
     input_channel: InputChannel,      // which channel of a multi-channel device to decode
     input_peak: Option<f32>,          // last per-slot captured peak (0..1); None until first slot
+    // Last slot's capture diagnostics (samples, blocks, avg_block, jitter_ms) and
+    // decode count — an at-a-glance readout for locating capture/alignment issues.
+    capture_diag: Option<(usize, u32, u32, i64)>,
+    last_slot_decodes: Option<usize>,
 
     // Runtime.
     status: EngineStatus,
@@ -217,6 +221,8 @@ impl Ft8rsApp {
             // Mono default — Left turned out wrong for DAX and shouldn't stick.
             input_channel: InputChannel::parse(&load("audio_channel", "mono")).unwrap_or_default(),
             input_peak: None,
+            capture_diag: None,
+            last_slot_decodes: None,
             status: EngineStatus::Idle,
             applied: None,
             rows: Vec::new(),
@@ -378,8 +384,14 @@ impl Ft8rsApp {
                 EngineEvent::Status(status) => self.status = status,
                 EngineEvent::DevicesRefreshed(devices) => self.devices = devices,
                 EngineEvent::InputLevel(peak) => self.input_peak = Some(peak),
+                EngineEvent::CaptureDiag {
+                    samples,
+                    blocks,
+                    avg_block,
+                    jitter_ms,
+                } => self.capture_diag = Some((samples, blocks, avg_block, jitter_ms)),
                 EngineEvent::Decode(record) => self.push_decode(record),
-                EngineEvent::SlotComplete { .. } => {}
+                EngineEvent::SlotComplete { count, .. } => self.last_slot_decodes = Some(count),
                 EngineEvent::Reconfigured(_) => {}
                 EngineEvent::DxContext(snapshot) => self.dx = Some(snapshot),
                 EngineEvent::Error(err) => self.error = Some(err),
@@ -946,6 +958,40 @@ impl Ft8rsApp {
                         }
                     }
                 });
+                // Per-slot capture diagnostics: window length (should be ~14–15 s),
+                // driver block size/count, arrival jitter (large ⇒ unreliable capture
+                // timestamps), and decodes in the last slot. One live run locates most
+                // capture/alignment issues.
+                if let Some((samples, blocks, avg_block, jitter_ms)) = self.capture_diag {
+                    ui.add_space(2.0);
+                    let secs = samples as f64
+                        / self
+                            .current_device_info()
+                            .map(|d| d.input.sample_rate as f64)
+                            .unwrap_or(48_000.0);
+                    let decodes = self
+                        .last_slot_decodes
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "—".to_string());
+                    // Flag jitter that would smear a timestamp-precise window.
+                    let jitter_color = if jitter_ms >= 100 {
+                        Color32::from_rgb(0xdc, 0x26, 0x26)
+                    } else {
+                        ui.visuals().weak_text_color()
+                    };
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "slot: {secs:.1}s / {samples} smp · {blocks} blk (~{avg_block} smp) · "
+                            ))
+                            .weak(),
+                        );
+                        ui.label(
+                            RichText::new(format!("jitter {jitter_ms} ms")).color(jitter_color),
+                        );
+                        ui.label(RichText::new(format!(" · {decodes} dec")).weak());
+                    });
+                }
                 if self.input_channel == InputChannel::Mono {
                     ui.add_space(4.0);
                     ui.label(

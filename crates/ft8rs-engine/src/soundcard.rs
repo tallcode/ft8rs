@@ -29,12 +29,25 @@ pub(crate) enum SlotStage {
     N50,
 }
 
+/// Diagnostics for one just-completed slot — surfaced to the GUI so a single live
+/// test reveals how the driver actually delivers audio (block size / count), how
+/// full and well-timed the decode window is, and whether the block *arrival* times
+/// (`capture_ms`) are smooth or jittery. High `max_jitter_ms` on a driver that
+/// still decodes elsewhere is the tell that capture-timestamps are unreliable.
+pub(crate) struct SlotDiag {
+    pub peak: f32,
+    pub samples: usize, // native samples in the slot's decode window
+    pub blocks: u32,    // capture callbacks that fed this slot
+    pub avg_block: u32, // mean block size in samples
+    pub max_jitter_ms: i64, // worst deviation of block arrival from smooth real-time
+}
+
 /// What a `PeriodAccumulator::push` produced: staged 12 kHz windows to hand the
-/// decoder (in order), and, when a slot just finished, its timestamp + peak level.
+/// decoder (in order), and, when a slot just finished, its diagnostics.
 #[derive(Default)]
 pub(crate) struct AccOutput {
     pub stages: Vec<(SlotStage, SlotTimestamp, Vec<f32>)>,
-    pub completed: Option<(SlotTimestamp, f32)>,
+    pub completed: Option<SlotDiag>,
 }
 
 /// WSJT-X-style capture alignment. Instead of sleeping to the boundary, draining,
@@ -51,6 +64,10 @@ pub(crate) struct PeriodAccumulator {
     native: Vec<f32>,      // native-rate samples accumulated for the current slot
     stage: u8,             // 0 none, 1 N41 fired, 2 N47 fired, 3 N50 fired
     peak: f32,             // running peak amplitude of the current slot
+    // Per-slot capture diagnostics.
+    blocks: u32,
+    slot_t0_ms: Option<i64>, // delivery time just before the slot's first sample
+    max_jitter_ms: i64,
 }
 
 impl PeriodAccumulator {
@@ -61,45 +78,54 @@ impl PeriodAccumulator {
             native: Vec::new(),
             stage: 0,
             peak: 0.0,
+            blocks: 0,
+            slot_t0_ms: None,
+            max_jitter_ms: 0,
         }
     }
 
     /// Feed one captured block. Returns any staged windows now ready plus (once
     /// per slot) the completed-slot marker.
+    ///
+    /// Attributes the *whole* block to the UTC slot of its capture time and
+    /// appends its samples by count — exactly like WSJT-X, whose `writeData` keys a
+    /// once-per-block wall-clock check to decide only *whether* it crossed the slot
+    /// boundary (resetting `kin`), and otherwise packs samples densely by index. It
+    /// never uses a per-block timestamp to position individual samples. That coarse
+    /// decision tolerates block-delivery-time jitter (as on cpal's WASAPI capture);
+    /// a finer sub-sample split does not, and smears the window on jittery drivers.
     pub(crate) fn push(&mut self, chunk: &[f32], capture_ms: i64) -> AccOutput {
         let mut out = AccOutput::default();
         if chunk.is_empty() {
             return out;
         }
-        let n = chunk.len();
+        let slot = capture_ms.div_euclid(SLOT_MS) * SLOT_SECONDS as i64;
+        match self.boundary {
+            None => self.boundary = Some(slot),
+            Some(b) if slot > b => {
+                // Crossed into a new slot: finish the old one, start fresh.
+                self.finalize(&mut out);
+                self.reset(slot);
+            }
+            // Clock stepped back into an already-finished slot: ignore this block.
+            Some(b) if slot < b => return out,
+            _ => {}
+        }
+        // Capture diagnostics: measure how far this block's arrival time deviates
+        // from smooth real-time delivery (t0 + samples/rate). Small = clean timing;
+        // large = bursty/jittery driver, i.e. `capture_ms` can't be trusted for fine
+        // sample placement (the reason we grid whole blocks, not sub-samples).
+        let n = chunk.len() as i64;
         let rate = self.sample_rate as i64;
-        if self.boundary.is_none() {
-            // Anchor to the slot containing the block's *first* sample.
-            let first_ms = capture_ms - (n as i64 - 1) * 1000 / rate;
-            self.boundary = Some(first_ms.div_euclid(SLOT_MS) * SLOT_SECONDS as i64);
-        }
-
-        let mut start = 0usize;
-        loop {
-            let b = self.boundary.unwrap();
-            let b_next_ms = (b + SLOT_SECONDS as i64) * 1000;
-            // Number of trailing samples of the block at/after the next boundary:
-            // sample j is at capture_ms-(n-1-j)*1000/rate, so j>=b_next when
-            // n-1-j <= (capture_ms-b_next_ms)*rate/1000.
-            let k = (capture_ms - b_next_ms) * rate / 1000;
-            let after = (k + 1).clamp(0, n as i64) as usize;
-            let split = (n - after).max(start);
-            if split > start {
-                self.append(&chunk[start..split], &mut out);
+        self.blocks += 1;
+        match self.slot_t0_ms {
+            None => self.slot_t0_ms = Some(capture_ms - n * 1000 / rate),
+            Some(t0) => {
+                let expected = t0 + (self.native.len() as i64 + n) * 1000 / rate;
+                self.max_jitter_ms = self.max_jitter_ms.max((capture_ms - expected).abs());
             }
-            if split >= n {
-                break;
-            }
-            // Remaining samples belong to a later slot: finish this one and advance.
-            self.finalize(&mut out);
-            self.reset(b + SLOT_SECONDS as i64);
-            start = split;
         }
+        self.append(chunk, &mut out);
         out
     }
 
@@ -144,7 +170,13 @@ impl PeriodAccumulator {
                 .push((SlotStage::N50, ts.clone(), downsample_12k(&self.native, self.sample_rate)));
             self.stage = 3;
         }
-        out.completed = Some((ts, self.peak));
+        out.completed = Some(SlotDiag {
+            peak: self.peak,
+            samples: self.native.len(),
+            blocks: self.blocks,
+            avg_block: self.native.len() as u32 / self.blocks.max(1),
+            max_jitter_ms: self.max_jitter_ms,
+        });
     }
 
     fn reset(&mut self, boundary: i64) {
@@ -152,6 +184,9 @@ impl PeriodAccumulator {
         self.native.clear();
         self.stage = 0;
         self.peak = 0.0;
+        self.blocks = 0;
+        self.slot_t0_ms = None;
+        self.max_jitter_ms = 0;
     }
 
     fn ts(&self) -> SlotTimestamp {
@@ -852,17 +887,18 @@ mod tests {
             let capture_ms = start_ms + ((c as i64 + 1) * chunk_len as i64 * 1000) / SR as i64;
             let out = acc.push(&block, capture_ms);
             for (st, ts, s) in out.stages {
+                // A slot finishes when its N50 window is emitted.
+                if st == SlotStage::N50 {
+                    done.push(ts.clone());
+                }
                 stages.push((st, ts, s.len()));
-            }
-            if let Some((ts, _peak)) = out.completed {
-                done.push(ts);
             }
         }
         (stages, done)
     }
 
     #[test]
-    fn full_slot_emits_all_three_stages_with_full_window() {
+    fn full_slot_emits_all_three_stages_with_near_full_window() {
         const B: i64 = 1_700_000_010; // a multiple of 15
         let mut acc = PeriodAccumulator::new(SR);
         // 32 half-second blocks = 16 s, so slot B fills and the next one begins.
@@ -873,16 +909,17 @@ mod tests {
         let ts_b = SlotTimestamp::from_unix_seconds_utc(B);
         assert!(stages.iter().all(|(_, ts, _)| *ts == ts_b));
         assert_eq!(done, vec![ts_b]);
-        // N50 window must be ~a full 15 s slot (no tail lost to the straddling block).
+        // N50 window covers the slot up to the block that crossed the boundary — at
+        // least the ~14.4 s (172 800 @ 12 kHz) the decoder consumes.
         let (_, _, n50_len) = *stages.last().unwrap();
         assert!(
-            n50_len >= 179_000 && n50_len <= 180_000,
-            "N50 window should be a full slot, got {n50_len}"
+            (172_800..=180_000).contains(&n50_len),
+            "N50 window should be a near-full slot, got {n50_len}"
         );
     }
 
     #[test]
-    fn straddling_block_splits_so_next_slot_starts_at_its_boundary() {
+    fn each_whole_block_grids_to_its_slot_and_both_decode() {
         const B: i64 = 1_700_000_010;
         let mut acc = PeriodAccumulator::new(SR);
         // Run through slot B and well into slot B+15 so both finalize.
