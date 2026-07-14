@@ -208,10 +208,16 @@ fn run_monitor(
                         }
                     }
                 }
-                if let Some((_ts, peak)) = out.completed {
-                    // Input level for the GUI (silence vs signal), and the natural
+                if let Some(diag) = out.completed {
+                    // Input level + capture diagnostics for the GUI, and the natural
                     // point to apply a queued reconfiguration.
-                    let _ = event_tx.try_send(EngineEvent::InputLevel(peak));
+                    let _ = event_tx.try_send(EngineEvent::InputLevel(diag.peak));
+                    let _ = event_tx.try_send(EngineEvent::CaptureDiag {
+                        samples: diag.samples,
+                        blocks: diag.blocks,
+                        avg_block: diag.avg_block,
+                        jitter_ms: diag.max_jitter_ms,
+                    });
                     if let Some(mut new_state) = pending.take() {
                         let mut outcome = plan_reconfig(&state, &new_state);
                         if outcome.rebuild_output {

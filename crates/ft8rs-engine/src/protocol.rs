@@ -110,6 +110,14 @@ pub enum EngineEvent {
     /// Per-slot captured-audio peak amplitude (0.0..=1.0) so the GUI can show an
     /// input level and the operator can tell silence (dead capture) from signal.
     InputLevel(f32),
+    /// Per-slot capture diagnostics (window length, driver block size/count, and
+    /// arrival-time jitter) for locating capture/alignment problems from one live run.
+    CaptureDiag {
+        samples: usize,
+        blocks: u32,
+        avg_block: u32,
+        jitter_ms: i64,
+    },
     DxContext(DxContextSnapshot),
     /// What a just-applied `ApplyState` actually did (level + reset/migrate buckets).
     Reconfigured(ReconfigOutcome),
