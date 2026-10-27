@@ -1,25 +1,19 @@
-//! DX chase orchestration profile.
-//!
-//! This module intentionally stays outside `lib_wsjtx` and `lib_jtdx`. It builds
-//! worker sessions with existing public configuration fields, filters output to
-//! the operator-selected target, and later owns the DX-specific cross-slot
-//! context.
-
+//! Target-only orchestration using isolated, unchanged upstream sessions.
+use crate::decode::cooperative::{OutputLedger, SignalSource};
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::stream::session::{
-    DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage,
+    DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodeSession,
+    StreamDecodedMessage, StreamDecodedWithProvenance,
 };
 use crate::stream::time::SlotTimestamp;
-
+use std::sync::mpsc;
 use std::time::Duration;
 
 mod context;
 mod filter;
-
 use context::TargetContextStore;
-use filter::{normalize_message, DxTarget};
+use filter::DxTarget;
 
-/// Where the currently effective DX grid came from (decision 4, option C).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HisgridSource {
     #[default]
@@ -27,8 +21,6 @@ pub enum HisgridSource {
     User,
     Harvested,
 }
-
-/// Read-only snapshot of the DX target intel for the GUI panel.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DxSnapshot {
     pub target: String,
@@ -39,14 +31,24 @@ pub struct DxSnapshot {
     pub dt: Option<f64>,
 }
 
+#[derive(Clone)]
+struct RecoveryTask {
+    config: StreamDecodeConfig,
+    wsjtx: bool,
+    cold: bool,
+}
+enum Event {
+    Row(usize, Box<StreamDecodedMessage>),
+    Done(usize, Result<Vec<StreamDecodedWithProvenance>, String>),
+}
+
 pub struct DxStreamDecodeSession {
     base_config: StreamDecodeConfig,
-    target: DxTarget,
     context: TargetContextStore,
     hash_seed_calls: Vec<String>,
     listen: JtdxStreamDecodeSession,
+    cold_misses: u8,
 }
-
 impl DxStreamDecodeSession {
     pub fn new(config: StreamDecodeConfig) -> Self {
         let target = DxTarget::new(config.hiscall.as_deref().unwrap_or_default());
@@ -64,18 +66,12 @@ impl DxStreamDecodeSession {
         );
         Self {
             base_config: config,
-            target,
             context,
             hash_seed_calls,
             listen,
+            cold_misses: 0,
         }
     }
-
-    /// Build the session for `new_config`, carrying forward the still-valid DX
-    /// intel from `self`. The target (hiscall) must be
-    /// unchanged for any carry-over; `reset_operator` drops mycall-derived intel
-    /// (a mycall change). Non-identity changes (nfqso/nfa/nfb/swl/…) keep all
-    /// intel, rebinding the passband and re-pinning the focus.
     pub fn reconfigured(
         &self,
         new_config: StreamDecodeConfig,
@@ -91,15 +87,21 @@ impl DxStreamDecodeSession {
             if reset_operator {
                 context.drop_operator_intel();
             }
-            context.set_mycall(next.base_config.mycall.as_deref());
-            context.rebind_band(next.base_config.nfa, next.base_config.nfb);
-            context.seed_pinned(next.base_config.nfqso);
+            context.apply_user_config(
+                next.base_config.mycall.as_deref(),
+                next.base_config.hisgrid.as_deref(),
+                next.base_config.nfqso,
+                next.base_config.lhound,
+                next.base_config.nfa,
+                next.base_config.nfb,
+            );
             next.context = context;
+            if !reset_operator {
+                next.cold_misses = self.cold_misses;
+            }
         }
         next
     }
-
-    /// Read-only DX intel snapshot for the GUI panel.
     pub fn context_snapshot(&self) -> DxSnapshot {
         let (foci, tx_parity, hisgrid, hisgrid_source, dt) = self.context.snapshot_parts();
         DxSnapshot {
@@ -111,16 +113,14 @@ impl DxStreamDecodeSession {
             dt,
         }
     }
-
     pub fn decode_slot_at(
         &mut self,
         timestamp: &SlotTimestamp,
         samples: &[f32],
     ) -> Vec<StreamDecodedMessage> {
         self.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))
-            .expect("in-memory DX decode callback cannot fail")
+            .expect("in-memory DX callback cannot fail")
     }
-
     pub fn decode_slot_streaming_at<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -130,132 +130,219 @@ impl DxStreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        let started_at = std::time::Instant::now();
-        let foci =
-            if self.base_config.mycall.is_some() && self.context.should_run_focused(timestamp) {
-                self.context.selected_foci()
-            } else {
-                Vec::new()
-            };
-        let mut emitted = Vec::new();
-        let listen_results =
-            self.listen
-                .decode_slot_streaming_at(timestamp, samples, |decode| {
-                    emit_target_row(&self.context, &mut emitted, decode, &mut on_decode)?;
-                    Ok(())
-                })?;
-        self.context.harvest_listen(timestamp, &listen_results);
-
-        // Focused recovery runs one fully isolated disposable worker per focus,
-        // so the foci are mutually independent and share no kernel state. Decode
-        // them concurrently for wall-clock, then merge in the deterministic foci
-        // order: every worker's rows are byte-identical to a serial run (no
-        // shared residual/AP/hash state across foci, and each kernel stays
-        // single-threaded internally), and emit/harvest stay reproducible
-        // because they replay the sorted foci order, never thread-completion
-        // order.
-        let focus_rows = self.decode_foci_concurrently(timestamp, samples, &foci, started_at)?;
-
-        let mut focused_target_rows = Vec::new();
-        for rows in focus_rows {
-            for decode in &rows {
-                emit_target_row(&self.context, &mut emitted, decode, &mut on_decode)?;
-            }
-            focused_target_rows.extend(
-                rows.into_iter()
-                    .filter(|row| self.target.matches_message(&row.msg)),
-            );
-        }
-        self.context
-            .harvest_focused(timestamp, &focused_target_rows);
-
-        Ok(emitted)
+        self.decode_slot_streaming_tagged_at(timestamp, samples, |row| on_decode(&row.decode))
     }
-
-    /// Decode every focus on its own thread and return the raw rows per focus in
-    /// the same order as `foci` (deterministic). Each closure builds, seeds, and
-    /// drops its own disposable workers, so nothing is shared between threads but
-    /// immutable config/seed/grid references; the returned rows are merged by the
-    /// caller in foci order to keep emit/harvest reproducible.
-    fn decode_foci_concurrently(
-        &self,
+    pub fn decode_slot_streaming_tagged_at<F>(
+        &mut self,
         timestamp: &SlotTimestamp,
         samples: &[f32],
-        foci: &[f64],
-        started_at: std::time::Instant,
-    ) -> Result<Vec<Vec<StreamDecodedMessage>>, String> {
-        if foci.is_empty() {
-            return Ok(Vec::new());
-        }
-        let base_config = &self.base_config;
-        let hash_seed_calls = &self.hash_seed_calls;
-        let hisgrid = self.context.hisgrid().map(str::to_string);
-
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = foci
-                .iter()
-                .map(|&focus| {
-                    let hisgrid = hisgrid.as_deref();
-                    scope.spawn(move || {
-                        decode_one_focus(
-                            base_config,
-                            hash_seed_calls,
-                            hisgrid,
-                            focus,
-                            timestamp,
-                            samples,
-                            started_at,
-                        )
-                    })
-                })
-                .collect();
-
-            let mut outputs = Vec::with_capacity(handles.len());
-            for handle in handles {
-                let rows = handle
-                    .join()
-                    .map_err(|_| "dx focus worker panicked".to_string())??;
-                outputs.push(rows);
+        mut on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
+        self.context.begin_slot(timestamp);
+        let snapshot = self.context.clone();
+        let started = std::time::Instant::now();
+        let known_foci = snapshot.selected_foci();
+        let foci = if self.base_config.mycall.is_some() && snapshot.should_run_focused(timestamp) {
+            known_foci.clone()
+        } else {
+            Vec::new()
+        };
+        let mut tasks = Vec::new();
+        for focus in foci.iter().copied() {
+            tasks.push(RecoveryTask {
+                config: dx_focus_config(&self.base_config, focus),
+                wsjtx: false,
+                cold: false,
+            });
+            if let Some(grid) = snapshot.hisgrid() {
+                tasks.push(RecoveryTask {
+                    config: dx_a8_config(&self.base_config, focus, grid),
+                    wsjtx: true,
+                    cold: false,
+                });
             }
-            Ok(outputs)
-        })
+        }
+        // Two standard attempts followed by one quiet slot. Both parities are
+        // covered over time; no blind full-band deep search is introduced.
+        if known_foci.is_empty() && self.base_config.mycall.is_some() {
+            if self.cold_misses >= 2 {
+                self.cold_misses = 0;
+            } else {
+                let mut config = self.base_config.clone_for_profile_wsjt_x();
+                config.nagain = false;
+                tasks.push(RecoveryTask {
+                    config,
+                    wsjtx: true,
+                    cold: true,
+                });
+            }
+        }
+        let cold_started = tasks.iter().any(|t| t.cold);
+        let mut ledger = OutputLedger::with_frequency_tolerance(3.0);
+        let mut finished_rows = vec![Vec::new(); tasks.len() + 1];
+        let mut first_error = None;
+        let realtime = self.base_config.cooperative_realtime;
+        let hash_calls = &self.hash_seed_calls;
+        let listen = &mut self.listen;
+        std::thread::scope(|scope| {
+            let (tx, rx) = mpsc::channel();
+            let listen_tx = tx.clone();
+            scope.spawn(move || {
+                let result = guard_worker(|| {
+                    listen.decode_slot_streaming_with_provenance_at(timestamp, samples, |row| {
+                        listen_tx
+                            .send(Event::Row(0, Box::new(row.clone())))
+                            .map_err(|_| "DX event receiver closed".to_string())
+                    })
+                });
+                let _ = listen_tx.send(Event::Done(0, result));
+            });
+            let workers = tasks.len().min(4);
+            for worker in 0..workers {
+                let assigned: Vec<_> = tasks
+                    .iter()
+                    .enumerate()
+                    .filter(|(id, _)| id % workers == worker)
+                    .map(|(id, task)| (id + 1, task.clone()))
+                    .collect();
+                let task_tx = tx.clone();
+                scope.spawn(move || {
+                    for (id, task) in assigned {
+                        let result = guard_worker(|| {
+                            if dx_focused_budget_expired(&task.config, started.elapsed()) {
+                                return Ok(Vec::new());
+                            }
+                            let emit = |row: &StreamDecodedMessage| {
+                                task_tx
+                                    .send(Event::Row(id, Box::new(row.clone())))
+                                    .map_err(|_| "DX event receiver closed".to_string())
+                            };
+                            if task.wsjtx {
+                                let mut session = StreamDecodeSession::new(task.config);
+                                session.import_hash_calls(hash_calls);
+                                session.decode_slot_streaming_with_provenance_at(
+                                    timestamp, samples, emit,
+                                )
+                            } else {
+                                let mut session = JtdxStreamDecodeSession::new(task.config);
+                                session.import_hash_calls(hash_calls);
+                                session.decode_slot_streaming_with_provenance_at(
+                                    timestamp, samples, emit,
+                                )
+                            }
+                        });
+                        let _ = task_tx.send(Event::Done(id, result));
+                    }
+                });
+            }
+            let mut completed = 0;
+            while completed < tasks.len() + 1 {
+                match rx.recv().expect("DX coordinator retains an event sender") {
+                    Event::Row(id, row) => {
+                        if id == 0 || realtime {
+                            emit_target(
+                                &snapshot,
+                                &mut ledger,
+                                &row,
+                                if id == 0 {
+                                    StreamDecodeProvenance::Unknown
+                                } else {
+                                    StreamDecodeProvenance::ContextRecovery
+                                },
+                                &mut first_error,
+                                &mut on_decode,
+                            );
+                        }
+                    }
+                    Event::Done(id, result) => {
+                        completed += 1;
+                        match result {
+                            Ok(rows) => finished_rows[id] = rows,
+                            Err(error) => {
+                                first_error.get_or_insert(error);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        // Commit after every task: the whole slot used one frozen snapshot.
+        if !realtime {
+            for group in finished_rows.iter().skip(1) {
+                for row in group {
+                    emit_target(
+                        &snapshot,
+                        &mut ledger,
+                        &row.decode,
+                        StreamDecodeProvenance::ContextRecovery,
+                        &mut first_error,
+                        &mut on_decode,
+                    );
+                }
+            }
+        }
+        self.context.harvest_tagged(timestamp, &finished_rows[0]);
+        for (index, group) in finished_rows.iter().skip(1).enumerate() {
+            let rows: Vec<_> = group
+                .iter()
+                .filter(|row| snapshot.should_emit_target_row(&row.decode))
+                .map(|row| row.decode.clone())
+                .collect();
+            if tasks[index].cold {
+                if rows.is_empty() {
+                    self.cold_misses = self.cold_misses.saturating_add(1);
+                } else {
+                    self.cold_misses = 0;
+                }
+            }
+            self.context.harvest_focused(timestamp, &rows);
+        }
+        if !cold_started && !foci.is_empty() {
+            self.cold_misses = 0;
+        }
+        if let Some(error) = first_error {
+            Err(error)
+        } else {
+            Ok(ledger.into_sorted())
+        }
     }
 }
-
-/// Run the focused JTDX `swl+nagain` worker and, when a grid is known, the a8d
-/// WSJT-X worker for a single focus. Returns every decoded row (JTDX first, then
-/// a8d) so the caller can emit/harvest them in a deterministic order. Both
-/// workers are fresh and disposable, matching the serial path exactly.
-fn decode_one_focus(
-    base_config: &StreamDecodeConfig,
-    hash_seed_calls: &[String],
-    hisgrid: Option<&str>,
-    focus: f64,
-    timestamp: &SlotTimestamp,
-    samples: &[f32],
-    started_at: std::time::Instant,
-) -> Result<Vec<StreamDecodedMessage>, String> {
-    let mut rows = Vec::new();
-    if dx_focused_budget_expired(base_config, started_at.elapsed()) {
-        return Ok(rows);
-    }
-    let mut focused = JtdxStreamDecodeSession::new(dx_focus_config(base_config, focus));
-    focused.import_hash_calls(hash_seed_calls);
-    rows.extend(focused.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))?);
-
-    if let Some(hisgrid) = hisgrid {
-        if dx_focused_budget_expired(base_config, started_at.elapsed()) {
-            return Ok(rows);
+fn emit_target<F>(
+    context: &TargetContextStore,
+    ledger: &mut OutputLedger,
+    row: &StreamDecodedMessage,
+    provenance: StreamDecodeProvenance,
+    error: &mut Option<String>,
+    on_decode: &mut F,
+) where
+    F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+{
+    if context.should_emit_target_row(row)
+        && ledger.admit(
+            if provenance == StreamDecodeProvenance::Unknown {
+                SignalSource::Jtdx
+            } else {
+                SignalSource::Recovery
+            },
+            row,
+            provenance,
+        )
+        && error.is_none()
+    {
+        if let Err(failure) = on_decode(&StreamDecodedWithProvenance {
+            decode: row.clone(),
+            provenance,
+        }) {
+            *error = Some(failure);
         }
-        // Do not skip a8d just because the JTDX focused pass already found a
-        // target row near this focus. In FH/multi-stream traffic, another
-        // target-related message at the same focus can still be the one a8d
-        // recovers.
-        let mut wsjtx = StreamDecodeSession::new(dx_a8_config(base_config, focus, hisgrid));
-        wsjtx.import_hash_calls(hash_seed_calls);
-        rows.extend(wsjtx.decode_slot_streaming_at(timestamp, samples, |_| Ok(()))?);
     }
-    Ok(rows)
+}
+fn guard_worker<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        .map_err(|_| "DX worker panicked".to_string())?
 }
 
 fn dx_listen_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
@@ -302,34 +389,10 @@ fn dx_hash_seed_calls(config: &StreamDecodeConfig) -> Vec<String> {
     calls
 }
 
-fn emit_target_row<F>(
-    context: &TargetContextStore,
-    emitted: &mut Vec<StreamDecodedMessage>,
-    decode: &StreamDecodedMessage,
-    on_decode: &mut F,
-) -> Result<(), String>
-where
-    F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
-{
-    if !context.should_emit_target_row(decode)
-        || emitted.iter().any(|row| is_same_signal(row, decode))
-    {
-        return Ok(());
-    }
-    emitted.push(decode.clone());
-    on_decode(decode)
-}
-
 fn dx_focused_budget_expired(config: &StreamDecodeConfig, elapsed: Duration) -> bool {
     config
         .dx_monitor_watchdog_ms
         .is_some_and(|budget_ms| elapsed >= Duration::from_millis(budget_ms))
-}
-
-fn is_same_signal(a: &StreamDecodedMessage, b: &StreamDecodedMessage) -> bool {
-    normalize_message(&a.msg) == normalize_message(&b.msg)
-        && (a.freq - b.freq).abs() <= 3.0
-        && (a.dt - b.dt).abs() <= 0.3
 }
 
 fn normalize_call(call: Option<&str>) -> Option<String> {

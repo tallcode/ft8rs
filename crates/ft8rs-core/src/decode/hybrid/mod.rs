@@ -1,12 +1,13 @@
-//! Hybrid decode runner.
-//!
-//! Hybrid keeps decoder-private state inside each profile. Cross-decoder
-//! knowledge lives in this orchestration layer and is fed back only through
-//! session-level adapter methods.
-
+//! Independent upstream sessions plus bounded, isolated cooperative recovery.
 use std::collections::HashMap;
+use std::sync::mpsc;
 use std::thread;
+use std::time::{Duration, Instant};
 
+use crate::decode::cooperative::recovery::{self, CancellationStats};
+use crate::decode::cooperative::{
+    normalize_message as normalized_message, same_signal, OutputLedger, SignalSource,
+};
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::stream::session::{
     StreamDecodeConfig, StreamDecodeProvenance, StreamDecodeSession, StreamDecodedMessage,
@@ -35,19 +36,40 @@ pub enum DecodeSource {
     Jtdx,
     Both,
 }
-
 #[derive(Clone, Debug)]
 pub struct HybridDecodedMessage {
     pub decode: StreamDecodedMessage,
     pub source: DecodeSource,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct HybridSlotDiagnostics {
+    pub baseline_rows: usize,
+    pub recovered_rows: usize,
+    pub recovery_tasks: usize,
+    pub accepted_seeds: usize,
+    pub rejected_seeds: usize,
+    pub elapsed: Duration,
+}
+
+enum WorkerEvent {
+    Row(SignalSource, StreamDecodedMessage),
+    Done(
+        SignalSource,
+        Result<Vec<StreamDecodedWithProvenance>, String>,
+    ),
+    Recovered(SignalSource, StreamDecodedMessage),
+    RecoveryDone(Result<CancellationStats, String>),
+}
+
 pub struct HybridStreamDecodeSession {
     wsjtx: StreamDecodeSession,
     jtdx: JtdxStreamDecodeSession,
-    shared_hash_book: SharedHashCallBook,
+    config: StreamDecodeConfig,
+    early: Vec<StreamDecodedWithProvenance>,
     last_evidence_store: SharedEvidenceStore,
     active_call_context: ActiveCallContext,
+    diagnostics: HybridSlotDiagnostics,
 }
 
 impl HybridStreamDecodeSession {
@@ -55,26 +77,23 @@ impl HybridStreamDecodeSession {
         Self {
             wsjtx: StreamDecodeSession::new(config.clone_for_profile_wsjt_x()),
             jtdx: JtdxStreamDecodeSession::new(config.clone_for_profile_jtdx()),
-            shared_hash_book: SharedHashCallBook::default(),
+            config,
+            early: Vec::new(),
             last_evidence_store: SharedEvidenceStore::new(),
             active_call_context: ActiveCallContext::new(4),
+            diagnostics: HybridSlotDiagnostics::default(),
         }
     }
-
     pub fn last_evidence_store(&self) -> &SharedEvidenceStore {
         &self.last_evidence_store
     }
-
     pub fn qso_context_hints(&self) -> &[QsoContextHint] {
         self.active_call_context.hints()
     }
+    pub fn last_diagnostics(&self) -> &HybridSlotDiagnostics {
+        &self.diagnostics
+    }
 
-    /// One-shot slot decode (file mode / tests): run both workers on the full
-    /// slot audio, streaming WSJT-X rows live and JTDX-unique rows after the
-    /// merge. Monitor mode uses the staged `start_slot`/`decode_slot_nzhsym41`/
-    /// `subtract_slot_nzhsym47`/`decode_slot_nzhsym50` path instead, which emits
-    /// the same row set (so file-mode output is unchanged) but streams WSJT-X
-    /// early decodes before the slot boundary.
     pub fn decode_slot_streaming_at<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -84,49 +103,25 @@ impl HybridStreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        let shared_hash_calls = self.shared_hash_book.safe_calls();
-        self.wsjtx.import_hash_calls(&shared_hash_calls);
-        self.jtdx.import_hash_calls(&shared_hash_calls);
-
-        let (wsjtx_tagged, jtdx_tagged) = thread::scope(|scope| {
-            let jtdx_session = &mut self.jtdx;
-            let jtdx_handle = scope.spawn(|| {
-                jtdx_session.decode_slot_streaming_with_provenance_at(
-                    timestamp,
-                    samples,
-                    |_| Ok(()),
-                )
-            });
-
-            let wsjtx_tagged = self.wsjtx.decode_slot_streaming_with_provenance_at(
-                timestamp,
-                samples,
-                &mut on_decode,
-            )?;
-
-            let jtdx_tagged = jtdx_handle
-                .join()
-                .map_err(|_| "hybrid JTDX worker panicked".to_string())??;
-
-            Ok::<_, String>((wsjtx_tagged, jtdx_tagged))
-        })?;
-
-        self.finish_slot(&wsjtx_tagged, &jtdx_tagged, on_decode)
+        self.decode_slot_streaming_tagged_at(timestamp, samples, |row| on_decode(&row.decode))
     }
-
-    /// Begin a staged (monitor) slot: inject shared knowledge at the boundary
-    /// before decode, and return the WSJT-X early-decode state.
+    pub fn decode_slot_streaming_tagged_at<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
+        self.early.clear();
+        self.run_slot(timestamp, samples, None, on_decode)
+    }
     pub fn start_slot(&mut self) -> StreamSlotDecodeState {
-        let shared_hash_calls = self.shared_hash_book.safe_calls();
-        self.wsjtx.import_hash_calls(&shared_hash_calls);
-        self.jtdx.import_hash_calls(&shared_hash_calls);
+        // No shared calls are injected into either long-lived baseline book.
+        self.early.clear();
         self.wsjtx.start_slot_decode()
     }
-
-    /// `nzhsym=41` early decode: stream the WSJT-X early rows immediately (before
-    /// the slot boundary) and return how many were emitted, so `nzhsym=50` can
-    /// skip re-emitting them. JTDX has no early sub-results, so it does not run
-    /// here.
     pub fn decode_slot_nzhsym41<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -137,102 +132,372 @@ impl HybridStreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        let early =
+        self.decode_slot_nzhsym41_tagged(timestamp, state, samples, |row| on_decode(&row.decode))
+    }
+    pub fn decode_slot_nzhsym41_tagged<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        state: &mut StreamSlotDecodeState,
+        samples: &[f32],
+        mut on_decode: F,
+    ) -> Result<usize, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
+        self.early =
             self.wsjtx
                 .decode_slot_nzhsym41_with_provenance_at(Some(timestamp), state, samples)?;
-        for row in &early {
-            on_decode(&row.decode)?;
+        for row in &mut self.early {
+            if row.provenance == StreamDecodeProvenance::Regular {
+                row.provenance = StreamDecodeProvenance::Unknown;
+            }
         }
-        Ok(early.len())
+        for row in &self.early {
+            on_decode(row)?;
+        }
+        Ok(self.early.len())
     }
-
-    /// `nzhsym=47`: subtract the selected WSJT-X early decodes from the cleaned
-    /// prefix (WSJT-X staging only).
     pub fn subtract_slot_nzhsym47(&mut self, state: &mut StreamSlotDecodeState, samples: &[f32]) {
         self.wsjtx.subtract_slot_nzhsym47(state, samples);
     }
-
-    /// `nzhsym=50` final decode: finish the WSJT-X pass (streaming only the rows
-    /// not already emitted at `nzhsym=41`, per `early_count`) concurrently with
-    /// the JTDX pass, then merge and stream JTDX-unique rows. Same row set as the
-    /// one-shot path.
     pub fn decode_slot_nzhsym50<F>(
         &mut self,
         timestamp: &SlotTimestamp,
         state: StreamSlotDecodeState,
-        early_count: usize,
+        _early_count: usize,
         samples: &[f32],
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        let (wsjtx_tagged, jtdx_tagged) = thread::scope(|scope| {
-            let jtdx_session = &mut self.jtdx;
-            let jtdx_handle = scope.spawn(|| {
-                jtdx_session.decode_slot_streaming_with_provenance_at(
-                    timestamp,
-                    samples,
-                    |_| Ok(()),
-                )
-            });
-
-            // WSJT-X final decode returns ALL rows (including the early ones
-            // already streamed at nzhsym=41); emit only the newly-added ones.
-            let wsjtx_tagged = self
-                .wsjtx
-                .decode_slot_nzhsym50_and_finish_with_provenance(state, samples)?;
-            for row in wsjtx_tagged.iter().skip(early_count) {
-                on_decode(&row.decode)?;
-            }
-
-            let jtdx_tagged = jtdx_handle
-                .join()
-                .map_err(|_| "hybrid JTDX worker panicked".to_string())??;
-
-            Ok::<_, String>((wsjtx_tagged, jtdx_tagged))
-        })?;
-
-        self.finish_slot(&wsjtx_tagged, &jtdx_tagged, on_decode)
+        self.run_slot(timestamp, samples, Some(state), |row| {
+            on_decode(&row.decode)
+        })
+    }
+    pub fn decode_slot_nzhsym50_tagged<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        state: StreamSlotDecodeState,
+        samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
+        self.run_slot(timestamp, samples, Some(state), on_decode)
     }
 
-    /// Shared slot tail: update shared hash book / evidence / active context from
-    /// the two workers' tagged rows, then merge and stream JTDX-unique rows.
-    /// `on_decode` has already received every WSJT-X row by the time this runs.
-    fn finish_slot<F>(
+    fn run_slot<F>(
         &mut self,
-        wsjtx_tagged: &[StreamDecodedWithProvenance],
-        jtdx_tagged: &[StreamDecodedWithProvenance],
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        state: Option<StreamSlotDecodeState>,
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
-        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
-        let wsjtx_results: Vec<StreamDecodedMessage> =
-            wsjtx_tagged.iter().map(|row| row.decode.clone()).collect();
-        let jtdx: Vec<StreamDecodedMessage> =
-            jtdx_tagged.iter().map(|row| row.decode.clone()).collect();
-
-        self.shared_hash_book
-            .import_regular_calls(self.wsjtx.export_regular_hash_calls());
-        self.shared_hash_book
-            .import_regular_calls(self.jtdx.export_regular_hash_calls());
-
-        self.last_evidence_store =
-            build_passive_evidence_store_from_tagged(wsjtx_tagged, jtdx_tagged);
-        self.active_call_context
-            .update_from_evidence(&self.last_evidence_store);
-
-        let merged_with_source = merge_decodes_with_source(&wsjtx_results, &jtdx);
-        for row in &merged_with_source {
-            if row.source == DecodeSource::Jtdx {
-                on_decode(&row.decode)?;
+        let clock = Instant::now();
+        let mut ledger = OutputLedger::default();
+        for row in &self.early {
+            ledger.admit(SignalSource::Wsjtx, &row.decode, row.provenance);
+        }
+        let mut w_seen: Vec<_> = self.early.iter().map(|r| r.decode.clone()).collect();
+        let mut j_seen = Vec::new();
+        let mut w_rows: Option<Vec<StreamDecodedWithProvenance>> = None;
+        let mut j_rows: Option<Vec<StreamDecodedWithProvenance>> = None;
+        let mut pending_j = Vec::new();
+        let mut recovery_rows: [Vec<StreamDecodedMessage>; 2] = [Vec::new(), Vec::new()];
+        let mut scheduled = [false; 2];
+        let mut diagnostics = HybridSlotDiagnostics::default();
+        let config = self.config.clone();
+        let realtime = config.cooperative_realtime;
+        let mut first_error = None;
+        let wsjtx = &mut self.wsjtx;
+        let jtdx = &mut self.jtdx;
+        thread::scope(|scope| {
+            let (tx, rx) = mpsc::channel();
+            let w_tx = tx.clone();
+            scope.spawn(move || {
+                let result = guard_worker(|| {
+                    let mut emit = |row: &StreamDecodedMessage| {
+                        w_tx.send(WorkerEvent::Row(SignalSource::Wsjtx, row.clone()))
+                            .map_err(|_| "hybrid event receiver closed".to_string())
+                    };
+                    match state {
+                        Some(state) => wsjtx
+                            .decode_slot_nzhsym50_and_finish(state, samples, &mut emit)
+                            .map(|rows| {
+                                rows.into_iter()
+                                    .map(|decode| StreamDecodedWithProvenance {
+                                        provenance: wsjtx_provenance(&decode),
+                                        decode,
+                                    })
+                                    .collect()
+                            }),
+                        None => wsjtx
+                            .decode_slot_streaming_with_provenance_at(timestamp, samples, &mut emit)
+                            .map(|mut rows| {
+                                for row in &mut rows {
+                                    if row.provenance == StreamDecodeProvenance::Regular {
+                                        row.provenance = StreamDecodeProvenance::Unknown;
+                                    }
+                                }
+                                rows
+                            }),
+                    }
+                });
+                let _ = w_tx.send(WorkerEvent::Done(SignalSource::Wsjtx, result));
+            });
+            let j_tx = tx.clone();
+            scope.spawn(move || {
+                let result = guard_worker(|| {
+                    jtdx.decode_slot_streaming_with_provenance_at(timestamp, samples, |row| {
+                        j_tx.send(WorkerEvent::Row(SignalSource::Jtdx, row.clone()))
+                            .map_err(|_| "hybrid event receiver closed".to_string())
+                    })
+                });
+                let _ = j_tx.send(WorkerEvent::Done(SignalSource::Jtdx, result));
+            });
+            let (mut active, mut finished) = (2, 0);
+            while finished < active {
+                let event = rx.recv().expect("coordinator retains an event sender");
+                match event {
+                    WorkerEvent::Row(source, row) => {
+                        if source == SignalSource::Wsjtx {
+                            w_seen.push(row.clone());
+                        } else {
+                            j_seen.push(row.clone());
+                        }
+                        if !realtime && source == SignalSource::Jtdx && w_rows.is_none() {
+                            pending_j.push(row);
+                        } else {
+                            publish(
+                                &mut ledger,
+                                source,
+                                &row,
+                                if source == SignalSource::Wsjtx {
+                                    wsjtx_provenance(&row)
+                                } else {
+                                    StreamDecodeProvenance::Unknown
+                                },
+                                &mut first_error,
+                                &mut on_decode,
+                            );
+                        }
+                    }
+                    WorkerEvent::Done(source, result) => {
+                        finished += 1;
+                        let tagged = match result {
+                            Ok(rows) => rows,
+                            Err(error) => {
+                                first_error.get_or_insert(error);
+                                Vec::new()
+                            }
+                        };
+                        if source == SignalSource::Wsjtx {
+                            w_rows = Some(tagged);
+                            for row in pending_j.drain(..) {
+                                publish(
+                                    &mut ledger,
+                                    SignalSource::Jtdx,
+                                    &row,
+                                    StreamDecodeProvenance::Unknown,
+                                    &mut first_error,
+                                    &mut on_decode,
+                                );
+                            }
+                        } else {
+                            j_rows = Some(tagged);
+                        }
+                    }
+                    WorkerEvent::Recovered(direction, row) => {
+                        let index = usize::from(direction == SignalSource::Jtdx);
+                        recovery_rows[index].push(row.clone());
+                        if realtime {
+                            publish(
+                                &mut ledger,
+                                SignalSource::Recovery,
+                                &row,
+                                StreamDecodeProvenance::CooperativeRecovery,
+                                &mut first_error,
+                                &mut on_decode,
+                            );
+                        }
+                    }
+                    WorkerEvent::RecoveryDone(result) => {
+                        finished += 1;
+                        match result {
+                            Ok(stats) => {
+                                diagnostics.accepted_seeds += stats.accepted;
+                                diagnostics.rejected_seeds += stats.rejected_support;
+                            }
+                            Err(error) => {
+                                first_error.get_or_insert(error);
+                            }
+                        }
+                    }
+                }
+                for (index, direction) in [SignalSource::Wsjtx, SignalSource::Jtdx]
+                    .into_iter()
+                    .enumerate()
+                {
+                    if scheduled[index] || !config.hybrid_sic || first_error.is_some() {
+                        continue;
+                    }
+                    let ready = if realtime {
+                        if direction == SignalSource::Wsjtx {
+                            w_rows.is_some()
+                        } else {
+                            j_rows.is_some()
+                        }
+                    } else {
+                        w_rows.is_some() && j_rows.is_some()
+                    };
+                    if !ready {
+                        continue;
+                    }
+                    scheduled[index] = true;
+                    if realtime && clock.elapsed() >= Duration::from_secs(3) {
+                        continue;
+                    }
+                    let peer = if direction == SignalSource::Wsjtx {
+                        &j_seen
+                    } else {
+                        &w_seen
+                    };
+                    let source = if direction == SignalSource::Wsjtx {
+                        w_rows.as_ref().unwrap()
+                    } else {
+                        j_rows.as_ref().unwrap()
+                    };
+                    let seeds: Vec<_> = source
+                        .iter()
+                        .filter(|r| {
+                            (direction == SignalSource::Wsjtx
+                                || r.provenance == StreamDecodeProvenance::Regular)
+                                && recovery::eligible_shape(&r.decode, config.nfa, config.nfb)
+                                && !peer.iter().any(|p| same_signal(p, &r.decode))
+                        })
+                        .take(recovery::MAX_SEEDS)
+                        .map(|r| r.decode.clone())
+                        .collect();
+                    if seeds.is_empty() {
+                        continue;
+                    }
+                    active += 1;
+                    diagnostics.recovery_tasks += 1;
+                    let task_tx = tx.clone();
+                    let task_config = config.clone();
+                    scope.spawn(move || {
+                        let result = guard_worker(|| {
+                            let (input, stats) = recovery::prepare(
+                                samples,
+                                &seeds,
+                                task_config.nfa,
+                                task_config.nfb,
+                            );
+                            if stats.accepted > 0 {
+                                let emit = |row: &StreamDecodedMessage| {
+                                    task_tx
+                                        .send(WorkerEvent::Recovered(direction, row.clone()))
+                                        .map_err(|_| "hybrid event receiver closed".to_string())
+                                };
+                                if direction == SignalSource::Wsjtx {
+                                    JtdxStreamDecodeSession::new(
+                                        task_config.clone_for_profile_jtdx(),
+                                    )
+                                    .decode_slot_streaming_at(timestamp, &input, emit)?;
+                                } else {
+                                    StreamDecodeSession::new(
+                                        task_config.clone_for_profile_wsjt_x(),
+                                    )
+                                    .decode_slot_streaming_at(timestamp, &input, emit)?;
+                                }
+                            }
+                            Ok(stats)
+                        });
+                        let _ = task_tx.send(WorkerEvent::RecoveryDone(result));
+                    });
+                }
+            }
+        });
+        // Deterministic file output: baseline first, fixed recovery direction.
+        if !realtime {
+            for group in &recovery_rows {
+                for row in group {
+                    publish(
+                        &mut ledger,
+                        SignalSource::Recovery,
+                        row,
+                        StreamDecodeProvenance::CooperativeRecovery,
+                        &mut first_error,
+                        &mut on_decode,
+                    );
+                }
             }
         }
-        Ok(merged_with_source
-            .into_iter()
-            .map(|row| row.decode)
-            .collect())
+        let w_rows = w_rows.unwrap_or_default();
+        let j_rows = j_rows.unwrap_or_default();
+        let baseline = merge_decodes(&w_seen, &j_seen);
+        diagnostics.baseline_rows = baseline.len();
+        diagnostics.recovered_rows = ledger
+            .tagged()
+            .iter()
+            .filter(|r| !baseline.iter().any(|b| same_signal(b, &r.decode)))
+            .count();
+        diagnostics.elapsed = clock.elapsed();
+        self.diagnostics = diagnostics;
+        self.last_evidence_store = build_passive_evidence_store_from_tagged(&w_rows, &j_rows);
+        for (index, group) in recovery_rows.iter().enumerate() {
+            for row in group {
+                self.last_evidence_store.admit(shared_decode_candidate(
+                    DecoderId(if index == 0 { "sic-jtdx" } else { "sic-wsjtx" }),
+                    Provenance::CrossCancellation,
+                    row,
+                ));
+            }
+        }
+        self.active_call_context
+            .update_from_evidence(&self.last_evidence_store);
+        self.early.clear();
+        if let Some(error) = first_error {
+            Err(error)
+        } else {
+            Ok(ledger.into_sorted())
+        }
+    }
+}
+
+fn wsjtx_provenance(row: &StreamDecodedMessage) -> StreamDecodeProvenance {
+    if row.itone.iter().all(|tone| *tone == 0) {
+        StreamDecodeProvenance::A7Memory
+    } else {
+        StreamDecodeProvenance::Unknown
+    }
+}
+fn guard_worker<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        .map_err(|_| "cooperative worker panicked".to_string())?
+}
+fn publish<F>(
+    ledger: &mut OutputLedger,
+    source: SignalSource,
+    row: &StreamDecodedMessage,
+    provenance: StreamDecodeProvenance,
+    error: &mut Option<String>,
+    emit: &mut F,
+) where
+    F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+{
+    if ledger.admit(source, row, provenance) && error.is_none() {
+        if let Err(failure) = emit(&StreamDecodedWithProvenance {
+            decode: row.clone(),
+            provenance,
+        }) {
+            *error = Some(failure);
+        }
     }
 }
 
@@ -313,6 +578,9 @@ pub fn build_passive_evidence_store_from_tagged(
 
 fn provenance_from_stream(provenance: StreamDecodeProvenance) -> Provenance {
     match provenance {
+        StreamDecodeProvenance::Unknown => Provenance::Unknown,
+        StreamDecodeProvenance::CooperativeRecovery => Provenance::CrossCancellation,
+        StreamDecodeProvenance::ContextRecovery => Provenance::ImportedMemory,
         StreamDecodeProvenance::Regular => Provenance::Regular,
         StreamDecodeProvenance::ApMask => Provenance::ApMask,
         StreamDecodeProvenance::A7Memory => Provenance::A7Memory,
@@ -361,7 +629,9 @@ fn merge_decodes_with_source(
                 .copied()
                 .find(|&idx| is_same_signal(&rows[idx].decode, decode))
         }) {
-            rows[idx].source = DecodeSource::Both;
+            if rows[idx].source == DecodeSource::Wsjtx {
+                rows[idx].source = DecodeSource::Both;
+            }
             continue;
         }
         by_msg.entry(key).or_default().push(rows.len());
@@ -372,24 +642,6 @@ fn merge_decodes_with_source(
     }
 
     rows
-}
-
-fn normalized_message(msg: &str) -> String {
-    msg.split_whitespace()
-        .map(normalized_message_word)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn normalized_message_word(word: &str) -> String {
-    let word = word.to_ascii_uppercase();
-    if word.starts_with('<') && word.ends_with('>') {
-        let inner = &word[1..word.len() - 1];
-        if !inner.is_empty() && inner != "..." {
-            return inner.to_string();
-        }
-    }
-    word
 }
 
 fn is_same_signal(a: &StreamDecodedMessage, b: &StreamDecodedMessage) -> bool {
@@ -436,6 +688,17 @@ fn is_shared_full_call_candidate(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_jtdx_result_never_becomes_both() {
+        let jtdx = [
+            decoded(1000.0, 0.2, "K1JT BG5ATV RR73"),
+            decoded(1000.5, 0.2, "K1JT BG5ATV RR73"),
+        ];
+        let merged = merge_decodes_with_source(&[], &jtdx);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].source, DecodeSource::Jtdx);
+    }
 
     fn decoded(freq: f64, dt: f64, msg: &str) -> StreamDecodedMessage {
         StreamDecodedMessage {

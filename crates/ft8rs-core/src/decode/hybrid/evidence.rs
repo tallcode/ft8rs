@@ -1,3 +1,5 @@
+use crate::decode::cooperative::normalize_message;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DecoderId(pub &'static str);
 
@@ -12,6 +14,8 @@ impl DecoderId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Provenance {
+    Unknown,
+    CrossCancellation,
     Regular,
     ApMask,
     A7Memory,
@@ -73,6 +77,14 @@ impl SharedEvidenceStore {
     }
 
     pub fn admit(&mut self, candidate: SharedDecodeCandidate) {
+        if candidate.message.trim().is_empty()
+            || !candidate.freq_hz.is_finite()
+            || candidate.freq_hz < 0.0
+            || !candidate.dt_sec.is_finite()
+            || candidate.dt_sec.abs() > 3.5
+        {
+            return;
+        }
         let normalized_message = normalize_message(&candidate.message);
         let evidence = DecodeEvidence {
             source: candidate.source,
@@ -93,12 +105,14 @@ impl SharedEvidenceStore {
             }
             existing.evidence.push(evidence);
             existing.confidence = confidence_for(&existing.evidence);
-            existing.import_eligible = import_eligible(existing.confidence);
+            existing.import_eligible =
+                import_eligible(existing.confidence) && message_eligible(&existing.message);
             return;
         }
 
         let evidence_vec = vec![evidence];
         let confidence = confidence_for(&evidence_vec);
+        let eligible = import_eligible(confidence) && message_eligible(&candidate.message);
         self.rows.push(SharedDecode {
             message: candidate.message,
             normalized_message,
@@ -107,7 +121,7 @@ impl SharedEvidenceStore {
             snr_db: candidate.snr_db,
             sources: vec![candidate.source],
             confidence,
-            import_eligible: import_eligible(confidence),
+            import_eligible: eligible,
             evidence: evidence_vec,
         });
     }
@@ -123,7 +137,12 @@ fn confidence_for(evidence: &[DecodeEvidence]) -> DecodeConfidence {
     // independent evidence; if nothing independent remains, the row is Assisted.
     let independent: Vec<&DecodeEvidence> = evidence
         .iter()
-        .filter(|e| e.provenance != Provenance::ImportedMemory)
+        .filter(|e| {
+            !matches!(
+                e.provenance,
+                Provenance::Unknown | Provenance::ImportedMemory | Provenance::CrossCancellation
+            )
+        })
         .collect();
     if independent.is_empty() {
         return DecodeConfidence::Assisted;
@@ -140,15 +159,19 @@ fn confidence_for(evidence: &[DecodeEvidence]) -> DecodeConfidence {
         return DecodeConfidence::ConfirmedMulti;
     }
 
-    if independent.len() == 1 {
-        return match independent[0].provenance {
-            Provenance::Regular => DecodeConfidence::ConfirmedRegular,
-            Provenance::ApMask => DecodeConfidence::ConfirmedAp,
-            _ => DecodeConfidence::Assisted,
-        };
+    if independent
+        .iter()
+        .any(|e| e.provenance == Provenance::Regular)
+    {
+        DecodeConfidence::ConfirmedRegular
+    } else if independent
+        .iter()
+        .any(|e| e.provenance == Provenance::ApMask)
+    {
+        DecodeConfidence::ConfirmedAp
+    } else {
+        DecodeConfidence::Assisted
     }
-
-    DecodeConfidence::Assisted
 }
 
 fn import_eligible(confidence: DecodeConfidence) -> bool {
@@ -160,27 +183,55 @@ fn import_eligible(confidence: DecodeConfidence) -> bool {
     )
 }
 
-fn normalize_message(msg: &str) -> String {
-    msg.split_whitespace()
-        .map(normalize_message_word)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn normalize_message_word(word: &str) -> String {
-    let word = word.to_ascii_uppercase();
-    if word.starts_with('<') && word.ends_with('>') {
-        let inner = &word[1..word.len() - 1];
-        if !inner.is_empty() && inner != "..." {
-            return inner.to_string();
-        }
-    }
-    word
+fn message_eligible(message: &str) -> bool {
+    let parsed = crate::decode::cooperative::ParsedMessage::parse(message);
+    parsed.sender.is_some() && !parsed.unresolved
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_and_derived_results_do_not_create_independent_quorum() {
+        let mut store = SharedEvidenceStore::new();
+        store.admit(candidate(
+            DecoderId::WSJTX,
+            Provenance::Unknown,
+            "K1JT BG5ATV RR73",
+        ));
+        store.admit(candidate(
+            DecoderId("sic-jtdx"),
+            Provenance::CrossCancellation,
+            "K1JT BG5ATV RR73",
+        ));
+        assert_eq!(store.rows()[0].confidence, DecodeConfidence::Assisted);
+        assert!(!store.rows()[0].import_eligible);
+        store.admit(candidate(
+            DecoderId::JTDX,
+            Provenance::Regular,
+            "K1JT BG5ATV RR73",
+        ));
+        assert_eq!(
+            store.rows()[0].confidence,
+            DecodeConfidence::ConfirmedRegular
+        );
+    }
+    #[test]
+    fn duplicate_regular_observation_does_not_downgrade_or_fake_quorum() {
+        let mut store = SharedEvidenceStore::new();
+        for _ in 0..2 {
+            store.admit(candidate(
+                DecoderId::JTDX,
+                Provenance::Regular,
+                "K1JT BG5ATV RR73",
+            ));
+        }
+        assert_eq!(
+            store.rows()[0].confidence,
+            DecodeConfidence::ConfirmedRegular
+        );
+    }
 
     fn candidate(source: DecoderId, provenance: Provenance, msg: &str) -> SharedDecodeCandidate {
         SharedDecodeCandidate {

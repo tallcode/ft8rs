@@ -101,6 +101,10 @@ struct DecodeArgs {
     /// The dx profile enables nagain only for its own focused passes.
     #[arg(long, help_heading = "Decode")]
     nagain: bool,
+
+    /// Disable Hybrid's bounded cross-decoder cancellation round.
+    #[arg(long, help_heading = "Decode")]
+    no_hybrid_sic: bool,
 }
 
 #[derive(Args)]
@@ -217,6 +221,7 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     }
     config.swl = args.swl;
     config.nagain = args.nagain;
+    config.hybrid_sic = !args.no_hybrid_sic;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
         return Err("--profile dx requires --his-call CALL".to_string());
     }
@@ -257,6 +262,7 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
     });
     let outputs = RefCell::new(Outputs::new(udp)?);
     let mut config = stream_decode_config(&args.decode)?;
+    config.cooperative_realtime = true;
     if config.profile == DecodeProfile::Dx {
         config.dx_monitor_watchdog_ms = Some(DX_MONITOR_WATCHDOG_MS);
     }

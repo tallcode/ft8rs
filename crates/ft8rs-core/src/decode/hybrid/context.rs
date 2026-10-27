@@ -1,4 +1,5 @@
 use super::{DecodeConfidence, SharedDecode, SharedEvidenceStore};
+use crate::decode::cooperative::ParsedMessage;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QsoContextHint {
@@ -41,6 +42,9 @@ impl ActiveCallContext {
     }
 
     pub fn update_from_evidence(&mut self, evidence: &SharedEvidenceStore) {
+        // These are passive per-slot opportunities, not persistent station
+        // tracks. Never keep an old high-SNR hint alive without observations.
+        self.hints.clear();
         for row in evidence.rows() {
             if let Some(hint) = qso_hint_from_shared_decode(row) {
                 self.upsert_hint(hint);
@@ -85,42 +89,24 @@ fn qso_hint_from_shared_decode(row: &SharedDecode) -> Option<QsoContextHint> {
         return None;
     }
 
-    let words: Vec<&str> = row.message.split_whitespace().collect();
-    let (call, score_bonus) = if words.len() >= 3 && words[0].eq_ignore_ascii_case("CQ") {
-        (words[1], 5)
-    } else if words.len() >= 2 {
-        (words[1], 0)
+    let call = ParsedMessage::parse(&row.message).sender?;
+    let score_bonus = if row
+        .message
+        .split_whitespace()
+        .next()
+        .is_some_and(|w| w.eq_ignore_ascii_case("CQ"))
+    {
+        5
     } else {
-        return None;
+        0
     };
 
-    if !is_context_call(call) {
-        return None;
-    }
-
     Some(QsoContextHint {
-        hiscall: call
-            .trim_start_matches('<')
-            .trim_end_matches('>')
-            .to_ascii_uppercase(),
+        hiscall: call,
         nfqso: row.freq_hz,
         source_message: row.message.clone(),
         score: row.snr_db + score_bonus,
     })
-}
-
-fn is_context_call(call: &str) -> bool {
-    let call = call.trim().trim_start_matches('<').trim_end_matches('>');
-    call.len() >= 3
-        && !matches!(
-            call.to_ascii_uppercase().as_str(),
-            "CQ" | "DE" | "QRZ" | "DX" | "RRR" | "RR73" | "73" | "R" | "TU"
-        )
-        && call.chars().any(|c| c.is_ascii_digit())
-        && call.chars().any(|c| c.is_ascii_alphabetic())
-        && call
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '_')
 }
 
 #[cfg(test)]
@@ -201,6 +187,23 @@ mod tests {
         let mut context = ActiveCallContext::new(4);
         context.update_from_evidence(&store);
 
+        assert!(context.hints().is_empty());
+    }
+
+    #[test]
+    fn context_uses_shared_sender_roles_and_expires_unobserved_hints() {
+        let mut store = SharedEvidenceStore::new();
+        admit(
+            &mut store,
+            "CQ DX K1ABC FN42",
+            1000.0,
+            -10,
+            Provenance::Regular,
+        );
+        let mut context = ActiveCallContext::new(4);
+        context.update_from_evidence(&store);
+        assert_eq!(context.hints()[0].hiscall, "K1ABC");
+        context.update_from_evidence(&SharedEvidenceStore::new());
         assert!(context.hints().is_empty());
     }
 

@@ -2,8 +2,8 @@ use crate::decode::dx::{DxSnapshot, DxStreamDecodeSession};
 use crate::decode::hybrid::HybridStreamDecodeSession;
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::stream::session::{
-    DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodeSession,
-    StreamDecodedMessage, StreamDecodedWithProvenance, StreamSlotDecodeState,
+    DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage,
+    StreamDecodedWithProvenance, StreamSlotDecodeState,
 };
 use crate::stream::time::SlotTimestamp;
 
@@ -42,9 +42,9 @@ impl ProfileStreamDecodeSession {
     }
 
     /// Seed the learned hash-call book of the underlying session. Used by the
-    /// live engine to migrate hash calls across a session rebuild. Hybrid
-    /// manages its own shared hash book and DX seeds from the
-    /// target calls, so both are no-ops here.
+    /// live engine to migrate hash calls across a session rebuild. Hybrid keeps
+    /// baseline books independent and DX seeds only user target calls, so both
+    /// are no-ops here.
     pub fn import_hash_calls(&mut self, calls: &[String]) {
         match self {
             Self::Wsjtx(session) => session.import_hash_calls(calls),
@@ -90,12 +90,10 @@ impl ProfileStreamDecodeSession {
     /// Decode a slot, invoking `on_decode` per row (with provenance for the GUI's
     /// `a7`/AP marker) and returning the row count.
     ///
-    /// Hybrid and DX **stream** rows as produced — the WSJT-X pass emits first,
-    /// then the JTDX deep pass — so the front-end shows early decodes without
-    /// waiting for the slow pass to finish (their provenance is `Regular`, the
-    /// unified path doesn't surface per-row provenance). wsjtx and jtdx carry
-    /// real provenance and emit their batch (jtdx has no early sub-results to
-    /// stream, so this costs no latency).
+    /// Hybrid and DX stream concurrent worker rows in real-time mode and keep
+    /// stable merge ordering in file mode. Cooperative paths preserve unknown
+    /// native provenance and label isolated recovery tasks. The standalone
+    /// profiles retain their original batch wrapper and provenance semantics.
     pub fn decode_slot_streaming_with_provenance_at<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -126,23 +124,17 @@ impl ProfileStreamDecodeSession {
             }
             Self::Hybrid(session) => {
                 let mut count = 0usize;
-                session.decode_slot_streaming_at(timestamp, samples, |decode| {
+                session.decode_slot_streaming_tagged_at(timestamp, samples, |row| {
                     count += 1;
-                    on_decode(&StreamDecodedWithProvenance {
-                        decode: decode.clone(),
-                        provenance: StreamDecodeProvenance::Regular,
-                    })
+                    on_decode(row)
                 })?;
                 Ok(count)
             }
             Self::Dx(session) => {
                 let mut count = 0usize;
-                session.decode_slot_streaming_at(timestamp, samples, |decode| {
+                session.decode_slot_streaming_tagged_at(timestamp, samples, |row| {
                     count += 1;
-                    on_decode(&StreamDecodedWithProvenance {
-                        decode: decode.clone(),
-                        provenance: StreamDecodeProvenance::Regular,
-                    })
+                    on_decode(row)
                 })?;
                 Ok(count)
             }
@@ -187,13 +179,9 @@ impl ProfileStreamDecodeSession {
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
         match (self, state) {
-            (Self::Hybrid(session), ProfileSlotState::Hybrid(state)) => session
-                .decode_slot_nzhsym41(timestamp, state, samples, |decode| {
-                    on_decode(&StreamDecodedWithProvenance {
-                        decode: decode.clone(),
-                        provenance: StreamDecodeProvenance::Regular,
-                    })
-                }),
+            (Self::Hybrid(session), ProfileSlotState::Hybrid(state)) => {
+                session.decode_slot_nzhsym41_tagged(timestamp, state, samples, &mut on_decode)
+            }
             _ => Ok(0),
         }
     }
@@ -213,7 +201,7 @@ impl ProfileStreamDecodeSession {
         &mut self,
         timestamp: &SlotTimestamp,
         state: ProfileSlotState,
-        early_count: usize,
+        _early_count: usize,
         samples: &[f32],
         mut on_decode: F,
     ) -> Result<usize, String>
@@ -225,17 +213,11 @@ impl ProfileStreamDecodeSession {
                 let ProfileSlotState::Hybrid(state) = state else {
                     return Err("hybrid nzhsym=50 without hybrid slot state".to_string());
                 };
-                let merged = session.decode_slot_nzhsym50(
+                let merged = session.decode_slot_nzhsym50_tagged(
                     timestamp,
                     state,
-                    early_count,
                     samples,
-                    |decode| {
-                        on_decode(&StreamDecodedWithProvenance {
-                            decode: decode.clone(),
-                            provenance: StreamDecodeProvenance::Regular,
-                        })
-                    },
+                    &mut on_decode,
                 )?;
                 Ok(merged.len())
             }

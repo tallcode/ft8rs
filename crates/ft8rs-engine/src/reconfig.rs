@@ -92,6 +92,7 @@ pub enum ConfigField {
     Filter,
     HideDupes,
     HideHash,
+    HybridSic,
 }
 
 /// Diff the GUI-exposed decode-config fields.
@@ -115,6 +116,7 @@ pub fn config_diff(old: &StreamDecodeConfig, new: &StreamDecodeConfig) -> BTreeS
     note(old.filter != new.filter, ConfigField::Filter);
     note(old.hide_dupes != new.hide_dupes, ConfigField::HideDupes);
     note(old.hide_hash != new.hide_hash, ConfigField::HideHash);
+    note(old.hybrid_sic != new.hybrid_sic, ConfigField::HybridSic);
     changed
 }
 

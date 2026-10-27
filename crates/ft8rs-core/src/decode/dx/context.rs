@@ -1,47 +1,39 @@
-use crate::stream::session::StreamDecodedMessage;
-use crate::stream::time::SlotTimestamp;
-
-use super::filter::{normalize_message_word, DxTarget};
+use super::filter::DxTarget;
 use super::HisgridSource;
+use crate::decode::cooperative::{is_grid4, ParsedMessage};
+use crate::stream::session::{
+    StreamDecodeProvenance, StreamDecodedMessage, StreamDecodedWithProvenance,
+};
+use crate::stream::time::SlotTimestamp;
 
 const MAX_FOCI: usize = 5;
 const FOCUS_HALF_WIDTH_HZ: f64 = 25.0;
-/// Upstream `foxgen.f90` lays out the Fox's multi-stream signals at a fixed
-/// spacing `fstep = 60 Hz` (`f0 = nfreq + fstep*(n-1)`). We mirror that constant
-/// to pre-place the full focus grid in Hound mode.
 const FOX_STREAM_SPACING_HZ: f64 = 60.0;
-/// Number of distinct observed Fox streams at/above which we treat the target as
-/// a multi-stream Fox and switch to the equally-spaced grid (owner's rule: ">= 2").
-const FOX_MULTISTREAM_THRESHOLD: usize = 2;
+const HISTORY_SLOTS: u64 = 16;
 
-/// Where a frequency candidate came from, so operator-derived intel can be
-/// dropped on a mycall change while target-derived intel survives (§6.5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FrequencyOrigin {
     TargetSender,
     MyCall,
-    UserPinned,
+    Assisted,
 }
-
 #[derive(Clone, Debug)]
 struct FrequencyCandidate {
     freq: f64,
     confidence: u8,
-    last_seen_nutc: u32,
-    pinned: bool,
+    last_seen: u64,
     origin: FrequencyOrigin,
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ParityConfidence {
     Inferred,
     Observed,
 }
-
 #[derive(Clone, Copy, Debug)]
 struct TxParity {
     parity: usize,
     confidence: ParityConfidence,
+    last_seen: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -49,14 +41,17 @@ pub(super) struct TargetContextStore {
     target: DxTarget,
     mycall: Option<DxTarget>,
     frequencies: Vec<FrequencyCandidate>,
+    pinned: Option<f64>,
     tx_parity: Option<TxParity>,
-    hisgrid: Option<String>,
-    hisgrid_source: HisgridSource,
+    pending_parity: Option<(usize, u64)>,
+    user_grid: Option<String>,
+    observed_grid: Option<(String, u64)>,
     dt: Option<f64>,
-    low_band_prior: bool,
     hound: bool,
     nfa: f64,
     nfb: f64,
+    tick: u64,
+    last_stamp: Option<SlotTimestamp>,
 }
 
 impl TargetContextStore {
@@ -73,276 +68,327 @@ impl TargetContextStore {
             target,
             mycall: mycall.map(DxTarget::new),
             frequencies: Vec::new(),
+            pinned: None,
             tx_parity: None,
-            hisgrid: hisgrid.map(|grid| grid.trim().to_ascii_uppercase()),
-            hisgrid_source: if hisgrid.is_some() {
-                HisgridSource::User
-            } else {
-                HisgridSource::None
-            },
+            pending_parity: None,
+            user_grid: clean_grid(hisgrid),
+            observed_grid: None,
             dt: None,
-            low_band_prior: true,
             hound,
             nfa,
             nfb,
+            tick: 0,
+            last_stamp: None,
         };
-        // A pinned QSO seed only counts when it falls inside the search band;
-        // 0 / out-of-band means "no nfqso" and must not seed a focus.
-        if seed_frequency >= nfa && seed_frequency <= nfb {
-            store.remember_frequency(seed_frequency, 8, 0, true, FrequencyOrigin::UserPinned);
-        }
+        store.seed_pinned(seed_frequency);
         store
     }
-
-    pub(super) fn should_run_focused(&self, timestamp: &SlotTimestamp) -> bool {
-        match self.tx_parity {
-            Some(tx_parity) => tx_parity.parity == slot_parity(timestamp),
-            None => true,
+    pub(super) fn begin_slot(&mut self, timestamp: &SlotTimestamp) {
+        if let Some(previous) = &self.last_stamp {
+            if previous == timestamp {
+                return;
+            }
+            let gap = match (absolute_slot(previous), absolute_slot(timestamp)) {
+                (Some(a), Some(b)) if b < a => {
+                    // Older file timestamps retain their date prefix when
+                    // add_seconds wraps midnight; preserve the UTC slot gap.
+                    let old = previous.format();
+                    let new = timestamp.format();
+                    if old.split_once('_').map(|p| p.0) == new.split_once('_').map(|p| p.0)
+                        && previous.nutc() > timestamp.nutc()
+                    {
+                        u64::from(slots_between(previous.nutc(), timestamp.nutc()).max(1))
+                    } else {
+                        self.frequencies.clear();
+                        self.tx_parity = None;
+                        self.pending_parity = None;
+                        self.observed_grid = None;
+                        self.dt = None;
+                        1
+                    }
+                }
+                (Some(a), Some(b)) => (b - a).max(1) as u64,
+                _ => u64::from(slots_between(previous.nutc(), timestamp.nutc()).max(1)),
+            };
+            self.tick = self.tick.saturating_add(gap);
+        }
+        self.last_stamp = Some(timestamp.clone());
+        self.frequencies.retain(|f| {
+            self.tick.saturating_sub(f.last_seen)
+                <= if f.origin == FrequencyOrigin::Assisted {
+                    4
+                } else {
+                    HISTORY_SLOTS
+                }
+        });
+        if self
+            .tx_parity
+            .is_some_and(|p| self.tick.saturating_sub(p.last_seen) > HISTORY_SLOTS)
+        {
+            self.tx_parity = None;
+        }
+        if self
+            .pending_parity
+            .is_some_and(|(_, t)| self.tick.saturating_sub(t) > HISTORY_SLOTS)
+        {
+            self.pending_parity = None;
+        }
+        if self
+            .observed_grid
+            .as_ref()
+            .is_some_and(|(_, t)| self.tick.saturating_sub(*t) > 64)
+        {
+            self.observed_grid = None;
         }
     }
-
+    pub(super) fn should_run_focused(&self, timestamp: &SlotTimestamp) -> bool {
+        self.tx_parity.is_none_or(|p| {
+            p.confidence == ParityConfidence::Inferred || p.parity == slot_parity(timestamp)
+        })
+    }
     pub(super) fn selected_foci(&self) -> Vec<f64> {
-        if let Some(grid) = self.fox_multistream_foci() {
-            return grid;
-        }
-
         let mut candidates = self.frequencies.clone();
         candidates.sort_by(|a, b| {
             b.confidence
                 .cmp(&a.confidence)
-                .then_with(|| {
-                    low_band_rank(self.low_band_prior, a.freq)
-                        .cmp(&low_band_rank(self.low_band_prior, b.freq))
-                })
+                .then_with(|| b.last_seen.cmp(&a.last_seen))
                 .then_with(|| a.freq.total_cmp(&b.freq))
         });
-
-        let mut foci: Vec<f64> = Vec::new();
+        let mut foci = Vec::new();
+        if let Some(pinned) = self.pinned {
+            foci.push(pinned);
+        }
         for candidate in candidates {
-            if foci
-                .iter()
-                .any(|freq| (candidate.freq - *freq).abs() <= FOCUS_HALF_WIDTH_HZ)
-            {
-                continue;
-            }
-            foci.push(candidate.freq);
-            if foci.len() == MAX_FOCI {
-                break;
+            push_focus(&mut foci, candidate.freq);
+        }
+        // Actual evidence always gets a slot before extrapolated Fox streams.
+        if let Some(grid) = self.fox_multistream_foci() {
+            for freq in grid {
+                push_focus(&mut foci, freq);
             }
         }
         foci
     }
-
-    /// FH/Hound multi-stream foci. Once at least `FOX_MULTISTREAM_THRESHOLD`
-    /// distinct Fox-stream frequencies have been observed (in Hound mode every
-    /// harvested frequency is a target-as-sender Fox stream), the target is a
-    /// multi-stream Fox transmitting an equally-spaced block. Mirror upstream
-    /// `foxgen.f90` (`f0 = nfreq + 60*(n-1)`): anchor on the lowest live observed
-    /// stream and pre-place the full `MAX_FOCI` grid at 60 Hz, so a Fox that
-    /// dynamically grows to 3/4/5 streams is already monitored instead of being
-    /// discovered a slot late.
-    ///
-    /// Dynamic-lowest fallback: the anchor is the running minimum of the live
-    /// observed streams, so it re-adjusts downward for free — the always-on
-    /// full-band listen decodes any lower stream we had missed, which lowers the
-    /// minimum next slot and shifts the whole grid down; stale high anchors age
-    /// out the same way. No focus slot is spent on a separate downward probe, so
-    /// the upward coverage the owner asked for is preserved.
     fn fox_multistream_foci(&self) -> Option<Vec<f64>> {
-        if !self.hound || self.frequencies.len() < FOX_MULTISTREAM_THRESHOLD {
+        if !self.hound {
             return None;
         }
-        let base = self
+        let latest = self
             .frequencies
             .iter()
-            .map(|candidate| candidate.freq)
-            .fold(f64::INFINITY, f64::min);
-        if !base.is_finite() {
+            .filter(|f| f.origin == FrequencyOrigin::TargetSender)
+            .map(|f| f.last_seen)
+            .max()?;
+        let mut observed: Vec<_> = self
+            .frequencies
+            .iter()
+            .filter(|f| f.origin == FrequencyOrigin::TargetSender && f.last_seen == latest)
+            .map(|f| f.freq)
+            .collect();
+        if observed.len() < 2 {
             return None;
         }
-        let mut foci = Vec::with_capacity(MAX_FOCI);
-        for step in 0..MAX_FOCI {
-            let freq = base + FOX_STREAM_SPACING_HZ * step as f64;
-            // Stop once the grid point's whole focus window has left the passband.
-            if freq - FOCUS_HALF_WIDTH_HZ > self.nfb {
-                break;
-            }
-            foci.push(freq);
+        observed.sort_by(f64::total_cmp);
+        let base = observed[0];
+        if !observed.iter().all(|f| {
+            let step = ((f - base) / FOX_STREAM_SPACING_HZ).round();
+            (0.0..MAX_FOCI as f64).contains(&step)
+                && ((f - base) - step * FOX_STREAM_SPACING_HZ).abs() <= 5.0
+        }) {
+            return None;
         }
-        (!foci.is_empty()).then_some(foci)
+        Some(
+            (0..MAX_FOCI)
+                .map(|step| base + step as f64 * FOX_STREAM_SPACING_HZ)
+                .take_while(|f| f - FOCUS_HALF_WIDTH_HZ <= self.nfb)
+                .collect(),
+        )
     }
-
     pub(super) fn hisgrid(&self) -> Option<&str> {
-        self.hisgrid.as_deref()
+        self.user_grid
+            .as_deref()
+            .or_else(|| self.observed_grid.as_ref().map(|(g, _)| g.as_str()))
     }
-
-    pub(super) fn should_emit_target_row(&self, row: &StreamDecodedMessage) -> bool {
-        if !self.target.matches_message(&row.msg) {
-            return false;
+    fn grid_source(&self) -> HisgridSource {
+        if self.user_grid.is_some() {
+            HisgridSource::User
+        } else if self.observed_grid.is_some() {
+            HisgridSource::Harvested
+        } else {
+            HisgridSource::None
         }
-        !self.has_hard_grid_contradiction(row)
     }
-
+    pub(super) fn should_emit_target_row(&self, row: &StreamDecodedMessage) -> bool {
+        self.target.matches_message(&row.msg) && !self.has_hard_grid_contradiction(row)
+    }
+    #[cfg(test)]
     pub(super) fn harvest_listen(
         &mut self,
         timestamp: &SlotTimestamp,
         rows: &[StreamDecodedMessage],
     ) {
+        self.begin_slot(timestamp);
         for row in rows {
             self.harvest_row(timestamp, row, true);
         }
-        self.age_frequencies(timestamp.nutc());
     }
-
+    pub(super) fn harvest_tagged(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        rows: &[StreamDecodedWithProvenance],
+    ) {
+        self.begin_slot(timestamp);
+        for row in rows {
+            self.harvest_row(
+                timestamp,
+                &row.decode,
+                row.provenance == StreamDecodeProvenance::Regular,
+            );
+        }
+    }
     pub(super) fn harvest_focused(
         &mut self,
         timestamp: &SlotTimestamp,
         rows: &[StreamDecodedMessage],
     ) {
+        self.begin_slot(timestamp);
         for row in rows {
             self.harvest_row(timestamp, row, false);
         }
-        self.age_frequencies(timestamp.nutc());
     }
-
-    fn harvest_row(&mut self, timestamp: &SlotTimestamp, row: &StreamDecodedMessage, listen: bool) {
+    fn harvest_row(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        row: &StreamDecodedMessage,
+        observed: bool,
+    ) {
+        if self.has_hard_grid_contradiction(row) || !row.dt.is_finite() || row.dt.abs() > 3.5 {
+            return;
+        }
         let role = MessageRole::from_message(&row.msg, &self.target, self.mycall.as_ref());
         if !role.contains_target && !role.contains_mycall {
             return;
         }
-
-        let parity = slot_parity(timestamp);
-        if role.target_sender {
-            self.set_tx_parity(parity, ParityConfidence::Observed);
-            self.harvest_grid(&row.msg);
-            self.dt = Some(row.dt);
-        } else if role.target_recipient && self.tx_parity.is_none() {
-            self.set_tx_parity(1 - parity, ParityConfidence::Inferred);
+        let parsed = ParsedMessage::parse(&row.msg);
+        if parsed.unresolved {
+            return;
         }
-
-        let confidence = if role.target_sender {
-            10
-        } else if role.contains_mycall && !self.hound {
-            3
-        } else if listen {
-            2
-        } else {
-            1
-        };
-
-        // A row where the target is the *recipient* ("BG7XWF JK1QAY ...") carries
-        // the caller's TX frequency, not the target's, so it must not seed a focus
-        // (it still informs tx parity above). Only the target's own transmissions
-        // and mycall-neighbourhood rows pin where we actually look for the target.
-        let frequency_seed_allowed = role.target_sender || (!self.hound && role.contains_mycall);
-        if frequency_seed_allowed {
-            let origin = if role.target_sender {
-                FrequencyOrigin::TargetSender
-            } else {
-                FrequencyOrigin::MyCall
-            };
-            self.remember_frequency(row.freq, confidence, timestamp.nutc(), false, origin);
-        }
-    }
-
-    fn set_tx_parity(&mut self, parity: usize, confidence: ParityConfidence) {
-        let replace = match self.tx_parity {
-            None => true,
-            Some(existing) => {
-                matches!(
-                    (existing.confidence, confidence),
-                    (ParityConfidence::Inferred, ParityConfidence::Observed)
-                ) || existing.parity == parity
+        if observed && role.target_sender {
+            self.set_tx_parity(slot_parity(timestamp), ParityConfidence::Observed);
+            if let Some(grid) = parsed.grid {
+                self.observed_grid = Some((grid, self.tick));
+            } else if let Some((_, seen)) = &mut self.observed_grid {
+                *seen = self.tick;
             }
-        };
-        if replace {
-            self.tx_parity = Some(TxParity { parity, confidence });
+            self.dt = Some(row.dt);
+        } else if observed && role.target_recipient && self.tx_parity.is_none() {
+            self.set_tx_parity(1 - slot_parity(timestamp), ParityConfidence::Inferred);
+        }
+        if role.target_sender || (!self.hound && role.contains_mycall) {
+            let (confidence, origin) = if !observed {
+                (1, FrequencyOrigin::Assisted)
+            } else if role.target_sender {
+                (10, FrequencyOrigin::TargetSender)
+            } else {
+                (3, FrequencyOrigin::MyCall)
+            };
+            self.remember_frequency(row.freq, confidence, origin);
         }
     }
-
-    fn remember_frequency(
-        &mut self,
-        freq: f64,
-        confidence: u8,
-        nutc: u32,
-        pinned: bool,
-        origin: FrequencyOrigin,
-    ) {
-        if !(freq.is_finite() && freq >= self.nfa && freq <= self.nfb) {
+    fn set_tx_parity(&mut self, parity: usize, confidence: ParityConfidence) {
+        if confidence == ParityConfidence::Inferred {
+            if self.tx_parity.is_none() {
+                self.tx_parity = Some(TxParity {
+                    parity,
+                    confidence,
+                    last_seen: self.tick,
+                });
+            }
+            return;
+        }
+        if let Some(existing) = self.tx_parity {
+            if existing.confidence == ParityConfidence::Observed && existing.parity != parity {
+                self.tx_parity = None;
+                self.pending_parity = Some((parity, self.tick));
+                return;
+            }
+        } else if let Some((pending, when)) = self.pending_parity {
+            if pending != parity || when == self.tick {
+                self.pending_parity = Some((parity, self.tick));
+                return;
+            }
+        }
+        self.tx_parity = Some(TxParity {
+            parity,
+            confidence,
+            last_seen: self.tick,
+        });
+        self.pending_parity = None;
+    }
+    fn remember_frequency(&mut self, freq: f64, confidence: u8, origin: FrequencyOrigin) {
+        if !freq.is_finite() || freq < self.nfa || freq > self.nfb {
             return;
         }
         if let Some(existing) = self
             .frequencies
             .iter_mut()
-            .find(|existing| (existing.freq - freq).abs() <= FOCUS_HALF_WIDTH_HZ)
+            .find(|f| f.origin == origin && (f.freq - freq).abs() <= FOCUS_HALF_WIDTH_HZ)
         {
-            if confidence > existing.confidence {
-                existing.freq = freq;
-                existing.confidence = confidence;
-                existing.origin = origin;
-            }
-            existing.pinned |= pinned;
-            existing.last_seen_nutc = nutc;
-            return;
+            existing.freq = freq;
+            existing.confidence = confidence;
+            existing.last_seen = self.tick;
+        } else {
+            self.frequencies.push(FrequencyCandidate {
+                freq,
+                confidence,
+                last_seen: self.tick,
+                origin,
+            });
         }
-        self.frequencies.push(FrequencyCandidate {
-            freq,
-            confidence,
-            last_seen_nutc: nutc,
-            pinned,
-            origin,
-        });
+        if self.frequencies.len() > 20 {
+            self.frequencies.sort_by(|a, b| {
+                b.confidence
+                    .cmp(&a.confidence)
+                    .then_with(|| b.last_seen.cmp(&a.last_seen))
+            });
+            self.frequencies.truncate(20);
+        }
     }
-
-    fn age_frequencies(&mut self, nutc: u32) {
-        self.frequencies
-            .retain(|freq| freq.pinned || slots_between(freq.last_seen_nutc, nutc) <= 16);
-    }
-
-    /// Drop mycall-derived intel (for a mycall change), keeping target-derived
-    /// candidates, the observed transmit parity, and the harvested grid (§6.5).
     pub(super) fn drop_operator_intel(&mut self) {
-        self.frequencies.retain(|candidate| {
-            matches!(
-                candidate.origin,
-                FrequencyOrigin::TargetSender | FrequencyOrigin::UserPinned
-            )
-        });
-        if let Some(parity) = self.tx_parity {
-            if parity.confidence == ParityConfidence::Inferred {
-                self.tx_parity = None;
-            }
+        self.frequencies
+            .retain(|f| f.origin == FrequencyOrigin::TargetSender);
+        if self
+            .tx_parity
+            .is_some_and(|p| p.confidence == ParityConfidence::Inferred)
+        {
+            self.tx_parity = None;
         }
     }
-
-    pub(super) fn set_mycall(&mut self, mycall: Option<&str>) {
+    pub(super) fn apply_user_config(
+        &mut self,
+        mycall: Option<&str>,
+        grid: Option<&str>,
+        frequency: f64,
+        hound: bool,
+        nfa: f64,
+        nfb: f64,
+    ) {
         self.mycall = mycall.map(DxTarget::new);
-    }
-
-    /// Re-point the passband and prune candidates that fall outside it.
-    pub(super) fn rebind_band(&mut self, nfa: f64, nfb: f64) {
+        let grid = clean_grid(grid);
+        if self.user_grid != grid {
+            self.observed_grid = None;
+        }
+        self.user_grid = grid;
+        self.hound = hound;
         self.nfa = nfa;
         self.nfb = nfb;
-        self.frequencies
-            .retain(|candidate| candidate.freq >= nfa && candidate.freq <= nfb);
+        self.frequencies.retain(|f| f.freq >= nfa && f.freq <= nfb);
+        self.seed_pinned(frequency);
     }
-
     pub(super) fn seed_pinned(&mut self, freq: f64) {
-        if freq >= self.nfa && freq <= self.nfb {
-            self.remember_frequency(freq, 8, 0, true, FrequencyOrigin::UserPinned);
-        }
+        self.pinned = (freq.is_finite() && freq > 0.0 && freq >= self.nfa && freq <= self.nfb)
+            .then_some(freq);
     }
-
-    fn harvest_grid(&mut self, msg: &str) {
-        let words: Vec<String> = msg.split_whitespace().map(normalize_message_word).collect();
-        if let Some(grid) = words.iter().rev().find(|word| is_grid4(word)) {
-            self.hisgrid = Some(grid.clone());
-            self.hisgrid_source = HisgridSource::Harvested;
-        }
-    }
-
-    /// Read-only snapshot pieces for the GUI DX intel panel (foci, tx parity,
-    /// effective grid + its source, dt).
     pub(super) fn snapshot_parts(
         &self,
     ) -> (
@@ -354,41 +400,41 @@ impl TargetContextStore {
     ) {
         (
             self.selected_foci(),
-            self.tx_parity.map(|parity| parity.parity as u8),
-            self.hisgrid.clone(),
-            self.hisgrid_source,
+            self.tx_parity
+                .filter(|p| p.confidence == ParityConfidence::Observed)
+                .map(|p| p.parity as u8),
+            self.hisgrid().map(str::to_string),
+            self.grid_source(),
             self.dt,
         )
     }
-
     fn has_hard_grid_contradiction(&self, row: &StreamDecodedMessage) -> bool {
-        // Only a user-supplied grid may suppress a target-sender row. A harvested
-        // grid can be poisoned by a ~1/1024 10-bit hash collision (a non-target
-        // `<hash>` matching the target in a sender position but carrying a
-        // different grid): locking that wrong grid would then suppress the *real*
-        // target's rows — a silent miss on the one station we chase. Harvested
-        // grids still drive a8d recovery; they just never suppress.
-        if self.hisgrid_source != HisgridSource::User {
-            return false;
-        }
-        let Some(hisgrid) = self.hisgrid.as_deref() else {
+        let Some(grid) = self.user_grid.as_deref() else {
             return false;
         };
-        let words: Vec<String> = row
-            .msg
-            .split_whitespace()
-            .map(normalize_message_word)
-            .collect();
-        if !is_target_sender(&words, &self.target) {
-            return false;
-        }
-        words
-            .iter()
-            .rev()
-            .any(|word| is_grid4(word) && word != hisgrid)
+        let parsed = ParsedMessage::parse(&row.msg);
+        parsed
+            .sender
+            .as_deref()
+            .is_some_and(|call| self.target.matches_word(call))
+            && parsed.grid.as_deref().is_some_and(|found| found != grid)
     }
 }
 
+fn push_focus(foci: &mut Vec<f64>, freq: f64) {
+    if foci.len() < MAX_FOCI
+        && !foci
+            .iter()
+            .any(|old| (old - freq).abs() <= FOCUS_HALF_WIDTH_HZ)
+    {
+        foci.push(freq);
+    }
+}
+fn clean_grid(grid: Option<&str>) -> Option<String> {
+    let grid = grid?.trim().to_ascii_uppercase();
+    let first = grid.get(..4)?;
+    is_grid4(first).then(|| first.to_string())
+}
 #[derive(Clone, Copy, Debug, Default)]
 struct MessageRole {
     contains_target: bool,
@@ -396,78 +442,181 @@ struct MessageRole {
     target_recipient: bool,
     contains_mycall: bool,
 }
-
 impl MessageRole {
     fn from_message(msg: &str, target: &DxTarget, mycall: Option<&DxTarget>) -> Self {
-        let words: Vec<String> = msg.split_whitespace().map(normalize_message_word).collect();
-        let contains_target = words.iter().any(|word| target.matches_word(word));
-        let contains_mycall =
-            mycall.is_some_and(|mycall| words.iter().any(|word| mycall.matches_word(word)));
-        let target_sender = is_target_sender(&words, target);
-        let target_recipient = is_target_recipient(&words, target);
+        let parsed = ParsedMessage::parse(msg);
+        let target_sender = parsed
+            .sender
+            .as_deref()
+            .is_some_and(|call| target.matches_word(call));
+        let target_recipient = parsed
+            .recipients
+            .iter()
+            .any(|call| target.matches_word(call));
+        let contains_mycall = mycall.is_some_and(|my| {
+            parsed
+                .sender
+                .iter()
+                .chain(parsed.recipients.iter())
+                .any(|call| my.matches_word(call))
+        });
         Self {
-            contains_target,
+            contains_target: target_sender || target_recipient,
             target_sender,
             target_recipient,
             contains_mycall,
         }
     }
 }
-
-fn is_target_sender(words: &[String], target: &DxTarget) -> bool {
-    if words.is_empty() {
-        return false;
-    }
-    if words[0] == "CQ" {
-        return words.iter().skip(1).any(|word| target.matches_word(word));
-    }
-    words.get(1).is_some_and(|word| target.matches_word(word))
-}
-
-fn is_target_recipient(words: &[String], target: &DxTarget) -> bool {
-    words.first().is_some_and(|word| target.matches_word(word))
-}
-
-fn is_grid4(word: &str) -> bool {
-    let bytes = word.as_bytes();
-    bytes.len() == 4
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1].is_ascii_alphabetic()
-        && bytes[2].is_ascii_digit()
-        && bytes[3].is_ascii_digit()
-}
-
 fn slot_parity(timestamp: &SlotTimestamp) -> usize {
     ((timestamp.nutc() / 5) % 2) as usize
 }
-
-fn low_band_rank(low_band_prior: bool, freq: f64) -> u8 {
-    if low_band_prior && freq <= 1000.0 {
-        0
-    } else {
-        1
-    }
-}
-
-fn slots_between(start_nutc: u32, end_nutc: u32) -> u32 {
-    let start = nutc_to_seconds(start_nutc);
-    let mut end = nutc_to_seconds(end_nutc);
+fn slots_between(start: u32, end: u32) -> u32 {
+    let start = nutc_to_seconds(start);
+    let mut end = nutc_to_seconds(end);
     if end < start {
-        end += 24 * 60 * 60;
+        end += 86400;
     }
     (end - start) / 15
 }
-
 fn nutc_to_seconds(nutc: u32) -> u32 {
-    let h = nutc / 10000;
-    let m = (nutc / 100) % 100;
-    let s = nutc % 100;
-    h * 3600 + m * 60 + s
+    nutc / 10000 * 3600 + (nutc / 100) % 100 * 60 + nutc % 100
+}
+fn absolute_slot(timestamp: &SlotTimestamp) -> Option<i64> {
+    let text = timestamp.format();
+    let (date, _) = text.split_once('_')?;
+    let (year, rest) = if date.len() == 6 {
+        (2000 + date[..2].parse::<i64>().ok()?, &date[2..])
+    } else {
+        (date[..4].parse::<i64>().ok()?, &date[4..])
+    };
+    let month = rest[..2].parse::<i64>().ok()?;
+    let day = rest[2..].parse::<i64>().ok()?;
+    let y = year - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    Some(
+        (era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy) * 5760
+            + i64::from(nutc_to_seconds(timestamp.nutc()) / 15),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn store() -> TargetContextStore {
+        TargetContextStore::new(
+            DxTarget::new("BG5ATV"),
+            Some("K1JT"),
+            0.0,
+            None,
+            false,
+            200.0,
+            3000.0,
+        )
+    }
+    #[test]
+    fn rr73_neither_conflicts_with_nor_overwrites_a_user_grid() {
+        let mut s = store();
+        s.apply_user_config(Some("K1JT"), Some("PM00"), 0.0, false, 200.0, 3000.0);
+        let ts = SlotTimestamp::parse("140600").unwrap();
+        let end = row(1000.0, "K1JT BG5ATV RR73");
+        assert!(s.should_emit_target_row(&end));
+        s.harvest_listen(&ts, &[end, row(1000.0, "CQ BG5ATV PM00")]);
+        assert_eq!(s.grid_source(), HisgridSource::User);
+        assert_eq!(s.hisgrid(), Some("PM00"));
+        let conflict = row(2200.0, "CQ BG5ATV FN42");
+        assert!(!s.should_emit_target_row(&conflict));
+        s.harvest_listen(&ts, &[conflict]);
+        assert_eq!(s.hisgrid(), Some("PM00"));
+        assert_eq!(s.selected_foci(), vec![1000.0]);
+    }
+    #[test]
+    fn reconfiguration_replaces_and_clears_user_values() {
+        let mut s = store();
+        s.apply_user_config(Some("K1JT"), Some("PM00AA"), 1000.0, false, 200.0, 3000.0);
+        assert_eq!(s.hisgrid(), Some("PM00"));
+        s.apply_user_config(Some("K1JT"), Some("FN42"), 1200.0, false, 200.0, 3000.0);
+        assert_eq!(s.hisgrid(), Some("FN42"));
+        assert_eq!(s.selected_foci(), vec![1200.0]);
+        s.apply_user_config(Some("K1JT"), None, 0.0, false, 200.0, 3000.0);
+        assert!(s.hisgrid().is_none());
+        assert!(s.selected_foci().is_empty());
+    }
+    #[test]
+    fn observed_parity_can_change_and_expire() {
+        let mut s = store();
+        s.harvest_listen(
+            &SlotTimestamp::parse("140600").unwrap(),
+            &[row(1000.0, "CQ BG5ATV PM00")],
+        );
+        assert!(!s.should_run_focused(&SlotTimestamp::parse("140615").unwrap()));
+        s.harvest_listen(
+            &SlotTimestamp::parse("140615").unwrap(),
+            &[row(1000.0, "CQ BG5ATV PM00")],
+        );
+        assert!(s.should_run_focused(&SlotTimestamp::parse("140630").unwrap()));
+        s.harvest_listen(
+            &SlotTimestamp::parse("140645").unwrap(),
+            &[row(1000.0, "CQ BG5ATV PM00")],
+        );
+        assert!(!s.should_run_focused(&SlotTimestamp::parse("140700").unwrap()));
+        s.begin_slot(&SlotTimestamp::parse("141200").unwrap());
+        assert!(s.should_run_focused(&SlotTimestamp::parse("141200").unwrap()));
+    }
+    #[test]
+    fn assisted_rows_cannot_confirm_grid_or_parity() {
+        let mut s = store();
+        s.harvest_focused(
+            &SlotTimestamp::parse("140600").unwrap(),
+            &[row(1000.0, "CQ BG5ATV PM00")],
+        );
+        assert!(s.hisgrid().is_none());
+        assert!(s.tx_parity.is_none());
+        assert_eq!(s.selected_foci(), vec![1000.0]);
+    }
+    #[test]
+    fn frequency_tracks_equal_confidence_and_ages_across_days() {
+        let mut s = store();
+        s.harvest_listen(
+            &SlotTimestamp::parse("230208_140600").unwrap(),
+            &[row(1000.0, "CQ BG5ATV PM00")],
+        );
+        s.harvest_listen(
+            &SlotTimestamp::parse("230208_140630").unwrap(),
+            &[row(1020.0, "CQ BG5ATV PM00")],
+        );
+        assert_eq!(s.selected_foci(), vec![1020.0]);
+        s.begin_slot(&SlotTimestamp::parse("230209_140630").unwrap());
+        assert!(s.selected_foci().is_empty());
+        assert!(s.tx_parity.is_none());
+    }
+    #[test]
+    fn prefixed_file_midnight_wrap_preserves_recent_frequency() {
+        let mut s = store();
+        let ts = SlotTimestamp::parse("230208_235945").unwrap();
+        s.harvest_listen(&ts, &[row(1000.0, "CQ BG5ATV PM00")]);
+        s.begin_slot(&ts.add_seconds(15));
+        assert_eq!(s.selected_foci(), vec![1000.0]);
+    }
+    #[test]
+    fn pinned_and_nonconcurrent_frequencies_do_not_prove_fox_grid() {
+        let mut s = store();
+        s.apply_user_config(Some("K1JT"), None, 300.0, true, 200.0, 3000.0);
+        s.harvest_listen(
+            &SlotTimestamp::parse("140600").unwrap(),
+            &[row(600.0, "K1JT BG5ATV -10")],
+        );
+        assert_eq!(s.selected_foci(), vec![300.0, 600.0]);
+        s.harvest_listen(
+            &SlotTimestamp::parse("140630").unwrap(),
+            &[row(660.0, "K1JT BG5ATV -10")],
+        );
+        assert_eq!(s.selected_foci().len(), 3);
+        assert!(s.fox_multistream_foci().is_none());
+    }
 
     fn row(freq: f64, msg: &str) -> StreamDecodedMessage {
         StreamDecodedMessage {
@@ -666,7 +815,7 @@ mod tests {
 
         // A second distinct stream proves a multi-stream Fox: lay the full grid
         // at 60 Hz from the lowest, so streams 3/4/5 are covered before they appear.
-        store.harvest_listen(&ts, &[row(360.0, "OTHER DX1AAA -12")]);
+        store.harvest_listen(&ts, &[row(360.0, "W9XYZ DX1AAA -12")]);
         assert_eq!(
             store.selected_foci(),
             vec![300.0, 360.0, 420.0, 480.0, 540.0]
@@ -687,7 +836,7 @@ mod tests {
         let ts = SlotTimestamp::parse("140630").unwrap();
 
         store.harvest_listen(&ts, &[row(360.0, "MY1AAA DX1AAA -10")]);
-        store.harvest_listen(&ts, &[row(420.0, "OTHER DX1AAA -12")]);
+        store.harvest_listen(&ts, &[row(420.0, "W9XYZ DX1AAA -12")]);
         assert_eq!(
             store.selected_foci(),
             vec![360.0, 420.0, 480.0, 540.0, 600.0]
@@ -695,7 +844,7 @@ mod tests {
 
         // The always-on listen later decodes a lower stream we had missed; the
         // anchor drops to it and the whole grid shifts down (dynamic fallback).
-        store.harvest_listen(&ts, &[row(300.0, "THIRD DX1AAA -08")]);
+        store.harvest_listen(&ts, &[row(300.0, "N0CALL DX1AAA -08")]);
         assert_eq!(
             store.selected_foci(),
             vec![300.0, 360.0, 420.0, 480.0, 540.0]
@@ -716,7 +865,7 @@ mod tests {
         let ts = SlotTimestamp::parse("140630").unwrap();
 
         store.harvest_listen(&ts, &[row(900.0, "MY1AAA DX1AAA -10")]);
-        store.harvest_listen(&ts, &[row(960.0, "OTHER DX1AAA -12")]);
+        store.harvest_listen(&ts, &[row(960.0, "W9XYZ DX1AAA -12")]);
 
         // 900, 960, 1020(window 995..1045 still overlaps the 1000 Hz top);
         // 1080's window 1055..1105 is fully past the passband, so it is dropped.
@@ -739,7 +888,7 @@ mod tests {
         let ts = SlotTimestamp::parse("140630").unwrap();
 
         store.harvest_listen(&ts, &[row(300.0, "MY1AAA DX1AAA -10")]);
-        store.harvest_listen(&ts, &[row(360.0, "OTHER DX1AAA -12")]);
+        store.harvest_listen(&ts, &[row(360.0, "W9XYZ DX1AAA -12")]);
         assert_eq!(store.selected_foci(), vec![300.0, 360.0]);
     }
 }

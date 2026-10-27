@@ -4,6 +4,7 @@
 //! subtraction and hash-call logic. Stream/file/soundcard orchestration lives
 //! outside this module.
 
+pub(crate) mod cooperative;
 pub mod dx;
 /// ft8rs-specific GF(2) row kernel (not mirrored), shared by both OSD mirrors.
 pub mod gf2;

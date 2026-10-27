@@ -28,26 +28,7 @@ fn normalize_call(call: &str) -> String {
     call.trim().to_ascii_uppercase()
 }
 
-pub(super) fn normalize_message_word(word: &str) -> String {
-    let word = word
-        .trim()
-        .trim_matches(|ch| matches!(ch, ';' | ','))
-        .to_ascii_uppercase();
-    if word.starts_with('<') && word.ends_with('>') {
-        let inner = &word[1..word.len() - 1];
-        if inner != "..." {
-            return inner.to_string();
-        }
-    }
-    word
-}
-
-pub(super) fn normalize_message(msg: &str) -> String {
-    msg.split_whitespace()
-        .map(normalize_message_word)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+use crate::decode::cooperative::normalize_word as normalize_message_word;
 
 #[cfg(test)]
 mod tests {
