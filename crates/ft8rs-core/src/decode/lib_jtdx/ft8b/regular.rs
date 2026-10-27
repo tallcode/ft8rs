@@ -19,6 +19,10 @@ use super::state::{
 use super::sum_tones;
 use crate::stream::session::StreamDecodeConfig;
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(super) fn regular_decode(
     metrics: &SymbolMetrics,
     _candidate: SyncCandidate,
@@ -159,9 +163,9 @@ pub(super) fn regular_decode(
                 for i in 0..N {
                     llrz[i] = 2.83 * llr_source[i];
                 }
-                for i in 0..77 {
+                for (i, llrz_value) in llrz.iter_mut().enumerate().take(77) {
                     if ap.apmask[i] == 1 {
-                        llrz[i] = apmag * ap.apsym[i] as f32;
+                        *llrz_value = apmag * ap.apsym[i] as f32;
                     }
                 }
                 let decoded = bpdecode174_91(&llrz, &ap.apmask, 30).or_else(|| {
@@ -314,6 +318,10 @@ fn try_ft8s(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(super) fn try_ft8s_virtual(
     metrics: &SymbolMetrics,
     refined_freq: f64,
@@ -375,8 +383,8 @@ fn try_ft8s_with_s8(
         srr,
         config.nft8rxfsens,
         context.stophint,
-        &mycall,
-        &hiscall,
+        mycall,
+        hiscall,
         context.nlasttx,
         context.last_rx_msg.as_ref().map(LastRxMsgText::as_str),
         Some(tone8_tables),
@@ -449,6 +457,10 @@ pub(super) fn try_ft8sd_iqso4(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 fn try_ft8sd_regular_failure(
     metrics: &SymbolMetrics,
     refined_freq: f64,
@@ -513,6 +525,10 @@ fn nsubpasses_with_csold(classifier: SignalClassifier, has_csold: bool) -> usize
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 fn jtdx_ap_subpass_allowed(
     config: &StreamDecodeConfig,
     context: Ft8bCandidateContext,
@@ -543,10 +559,8 @@ fn jtdx_ap_subpass_allowed(
         if context.lqsomsgdcd {
             return false;
         }
-    } else if classifier.lmycsignal && lmycallstd {
-        if isubp1 > 2 && isubp1 < 6 {
-            return false;
-        }
+    } else if classifier.lmycsignal && lmycallstd && isubp1 > 2 && isubp1 < 6 {
+        return false;
     }
 
     if config.lhound {
@@ -836,10 +850,8 @@ fn jtdx_ap_signal_pruning_allowed(
             if isubp2 == 17 && classifier.smycnr < 1.0 && !classifier.lmycsignal {
                 return false;
             }
-            if isubp2 == 18 {
-                if config.lft8lowth || config.lft8subpass {
-                    return classifier.smycnr >= 1.2 || classifier.lmycsignal;
-                }
+            if isubp2 == 18 && (config.lft8lowth || config.lft8subpass) {
+                return classifier.smycnr >= 1.2 || classifier.lmycsignal;
             }
             true
         }

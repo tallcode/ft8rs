@@ -179,10 +179,8 @@ fn is_ignored_jtdx_baseline_marker(value: &str) -> bool {
 }
 
 fn assert_release_mode() {
-    assert!(
-        !cfg!(debug_assertions),
-        "stream decode acceptance tests must be run with --release"
-    );
+    #[cfg(debug_assertions)]
+    panic!("stream decode acceptance tests must be run with --release");
 }
 
 fn samples_12k_from_wav(path: &str) -> Vec<f32> {

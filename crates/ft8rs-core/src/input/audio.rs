@@ -119,6 +119,10 @@ fn fil4_decimate(src: &[f32]) -> Vec<f32> {
     const NDOWN: usize = 4;
     const NTAPS: usize = 49;
     // Coefficients copied verbatim from lib/fil4.f90.
+    #[expect(
+        clippy::excessive_precision,
+        reason = "Keep the verbatim WSJT-X fil4.f90 coefficients and their existing f32 values"
+    )]
     const W: [f32; NTAPS] = [
         0.000861074040,
         0.010051920210,

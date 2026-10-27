@@ -102,12 +102,10 @@ fn split77(msg: &str) -> Vec<String> {
         .map(String::from)
         .collect();
 
-    if parts.len() >= 3 && parts[0] == "CQ" {
-        if chkcall(&parts[2]).is_some() {
-            let mut merged = vec![format!("CQ_{}", parts[1])];
-            merged.extend_from_slice(&parts[2..]);
-            return merged;
-        }
+    if parts.len() >= 3 && parts[0] == "CQ" && chkcall(&parts[2]).is_some() {
+        let mut merged = vec![format!("CQ_{}", parts[1])];
+        merged.extend_from_slice(&parts[2..]);
+        return merged;
     }
     parts
 }
@@ -144,7 +142,7 @@ fn chkcall(token: &str) -> Option<String> {
 
     let bytes = base.as_bytes();
     let nbc = bytes.len();
-    if nbc > 6 || nbc < 3 {
+    if !(3..=6).contains(&nbc) {
         return None;
     }
     if !bytes[0].is_ascii_uppercase() && !bytes[1].is_ascii_uppercase() {
@@ -221,17 +219,17 @@ fn parse_callsign(raw: &str) -> CallsignParse {
 
     let mut npdig = 0;
     let mut nplet = 0;
-    for i in 0..iarea as usize {
-        if is_digit(chars[i]) {
+    for chars_value in chars.iter().take(iarea as usize) {
+        if is_digit(*chars_value) {
             npdig += 1;
         }
-        if is_letter(chars[i]) {
+        if is_letter(*chars_value) {
             nplet += 1;
         }
     }
     let mut nslet = 0;
-    for i in (iarea as usize + 1)..chars.len() {
-        if is_letter(chars[i]) {
+    for chars_value in chars.iter().skip(iarea as usize + 1) {
+        if is_letter(*chars_value) {
             nslet += 1;
         }
     }
@@ -275,7 +273,7 @@ pub fn pack28(token: &str) -> usize {
             let padded = format!("{:>4}", rest);
             let mut m: usize = 0;
             for c in padded.chars() {
-                let j = if ('A'..='Z').contains(&c) {
+                let j = if c.is_ascii_uppercase() {
                     (c as usize) - 64
                 } else {
                     0
@@ -316,9 +314,8 @@ pub fn pack28(token: &str) -> usize {
 
         let cs_chars: Vec<char> = cs.chars().collect();
         let mut cs_padded = [' '; 6];
-        for i in 0..cs_chars.len().min(6) {
-            cs_padded[i] = cs_chars[i];
-        }
+        let len = cs_chars.len().min(6);
+        cs_padded[..len].copy_from_slice(&cs_chars[..len]);
 
         let i1 = find_char(A1, cs_padded[0]);
         let i2 = find_char(A2, cs_padded[1]);
@@ -392,12 +389,8 @@ impl HashCallBook {
 
         let clean = if trimmed.starts_with('<') && trimmed.ends_with('>') {
             &trimmed[1..trimmed.len() - 1]
-        } else if trimmed.starts_with('<') {
-            if let Some(gt) = trimmed.find('>') {
-                &trimmed[1..gt]
-            } else {
-                &trimmed[1..]
-            }
+        } else if let Some(inner) = trimmed.strip_prefix('<') {
+            inner.split_once('>').map_or(inner, |(call, _)| call)
         } else {
             trimmed
         };
@@ -975,8 +968,8 @@ fn pack_text77(chars: &[char]) -> Vec<u8> {
         bits.push((byte0 >> b) & 1);
     }
     // limbs 1..8 give 8 bits each
-    for li in 1..=8 {
-        let byte = qa_bytes[li];
+    for qa_bytes_value in qa_bytes.iter().skip(1) {
+        let byte = *qa_bytes_value;
         for b in (0..8).rev() {
             bits.push((byte >> b) & 1);
         }
@@ -989,7 +982,7 @@ pub fn is_stdcall(callsign: &str) -> bool {
     let c = callsign.trim().to_uppercase();
     let bytes = c.as_bytes();
     let n = bytes.len();
-    if n < 2 || n > 12 {
+    if !(2..=12).contains(&n) {
         return false;
     }
 
@@ -1010,24 +1003,24 @@ pub fn is_stdcall(callsign: &str) -> bool {
     // Count digits and letters before call area
     let mut npdig = 0;
     let mut nplet = 0;
-    for i in 0..(iarea as usize) {
-        if bytes[i].is_ascii_digit() {
+    for bytes_value in bytes.iter().take(iarea as usize) {
+        if (*bytes_value).is_ascii_digit() {
             npdig += 1;
         }
-        if bytes[i].is_ascii_uppercase() {
+        if (*bytes_value).is_ascii_uppercase() {
             nplet += 1;
         }
     }
 
     // Count letters in suffix
     let mut nslet = 0;
-    for i in (iarea as usize + 1)..n {
-        if bytes[i].is_ascii_uppercase() {
+    for bytes_value in bytes.iter().take(n).skip(iarea as usize + 1) {
+        if (*bytes_value).is_ascii_uppercase() {
             nslet += 1;
         }
     }
 
-    nplet >= 1 && (npdig as i32) < iarea && nslet <= 3
+    nplet >= 1 && npdig < iarea && nslet <= 3
 }
 
 #[cfg(test)]
@@ -1380,8 +1373,8 @@ fn unpack_text77(bits71: &[u8]) -> String {
 
     // First 7 bits → byte 0 (MSB first, so bits 0-6 become the byte value)
     let mut val: u8 = 0;
-    for b in 0..7 {
-        val = (val << 1) | bits71[b];
+    for bits71_value in bits71.iter().take(7) {
+        val = (val << 1) | *bits71_value;
     }
     qa_bytes[0] = val;
 

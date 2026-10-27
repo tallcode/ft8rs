@@ -2,7 +2,7 @@ pub fn is_stdcall(callsign: &str) -> bool {
     let c = callsign.trim().to_uppercase();
     let bytes = c.as_bytes();
     let n = bytes.len();
-    if n < 2 || n > 12 {
+    if !(2..=12).contains(&n) {
         return false;
     }
 
@@ -23,22 +23,22 @@ pub fn is_stdcall(callsign: &str) -> bool {
     // Count digits and letters before call area
     let mut npdig = 0;
     let mut nplet = 0;
-    for i in 0..(iarea as usize) {
-        if bytes[i].is_ascii_digit() {
+    for bytes_value in bytes.iter().take(iarea as usize) {
+        if (*bytes_value).is_ascii_digit() {
             npdig += 1;
         }
-        if bytes[i].is_ascii_uppercase() {
+        if (*bytes_value).is_ascii_uppercase() {
             nplet += 1;
         }
     }
 
     // Count letters in suffix
     let mut nslet = 0;
-    for i in (iarea as usize + 1)..n {
-        if bytes[i].is_ascii_uppercase() {
+    for bytes_value in bytes.iter().take(n).skip(iarea as usize + 1) {
+        if (*bytes_value).is_ascii_uppercase() {
             nslet += 1;
         }
     }
 
-    nplet >= 1 && (npdig as i32) < iarea && nslet <= 3
+    nplet >= 1 && npdig < iarea && nslet <= 3
 }

@@ -52,13 +52,13 @@ pub fn agccft8(dd8: &mut [f32], nfa: i32, nfb: i32, lforcesync: bool) -> AgcResu
     let mut x_re = vec![0.0f64; NFFT];
     let mut x_im = vec![0.0f64; NFFT];
 
-    for j in 1..=10usize {
-        s3[j] = median_symbol_level(
+    for (j, s3_value) in s3.iter_mut().enumerate().take(10usize + 1).skip(1) {
+        *s3_value = median_symbol_level(
             dd8, j, nf1, nf2, nsb, nmed, fac1, &w11, &mut x_re, &mut x_im,
         );
     }
-    for j in 169..=178usize {
-        s3[j] = median_symbol_level(
+    for (j, s3_value) in s3.iter_mut().enumerate().skip(169) {
+        *s3_value = median_symbol_level(
             dd8, j, nf1, nf2, nsb, nmed, fac1, &w11, &mut x_re, &mut x_im,
         );
     }
@@ -106,6 +106,10 @@ pub fn agccft8(dd8: &mut [f32], nfa: i32, nfb: i32, lforcesync: bool) -> AgcResu
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 fn median_symbol_level(
     dd8: &[f32],
     j: usize,

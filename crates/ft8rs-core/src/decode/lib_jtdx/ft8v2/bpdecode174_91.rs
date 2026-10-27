@@ -15,6 +15,10 @@ pub(crate) struct BpDecodeResult {
     pub(crate) dmin: f32,
 }
 
+#[expect(
+    clippy::needless_range_loop,
+    reason = "Keep the reference BP update order and transposed parity-matrix indices explicit"
+)]
 pub(crate) fn bpdecode174_91(
     llr: &[f32; N],
     apmask: &[i8; N],
@@ -59,7 +63,7 @@ pub(crate) fn bpdecode174_91(
             for &bit in nm(i) {
                 syndrome += cw[bit] as usize;
             }
-            if syndrome % 2 != 0 {
+            if !syndrome.is_multiple_of(2) {
                 ncheck += 1;
             }
         }

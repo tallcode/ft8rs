@@ -227,9 +227,9 @@ impl Sync8Workspace {
             self.x_re[960] *= 1.9;
             self.x_re[2879] *= 1.9;
             if j != NHSYM {
-                for i in 0..=200 {
+                for (i, windowx_value) in windowx.iter().enumerate() {
                     self.x_re[2880 + i] =
-                        (dd8.get(ib + 1 + i).copied().unwrap_or(0.0) * windowx[i]) as f64;
+                        (dd8.get(ib + 1 + i).copied().unwrap_or(0.0) * *windowx_value) as f64;
                 }
             }
 
@@ -293,9 +293,9 @@ impl Sync8Workspace {
                 let mut t0c = 0.0f32;
                 let mut t0cq = 0.0f32;
 
-                for n in 0..7 {
+                for (n, icos7_value) in ICOS7.iter().enumerate() {
                     let k = j as isize + jstrt + nssy * n as isize;
-                    let i_costas = i + nfos * ICOS7[n] as usize;
+                    let i_costas = i + nfos * *icos7_value as usize;
                     if k > 0 && k <= NHSYM as isize {
                         let k = k as usize;
                         ta += self.s[s_idx(i_costas, k)];
@@ -406,13 +406,13 @@ impl Sync8Workspace {
 
                 let mut lcq = false;
                 let (sync_abc, sync_bc) = if config.ipass > 1 {
-                    for n in 7..=15 {
+                    for (n, tall_value) in tall.iter_mut().enumerate().take(15 + 1).skip(7) {
                         let k = j as isize + jstrt + nssy * n as isize;
                         if k > 0 && k <= NHSYM as isize {
                             let k = k as usize;
                             let tone_i = if n < 15 { i } else { i + 2 };
                             let sig = self.s[s_idx(tone_i, k)];
-                            tall[n] = sig * 6.0 / (self.rs_table[rss_idx(i, k)] - sig);
+                            *tall_value = sig * 6.0 / (self.rs_table[rss_idx(i, k)] - sig);
                         }
                     }
                     let sya = sum_tall(&tall, 0, 7);

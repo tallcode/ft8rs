@@ -149,7 +149,7 @@ fn fill_idtone56(
 }
 
 fn build_csynce(itone: &[i32; 79]) -> Option<CsyncE> {
-    let (wave_re, wave_im) = gen_ft8wave(&itone, 0.0);
+    let (wave_re, wave_im) = gen_ft8wave(itone, 0.0);
     let mut out = CsyncE::default();
     let mut m = 7 * 1920;
     for j in 0..19 {

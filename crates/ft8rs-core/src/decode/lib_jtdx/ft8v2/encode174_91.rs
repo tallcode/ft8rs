@@ -32,8 +32,8 @@ fn generator_matrix() -> [[u8; K]; M] {
     let mut gen = [[0u8; K]; M];
     for i in 0..M {
         let hex = G_HEX[i].as_bytes();
-        for j in 0..23 {
-            let istr = (hex[j] as char).to_digit(16).unwrap_or(0) as u8;
+        for (j, hex_value) in hex.iter().enumerate().take(23) {
+            let istr = (*hex_value as char).to_digit(16).unwrap_or(0) as u8;
             let ibmax = if j == 22 { 3 } else { 4 };
             for jj in 1..=ibmax {
                 let icol = j * 4 + jj - 1;

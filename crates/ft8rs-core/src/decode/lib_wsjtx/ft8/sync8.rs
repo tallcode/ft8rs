@@ -126,12 +126,12 @@ pub(super) fn sync8(
                 let mut t0b = 0.0;
                 let mut t0c = 0.0;
 
-                for n in 0..COSTAS_BLOCKS {
+                for (n, costas_value) in COSTAS.iter().enumerate().take(COSTAS_BLOCKS) {
                     // WSJT-X sync8.f90 keeps `m` as a 1-based time-bin index
                     // into s(:,m). Convert only at the Rust access boundary.
                     let m: isize = jj + jstrt as isize + nssy as isize * n as isize;
                     let m0 = m - 1;
-                    let i_costas = i + nfos * COSTAS[n] as usize;
+                    let i_costas = i + nfos * *costas_value as usize;
 
                     if m >= 1 && m <= NHSYM as isize && i_costas < half_size {
                         ta += s[i_costas * NHSYM + m0 as usize];

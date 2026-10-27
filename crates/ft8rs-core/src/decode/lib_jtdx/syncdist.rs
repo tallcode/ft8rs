@@ -4,10 +4,10 @@ use super::ft8_mod1::ICOS7;
 
 pub(crate) fn sync_rank_distribution(s8: &[[f32; 79]; 8]) -> [usize; 8] {
     let mut nsmax = [0usize; 8];
-    for k in 0..7 {
-        syncdist(&mut nsmax, s8_column(s8, k), ICOS7[k] as usize);
-        syncdist(&mut nsmax, s8_column(s8, k + 36), ICOS7[k] as usize);
-        syncdist(&mut nsmax, s8_column(s8, k + 72), ICOS7[k] as usize);
+    for (k, icos7_value) in ICOS7.iter().enumerate() {
+        syncdist(&mut nsmax, s8_column(s8, k), *icos7_value as usize);
+        syncdist(&mut nsmax, s8_column(s8, k + 36), *icos7_value as usize);
+        syncdist(&mut nsmax, s8_column(s8, k + 72), *icos7_value as usize);
     }
     nsmax
 }

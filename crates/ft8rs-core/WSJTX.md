@@ -331,6 +331,7 @@ Run these before accepting decode-core changes:
 
 ```bash
 cargo fmt --check
+cargo clippy --workspace --all-targets --profile fast -- -D warnings
 cargo test --release test_stream_decode_short_audio
 cargo test --release test_stream_decode_long_audio
 FT8RS_REQUIRE_WSJTX_SOURCE=1 cargo test --release --test wsjtx_source_audit_test
@@ -342,6 +343,15 @@ an explicit reference. An invalid explicit path always fails; setting
 `FT8RS_REQUIRE_WSJTX_SOURCE` also fails if automatic discovery finds no source.
 Without either variable, environments without a reference checkout may skip
 the upstream comparisons.
+
+Clippy cleanup must preserve the original floating-point literals, arithmetic
+precision, tie ordering, and accumulation order. Ordinary Rust style warnings
+are fixed in code. Intentional exceptions use local `#[expect(..., reason =
+"...")]` attributes: verbatim reference coefficients, source-shaped decoder
+argument lists, indexed BP/pivot updates, and existing public/inline event
+ownership. Do not truncate coefficients, rearrange numerical reductions, box
+public payloads, or relax filters solely to satisfy a style lint. Avoid broad
+crate/module lint allowances; an obsolete local expectation should itself warn.
 
 For FFTW alignment:
 

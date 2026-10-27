@@ -15,7 +15,7 @@ pub(crate) fn chkspecial8(msg37: &str, msg37_2: &str, mycall: &str, hiscall: &st
         return true;
     };
 
-    if ispc1 + 1 <= 3 || ispc2 + 1 <= 7 {
+    if ispc1 < 3 || ispc2 < 7 {
         return true;
     }
 

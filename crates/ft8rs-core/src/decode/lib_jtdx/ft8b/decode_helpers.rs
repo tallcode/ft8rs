@@ -52,12 +52,12 @@ pub(super) fn build_bit_metrics_inner(
                     _ => 8,
                 };
                 let mut s2 = [0.0f32; 512];
-                for i in 0..=nt {
+                for (i, s2_value) in s2.iter_mut().enumerate().take(nt + 1) {
                     let i1 = i / 64;
                     let i2 = (i & 63) / 8;
                     let i33 = i & 7;
 
-                    s2[i] = match source {
+                    *s2_value = match source {
                         MetricSource::Cs => match nsym {
                             1 => cabs1(metrics, MetricSource::Cs, GRAYMAP[i33] as usize, ks),
                             2 => cabs2(
@@ -254,11 +254,11 @@ pub(super) fn build_bit_metrics_inner(
                     };
 
                     if source == MetricSource::Cs && srr < 2.5 {
-                        s2[i] = shape_primary_metric(s2[i], srr);
+                        *s2_value = shape_primary_metric(*s2_value, srr);
                     }
                     if source != MetricSource::Cs && srr < 2.5 {
-                        let ss1 = 0.5 * s2[i];
-                        s2[i] = ss1 * ss1 * ss1;
+                        let ss1 = 0.5 * *s2_value;
+                        *s2_value = ss1 * ss1 * ss1;
                     }
                 }
 
@@ -415,9 +415,7 @@ pub(super) fn ap_type_table(config: &StreamDecodeConfig) -> &'static [[i32; 27];
         &NHAPTYPES
     } else if lmycallstd && (lhiscallstd || lnohiscall) {
         &NAPTYPES
-    } else if lmycallstd && !lhiscallstd && !lnohiscall {
-        &NDXNSAPTYPES
-    } else if !lmycallstd && !lhiscallstd && !lnohiscall {
+    } else if !lhiscallstd && !lnohiscall {
         &NDXNSAPTYPES
     } else {
         &NMYCNSAPTYPES
@@ -447,6 +445,10 @@ pub(super) fn is_nonstandard_call(call: &str) -> bool {
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(super) fn decoded_to_result(
     metrics: &SymbolMetrics,
     refined_freq: f64,
@@ -472,9 +474,7 @@ pub(super) fn decoded_to_result(
         config.mycall.as_deref(),
         config.hiscall.as_deref(),
     );
-    let Some(mut msg) = unpack77_with_context(&decoded.message77, unpack_context) else {
-        return None;
-    };
+    let mut msg = unpack77_with_context(&decoded.message77, unpack_context)?;
     let l_free_text = i3 == 0 && n3 == 0;
     let mut msg37_2 = String::new();
     let mut l_special = false;
@@ -557,6 +557,10 @@ pub(super) fn decoded_quality_rejected(decoded: &BpDecodeResult, isubp2: usize) 
         || (isubp2 > 2 && decoded.nharderror > 39)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(super) fn decoded_bits_to_result(
     metrics: &SymbolMetrics,
     refined_freq: f64,
@@ -632,8 +636,8 @@ fn split_tu_message(msg: String) -> (String, String, bool) {
 
 pub(super) fn sync_snr_ratio(metrics: &SymbolMetrics) -> f32 {
     let mut synclev = 0.0f32;
-    for k in 0..7 {
-        synclev += metrics.s8[ICOS7[k] as usize][k + 36];
+    for (k, icos7_value) in ICOS7.iter().enumerate() {
+        synclev += metrics.s8[*icos7_value as usize][k + 36];
     }
     let mut total = 0.0f32;
     for tone in 0..8 {
@@ -648,10 +652,10 @@ pub(super) fn sync_snr_ratio(metrics: &SymbolMetrics) -> f32 {
     synclev / snoiselev
 }
 
-fn metric_tables<'a>(
-    metrics: &'a SymbolMetrics,
+fn metric_tables(
+    metrics: &SymbolMetrics,
     source: MetricSource,
-) -> (&'a [[f32; 79]; 8], &'a [[f32; 79]; 8]) {
+) -> (&[[f32; 79]; 8], &[[f32; 79]; 8]) {
     match source {
         MetricSource::Cs | MetricSource::CsCsoldPower | MetricSource::CsCsoldSum => {
             (&metrics.cs_re, &metrics.cs_im)
@@ -682,6 +686,10 @@ fn cabs2(
     (re * re + im * im).sqrt()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 fn cabs3(
     metrics: &SymbolMetrics,
     source: MetricSource,

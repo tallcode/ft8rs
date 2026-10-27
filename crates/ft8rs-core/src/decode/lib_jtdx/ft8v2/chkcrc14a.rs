@@ -10,8 +10,11 @@ pub(crate) fn chkcrc14a(decoded91: &[u8]) -> bool {
 
 pub(crate) fn crc14(msg77: &[u8]) -> u16 {
     let mut crc: u16 = 0;
-    for bit_idx in 0..96 {
-        let next_bit = if bit_idx < 77 { msg77[bit_idx] } else { 0 };
+    for next_bit in msg77[..77]
+        .iter()
+        .copied()
+        .chain(std::iter::repeat_n(0, 19))
+    {
         if (crc & 0x2000) != 0 {
             crc = ((crc << 1) | next_bit as u16) ^ CRC14_POLY;
         } else {

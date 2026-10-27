@@ -146,7 +146,7 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
             idx = i;
         }
     }
-    ibest = idx as isize - 4 + ibest;
+    ibest += idx as isize - 4;
     let xdt_refined = (ibest as f64 - 1.0) * DT2 - 0.5;
 
     // ── Extract soft symbols: 79 symbols × 8 tones ──
@@ -190,11 +190,11 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
                 let ks = ks_base + k;
 
                 // Compute s2[0..nt-1]
-                for i in 0..nt {
+                for (i, s2_value) in s2.iter_mut().enumerate().take(nt) {
                     let i1_val = i / 64;
                     let i2_val = (i & 63) / 8;
                     let i3_val = i & 7;
-                    s2[i] = if nsym == 1 {
+                    *s2_value = if nsym == 1 {
                         let t = GRAY_MAP[i3_val] as usize;
                         ap_wsjtx_cabs(cs_re[t][ks] as f32, cs_im[t][ks] as f32) as f64
                     } else if nsym == 2 {
@@ -288,7 +288,7 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     let mut dmm = [1e30f64; 207]; // 1-indexed
     let mut best_imsg = 1; // track which imsg gave dmin
 
-    for imsg in 1..=206 {
+    for (imsg, dmm_value) in dmm.iter_mut().enumerate().skip(1) {
         let msg = build_ap_message(call_1, call_2, grid4, std_1, std_2, imsg);
 
         let msg77 = pack77(&msg);
@@ -324,7 +324,7 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
         let dd_val = hamming_dist(&cw, &llrd);
 
         let dm = da.min(db).min(dc).min(dd_val);
-        dmm[imsg] = dm;
+        *dmm_value = dm;
 
         if dm < dmin {
             dmin = dm;
@@ -348,9 +348,9 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
 
     // Second minimum (exclude the best match) — matching WSJT-X exactly
     let mut dmin2 = 1e30f64;
-    for imsg in 1..=206 {
-        if imsg != best_imsg && dmm[imsg] < dmin2 {
-            dmin2 = dmm[imsg];
+    for (imsg, dmm_value) in dmm.iter().enumerate().skip(1) {
+        if imsg != best_imsg && *dmm_value < dmin2 {
+            dmin2 = *dmm_value;
         }
     }
 
@@ -461,7 +461,7 @@ fn build_ap_message(
             // WSJT-X format: {+,-}NN (always 2-digit with sign, 3 chars total)
             // For imsg odd: "+NN" or "-NN"
             // For imsg even: "R+NN" or "R-NN"
-            let abs_val = isnr.abs() as usize;
+            let abs_val = isnr.unsigned_abs();
             let report = if i % 2 == 1 {
                 // SNR report: "+NN" or "-NN"
                 if isnr >= 0 {
@@ -494,31 +494,6 @@ fn is_cq_call_1(call_1: &str) -> bool {
     ] == *b"CQ "
 }
 
-#[cfg(test)]
-mod tests {
-    use super::build_ap_message;
-
-    #[test]
-    fn ap_message_imsg5_nonstandard_calls_matches_wsjtx_cq_override() {
-        let msg = build_ap_message("EA5/DH0YAH", "RK4FF/P", "JN00", false, false, 5);
-        assert_eq!(msg, "CQ RK4FF/P");
-    }
-
-    #[test]
-    fn ap_message_imsg5_standard_call_preserves_grid_override() {
-        let msg = build_ap_message("K1ABC", "W9XYZ", "FN42", true, true, 5);
-        assert_eq!(msg, "CQ W9XYZ FN42");
-    }
-
-    #[test]
-    fn ap_message_compact_cq_call_matches_fortran_padded_cq() {
-        let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 1);
-        assert_eq!(msg, "QU1RK D1DX");
-        let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 5);
-        assert_eq!(msg, "CQ D1DX KN87");
-    }
-}
-
 /// Hamming-weighted distance: sum of |llr[i]| where decoded bit != codeword bit
 fn hamming_dist(cw: &[u8], llr: &[f64]) -> f64 {
     let mut dist = 0.0f64;
@@ -546,9 +521,9 @@ fn build_one_table() -> &'static [[bool; 9]; 512] {
     static ONE: std::sync::OnceLock<[[bool; 9]; 512]> = std::sync::OnceLock::new();
     ONE.get_or_init(|| {
         let mut table = [[false; 9]; 512];
-        for i in 0..512 {
-            for j in 0..9 {
-                table[i][j] = (i & (1 << j)) != 0;
+        for (i, row) in table.iter_mut().enumerate() {
+            for (j, bit) in row.iter_mut().enumerate() {
+                *bit = (i & (1 << j)) != 0;
             }
         }
         table
@@ -587,4 +562,29 @@ fn build_ctwk(dphi: f64) -> ([f64; 32], [f64; 32]) {
         phi = (phi + dphi) % twopi;
     }
     (re, im)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_ap_message;
+
+    #[test]
+    fn ap_message_imsg5_nonstandard_calls_matches_wsjtx_cq_override() {
+        let msg = build_ap_message("EA5/DH0YAH", "RK4FF/P", "JN00", false, false, 5);
+        assert_eq!(msg, "CQ RK4FF/P");
+    }
+
+    #[test]
+    fn ap_message_imsg5_standard_call_preserves_grid_override() {
+        let msg = build_ap_message("K1ABC", "W9XYZ", "FN42", true, true, 5);
+        assert_eq!(msg, "CQ W9XYZ FN42");
+    }
+
+    #[test]
+    fn ap_message_compact_cq_call_matches_fortran_padded_cq() {
+        let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 1);
+        assert_eq!(msg, "QU1RK D1DX");
+        let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 5);
+        assert_eq!(msg, "CQ D1DX KN87");
+    }
 }

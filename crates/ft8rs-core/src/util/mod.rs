@@ -7,7 +7,7 @@ pub(crate) mod fft_rustfft;
 ///
 /// Default: rustfft @ 3840, no external FFTW runtime dependency.
 /// Feature `fftw`: FFTW @ 3840, used for FFTW validation.
-
+///
 /// sync8 FFT size: both compile-time engines use 3840 bins.
 #[inline]
 pub fn sync8_fft_size() -> usize {

@@ -268,8 +268,8 @@ fn unpack_text77(bits71: &[u8]) -> String {
 
     // First 7 bits → byte 0 (MSB first, so bits 0-6 become the byte value)
     let mut val: u8 = 0;
-    for b in 0..7 {
-        val = (val << 1) | bits71[b];
+    for bits71_value in bits71.iter().take(7) {
+        val = (val << 1) | *bits71_value;
     }
     qa_bytes[0] = val;
 

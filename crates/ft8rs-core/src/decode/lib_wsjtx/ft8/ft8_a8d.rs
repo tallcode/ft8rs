@@ -363,7 +363,7 @@ fn getmsg(i: usize, mycall: &str, hiscall: &str, hisgrid: &str) -> String {
     }
     if (7..=206).contains(&i) {
         isnr = -50 + (i as isize - 7) / 2;
-        let abs = isnr.abs() as usize;
+        let abs = isnr.unsigned_abs();
         let rpt = if i & 1 == 1 {
             if isnr >= 0 {
                 format!("+{abs:02}")
@@ -413,13 +413,11 @@ fn gen_ft8wave_a8(itone: &[i32; 79]) -> (Vec<f32>, Vec<f32>) {
     for value in &mut dphi {
         *value += twopi * f0 * dt;
     }
-    let mut k = 0usize;
-    for j in NSPS_A8..(NSPS_A8 + NWAVE) {
+    for (k, &phase_step) in dphi[NSPS_A8..NSPS_A8 + NWAVE].iter().enumerate() {
         let idx = (phi * NTAB as f32 / twopi) as usize;
         cwave_re[k] = ctab[idx].0;
         cwave_im[k] = ctab[idx].1;
-        phi = (phi + dphi[j]).rem_euclid(twopi);
-        k += 1;
+        phi = (phi + phase_step).rem_euclid(twopi);
     }
 
     let nramp = nint_wsjtx_real(NSPS_A8 as f32 / 8.0) as usize;
@@ -469,6 +467,10 @@ fn gfsk_pulse(bt: f32, tt: f32) -> f32 {
     0.5 * (erf_approx(c * bt * (tt + 0.5)) - erf_approx(c * bt * (tt - 0.5)))
 }
 
+#[expect(
+    clippy::excessive_precision,
+    reason = "Preserve the reference error-function coefficients and f32 rounding"
+)]
 fn erf_approx(x: f32) -> f32 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let ax = x.abs();

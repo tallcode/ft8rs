@@ -1621,7 +1621,7 @@ fn rx_text_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Res
     );
     if resp.changed() {
         value.retain(|c| c.is_ascii_digit());
-        if value.parse::<f64>().map_or(false, |v| v > 3000.0) {
+        if value.parse::<f64>().is_ok_and(|v| v > 3000.0) {
             *value = "3000".to_string();
         }
     }
@@ -2251,11 +2251,13 @@ fn install_fonts(ctx: &egui::Context) {
 /// can't be parsed (keeps startup robust).
 fn center_tweak(bytes: &[u8]) -> egui::FontTweak {
     use ab_glyph::Font as _;
-    let mut tweak = egui::FontTweak::default();
     // A small constant downward bias: centering the typographic block leaves text
     // looking a hair high (ascenders/descenders are rarely all used), so nudge it
     // down ~1px for optical centering. Applies to every face and platform.
-    tweak.y_offset = 1.0;
+    let mut tweak = egui::FontTweak {
+        y_offset: 1.0,
+        ..Default::default()
+    };
     // index 0 handles both single faces (.ttf/.otf) and the first face of a
     // collection (.ttc), e.g. Menlo / PingFang / YaHei.
     if let Ok(font) = ab_glyph::FontRef::try_from_slice_and_index(bytes, 0) {
