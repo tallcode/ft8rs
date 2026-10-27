@@ -114,6 +114,9 @@ FT8 core constants:
 
 All file and soundcard input must become a stable 12 kHz mono stream before it
 enters the decode core. EOF tail slots must be flushed rather than dropped.
+WAV and live 48 kHz input share the unchanged WSJT-X `fil4` coefficients.
+Other downsampling ratios use a centered, windowed-sinc input adapter to avoid
+aliasing; already-12 kHz input and decoder constants remain unchanged.
 
 ## FFT Policy
 
@@ -149,6 +152,8 @@ Important rules:
 - `nzhsym<50` disables `ft8b` internal AP passes;
 - final decode zero-pads after `50 * 3456`, not after the full 15 s buffer;
 - AP parity uses `jseq = mod(nutc/5, 2)` from the slot timestamp.
+- Each stage reads a fresh audio snapshot, including when a caller updates a
+  fixed-size buffer in place. A pointer/length pair is not an audio version.
 
 ## `ft8_decode` and `ft8b`
 
@@ -171,6 +176,9 @@ Outer regular passes:
   `npasses=5+2*nappasses(nQSOProgress)`, `lapcqonly=>7`, `nzhsym<50=>5`;
 - AP magnitude follows current WSJT-X FT8:
   `apmag=maxval(abs(llrz))*1.1`.
+- Noise power follows `10**(0.1*(sbase-40))` for all valid dB baselines,
+  including zero and negative values. A positivity gate or a fixed linear
+  fallback breaks SNR and the existing `nsync<=10 / SNR<-25` rejection gate.
 
 `cs` and `s8` are deliberately written like the F90:
 
@@ -200,6 +208,10 @@ Critical alignment points:
 
 WSJT-X AP behavior:
 
+- AP template pack/unpack validation shares a hash-call table, as Fortran's
+  `pack77`, `save_hash_call`, and `unpack77` do. Seed both context calls before
+  checking the round trip so a compound MyCall resolves rather than becoming
+  `<...>`. Keep the original message-type and round-trip rejection rules.
 - `ft8_a7_save` stores `msg0/dt0/f0` by parity;
 - on a new slot, current memory moves to previous memory for that parity;
 - AP at `nzhsym=50` uses previous entries of the same parity;
@@ -321,8 +333,15 @@ Run these before accepting decode-core changes:
 cargo fmt --check
 cargo test --release test_stream_decode_short_audio
 cargo test --release test_stream_decode_long_audio
-cargo test --release --test wsjtx_source_audit_test
+FT8RS_REQUIRE_WSJTX_SOURCE=1 cargo test --release --test wsjtx_source_audit_test
 ```
+
+The source audit discovers a sibling `wsjtx` checkout from the crate/workspace
+ancestors. Set `FT8RS_WSJTX_SOURCE_DIR` to the WSJT-X repository root to choose
+an explicit reference. An invalid explicit path always fails; setting
+`FT8RS_REQUIRE_WSJTX_SOURCE` also fails if automatic discovery finds no source.
+Without either variable, environments without a reference checkout may skip
+the upstream comparisons.
 
 For FFTW alignment:
 

@@ -244,7 +244,9 @@ impl StreamDecodeConfig {
         config.nft8rxfsens = 3;
         config.lft8lowth = true;
         config.lft8subpass = true;
-        config.nagcc = true;
+        // JTDX's AGC compensation is an explicit receiver option, defaulting
+        // to false (mainwindow.cpp: AGCcompensation). Preserve the caller's
+        // selection; high sensitivity does not imply AGC compensation.
         config.lenabledxcsearch = true;
         config.lwidedxcsearch = true;
         config.ncandthin = 100;
@@ -292,8 +294,6 @@ pub struct StreamDecodedWithProvenance {
 
 pub struct StreamSlotDecodeState {
     dd0: Vec<f64>,
-    dd0_samples_ptr: usize,
-    dd0_sample_len: usize,
     seen: HashSet<String>,
     merged: Vec<StreamDecodedMessage>,
     provenance: Vec<StreamDecodedWithProvenance>,
@@ -305,8 +305,6 @@ pub struct StreamSlotDecodeState {
 
 impl StreamSlotDecodeState {
     fn reset_for_slot(&mut self) {
-        self.dd0_samples_ptr = 0;
-        self.dd0_sample_len = usize::MAX;
         self.seen.clear();
         self.merged.clear();
         self.provenance.clear();
@@ -435,8 +433,6 @@ impl StreamDecodeSession {
     pub fn start_slot_decode(&self) -> StreamSlotDecodeState {
         StreamSlotDecodeState {
             dd0: vec![0.0; NMAX],
-            dd0_samples_ptr: 0,
-            dd0_sample_len: usize::MAX,
             seen: HashSet::new(),
             merged: Vec::new(),
             provenance: Vec::new(),
@@ -471,7 +467,7 @@ impl StreamDecodeSession {
     {
         self.ft8_a7_new_slot(timestamp);
 
-        fill_dd0_from_samples_if_needed(state, samples);
+        fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 41, &mut state.work);
         let (early_results, _) = if self.params.ndepth == 1 {
             (Vec::new(), Vec::new())
@@ -495,7 +491,7 @@ impl StreamDecodeSession {
     }
 
     pub fn subtract_slot_nzhsym47(&self, state: &mut StreamSlotDecodeState, samples: &[f32]) {
-        fill_dd0_from_samples_if_needed(state, samples);
+        fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 47, &mut state.dd1);
         state.early_subtracted.clear();
         state
@@ -558,7 +554,7 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        fill_dd0_from_samples_if_needed(state, samples);
+        fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 50, &mut state.work);
         if !self.params.nagain {
             let clean_prefix = (47 * NZHSYM_STRIDE).min(NMAX);
@@ -842,17 +838,6 @@ fn decode_a7_from_saved_entry_with_adapter_retries(
     None
 }
 
-fn fill_dd0_from_samples_if_needed(state: &mut StreamSlotDecodeState, samples: &[f32]) {
-    let ptr = samples.as_ptr() as usize;
-    let len = samples.len().min(NMAX);
-    if state.dd0_samples_ptr == ptr && state.dd0_sample_len == len {
-        return;
-    }
-    fill_dd0_from_samples(samples, &mut state.dd0);
-    state.dd0_samples_ptr = ptr;
-    state.dd0_sample_len = len;
-}
-
 fn fill_dd0_from_samples(samples: &[f32], out: &mut [f64]) {
     out.fill(0.0);
     let len = samples.len().min(NMAX);
@@ -1127,6 +1112,19 @@ mod tests {
         assert_eq!(jseq_from_nutc(140315), 1);
         assert_eq!(jseq_from_nutc(140330), 0);
         assert_eq!(jseq_from_nutc(140345), 1);
+    }
+
+    #[test]
+    fn high_sensitivity_preserves_explicit_agc_compensation_selection() {
+        for nagcc in [false, true] {
+            let config = StreamDecodeConfig {
+                nagcc,
+                ..Default::default()
+            };
+            let jtdx = config.clone_for_profile_jtdx_high_sensitivity();
+            assert_eq!(jtdx.nagcc, nagcc);
+            assert!(jtdx.lft8lowth && jtdx.lft8subpass);
+        }
     }
 
     #[test]

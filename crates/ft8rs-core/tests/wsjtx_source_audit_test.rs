@@ -11,15 +11,32 @@ fn read_to_string(path: &Path) -> String {
 }
 
 fn local_wsjtx_ft8_dir() -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("FT8RS_WSJTX_SOURCE_DIR") {
+        let dir = PathBuf::from(root).join("lib/ft8");
+        assert!(
+            dir.is_dir(),
+            "FT8RS_WSJTX_SOURCE_DIR must point to a WSJT-X source tree: {} is missing",
+            dir.display()
+        );
+        return Some(dir);
+    }
+
     let root = project_root();
-    let dir = root.parent()?.join("wsjtx/lib/ft8");
-    dir.is_dir().then_some(dir)
+    // The manifest is in crates/ft8rs-core. Find the sibling checkout from
+    // the workspace's ancestors rather than assuming a root-level crate.
+    root.ancestors()
+        .map(|ancestor| ancestor.join("wsjtx/lib/ft8"))
+        .find(|dir| dir.is_dir())
 }
 
 fn skip_without_local_wsjtx() -> Option<PathBuf> {
     match local_wsjtx_ft8_dir() {
         Some(dir) => Some(dir),
         None => {
+            assert!(
+                std::env::var_os("FT8RS_REQUIRE_WSJTX_SOURCE").is_none(),
+                "WSJT-X source audit is required; set FT8RS_WSJTX_SOURCE_DIR to the reference checkout"
+            );
             eprintln!("skipping WSJT-X source audit: ../wsjtx/lib/ft8 is not present");
             None
         }

@@ -10,6 +10,10 @@ pub fn twkfreq1(
     fsample: f64,
     a: &[f64; 5],
 ) -> ComplexC {
+    #[expect(
+        clippy::approx_constant,
+        reason = "Preserve the established decoder phase constant rather than substituting TAU"
+    )]
     let twopi = 6.283_185_307_f64;
     let dphi = a[0] * (twopi / fsample);
     let wstep_re = dphi.cos();

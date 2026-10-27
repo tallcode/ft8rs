@@ -95,8 +95,8 @@ pub struct Ft8rsApp {
 
     devices: Vec<SoundcardDeviceInfo>,
     selected_device: Option<String>, // device name; None = default
-    input_channel: InputChannel,      // which channel of a multi-channel device to decode
-    input_peak: Option<f32>,          // last per-slot captured peak (0..1); None until first slot
+    input_channel: InputChannel,     // which channel of a multi-channel device to decode
+    input_peak: Option<f32>,         // last per-slot captured peak (0..1); None until first slot
     // Last slot's capture diagnostics (samples, blocks, avg_block, jitter_ms) and
     // decode count — an at-a-glance readout for locating capture/alignment issues.
     capture_diag: Option<(usize, u32, u32, i64)>,
@@ -904,8 +904,16 @@ impl Ft8rsApp {
                             InputChannel::Right => "Right",
                         })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.input_channel, InputChannel::Mono, "Mono");
-                            ui.selectable_value(&mut self.input_channel, InputChannel::Left, "Left");
+                            ui.selectable_value(
+                                &mut self.input_channel,
+                                InputChannel::Mono,
+                                "Mono",
+                            );
+                            ui.selectable_value(
+                                &mut self.input_channel,
+                                InputChannel::Left,
+                                "Left",
+                            );
                             ui.selectable_value(
                                 &mut self.input_channel,
                                 InputChannel::Right,

@@ -36,9 +36,9 @@ pub(crate) enum SlotStage {
 /// still decodes elsewhere is the tell that capture-timestamps are unreliable.
 pub(crate) struct SlotDiag {
     pub peak: f32,
-    pub samples: usize, // native samples in the slot's decode window
-    pub blocks: u32,    // capture callbacks that fed this slot
-    pub avg_block: u32, // mean block size in samples
+    pub samples: usize,     // native samples in the slot's decode window
+    pub blocks: u32,        // capture callbacks that fed this slot
+    pub avg_block: u32,     // mean block size in samples
     pub max_jitter_ms: i64, // worst deviation of block arrival from smooth real-time
 }
 
@@ -142,13 +142,19 @@ impl PeriodAccumulator {
         self.native.extend_from_slice(samples);
         // Stream the early stages as soon as enough audio has arrived.
         if self.stage == 0 && self.native.len() >= native_samples_for_nzhsym(self.sample_rate, 41) {
-            out.stages
-                .push((SlotStage::N41, self.ts(), downsample_12k(&self.native, self.sample_rate)));
+            out.stages.push((
+                SlotStage::N41,
+                self.ts(),
+                downsample_12k(&self.native, self.sample_rate),
+            ));
             self.stage = 1;
         }
         if self.stage == 1 && self.native.len() >= native_samples_for_nzhsym(self.sample_rate, 47) {
-            out.stages
-                .push((SlotStage::N47, self.ts(), downsample_12k(&self.native, self.sample_rate)));
+            out.stages.push((
+                SlotStage::N47,
+                self.ts(),
+                downsample_12k(&self.native, self.sample_rate),
+            ));
             self.stage = 2;
         }
     }
@@ -161,13 +167,19 @@ impl PeriodAccumulator {
         }
         let ts = self.ts();
         if self.stage == 1 {
-            out.stages
-                .push((SlotStage::N47, ts.clone(), downsample_12k(&self.native, self.sample_rate)));
+            out.stages.push((
+                SlotStage::N47,
+                ts.clone(),
+                downsample_12k(&self.native, self.sample_rate),
+            ));
             self.stage = 2;
         }
         if self.stage == 2 {
-            out.stages
-                .push((SlotStage::N50, ts.clone(), downsample_12k(&self.native, self.sample_rate)));
+            out.stages.push((
+                SlotStage::N50,
+                ts.clone(),
+                downsample_12k(&self.native, self.sample_rate),
+            ));
             self.stage = 3;
         }
         out.completed = Some(SlotDiag {
@@ -595,7 +607,6 @@ where
     Ok(slot_complete)
 }
 
-
 pub(crate) fn start_input_stream(
     selector: Option<&str>,
     channel: InputChannel,
@@ -793,7 +804,10 @@ fn capture_now_ms() -> i64 {
 }
 
 fn send_f32(data: &[f32], channels: usize, channel: InputChannel, tx: &mpsc::Sender<AudioChunk>) {
-    let _ = tx.send((fold_channels(data.iter().copied(), channels, channel), capture_now_ms()));
+    let _ = tx.send((
+        fold_channels(data.iter().copied(), channels, channel),
+        capture_now_ms(),
+    ));
 }
 
 fn send_i16(data: &[i16], channels: usize, channel: InputChannel, tx: &mpsc::Sender<AudioChunk>) {
@@ -856,13 +870,11 @@ where
     }
 }
 
-
 pub(crate) fn native_samples_for_nzhsym(sample_rate: u32, nzhsym: usize) -> usize {
     let samples_12k = nzhsym * NZHSYM_STRIDE;
     ((samples_12k as u64 * sample_rate as u64) + TARGET_SAMPLE_RATE as u64 - 1) as usize
         / TARGET_SAMPLE_RATE as usize
 }
-
 
 #[cfg(test)]
 mod tests {

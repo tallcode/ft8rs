@@ -97,15 +97,7 @@ pub(super) fn ft8b(
     // sbase is built by sync8 with NFFT1=3840 → df=3.125 Hz/bin.
     // WSJT-X ft8b.f90: xbase = 10^(0.1*(sbase[freq_bin]-40))
     // This represents the absolute noise power at f1 in the original spectrum.
-    let xbase = {
-        let df_sync = SAMPLE_RATE as f64 / NFFT1 as f64; // 3.125 Hz/bin
-        let freq_bin = nint_wsjtx_f32(f1 / df_sync).max(0) as usize;
-        if freq_bin < _sbase.len() && _sbase[freq_bin] > 0.0 {
-            (10.0f32.powf(0.1 * (_sbase[freq_bin] as f32 - 40.0))) as f64
-        } else {
-            1e-6 // safe fallback: very low noise floor
-        }
-    };
+    let xbase = spectrum_noise_power(_sbase, f1)?;
 
     let result = try_decode_passes(workspace, depth, f1, ap_options, _book);
     let Some(result) = result else {
@@ -167,6 +159,15 @@ pub(super) fn ft8b(
         snr,
         itone,
     })
+}
+
+fn spectrum_noise_power(sbase: &[f64], frequency: f64) -> Option<f64> {
+    let df_sync = SAMPLE_RATE as f64 / NFFT1 as f64;
+    let freq_bin = nint_wsjtx_f32(frequency / df_sync).max(0) as usize;
+    // sbase is logarithmic power. Zero and negative dB values are valid;
+    // WSJT-X applies this expression without a positivity gate or a floor.
+    let baseline_db = *sbase.get(freq_bin)? as f32;
+    Some(10.0f32.powf(0.1 * (baseline_db - 40.0)) as f64)
 }
 
 fn find_best_time_offset(cd0_re: &[f64], cd0_im: &[f64], xdt: f64) -> TimeSearchResult {
@@ -819,4 +820,34 @@ fn set_i3_001(workspace: &mut DecodeWorkspace, apmag: f64) {
     set_sign(workspace, 75, -1, apmag);
     set_sign(workspace, 76, -1, apmag);
     set_sign(workspace, 77, 1, apmag);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compute_snr, spectrum_noise_power, NN};
+
+    #[test]
+    fn negative_db_baseline_does_not_discard_a_valid_snr() {
+        let mut s8 = vec![0.01; 8 * NN];
+        s8[..NN].fill(0.1);
+        let xbase = spectrum_noise_power(&[-40.0; 321], 1000.0).unwrap();
+        let (_, snr) = compute_snr(&s8, &[0; 79], xbase);
+        // The old 1e-6 fallback produced -57 dB here, causing the nsync<=10
+        // gate to reject a signal whose reference SNR is about -13 dB.
+        assert!((snr - (-12.963)).abs() < 0.01);
+    }
+
+    #[test]
+    fn snr_is_invariant_when_audio_gain_and_db_baseline_change_together() {
+        let mut s8 = vec![0.01; 8 * NN];
+        s8[..NN].fill(0.1);
+        let xbase = spectrum_noise_power(&[-40.0; 321], 1000.0).unwrap();
+        let (_, original) = compute_snr(&s8, &[0; 79], xbase);
+        for value in &mut s8 {
+            *value *= 100.0;
+        }
+        let xbase = spectrum_noise_power(&[0.0; 321], 1000.0).unwrap();
+        let (_, amplified) = compute_snr(&s8, &[0; 79], xbase);
+        assert!((original - amplified).abs() < 0.001);
+    }
 }

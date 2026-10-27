@@ -1,31 +1,17 @@
-//! JTDX `chkfalse8` false-decode filter.
+//! JTDX false-decode checks, grouped from `lib/chkfalse8.f90` and its
+//! caller-side checks in `lib/ft8b.f90`.
 //!
-//! PROVENANCE (verified 2026-07-12): this file does NOT match the
-//! `chkfalse8.f90` in the pinned JTDX reference tree. Its filter takes extra
-//! inputs and gates most checks behind them:
-//!   - extra args `msg37_2`, `lcall2hash`, and a `FilterContext { quality, xsnr,
-//!     rxdt }` (built in `ft8b/decode_helpers.rs`);
-//!   - `primary_false_check = quality < 0.39 || xsnr < -20.5 || rxdt < -0.5
-//!     || rxdt > 1.9 || iaptype in {1,2,3,11,21,40,41}`.
-//! None of that exists in the pinned Fortran, whose signature is the 6-arg
-//! `chkfalse8(msg37,i3,n3,nbadcrc,iaptype,lcall1hash)` and which has no
-//! quality/SNR/DT gating. The pinned reference HEAD (2022-03-01) is the newest
-//! ref in that checkout, and `git log --all -S quality`/`-S msg37_2` on
-//! `lib/chkfalse8.f90` finds nothing — so the newer form is absent from every
-//! ref there.
+//! Source provenance corrected on 2026-10-27 against JTDX
+//! `2a0e2bea8c66c9ca94d2ea8034cf83a68cfa40eb`:
+//! `quality < 0.39`, `xsnr < -20.5`, the DT bounds, and the AP-type gate
+//! originate in `ft8b.f90` before its call to the six-argument `chkfalse8`.
+//! The extra `msg37_2` and `lcall2hash` inputs also belong to that caller.
+//! Their absence from `chkfalse8.f90` alone does not imply a newer or unknown
+//! upstream version. Keep the original gates when maintaining this Rust split.
 //!
-//! Therefore this file targets either a JTDX release newer than that checkout or
-//! is a local enhancement layered on the 2022 logic. Which one is no longer
-//! remembered, so it CANNOT be byte-verified against the pinned reference and no
-//! target version can be cited. The `->` mapping in `JTDX.md` is a name mapping
-//! only, not a byte-alignment claim, for this file.
-//!
-//! It is a false-decode filter: it only rejects candidates, never creates
-//! decodes, and the jtdx baselines (20/20 short, 430/431 long) are green with it
-//! as-is. Do NOT "restore alignment" by reverting to the 6-arg version — that
-//! drops the quality/xsnr/rxdt gating the baselines are calibrated against and
-//! can shift decodes. If the upstream source it targets is ever identified, pin
-//! that `chkfalse8.f90` so this file becomes diff-verifiable again.
+//! This module groups checks from both source files into Rust helpers; it is
+//! not a one-function, byte-for-byte mirror. Full callsign/grid geography
+//! validation remains intentionally deferred; see `JTDX.md`.
 
 use super::call_q::call_q_pair_reject;
 use super::callsign_q::callsign_q_reject;

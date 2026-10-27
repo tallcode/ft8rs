@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::input::audio::{read_wav_mono_f32, resample_linear};
+use crate::input::audio::{downsample_12k, read_wav_mono_f32};
 use crate::stream::session::{StreamDecodeConfig, StreamDecodedMessage};
 use crate::stream::slot::{
     decode_12k_slots, decode_12k_slots_streaming, decode_12k_slots_streaming_decodes,
@@ -76,11 +76,7 @@ fn read_wav_12k(path: impl AsRef<Path>) -> Result<Vec<f32>, String> {
     if audio.sample_rate == SAMPLE_RATE {
         return Ok(audio.samples);
     }
-    Ok(resample_linear(
-        &audio.samples,
-        audio.sample_rate,
-        SAMPLE_RATE,
-    ))
+    Ok(downsample_12k(&audio.samples, audio.sample_rate))
 }
 
 fn is_timestamp_bytes(window: &[u8]) -> bool {

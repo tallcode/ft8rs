@@ -130,6 +130,8 @@ impl JtdxStreamDecodeSession {
         Ok(std::mem::take(&mut self.last_provenance))
     }
 
+    /// Decode normalized 12 kHz audio, converting to JTDX's signed 16-bit PCM
+    /// amplitude scale before AGC and candidate processing.
     pub fn decode_slot_streaming_at<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -142,7 +144,10 @@ impl JtdxStreamDecodeSession {
         self.last_provenance.clear();
         self._state.dd8.fill(0.0);
         for (dst, src) in self._state.dd8.iter_mut().zip(samples.iter().copied()) {
-            *dst = src;
+            // The public audio stream uses normalized floats. JTDX jt9a.f90
+            // assigns integer*2 PCM directly to dd8, and its AGC, soft metrics
+            // and SNR noise floor all use that original amplitude scale.
+            *dst = src * 32768.0;
         }
         let interval = IntervalKind::from_timestamp(timestamp);
         rotate_odd_even_memory(&mut self._state, interval);

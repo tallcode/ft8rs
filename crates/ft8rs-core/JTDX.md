@@ -81,6 +81,17 @@ boundary.
 
 ## State Model
 
+The public decoder input is normalized 12 kHz floating-point audio. Convert it
+to signed 16-bit PCM amplitude (`sample * 32768`) once when filling `dd8`,
+matching the `integer*2 -> real` assignment in JTDX `jt9a.f90`. Keep the original
+AGC, nonlinear soft-metric, and SNR noise-floor constants in their native scale;
+do not compensate for normalized input by weakening decoder/filter thresholds.
+
+AGC compensation remains an independent receiver option (`nagcc`), disabled by
+default like JTDX's `AGCcompensation` setting. High-sensitivity profile setup
+preserves the caller's choice instead of forcing it on. When explicitly enabled,
+the original `agccft8` processing, including its tail handling, applies.
+
 JTDX `ft8_mod1.f90` is mutable decoder state, not just constants. The Rust
 profile keeps this state private to a JTDX session:
 
@@ -105,6 +116,7 @@ nft8cycles = 3
 nft8swlcycles = 3
 lft8lowth = true
 lft8subpass = true
+nagcc = false (preserve the caller's explicit setting)
 ncandthin = 100
 ndtcenter = 0
 filter = false
@@ -139,7 +151,7 @@ W     -> WSJT-X-only reference row, not a JTDX target
 E     -> excluded row
 ```
 
-Current release-mode observations:
+Previously recorded release-mode observations:
 
 ```text
 210703_133430.wav -> 20/20 JTDX target rows
@@ -171,8 +183,34 @@ false-decode filters.
 explicit `--jtdx-threads 4` or `8`. It is missed only by the single-thread
 diagnostic run.
 
+The 2026-10-27 paired review run used the same `fast` build profile, default
+session configuration, `nfa=200`, and identical `ALLCALL7.TXT` on both sides.
+It recovered 20/20 short-fixture and 429/431 long-fixture targets before and
+after the remaining fixes. Both long-fixture misses above were present on
+both sides; the entire emitted message/frequency/DT/SNR output was identical.
+These measurements do not replace the earlier automatic-thread release
+observation above or claim that the two configurations are equivalent.
+
+The paired synthetic sweep covered -15/-18/-21/-24/-27 dB, eight fixed noise
+seeds, and two input levels. JTDX regular decoding remained 48/80; WSJT-X
+regular decoding remained 44/80 and compound-MyCall AP decoding remained
+48/80. No previously recovered case was lost. This is a finite regression
+check, not a measurement of an absolute sensitivity limit.
+
+The final release integration run passed 16 checks across source audits,
+input conversion, and staged/fixture decoding; seven existing manual checks
+remained ignored. The full workspace passed `cargo fmt --all --check` and
+`cargo clippy --locked --offline --workspace --all-targets --profile fast`.
+Existing advisory Clippy warnings remain; the two `approx_constant` errors
+are resolved with local, documented `expect` attributes so the original
+`twopi` literals keep their exact floating-point values.
+
 ## Important Alignment Notes
 
+- JTDX's Field Day sections and RTTY multipliers follow the pinned reference
+  `packjt77.f90`: 85 sections (`GTA`, `MAR`, `NT`) and 65 multipliers. Keep
+  these separate from the newer WSJT-X tables (86/171), so the same payload
+  bits retain the original JTDX meaning.
 - `ft8b` keeps JTDX AP/deep work inside the source-shaped `isubp1` metric loop.
 - `sync8` candidate ordering uses the local JTDX `indexx` mirror rather than a
   direct Rust sort.
@@ -182,29 +220,42 @@ diagnostic run.
   not enter odd/even AP memory by accident.
 - FT8S/FT8SD accepted messages follow their source-specific false-decode
   boundary instead of the broad regular/AP `chkfalse8` path.
-- `chkgrid` remains intentionally partial. Full JTDX callsign-to-grid geography
-  validation is mostly false-positive reduction and is deferred unless it
-  blocks a real target.
-- `chkfalse8.rs` **does not match the pinned `chkfalse8.f90`** and cannot be
-  byte-verified against it (verified 2026-07-12). The Rust filter adds
-  `msg37_2`/`lcall2hash` args and a `FilterContext { quality, xsnr, rxdt }` with
-  a `primary_false_check` gate (`quality<0.39 || xsnr<-20.5 || rxdt<-0.5 ||
-  rxdt>1.9 || iaptype∈{1,2,3,11,21,40,41}`); the pinned Fortran is the 6-arg
-  `chkfalse8(msg37,i3,n3,nbadcrc,iaptype,lcall1hash)` with no quality/SNR/DT
-  gating. That newer form is absent from **every** ref of the checked-out JTDX
-  tree (HEAD 2022-03-01 is the newest; `git log --all -S quality`/`-S msg37_2`
-  on `lib/chkfalse8.f90` finds nothing), so this file targets either a
-  post-2022 JTDX release not in the checkout or a local enhancement on the 2022
-  logic — no longer remembered, so no target version can be cited. It is a
-  false-decode filter (only rejects, never adds decodes); the 20/20 & 430/431
-  baselines are green with it as-is. **Do not** revert it to the 6-arg version
-  to "restore alignment": that drops the gating the baselines are calibrated
-  against and can shift decodes. If the upstream source is ever identified, pin
-  that `chkfalse8.f90` to make this file diff-verifiable again. Full detail is in
-  the `chkfalse8.rs` header.
+- `chkgrid` remains intentionally partial; the complete geography port is
+  explicitly out of scope under the review decision below.
+- `chkfalse8.rs` groups checks from both `chkfalse8.f90` and the caller
+  `ft8b.f90`. The `quality<0.39`, `xsnr<-20.5`, DT, and AP-type gates are in
+  the pinned **caller** before it invokes the six-argument `chkfalse8`.
+  `msg37_2` and `lcall2hash` are caller-side state too. The earlier claim that
+  these gates came from an unidentified post-2022 source was incorrect: it
+  compared only the callee. Keep the existing gates and values; do not remove
+  them merely to match the Fortran callee's argument list. This Rust grouping
+  is not a byte-for-byte equivalence claim for every helper.
 - `ALLCALL7.TXT` version changes can change output. The pinned source-tree
   copy recovered RA3ABG-related extra rows but did not change the remaining
   no-context miss.
+
+## Deferred Full `chkgrid` Port — Review Decision 2026-10-27
+
+The user explicitly accepts some false positives and requested that a large,
+complex full port be abandoned and documented. The pinned JTDX source
+`2a0e2bea8c66c9ca94d2ea8034cf83a68cfa40eb`, `lib/chkgrid.f90`, contains
+3,392 physical lines, 997 `if`/`else if` conditions, two forward jumps, and
+20 early returns in addition to the final return. Its country/prefix-specific
+allowed grids, geographic exclusions, invalid-call rules, and special-station
+exceptions require a substantial independent callsign/grid validation corpus.
+
+The full geography port was therefore abandoned for this review. Keep the
+existing grid syntax and coarse area checks. The current implementation does
+not use the callsign to validate geography and leaves `lwrongcall=false`, so
+some implausible callsign/grid pairs can survive; this is an accepted false-
+positive tradeoff, not a claim of complete JTDX parity. Do not compensate by
+adding stricter ad hoc filters, changing decoder constants, or sacrificing
+weak-signal recovery. Revisit the full port only at the user's request.
+
+For source checks with a local reference checkout, run
+`FT8RS_REQUIRE_JTDX_SOURCE=1 cargo test --release -p ft8rs-core --test jtdx_source_audit_test`.
+Use `FT8RS_JTDX_SOURCE_DIR` to explicitly select its repository root. The audit
+checks both protocol tables and the caller-side filter-gate provenance.
 
 ## Remaining Work
 
