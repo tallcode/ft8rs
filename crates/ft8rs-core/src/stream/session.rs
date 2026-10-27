@@ -174,6 +174,11 @@ pub struct StreamDecodeConfig {
     pub hide_dupes: bool,
     pub hide_hash: bool,
     pub dx_monitor_watchdog_ms: Option<u64>,
+    /// Hybrid-only bounded cancellation. Pure upstream profiles ignore this.
+    pub hybrid_sic: bool,
+    /// Real-time scheduling may use already-seen peer results. File mode uses
+    /// a completed baseline barrier and deterministic seeds instead.
+    pub cooperative_realtime: bool,
     pub mycall: Option<String>,
     pub mygrid: Option<String>,
     pub hiscall: Option<String>,
@@ -216,6 +221,8 @@ impl Default for StreamDecodeConfig {
             hide_dupes: false,
             hide_hash: false,
             dx_monitor_watchdog_ms: None,
+            hybrid_sic: true,
+            cooperative_realtime: false,
             mycall: None,
             mygrid: None,
             hiscall: None,
@@ -278,6 +285,12 @@ pub struct StreamDecodedMessage {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamDecodeProvenance {
+    /// The upstream result does not expose whether its regular path used AP.
+    Unknown,
+    /// Produced by an isolated orchestration recovery task, never a new seed.
+    CooperativeRecovery,
+    /// Isolated DX context task; this does not claim a native AP subtype.
+    ContextRecovery,
     Regular,
     ApMask,
     A7Memory,

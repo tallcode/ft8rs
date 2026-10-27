@@ -36,6 +36,7 @@ impl SharedHashCallBook {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn safe_calls(&self) -> Vec<String> {
         self.calls
             .iter()

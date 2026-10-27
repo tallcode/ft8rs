@@ -98,7 +98,7 @@ target/release/ft8rs file recording.wav --start-time 230208_140300
 ```text
 wsjtx  - WSJT-X-aligned decoder, default
 jtdx   - JTDX-oriented high-sensitivity decoder path
-hybrid - WSJT-X and JTDX result union
+hybrid - WSJT-X and JTDX result union with bounded cross cancellation
 dx     - single-target DX chase profile, requires --his-call
 ```
 
@@ -152,6 +152,7 @@ target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --
 | `--his-call` | `-x` | DX callsign context (required by `dx`) |
 | `--his-grid` | `-g` | DX grid context |
 | `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
+| `--no-hybrid-sic` | | disable Hybrid cross cancellation; retain both baseline decoders |
 | `--nagain` | | JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
 | `--udp` | `-u` | enable UDP output |
 | `--udp-host` | `-o` | UDP destination host |
@@ -179,7 +180,10 @@ cargo test --release -p ft8rs-core test_stream_decode_short_audio
 cargo test --release -p ft8rs-core --features fftw test_stream_decode_short_audio  # FFTW path
 ```
 
-The profile/DX manual acceptance gates (hybrid 465 count, jtdx long, dx) are
+Unit tests for this repository run locally; CI is not a substitute. Run
+`cargo test --profile fast --workspace --lib --bins -- --test-threads=1`.
+
+The profile/DX manual acceptance gates (hybrid baseline preservation, jtdx long, dx) are
 `#[ignore]`d; run them with `cargo test --release -p ft8rs-core -- --ignored`.
 
 Both profiles produce identical decode results; `fast` only changes build speed.
@@ -190,9 +194,16 @@ Current release expectations:
 default wsjtx short fixture -> 21/21 target rows
 default wsjtx long fixture  -> 424/424 target rows
 jtdx short fixture          -> 20/20 target rows
-jtdx long fixture           -> 430/431 target rows with auto threads
+jtdx long fixture           -> 430/431 target rows with 4 logical partitions
 dx a8d fixture              -> target row recovered
 ```
+
+The JTDX long-fixture calibration fixes `jtdx_threads=4`, the 2022 CallDB,
+200–3000 Hz and no user QSO context, with SWL and AGC compensation disabled.
+Production still defaults to automatic partition selection. Record visible cores
+and actual partitions when comparing automatic-mode results; the parameter
+changes decode search, not just execution speed. See
+[JTDX notes](crates/ft8rs-core/JTDX.md).
 
 The fixture CSV files include an `Extra` marker column:
 
@@ -210,8 +221,15 @@ E     -> excluded row
   - JTDX alignment: `crates/ft8rs-core/JTDX.md`
   - Hybrid result-union: `crates/ft8rs-core/HYBRID.md`
   - DX chase profile: `crates/ft8rs-core/DX.md`
-- Manual acceptance gates (`#[ignore]`d, e.g. `hybrid == 465`, weak DX recovery)
+- Manual acceptance gates (`#[ignore]`d, e.g. Hybrid baseline preservation, weak DX recovery)
   are calibrated against the 2022 callsign snapshot. Run them with the calibrated
   DB via `./scripts/acceptance-gates.sh` (the shipped `ALLCALL7.TXT` is newer and
   can shift the very weakest DX decode).
+- Cooperative changes require per-message before/after comparison with the same
+  recording, config, CallDB and optimized build. New rows cannot compensate for
+  lost baseline messages. Architecture details are in
+  `crates/ft8rs-core/COOPERATIVE_DECODER_DESIGN.md`.
+- The app only listens. For Hybrid/DX, distinguish callbacks by the next slot
+  +2/+3 seconds from total worker completion. GUI markers `sic`, `ctx`, and `?`
+  identify cancellation recovery, context recovery, and unknown provenance.
 - License: GPL-3.0.

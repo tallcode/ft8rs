@@ -136,11 +136,13 @@ freq < 100 MHz -> napwid = 15
 else           -> napwid = 50
 ```
 
-`--jtdx-threads 0` keeps JTDX-style automatic band splitting. Explicit
-`1..=24` values are useful for diagnostics, but `1` is not equivalent to JTDX's
-usual GUI/source execution shape.
+`--jtdx-threads 0` selects automatic band splitting. The current Rust session
+processes these logical bands serially; the value does not spawn that number of
+OS threads. Automatic selection depends on visible cores: 12 cores select 9
+bands. Band count changes search and state evolution, so it is part of the decode
+configuration rather than a pure speed setting.
 
-## Current Baseline
+## Calibrated Baseline
 
 JTDX fixture rows use `Extra` markers as follows:
 
@@ -151,66 +153,42 @@ W     -> WSJT-X-only reference row, not a JTDX target
 E     -> excluded row
 ```
 
-Previously recorded release-mode observations:
+The long-fixture acceptance point is fixed:
 
 ```text
-210703_133430.wav -> 20/20 JTDX target rows
-230208_140300.wav -> 430/431 JTDX target rows with --jtdx-threads 0
+fixture          = 230208_140300.wav, all 19 slots in one reused session
+CallDB           = ALLCALL7.TXT.2022
+frequency range  = 200..3000 Hz
+jtdx_threads     = 4 logical bands
+swl              = false
+nagcc            = false
+user QSO context = none
+accepted floor   = 430/431 target rows
 ```
 
-The remaining no-context JTDX miss is:
+The constructor retains its existing high-sensitivity mapping. The four-band
+setting belongs to calibration; production defaults remain automatic. Automatic
+mode must record the actual core/band count when comparing results, because
+`threads=0` is not a fixed operating point across machines. Do not lower the
+430/431 threshold or alter aligned decoder code to compensate for a different
+partition setting.
+
+Run the calibrated local gate with the private-database helper:
+
+```bash
+./scripts/acceptance-gates.sh test_jtdx_profile_long_audio
+```
+
+The short fixture retains its existing 20/20 target floor. The remaining
+long-fixture no-user-context miss is:
 
 ```text
 230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,J
 ```
 
-Supplying QSO context recovers it:
-
-```bash
-ft8rs file tests/ft8/230208_140300.wav \
-  --start-time 230208_140300 \
-  --profile jtdx \
-  --my-call F1MLZ \
-  --rx-frequency 1153
-```
-
-Focused diagnostics showed the `140700` recovery as `source=Regular iaptype=2`.
-That means it is a MyCall/AP-assisted regular-path decode, not a pure
-`iaptype=0` no-context regular decode. Do not recover it by relaxing
-false-decode filters.
-
-`140715 OH5NBJ SV1MRW KM17` is recovered by source-style auto threads and by
-explicit `--jtdx-threads 4` or `8`. It is missed only by the single-thread
-diagnostic run.
-
-The 2026-10-27 paired review run used the same `fast` build profile, default
-session configuration, `nfa=200`, and identical `ALLCALL7.TXT` on both sides.
-It recovered 20/20 short-fixture and 429/431 long-fixture targets before and
-after the remaining fixes. Both long-fixture misses above were present on
-both sides; the entire emitted message/frequency/DT/SNR output was identical.
-These measurements do not replace the earlier automatic-thread release
-observation above or claim that the two configurations are equivalent.
-
-The paired synthetic sweep covered -15/-18/-21/-24/-27 dB, eight fixed noise
-seeds, and two input levels. JTDX regular decoding remained 48/80; WSJT-X
-regular decoding remained 44/80 and compound-MyCall AP decoding remained
-48/80. No previously recovered case was lost. This is a finite regression
-check, not a measurement of an absolute sensitivity limit.
-
-The final release integration run passed 16 checks across source audits,
-input conversion, and staged/fixture decoding; seven existing manual checks
-remained ignored. The full workspace passed `cargo fmt --all --check` and
-`cargo clippy --locked --offline --workspace --all-targets --profile fast`.
-At that point advisory Clippy warnings remained; the two `approx_constant`
-errors were resolved with local, documented `expect` attributes so the original
-`twopi` literals keep their exact floating-point values. The subsequent warning
-cleanup passes the full workspace command above with `-- -D warnings` too.
-Reference coefficients, BP update order, and floating-point accumulation order
-are preserved; intentional source/API exceptions have local reasons rather
-than module-wide suppression. See `WSJTX.md` for the lint-maintenance contract.
-The two-profile fixture output and all 240 paired synthetic cases remained
-identical to the pre-cleanup build; the 16 release integration checks passed
-again, with the same seven manual checks ignored.
+QSO-assisted recovery is a separate operating point and must not be counted as a
+no-user-context baseline success. Preserve the native distinction between a
+regular algorithm path and whether AP assistance was used.
 
 ## Important Alignment Notes
 

@@ -462,6 +462,7 @@ fn build_udp(config: Option<&UdpConfig>, event_tx: &SyncSender<EngineEvent>) -> 
 
 fn effective_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
     let mut config = config.clone();
+    config.cooperative_realtime = true;
     if config.profile == DecodeProfile::Dx {
         config.dx_monitor_watchdog_ms = Some(DX_MONITOR_WATCHDOG_MS);
     }
