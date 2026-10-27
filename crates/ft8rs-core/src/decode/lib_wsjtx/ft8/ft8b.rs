@@ -46,6 +46,10 @@ pub(crate) fn extract_symbol_spectrum(
     );
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(super) fn ft8b(
     _dd0: &[f64],
     cx_re: &[f64],
@@ -99,10 +103,7 @@ pub(super) fn ft8b(
     // This represents the absolute noise power at f1 in the original spectrum.
     let xbase = spectrum_noise_power(_sbase, f1)?;
 
-    let result = try_decode_passes(workspace, depth, f1, ap_options, _book);
-    let Some(result) = result else {
-        return None;
-    };
+    let result = try_decode_passes(workspace, depth, f1, ap_options, _book)?;
 
     if result.cw.iter().all(|&b| b == 0) {
         return None;
@@ -119,10 +120,7 @@ pub(super) fn ft8b(
         ap_options.mycall.as_deref(),
         ap_options.hiscall.as_deref(),
     );
-    let msg = unpack77_with_context(message77, unpack_context);
-    let Some(msg) = msg else {
-        return None;
-    };
+    let msg = unpack77_with_context(message77, unpack_context)?;
     if !is_acceptable_unpacked_message(&msg, i3v, ap_options.ncontest) {
         return None;
     }
@@ -218,9 +216,9 @@ fn refine_time_offset(
 
     let mut max_idx: isize = 4;
     let mut max_val = -1.0;
-    for i in 0..9 {
-        if ss[i] > max_val {
-            max_val = ss[i];
+    for (i, ss_value) in ss.iter().enumerate().take(9) {
+        if *ss_value > max_val {
+            max_val = *ss_value;
             max_idx = i as isize;
         }
     }
@@ -405,8 +403,8 @@ pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
     let n = bmet.len();
     let mut sum = 0.0f32;
     let mut sum2 = 0.0f32;
-    for i in 0..n {
-        let v = bmet[i] as f32;
+    for bmet_value in bmet.iter().take(n) {
+        let v = *bmet_value as f32;
         sum += v;
         sum2 += v * v;
     }
@@ -419,8 +417,8 @@ pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
         avg2.sqrt()
     };
     if sigma > 0.0 {
-        for i in 0..n {
-            bmet[i] = ((bmet[i] as f32) / sigma) as f64;
+        for bmet_value in bmet.iter_mut().take(n) {
+            *bmet_value = ((*bmet_value as f32) / sigma) as f64;
         }
     }
 }
@@ -648,7 +646,7 @@ pub(super) fn apply_wsjt_ap_mask(
         1 => apply_cq_ap_mask(workspace, ap.ncontest, apmag),
         2 => apply_mycall_ap_mask(workspace, ap, apmag),
         3 => apply_mycall_dxcall_ap_mask(workspace, ap, apmag),
-        4 | 5 | 6 => apply_tail_ap_mask(workspace, ap, iaptype, apmag),
+        4..=6 => apply_tail_ap_mask(workspace, ap, iaptype, apmag),
         _ => false,
     }
 }

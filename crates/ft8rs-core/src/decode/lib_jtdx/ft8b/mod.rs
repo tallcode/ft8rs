@@ -43,6 +43,10 @@ struct QsoAttemptOutcome {
     state: QsoRefinementState,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(crate) fn ft8b(
     workspace: &mut Ft8bWorkspace,
     config: &StreamDecodeConfig,
@@ -113,6 +117,10 @@ pub(crate) fn ft8b(
     None
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 fn try_ft8b_decode_for_iqso(
     cd0: &super::ft8_downsample::ComplexC,
     config: &StreamDecodeConfig,
@@ -152,11 +160,7 @@ fn try_ft8b_decode_for_iqso(
         csynce: csynce_templates.as_ref(),
     };
     let state = if iqso == 4 && !ldeepsync {
-        if let Some(previous) = previous_qso_state {
-            previous.clone()
-        } else {
-            return None;
-        }
+        previous_qso_state?.clone()
     } else if iqso == 3 {
         if let Some(previous) = previous_qso_state {
             QsoRefinementState {
@@ -465,15 +469,15 @@ fn costas_index(k: usize) -> Option<usize> {
 fn sync_quality(s8: &[[f32; 79]; 8]) -> (usize, usize) {
     let mut nsync = 0usize;
     let mut nsync2 = 0usize;
-    for k in 0..7 {
+    for (k, icos7_value) in ICOS7.iter().enumerate() {
         for base in [0usize, 36, 72] {
             let sym = base + k;
             let best = max_tone(s8, sym, None);
-            if best == ICOS7[k] as usize {
+            if best == *icos7_value as usize {
                 nsync += 1;
             } else {
                 let second = max_tone(s8, sym, Some(best));
-                if second == ICOS7[k] as usize {
+                if second == *icos7_value as usize {
                     nsync2 += 1;
                 }
             }
@@ -504,9 +508,9 @@ fn compute_s256(cd0: &super::ft8_downsample::ComplexC, ibest: isize) -> [f32; 27
     for i in 0..=8 {
         s256[i] = (re[i] * re[i] + im[i] * im[i]).sqrt() as f32;
     }
-    for i in 9..=26 {
+    for (i, s256_value) in s256.iter_mut().enumerate().skip(9) {
         let src = i - 1;
-        s256[i] = (re[src] * re[src] + im[src] * im[src]).sqrt() as f32;
+        *s256_value = (re[src] * re[src] + im[src] * im[src]).sqrt() as f32;
     }
     s256
 }
@@ -523,12 +527,12 @@ fn normalize_tone_spectra(
     let mut sp = [0.0f32; 8];
     for tone in 0..8 {
         let mut sum1 = 0.0f32;
-        for k in 0..7 {
-            sum1 += s8[tone][k];
+        for &value in &s8[tone][0..7] {
+            sum1 += value;
         }
         let mut sum2 = 0.0f32;
-        for k in 17..79 {
-            sum2 += s8[tone][k];
+        for &value in &s8[tone][17..79] {
+            sum2 += value;
         }
         sp[tone] = sum1 + sum2;
     }
@@ -697,21 +701,21 @@ fn jtdx_soft_sync_gate(s8: &[[f32; 79]; 8], refined_dt: f64) -> bool {
     let mut scoreratio1 = 0.0f32;
     let mut scoreratio2 = 0.0f32;
     let mut scoreratio3 = 0.0f32;
-    for k in 0..7 {
+    for (k, icos7_value) in ICOS7.iter().enumerate() {
         if rrxdt >= -0.5 {
-            let (hit, ratio) = sync_score_at(s8, ICOS7[k] as usize, k);
+            let (hit, ratio) = sync_score_at(s8, *icos7_value as usize, k);
             if hit {
                 nsyncscore1 += 1;
                 scoreratio1 += ratio;
             }
         }
-        let (hit, ratio) = sync_score_at(s8, ICOS7[k] as usize, k + 36);
+        let (hit, ratio) = sync_score_at(s8, *icos7_value as usize, k + 36);
         if hit {
             nsyncscore2 += 1;
             scoreratio2 += ratio;
         }
         if rrxdt <= 2.13 {
-            let (hit, ratio) = sync_score_at(s8, ICOS7[k] as usize, k + 72);
+            let (hit, ratio) = sync_score_at(s8, *icos7_value as usize, k + 72);
             if hit {
                 nsyncscore3 += 1;
                 scoreratio3 += ratio;
@@ -927,8 +931,8 @@ pub(super) fn sum_tones(s8: &[[f32; 79]; 8], k: usize) -> f32 {
 
 fn sum_symbol_range(s8: &[[f32; 79]; 8], tone: usize, start: usize, end: usize) -> f32 {
     let mut sum = 0.0f32;
-    for k in start..end {
-        sum += s8[tone][k];
+    for &value in s8[tone].iter().take(end).skip(start) {
+        sum += value;
     }
     sum
 }

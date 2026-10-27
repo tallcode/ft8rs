@@ -99,6 +99,10 @@ pub struct SessionSnapshot {
 
 /// Events the engine emits to the GUI.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Preserve the public event API and avoid an extra allocation per decoded message"
+)]
 pub enum EngineEvent {
     Status(EngineStatus),
     Decode(DecodeRecord),

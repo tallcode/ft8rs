@@ -190,8 +190,10 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     ft8rs::set_fft_threads(1)?;
     ft8rs::set_fft_patience(1)?;
 
-    let mut config = StreamDecodeConfig::default();
-    config.profile = DecodeProfile::parse(&args.profile)?;
+    let mut config = StreamDecodeConfig {
+        profile: DecodeProfile::parse(&args.profile)?,
+        ..Default::default()
+    };
     if let Some(value) = normalized_nonempty(&args.my_call) {
         config.mycall = Some(value);
     }

@@ -470,6 +470,10 @@ fn effective_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
 
 // ── Decode actor ────────────────────────────────────────────────────────────
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep configuration ownership inline in the existing bounded actor channel"
+)]
 enum DecodeCmd {
     Stage {
         stage: SlotStage,
@@ -487,6 +491,10 @@ enum DecodeCmd {
 /// wsjtx uses the staged `StreamDecodeSession` (early decode); other profiles use
 /// the unified `ProfileStreamDecodeSession` (final decode only) — mirroring the
 /// shipped soundcard worker exactly, so decode behavior is unchanged.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "These long-lived sessions retain their existing inline ownership and construction"
+)]
 enum DecodeSession {
     Wsjtx(StreamDecodeSession),
     Profile(ProfileStreamDecodeSession),
@@ -779,8 +787,10 @@ mod tests {
 
         // Reconfigure to jtdx in place (hash migrated) and decode again — the
         // actor must survive the rebuild and keep producing.
-        let mut jtdx = StreamDecodeConfig::default();
-        jtdx.profile = DecodeProfile::Jtdx;
+        let jtdx = StreamDecodeConfig {
+            profile: DecodeProfile::Jtdx,
+            ..Default::default()
+        };
         cmd_tx
             .send(DecodeCmd::Reconfigure {
                 config: jtdx,
@@ -816,10 +826,9 @@ mod tests {
         let sps = 15 * TARGET_SAMPLE_RATE as usize;
         let nseg = s12k.len().div_ceil(sps);
         let start = SlotTimestamp::parse("230208_140300").unwrap();
-        let hyb = || {
-            let mut c = StreamDecodeConfig::default();
-            c.profile = DecodeProfile::Hybrid;
-            c
+        let hyb = || StreamDecodeConfig {
+            profile: DecodeProfile::Hybrid,
+            ..Default::default()
         };
 
         let mut oneshot = ProfileStreamDecodeSession::new(hyb());
@@ -861,10 +870,9 @@ mod tests {
             return;
         };
         let ts = SlotTimestamp::parse("210703_133430").unwrap();
-        let hybrid_cfg = || {
-            let mut c = StreamDecodeConfig::default();
-            c.profile = DecodeProfile::Hybrid;
-            c
+        let hybrid_cfg = || StreamDecodeConfig {
+            profile: DecodeProfile::Hybrid,
+            ..Default::default()
         };
 
         // Reference: one-shot hybrid decode (file path) of the whole slot.

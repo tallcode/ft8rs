@@ -72,12 +72,14 @@ pub struct JtdxStreamDecodeSession {
 impl JtdxStreamDecodeSession {
     pub fn new(config: StreamDecodeConfig) -> Self {
         let config = config.clone_for_profile_jtdx_high_sensitivity();
-        let mut state = ft8_mod1::Ft8Mod1::default();
-        state.nft8cycles = config.nft8cycles;
-        state.nft8swlcycles = config.nft8swlcycles;
-        state.nft8rxfsens = config.nft8rxfsens;
-        state.lhound = config.lhound;
-        state.nintcount = 3;
+        let mut state = ft8_mod1::Ft8Mod1 {
+            nft8cycles: config.nft8cycles,
+            nft8swlcycles: config.nft8swlcycles,
+            nft8rxfsens: config.nft8rxfsens,
+            lhound: config.lhound,
+            nintcount: 3,
+            ..Default::default()
+        };
         if let Some(mycall) = &config.mycall {
             state.mycall = mycall.clone();
         }
@@ -444,7 +446,7 @@ fn jtdx_section_order(numthreads: usize) -> Vec<usize> {
     }
 
     let mut order = Vec::with_capacity(numthreads);
-    if numthreads % 2 == 0 {
+    if numthreads.is_multiple_of(2) {
         let left = numthreads / 2 - 1;
         let right = numthreads / 2;
         order.push(left);
@@ -1077,9 +1079,9 @@ fn is_duplicate_decode(
             if nsnr <= state.allsnrs[i] || (nsnr > state.allsnrs[i] && freq_delta < 45.0) {
                 return true;
             }
-        } else if nsnr <= state.allsnrs[i] && freq_delta < 45.0 {
-            return true;
-        } else if nsnr > state.allsnrs[i] && freq_delta < 45.0 && numthreads != 1 {
+        } else if (nsnr <= state.allsnrs[i] && freq_delta < 45.0)
+            || (nsnr > state.allsnrs[i] && freq_delta < 45.0 && numthreads != 1)
+        {
             return true;
         }
     }

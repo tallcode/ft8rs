@@ -15,10 +15,10 @@ pub(crate) fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
     let mut dphi = vec![0.0f64; (79 + 2) * NSPS];
     let dphi_peak = twopi / NSPS as f64;
 
-    for j in 0..79 {
+    for (j, itone_value) in itone.iter().enumerate().take(79) {
         let ib = j * NSPS;
         for i in 0..(3 * NSPS) {
-            dphi[ib + i] += dphi_peak * pulse[i] * itone[j] as f64;
+            dphi[ib + i] += dphi_peak * pulse[i] * *itone_value as f64;
         }
     }
     for i in 0..(2 * NSPS) {
@@ -35,13 +35,13 @@ pub(crate) fn gen_ft8wave(itone: &[i32; 79], f0: f64) -> (Vec<f64>, Vec<f64>) {
     let mut cwave_im = vec![0.0f64; NFRAME];
     let twopi_over_ntab = twopi / NTAB as f64;
     let mut phi = 0.0f64;
-    for j in NSPS..(NSPS + NFRAME) {
+    for (j, dphi_value) in dphi.iter().enumerate().skip(NSPS).take(NFRAME) {
         let k = j - NSPS;
         let idx = ((phi / twopi_over_ntab) as usize) % NTAB;
         let (re, im) = ctab[idx];
         cwave_re[k] = re;
         cwave_im[k] = im;
-        phi = (phi + dphi[j]) % twopi;
+        phi = (phi + *dphi_value) % twopi;
     }
 
     let nramp = (NSPS as f64 / 8.0).round() as usize;

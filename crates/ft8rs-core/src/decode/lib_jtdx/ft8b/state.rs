@@ -9,6 +9,10 @@ pub struct LastRxMsgText {
 }
 
 impl LastRxMsgText {
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "Preserve this public fixed-width truncating constructor, which does not parse or validate text"
+    )]
     pub fn from_str(value: &str) -> Self {
         let mut bytes = [b' '; 37];
         let src = value.as_bytes();

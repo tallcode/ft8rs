@@ -201,9 +201,16 @@ The final release integration run passed 16 checks across source audits,
 input conversion, and staged/fixture decoding; seven existing manual checks
 remained ignored. The full workspace passed `cargo fmt --all --check` and
 `cargo clippy --locked --offline --workspace --all-targets --profile fast`.
-Existing advisory Clippy warnings remain; the two `approx_constant` errors
-are resolved with local, documented `expect` attributes so the original
-`twopi` literals keep their exact floating-point values.
+At that point advisory Clippy warnings remained; the two `approx_constant`
+errors were resolved with local, documented `expect` attributes so the original
+`twopi` literals keep their exact floating-point values. The subsequent warning
+cleanup passes the full workspace command above with `-- -D warnings` too.
+Reference coefficients, BP update order, and floating-point accumulation order
+are preserved; intentional source/API exceptions have local reasons rather
+than module-wide suppression. See `WSJTX.md` for the lint-maintenance contract.
+The two-profile fixture output and all 240 paired synthetic cases remained
+identical to the pre-cleanup build; the 16 release integration checks passed
+again, with the same seven manual checks ignored.
 
 ## Important Alignment Notes
 

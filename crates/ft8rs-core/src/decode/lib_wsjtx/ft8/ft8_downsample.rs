@@ -87,10 +87,10 @@ pub(crate) fn ft8_downsample_from_cx(
     }
 
     let end_tap = k - 1;
-    for i in 0..TAPER_SIZE {
+    for (i, taper_data_value) in taper_data.iter().enumerate().take(TAPER_SIZE) {
         let idx = end_tap - TAPER_SIZE + 1 + i;
         if idx < NFFT2 {
-            let tap = taper_data[i];
+            let tap = *taper_data_value;
             cd0_re[idx] *= tap;
             cd0_im[idx] *= tap;
         }

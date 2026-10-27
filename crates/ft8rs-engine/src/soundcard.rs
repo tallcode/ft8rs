@@ -365,6 +365,10 @@ enum DecodeWorkerCommand {
     Stop,
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep decoded messages inline to avoid an extra allocation per worker event"
+)]
 enum DecodeWorkerEvent {
     Decode {
         timestamp: SlotTimestamp,
@@ -618,7 +622,7 @@ pub(crate) fn start_input_stream(
     let channels = supported_config.channels() as usize;
 
     let (tx, rx) = mpsc::channel();
-    let stream_config = supported_config.clone().into();
+    let stream_config = supported_config.into();
     let err_fn = |err| eprintln!("soundcard input stream error: {err}");
     let stream = match supported_config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
@@ -677,14 +681,14 @@ fn select_input_config(
                 && c.min_sample_rate() <= PREFERRED_RATE
                 && c.max_sample_rate() >= PREFERRED_RATE
         }) {
-            return Ok(range.clone().with_sample_rate(PREFERRED_RATE));
+            return Ok((*range).with_sample_rate(PREFERRED_RATE));
         }
         // 2) Any f32 config (still avoids an int format the driver may not stream).
         if let Some(range) = configs
             .iter()
             .find(|c| c.sample_format() == cpal::SampleFormat::F32)
         {
-            return Ok(range.clone().with_max_sample_rate());
+            return Ok((*range).with_max_sample_rate());
         }
     }
     // 3) Fall back to the device default.

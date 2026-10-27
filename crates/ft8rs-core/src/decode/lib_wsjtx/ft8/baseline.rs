@@ -23,7 +23,7 @@ pub(super) fn baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) ->
     let nlen = db_range / nseg;
     if nlen < 1 {
         let window = 50;
-        for i in 1..=nh1 {
+        for (i, base) in sbase.iter_mut().enumerate().take(nh1 + 1).skip(1) {
             let lo = ia.max(i.saturating_sub(window));
             let hi = ib.min(i + window);
             let mut sum = 0.0;
@@ -32,7 +32,7 @@ pub(super) fn baseline(savg: &[f64], nfa: f64, nfb: f64, df: f64, nh1: usize) ->
                 sum += item;
                 count += 1;
             }
-            sbase[i] = if count > 0 {
+            *base = if count > 0 {
                 10.0 * (1e-30f64.max(sum / count as f64)).log10()
             } else {
                 0.0
@@ -92,6 +92,10 @@ fn percentile(slice: &[f64], k: usize) -> f64 {
     slice[indx[idx]]
 }
 
+#[expect(
+    clippy::needless_range_loop,
+    reason = "Keep the indexed pivot/elimination updates and floating-point accumulation order unchanged"
+)]
 fn polyfit(x: &[f64], y: &[f64], d: usize) -> Vec<f64> {
     let n = x.len().min(y.len());
     if n <= d {

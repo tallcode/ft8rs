@@ -92,6 +92,10 @@ impl Default for DownsampleOutput {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub fn ft8_downsample(
     workspace: &mut DownsampleWorkspace,
     dd8: &[f32],

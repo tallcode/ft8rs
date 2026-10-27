@@ -48,10 +48,10 @@ fn lpf_data() -> &'static LpfData {
     LPF.get_or_init(|| {
         let mut sumw: f64 = 0.0;
         let mut window = vec![0.0f64; NFILT + 1];
-        for j in 0..=NFILT {
+        for (j, window_value) in window.iter_mut().enumerate().take(NFILT + 1) {
             let j_signed = j as isize - HALF_FILT as isize;
-            window[j] = (PI * j_signed as f64 / NFILT as f64).cos().powi(2);
-            sumw += window[j];
+            *window_value = (PI * j_signed as f64 / NFILT as f64).cos().powi(2);
+            sumw += *window_value;
         }
 
         let mut cw_re = vec![0.0f64; NFFT];

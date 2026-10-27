@@ -95,10 +95,10 @@ fn split_message3(msg: &str) -> Option<(&str, &str, &str)> {
 
 fn data_symbols(s8: &[[f32; 79]; 8]) -> [[f32; 58]; 8] {
     let mut out = [[0.0f32; 58]; 8];
-    for i in 0..58 {
-        let sym = if i < 29 { i + 7 } else { i + 14 };
-        for tone in 0..8 {
-            out[tone][i] = s8[tone][sym];
+    for (row, source) in out.iter_mut().zip(s8) {
+        for (i, value) in row.iter_mut().enumerate() {
+            let sym = if i < 29 { i + 7 } else { i + 14 };
+            *value = source[sym];
         }
     }
     out
@@ -106,24 +106,24 @@ fn data_symbols(s8: &[[f32; 79]; 8]) -> [[f32; 58]; 8] {
 
 fn tone_ranks(s8d: &[[f32; 58]; 8]) -> [[usize; 2]; 58] {
     let mut ranks = [[0usize; 2]; 58];
-    for j in 0..58 {
+    for (j, ranks_value) in ranks.iter_mut().enumerate() {
         let mut i1 = 0usize;
         let mut s1 = -1.0e6f32;
-        for tone in 0..8 {
-            if s8d[tone][j] > s1 {
-                s1 = s8d[tone][j];
+        for (tone, s8d_value) in s8d.iter().enumerate().take(8) {
+            if s8d_value[j] > s1 {
+                s1 = s8d_value[j];
                 i1 = tone;
             }
         }
         let mut i2 = 0usize;
         let mut s2 = -1.0e6f32;
-        for tone in 0..8 {
-            if tone != i1 && s8d[tone][j] > s2 {
-                s2 = s8d[tone][j];
+        for (tone, s8d_value) in s8d.iter().enumerate().take(8) {
+            if tone != i1 && s8d_value[j] > s2 {
+                s2 = s8d_value[j];
                 i2 = tone;
             }
         }
-        ranks[j] = [i1, i2];
+        *ranks_value = [i1, i2];
     }
     ranks
 }

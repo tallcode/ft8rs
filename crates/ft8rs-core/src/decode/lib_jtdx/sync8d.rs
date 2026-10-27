@@ -45,9 +45,9 @@ pub fn build_csync() -> &'static SyncTemplates {
                 }
             }
         } else {
-            for i in 0..COSTAS_BLOCKS {
+            for (i, icos7_value) in ICOS7.iter().enumerate().take(COSTAS_BLOCKS) {
                 let mut phi = 0.0f64;
-                let dphi = TWO_PI * ICOS7[i] as f64 / COSTAS_SYMBOL_LEN as f64;
+                let dphi = TWO_PI * *icos7_value as f64 / COSTAS_SYMBOL_LEN as f64;
                 for j in 0..COSTAS_SYMBOL_LEN {
                     let idx = i * COSTAS_SYMBOL_LEN + j;
                     csync_re[idx] = phi.cos();

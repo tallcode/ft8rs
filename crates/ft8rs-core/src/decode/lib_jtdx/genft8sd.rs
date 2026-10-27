@@ -9,11 +9,9 @@ pub(crate) fn genft8sd(msg: &str) -> Option<(String, [u8; 77], [i32; 79])> {
     let msgsent = unpack77sd(&msgbits)?;
     let codeword = encode174_91(&msgbits);
     let mut itone = [0i32; 79];
-    for i in 0..7 {
-        itone[i] = ICOS7[i];
-        itone[36 + i] = ICOS7[i];
-        itone[72 + i] = ICOS7[i];
-    }
+    itone[..7].copy_from_slice(&ICOS7);
+    itone[36..43].copy_from_slice(&ICOS7);
+    itone[72..79].copy_from_slice(&ICOS7);
     let mut k = 7usize;
     for j in 1..=58 {
         let i = (j - 1) * 3;

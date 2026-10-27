@@ -47,9 +47,7 @@ fn ap_types_for_config(config: &StreamDecodeConfig) -> Vec<i32> {
         &NHAPTYPES
     } else if lmycallstd && (lhiscallstd || lnohiscall) {
         &NAPTYPES
-    } else if lmycallstd && !lhiscallstd && !lnohiscall {
-        &NDXNSAPTYPES
-    } else if !lmycallstd && !lhiscallstd && !lnohiscall {
+    } else if !lhiscallstd && !lnohiscall {
         &NDXNSAPTYPES
     } else {
         &NMYCNSAPTYPES
@@ -243,9 +241,7 @@ fn build_ap_mask(config: &StreamDecodeConfig, iaptype: i32) -> Option<ApMaskPlan
 fn hound_cq_type4_mask() -> ApMaskPlan {
     let mut apsym = [-1i16; 77];
     let mut apmask = [0i8; N];
-    for i in 71..77 {
-        apmask[i] = 1;
-    }
+    apmask[71..77].fill(1);
     apsym[73] = 1;
     ApMaskPlan { apsym, apmask }
 }
@@ -253,8 +249,8 @@ fn hound_cq_type4_mask() -> ApMaskPlan {
 fn plan_from_template(template: &str, ranges: &[(usize, usize)], expected_i3: usize) -> ApMaskPlan {
     let mut apmask = [0i8; N];
     for &(start, end) in ranges {
-        for i in start..end.min(77) {
-            apmask[i] = 1;
+        if start < end.min(77) {
+            apmask[start..end.min(77)].fill(1);
         }
     }
 

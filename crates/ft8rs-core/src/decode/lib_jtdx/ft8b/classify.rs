@@ -21,6 +21,10 @@ impl ToneHints {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(super) fn remember_failed_candidate_signal(
     signal_memory: &mut SignalMemory,
     metrics: &SymbolMetrics,

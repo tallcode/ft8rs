@@ -1,7 +1,6 @@
 use super::*;
 
-#[cfg(test)]
-mod tests {
+mod protocol_tests {
     use super::is_stdcall;
     use super::HashCallBook;
 

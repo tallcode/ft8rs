@@ -81,8 +81,8 @@ pub(crate) fn ft8sd(
             let mut nmatch = 0usize;
             let mut nbase = 0usize;
             let mut ncrcpaty = 0usize;
-            for k in 0..58 {
-                if message.idtone[k] == itonedem[k] {
+            for (k, itonedem_value) in itonedem.iter().enumerate() {
+                if message.idtone[k] == *itonedem_value {
                     nmatch += 1;
                     if k < 22 {
                         nbase += 1;

@@ -31,6 +31,10 @@ pub(crate) struct FilterContext {
     pub(crate) rxdt: f32,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(crate) fn accept_decoded_message(
     msg37: &str,
     msg37_2: &str,
@@ -46,6 +50,10 @@ pub(crate) fn accept_decoded_message(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(crate) fn chkfalse8(
     msg37: &str,
     msg37_2: &str,
@@ -142,10 +150,13 @@ pub(crate) fn chkfalse8(
         return false;
     }
 
-    if iaptype == 0 && i3 == 1 && n3 == 0 && msg.contains("/R ") {
-        if rejects_standard_r_portable_message(&words) {
-            return false;
-        }
+    if iaptype == 0
+        && i3 == 1
+        && n3 == 0
+        && msg.contains("/R ")
+        && rejects_standard_r_portable_message(&words)
+    {
+        return false;
     }
 
     if rejects_r_or_portable_call_pair(msg, &words, i3, context) {
@@ -199,10 +210,12 @@ pub(crate) fn chkfalse8(
         return false;
     }
 
-    if primary_false_check && i3 == 0 && n3 == 0 {
-        if msg.contains("/.") || filtersfree(&msg[..msg.len().min(22)]) {
-            return false;
-        }
+    if primary_false_check
+        && i3 == 0
+        && n3 == 0
+        && (msg.contains("/.") || filtersfree(&msg[..msg.len().min(22)]))
+    {
+        return false;
     }
 
     if !context.hisgrid4.is_empty() && words.iter().any(|w| *w == context.hisgrid4) {
@@ -231,10 +244,12 @@ fn rejects_post_label_protocol_shape(
         }
     }
 
-    if i3 == 4 && n3 == 0 && words.iter().any(|word| word.ends_with("/R")) {
-        if words.iter().any(|word| is_grid4(word)) {
-            return true;
-        }
+    if i3 == 4
+        && n3 == 0
+        && words.iter().any(|word| word.ends_with("/R"))
+        && words.iter().any(|word| is_grid4(word))
+    {
+        return true;
     }
 
     false
@@ -454,10 +469,9 @@ fn rejects_i3_4_hash_call_shape(msg: &str) -> bool {
         if callsign.len() == 11
             && islash.is_some()
             && !callsign[islash.unwrap() + 1..].contains('/')
+            && rejects_single_slash_11_call(callsign)
         {
-            if rejects_single_slash_11_call(callsign) {
-                return true;
-            }
+            return true;
         }
         return callsign_q_reject(callsign) || chklong8(callsign);
     }

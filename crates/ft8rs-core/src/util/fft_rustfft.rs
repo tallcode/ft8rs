@@ -116,6 +116,19 @@ fn four2a_c2c_impl(re: &mut [f64], im: &mut [f64], inverse: bool) {
     });
 }
 
+/// four2a/FFTPACK-style real-to-complex forward FFT.
+#[inline]
+pub fn four2a_r2c(re: &mut [f64], im: &mut [f64]) {
+    let n = re.len();
+    debug_assert_eq!(im.len(), n);
+    let nh = n / 2 + 1;
+    four2a_c2c(re, im, -1);
+    for i in nh..n {
+        re[i] = 0.0;
+        im[i] = 0.0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,18 +229,5 @@ mod tests {
                 assert!(re_fwd[i].abs() < 1e-8, "re[{}]: {}", i, re_fwd[i]);
             }
         }
-    }
-}
-
-/// four2a/FFTPACK-style real-to-complex forward FFT.
-#[inline]
-pub fn four2a_r2c(re: &mut [f64], im: &mut [f64]) {
-    let n = re.len();
-    debug_assert_eq!(im.len(), n);
-    let nh = n / 2 + 1;
-    four2a_c2c(re, im, -1);
-    for i in nh..n {
-        re[i] = 0.0;
-        im[i] = 0.0;
     }
 }

@@ -10,6 +10,10 @@ use crate::stream::time::SlotTimestamp;
 /// Per-slot state for the staged (monitor) decode path. Only hybrid carries
 /// WSJT-X early-decode state; the other profiles decode in one shot at
 /// `nzhsym=50` and need no cross-stage state.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep the staged-state API and avoid adding an allocation per decoded slot"
+)]
 pub enum ProfileSlotState {
     Hybrid(StreamSlotDecodeState),
     Stateless,

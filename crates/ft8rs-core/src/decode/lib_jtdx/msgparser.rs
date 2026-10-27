@@ -2,7 +2,7 @@
 
 pub(crate) fn msgparser(msg37: &str) -> Option<(String, String)> {
     let spaces = space_positions(msg37);
-    if spaces.len() < 5 || spaces[4] + 1 <= 20 {
+    if spaces.len() < 5 || spaces[4] < 20 {
         return None;
     }
 

@@ -18,6 +18,10 @@ struct Ft8sMessage {
     idtone: [i32; 58],
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the source-shaped decoder inputs explicit for reference audits"
+)]
 pub(crate) fn ft8s(
     s8: &[[f32; 79]; 8],
     srr: f32,
@@ -84,8 +88,8 @@ pub(crate) fn ft8s(
 
     let mut nmycall1 = 0usize;
     let mut nbase1 = 0usize;
-    for k in 0..19 {
-        if messages[0].idtone[k] == itonedem[k] {
+    for (k, itonedem_value) in itonedem.iter().enumerate().take(19) {
+        if messages[0].idtone[k] == *itonedem_value {
             if k < 9 {
                 nmycall1 += 1;
             }
@@ -110,11 +114,11 @@ pub(crate) fn ft8s(
     let mut imax = None;
     let mut nmatchditer1 = 0usize;
     let mut ncrcpatyiter1 = 0usize;
-    for i in ilow..ihigh_exclusive {
-        if lastreport && i >= 26 && i < 53 {
+    for (i, messages_value) in messages.iter().enumerate().take(ihigh_exclusive).skip(ilow) {
+        if lastreport && (26..53).contains(&i) {
             continue;
         }
-        let (nmatch1, ncrcpaty1) = count_matches(&messages[i].idtone, &itonedem, None);
+        let (nmatch1, ncrcpaty1) = count_matches(&messages_value.idtone, &itonedem, None);
         if nmatch1 > nmatchditer1 {
             imax = Some(i);
             nmatchditer1 = nmatch1;
@@ -160,22 +164,22 @@ pub(crate) fn ft8s(
     let mut u1oth = 0.0f32;
     let mut u2oth = 0.0f32;
 
-    for k in ilow..ihigh_exclusive {
-        if lastreport && k >= 26 && k < 53 {
+    for (k, messages_value) in messages.iter().enumerate().take(ihigh_exclusive).skip(ilow) {
+        if lastreport && (26..53).contains(&k) {
             continue;
         }
-        let (psum, refv) = score_message(&s8d, &ranks, &messages[k].idtone, ref0, None);
+        let (psum, refv) = score_message(&s8d, &ranks, &messages_value.idtone, ref0, None);
         let (psumpaty, refpaty) = score_message(
             &s8d,
             &ranks,
-            &messages[k].idtone,
+            &messages_value.idtone,
             ref0paty,
             Some(RefPart::Parity),
         );
         let (psumoth, refoth) = score_message(
             &s8d,
             &ranks,
-            &messages[k].idtone,
+            &messages_value.idtone,
             ref0oth,
             Some(RefPart::Other),
         );
@@ -459,10 +463,10 @@ fn extend_matches(
 
 fn data_symbols(s8: &[[f32; 79]; 8]) -> [[f32; 58]; 8] {
     let mut out = [[0.0f32; 58]; 8];
-    for i in 0..58 {
-        let sym = data_symbol_index(i);
-        for tone in 0..8 {
-            out[tone][i] = s8[tone][sym];
+    for (row, source) in out.iter_mut().zip(s8) {
+        for (i, value) in row.iter_mut().enumerate() {
+            let sym = data_symbol_index(i);
+            *value = source[sym];
         }
     }
     out
@@ -480,13 +484,13 @@ fn in_part(j: usize, part: Option<RefPart>) -> bool {
         None => true,
         Some(RefPart::Parity) => j >= 26,
         Some(RefPart::MyCall) => j < 9,
-        Some(RefPart::Other) => j < 9 || j >= 26,
+        Some(RefPart::Other) => !(9..26).contains(&j),
     }
 }
 
 fn tone_ranks(s8d: &[[f32; 58]; 8]) -> [[usize; 4]; 58] {
     let mut ranks = [[0usize; 4]; 58];
-    for j in 0..58 {
+    for (j, ranks_value) in ranks.iter_mut().enumerate() {
         let mut s1 = -1.0e6f32;
         let mut s2 = -1.0e6f32;
         let mut s3 = -1.0e6f32;
@@ -495,31 +499,31 @@ fn tone_ranks(s8d: &[[f32; 58]; 8]) -> [[usize; 4]; 58] {
         let mut i2 = 0usize;
         let mut i3 = 0usize;
         let mut i4 = 0usize;
-        for i in 0..8 {
-            if s8d[i][j] > s1 {
-                s1 = s8d[i][j];
+        for (i, s8d_value) in s8d.iter().enumerate().take(8) {
+            if s8d_value[j] > s1 {
+                s1 = s8d_value[j];
                 i1 = i;
             }
         }
-        for i in 0..8 {
-            if i != i1 && s8d[i][j] > s2 {
-                s2 = s8d[i][j];
+        for (i, s8d_value) in s8d.iter().enumerate().take(8) {
+            if i != i1 && s8d_value[j] > s2 {
+                s2 = s8d_value[j];
                 i2 = i;
             }
         }
-        for i in 0..8 {
-            if i != i1 && i != i2 && s8d[i][j] > s3 {
-                s3 = s8d[i][j];
+        for (i, s8d_value) in s8d.iter().enumerate().take(8) {
+            if i != i1 && i != i2 && s8d_value[j] > s3 {
+                s3 = s8d_value[j];
                 i3 = i;
             }
         }
-        for i in 0..8 {
-            if i != i1 && i != i2 && i != i3 && s8d[i][j] > s4 {
-                s4 = s8d[i][j];
+        for (i, s8d_value) in s8d.iter().enumerate().take(8) {
+            if i != i1 && i != i2 && i != i3 && s8d_value[j] > s4 {
+                s4 = s8d_value[j];
                 i4 = i;
             }
         }
-        ranks[j] = [i1, i2, i3, i4];
+        *ranks_value = [i1, i2, i3, i4];
     }
     ranks
 }
@@ -610,14 +614,14 @@ fn validate_ft8s(
         xsync[i + 14] = s8[message.itone[k3] as usize][k3];
     }
     let mut xdata = [0.0f32; 58];
-    for i in 0..58 {
+    for (i, xdata_value) in xdata.iter_mut().enumerate() {
         let sym = data_symbol_index(i);
-        xdata[i] = s8[message.itone[sym] as usize][sym];
+        *xdata_value = s8[message.itone[sym] as usize][sym];
     }
     let mut xnoise = [0.0f32; 79];
-    for i in 0..79 {
+    for (i, noise) in xnoise.iter_mut().enumerate() {
         let tone = ((message.itone[i] + 4).rem_euclid(8)) as usize;
-        xnoise[i] = s8[tone][i];
+        *noise = s8[tone][i];
     }
 
     let mut xmsync = median3_series_21(&xsync);
