@@ -10,6 +10,10 @@ pub(crate) fn twkfreq1(
     fsample: f64,
     a: &[f64; 5],
 ) -> (Vec<f64>, Vec<f64>) {
+    #[expect(
+        clippy::approx_constant,
+        reason = "Preserve the WSJT-X twkfreq1.f90 literal and existing phase arithmetic"
+    )]
     let twopi = 6.283185307;
     let x0 = 0.5 * (npts as f64 + 1.0);
     let s = 2.0 / npts as f64;

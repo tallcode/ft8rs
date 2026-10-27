@@ -4,7 +4,7 @@
 //! - `wsjtx/lib/ft8/ft8apset.f90`
 
 use super::Ft8ApSet;
-use crate::decode::packjt77::{is_stdcall, pack77, unpack77, C38};
+use crate::decode::packjt77::{is_stdcall, pack77, unpack77, HashCallBook, C38};
 
 pub(super) const MCQ: [i8; 29] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
@@ -64,7 +64,12 @@ pub(super) fn ft8_ap_set(mycall: Option<&str>, hiscall: Option<&str>, ncontest: 
     }
 
     let i3 = ((bits[74] as usize) << 2) | ((bits[75] as usize) << 1) | bits[76] as usize;
-    let unpacked = unpack77(&bits, None);
+    // Fortran pack77/save_hash_call and unpack77 share a callsign table.
+    // Preserve that state for the round trip, including a hashed MyCall.
+    let book = HashCallBook::new();
+    book.save(&mycall);
+    book.save(hiscall_for_pack);
+    let unpacked = unpack77(&bits, Some(&book));
     if ncontest == 7 && (i3 != 1 || unpacked.is_none()) {
         return Ft8ApSet { apsym, aph10 };
     }
@@ -103,4 +108,31 @@ fn ihashcall_bits(call: &str, m: usize) -> usize {
     const MAGIC: u64 = 47055833459;
     let prod = MAGIC.wrapping_mul(n8);
     ((prod >> (64 - m as u32)) & ((1u64 << m as u32) - 1)) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ft8_ap_set;
+
+    #[test]
+    fn compound_mycall_keeps_ap_enabled_after_hash_round_trip() {
+        let ap = ft8_ap_set(Some("EA5/K1ABC"), Some("W9XYZ"), 0);
+        assert!(ap.apsym.iter().all(|sign| matches!(sign, -1 | 1)));
+        assert!(ap.aph10.iter().all(|sign| matches!(sign, -1 | 1)));
+    }
+
+    #[test]
+    fn compound_mycall_without_dxcall_enables_only_mycall_ap() {
+        let ap = ft8_ap_set(Some("EA5/K1ABC"), None, 0);
+        assert!(ap.apsym[..29].iter().all(|sign| matches!(sign, -1 | 1)));
+        assert_eq!(ap.apsym[29], 99);
+        assert_eq!(ap.aph10[0], 99);
+    }
+
+    #[test]
+    fn unsupported_type4_template_still_fails_standard_ap_validation() {
+        let ap = ft8_ap_set(Some("K1ABC"), Some("EA5/W9XYZ"), 0);
+        assert_eq!(ap.apsym[0], 99);
+        assert_eq!(ap.apsym[29], 99);
+    }
 }

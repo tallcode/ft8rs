@@ -32,17 +32,82 @@ pub fn read_wav_mono_f32(path: impl AsRef<Path>) -> Result<AudioSamples, String>
 /// does. For the overwhelmingly common 4:1 case (a 48 kHz sound card / virtual
 /// cable such as FlexRadio DAX) this applies WSJT-X's exact `fil4` anti-alias
 /// FIR before decimating, so out-of-band energy above ~6 kHz can't fold back
-/// into the FT8 passband. Other source rates fall back to linear interpolation
-/// (WSJT-X sidesteps them by asking the OS for 48 kHz in the first place).
+/// into the FT8 passband. Other downsampling ratios use a windowed-sinc
+/// low-pass, so e.g. a 44.1 kHz WAV cannot alias energy into the decode band.
+/// WSJT-X normally asks the OS for 48 kHz and uses the `fil4` path above.
 ///
-/// This matters only on the live soundcard path: WAV fixtures are already 12 kHz
-/// so the decoder's acceptance tests never exercise resampling.
+/// File and live input share this conversion. Already-12 kHz samples are copied
+/// without filtering; lower-rate input retains the existing interpolation.
 pub fn downsample_12k(src: &[f32], from_rate: u32) -> Vec<f32> {
     const TARGET: u32 = 12_000;
     if from_rate == 4 * TARGET {
         return fil4_decimate(src);
     }
+    if from_rate > TARGET {
+        return resample_lowpass(src, from_rate, TARGET);
+    }
     resample_linear(src, from_rate, TARGET)
+}
+
+/// Centered FIR interpolation for rates outside WSJT-X's native 48 kHz path.
+/// Kernels are shared by all output samples with the same rational phase.
+/// This input conversion does not change decoder thresholds or `fil4` taps.
+fn resample_lowpass(src: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if src.is_empty() {
+        return Vec::new();
+    }
+    let mut a = from_rate;
+    let mut b = to_rate;
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    let step = (from_rate / a) as usize;
+    let phases = (to_rate / a) as usize;
+    let half_width = (16 * u64::from(from_rate)).div_ceil(u64::from(to_rate)) as isize;
+    let cutoff = 0.9 * f64::from(to_rate) / f64::from(from_rate);
+    let kernels: Vec<Vec<f64>> = (0..phases)
+        .map(|phase| {
+            let fraction = phase as f64 / phases as f64;
+            let mut kernel: Vec<f64> = (-half_width..=half_width)
+                .map(|offset| {
+                    let x = offset as f64 - fraction;
+                    let y = std::f64::consts::PI * cutoff * x;
+                    let sinc = if y == 0.0 { 1.0 } else { y.sin() / y };
+                    let window = if x.abs() <= half_width as f64 {
+                        0.5 * (1.0 + (std::f64::consts::PI * x / half_width as f64).cos())
+                    } else {
+                        0.0
+                    };
+                    cutoff * sinc * window
+                })
+                .collect();
+            let sum: f64 = kernel.iter().sum();
+            for weight in &mut kernel {
+                *weight /= sum;
+            }
+            kernel
+        })
+        .collect();
+    let out_len = (src.len() as u64 * u64::from(to_rate)).div_ceil(u64::from(from_rate)) as usize;
+    (0..out_len)
+        .map(|i| {
+            let position = i * step;
+            let center = (position / phases) as isize;
+            kernels[position % phases]
+                .iter()
+                .enumerate()
+                .map(|(tap, weight)| {
+                    let index = center + tap as isize - half_width;
+                    let sample = if index >= 0 {
+                        src.get(index as usize).copied().unwrap_or(0.0)
+                    } else {
+                        0.0
+                    };
+                    f64::from(sample) * weight
+                })
+                .sum::<f64>() as f32
+        })
+        .collect()
 }
 
 /// WSJT-X's `lib/fil4.f90`: a 49-tap linear-phase FIR low-pass (fc 4500 Hz,
@@ -234,7 +299,10 @@ mod tests {
         let out = downsample_12k(&tone(1_000.0, 48_000, 48_000), 48_000);
         assert_eq!(out.len(), 12_000);
         let level = rms(&out) * 2f32.sqrt(); // sine RMS → amplitude
-        assert!(level > 0.9, "1 kHz tone should pass ~unattenuated, got {level}");
+        assert!(
+            level > 0.9,
+            "1 kHz tone should pass ~unattenuated, got {level}"
+        );
     }
 
     // A 9 kHz tone would fold to |9000 - 12000| = 3 kHz — right inside the FT8
@@ -257,10 +325,12 @@ mod tests {
     }
 
     #[test]
-    fn downsample_non_4to1_falls_back_to_linear() {
-        // 44.1 kHz → 12 kHz isn't an integer 4:1, so it should match the linear
-        // path exactly (no fil4).
+    fn downsample_non_4to1_preserves_in_band_signal_and_rejects_alias() {
         let src = tone(1_000.0, 44_100, 44_100);
-        assert_eq!(downsample_12k(&src, 44_100), resample_linear(&src, 44_100, 12_000));
+        let out = downsample_12k(&src, 44_100);
+        assert_eq!(out.len(), 12_000);
+        assert!((rms(&out) * 2f32.sqrt() - 1.0).abs() < 0.01);
+        let alias = downsample_12k(&tone(9_000.0, 44_100, 44_100), 44_100);
+        assert!(rms(&alias) < 0.01);
     }
 }

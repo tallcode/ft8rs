@@ -243,8 +243,12 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
         return run_monitor_ls();
     }
 
-    let channel = InputChannel::parse(&args.channel)
-        .ok_or_else(|| format!("invalid --channel '{}': use left, right, or mono", args.channel))?;
+    let channel = InputChannel::parse(&args.channel).ok_or_else(|| {
+        format!(
+            "invalid --channel '{}': use left, right, or mono",
+            args.channel
+        )
+    })?;
     let udp = args.udp.then_some(UdpConfig {
         host: args.udp_host,
         port: args.udp_port,

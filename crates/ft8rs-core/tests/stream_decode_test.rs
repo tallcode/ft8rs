@@ -246,6 +246,30 @@ fn test_stream_decode_short_audio() {
 }
 
 #[test]
+fn test_stream_decode_reused_fixed_buffer_refreshes_audio_between_stages() {
+    assert_release_mode();
+    let samples = samples_12k_from_wav("tests/ft8/210703_133430.wav");
+    let mut capture = vec![0.0; 180_000];
+    let address = capture.as_ptr();
+    let mut decoder = StreamDecodeSession::new(StreamDecodeConfig::default());
+    let mut state = decoder.start_slot_decode();
+    let timestamp = SlotTimestamp::parse("210703_133430").unwrap();
+    decoder
+        .decode_slot_nzhsym41_at(Some(&timestamp), &mut state, &capture, |_| Ok(()))
+        .unwrap();
+
+    // A caller may update its full-size capture buffer without reallocating.
+    // A pointer/length cache would keep the old zero-filled snapshot here.
+    capture.copy_from_slice(&samples[..180_000]);
+    assert_eq!(capture.as_ptr(), address);
+    decoder.subtract_slot_nzhsym47(&mut state, &capture);
+    let rows = decoder
+        .decode_slot_nzhsym50_and_finish(state, &capture, |_| Ok(()))
+        .unwrap();
+    assert!(rows.iter().any(|row| norm(&row.msg) == "W1FC F5BZB -08"));
+}
+
+#[test]
 fn test_stream_decode_a8d_audio() {
     assert_release_mode();
     let samples = samples_12k_from_wav("tests/ft8/a8d_k1jt_bg5atv_pm00.wav");

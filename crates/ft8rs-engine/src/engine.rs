@@ -731,7 +731,11 @@ mod tests {
 
     fn feed_slot(cmd_tx: &SyncSender<DecodeCmd>, ts: &SlotTimestamp, s12k: &[f32]) {
         let slice = |n: usize| s12k[..(n * NZHSYM_STRIDE).min(s12k.len())].to_vec();
-        for (n, stage) in [(41, SlotStage::N41), (47, SlotStage::N47), (50, SlotStage::N50)] {
+        for (n, stage) in [
+            (41, SlotStage::N41),
+            (47, SlotStage::N47),
+            (50, SlotStage::N50),
+        ] {
             let samples = if n == 50 { s12k.to_vec() } else { slice(n) };
             cmd_tx
                 .send(DecodeCmd::Stage {
