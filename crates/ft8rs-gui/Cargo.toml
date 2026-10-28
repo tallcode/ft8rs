@@ -13,6 +13,7 @@ path = "src/main.rs"
 ft8rs-core = { path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
 eframe = { version = "0.35", features = ["persistence"] }
+egui_extras = { version = "0.35", default-features = false, features = ["svg"] }
 muda = "0.19"
 # Read a font's vertical metrics (line gap) at load time so we can re-center its
 # glyphs in the row box — fixes the top-shifted text with large-line-gap faces
