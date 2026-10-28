@@ -40,7 +40,8 @@ use crate::protocol::{
 use crate::reconfig::{plan_reconfig, EngineState, StateBucket};
 use crate::report::{UdpConfig, UdpOutput};
 use crate::soundcard::{
-    list_soundcards, start_input_stream, InputChannel, PeriodAccumulator, SlotStage,
+    list_soundcards, peak_level, start_input_stream, AudioCapture, InputChannel, PeriodAccumulator,
+    SlotStage,
 };
 
 // Only the test helpers reference this now; production goes through
@@ -141,14 +142,23 @@ fn run_monitor(
 ) -> MonitorExit {
     let mut udp = build_udp(state.udp.as_ref(), event_tx);
 
-    let (mut stream, mut rx, mut sample_rate) =
-        match start_input_stream(state.device.as_deref(), state.channel) {
-            Ok(parts) => parts,
-            Err(err) => {
-                let _ = event_tx.try_send(EngineEvent::Error(err));
-                return MonitorExit::Stopped;
-            }
-        };
+    let AudioCapture {
+        mut stream,
+        mut rx,
+        mut format,
+        device_name,
+    } = match start_input_stream(state.device.as_deref(), state.channel) {
+        Ok(parts) => parts,
+        Err(err) => {
+            let _ = event_tx.try_send(EngineEvent::Error(err));
+            return MonitorExit::Stopped;
+        }
+    };
+    let mut sample_rate = format.sample_rate;
+    let _ = event_tx.try_send(EngineEvent::CaptureStarted {
+        device_name,
+        format: format.clone(),
+    });
 
     let (dec_cmd_tx, dec_evt_rx) = spawn_decode_actor(effective_config(&state.config));
 
@@ -160,6 +170,9 @@ fn run_monitor(
     let mut acc = PeriodAccumulator::new(sample_rate);
     let mut pending: Option<EngineState> = None;
     let mut last_audio = Instant::now();
+    let mut last_level = Instant::now();
+    let mut channel_peaks = vec![0.0f32; format.channels as usize];
+    let mut input_peak = 0.0f32;
     let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
 
     loop {
@@ -175,9 +188,26 @@ fn run_monitor(
         forward_decode_events(&dec_evt_rx, event_tx, &mut udp);
 
         match rx.recv_timeout(POLL) {
-            Ok((chunk, capture_ms)) => {
+            Ok(chunk) => {
+                if let Some(err) = chunk.error {
+                    let _ = event_tx.try_send(EngineEvent::Error(err));
+                    return teardown(dec_cmd_tx, stream);
+                }
                 last_audio = Instant::now();
-                let out = acc.push(&chunk, capture_ms);
+                for (peak, value) in channel_peaks.iter_mut().zip(&chunk.channel_peaks) {
+                    *peak = peak.max(*value);
+                }
+                input_peak = input_peak.max(peak_level(&chunk.samples));
+                if last_level.elapsed() >= Duration::from_millis(100) {
+                    let _ = event_tx.try_send(EngineEvent::CaptureLevels {
+                        channel_peaks: channel_peaks.clone(),
+                        peak: input_peak,
+                    });
+                    channel_peaks.fill(0.0);
+                    input_peak = 0.0;
+                    last_level = Instant::now();
+                }
+                let out = acc.push(&chunk.samples, chunk.capture_ms);
                 for (stage, timestamp, samples_12k) in out.stages {
                     // Wait for decode-queue space rather than dropping the slot (the
                     // old shedding could drop *every* slot on DAX). Command handling
@@ -217,6 +247,7 @@ fn run_monitor(
                         blocks: diag.blocks,
                         avg_block: diag.avg_block,
                         jitter_ms: diag.max_jitter_ms,
+                        sample_rate,
                     });
                     if let Some(mut new_state) = pending.take() {
                         let mut outcome = plan_reconfig(&state, &new_state);
@@ -235,11 +266,18 @@ fn run_monitor(
                             // a failed switch keeps the current capture running.
                             match start_input_stream(new_state.device.as_deref(), new_state.channel)
                             {
-                                Ok((new_stream, new_rx, new_rate)) => {
+                                Ok(capture) => {
                                     drop(stream);
-                                    stream = new_stream;
-                                    rx = new_rx;
-                                    sample_rate = new_rate;
+                                    stream = capture.stream;
+                                    rx = capture.rx;
+                                    format = capture.format;
+                                    sample_rate = format.sample_rate;
+                                    channel_peaks = vec![0.0; format.channels as usize];
+                                    input_peak = 0.0;
+                                    let _ = event_tx.try_send(EngineEvent::CaptureStarted {
+                                        device_name: capture.device_name,
+                                        format: format.clone(),
+                                    });
                                     acc = PeriodAccumulator::new(sample_rate);
                                     last_audio = Instant::now();
                                 }
@@ -247,6 +285,13 @@ fn run_monitor(
                                     let _ = event_tx.try_send(EngineEvent::Error(format!(
                                         "device switch failed, keeping current input: {err}"
                                     )));
+                                    let _ =
+                                        event_tx.try_send(EngineEvent::CaptureSelectionRejected {
+                                            requested_device: new_state.device.clone(),
+                                            requested_channel: new_state.channel,
+                                            active_device: state.device.clone(),
+                                            active_channel: state.channel,
+                                        });
                                     new_state.device = state.device.clone();
                                     new_state.channel = state.channel;
                                     outcome.restart_capture = false;
@@ -280,10 +325,17 @@ fn run_monitor(
             state.channel,
             &mut pending,
         ) {
-            Reconnect::Ok((new_stream, new_rx, new_rate)) => {
-                stream = new_stream;
-                rx = new_rx;
-                sample_rate = new_rate;
+            Reconnect::Ok(capture) => {
+                stream = capture.stream;
+                rx = capture.rx;
+                format = capture.format;
+                sample_rate = format.sample_rate;
+                channel_peaks = vec![0.0; format.channels as usize];
+                input_peak = 0.0;
+                let _ = event_tx.try_send(EngineEvent::CaptureStarted {
+                    device_name: capture.device_name,
+                    format: format.clone(),
+                });
                 acc = PeriodAccumulator::new(sample_rate);
                 last_audio = Instant::now();
                 let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
@@ -314,7 +366,7 @@ fn teardown(dec_cmd_tx: SyncSender<DecodeCmd>, stream: cpal::Stream) -> MonitorE
 }
 
 enum Reconnect {
-    Ok((cpal::Stream, Receiver<(Vec<f32>, i64)>, u32)),
+    Ok(AudioCapture),
     Stop,
     Shutdown,
     Failed,

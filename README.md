@@ -82,6 +82,33 @@ Limit the number of slots (otherwise it runs until stopped):
 target/release/ft8rs monitor --device "VB-Cable A" --slots 2
 ```
 
+The default `--channel mono` requests a native mono stream at 48 kHz. If the
+backend only exposes multiple channels, it uses channel 1 without averaging.
+Use `--channel left` or `--channel right` to select a stereo channel explicitly;
+`--channel mix` opts into averaging all channels. Mixing can attenuate a
+single-sided source by 6 dB or cancel opposite-phase channels. This corrects
+older versions whose "Mono" setting always averaged the input. WSJT-X's
+[input setup](https://github.com/WSJTX/wsjtx/blob/master/Audio/soundin.cpp) requests
+one channel for Mono; its
+[sample extractor](https://github.com/WSJTX/wsjtx/blob/master/Audio/AudioDevice.hpp)
+does not perform an application-side stereo average.
+
+For a FlexRadio on Windows, select the receive endpoint belonging to the slice:
+`DAX Audio RX 1` with DAXv1, or `DAX RX 1 (FlexRadio DAX)` with DAXv2 (substitute
+the assigned channel number). DAX IQ, microphone and reserved endpoints are
+different streams. FlexRadio documents the
+[endpoint names](https://helpdesk.flexradio.com/hc/en-us/articles/47301935880731-DAX-Version-2-Improvements-and-Updates)
+and recommends
+[48 kHz and adjusting levels in the DAX panel](https://helpdesk.flexradio.com/hc/en-us/articles/49847922262427-How-to-Configure-HRD-using-DAXv2).
+
+In the GUI, **Settings → Audio** shows the actual opened format, recent input
+peak and per-channel peaks, then per-slot capture timing. The idle device format
+is only the OS default and can differ from the active format. Peaks are in
+dBFS (0 dBFS is full scale), not WSJT-X's positive noise-level meter units.
+The Mono correction is covered by synthetic channel and PCM conversion tests;
+Windows DAX hardware still needs a live comparison against WSJT-X using the
+same endpoint, slice and signal.
+
 ## Decode A WAV File
 
 Offline decoding takes the same decode options as `monitor`, reading a recording

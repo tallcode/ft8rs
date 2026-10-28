@@ -119,9 +119,8 @@ struct MonitorArgs {
     #[arg(short = 'i', long, help_heading = "Input")]
     device: Option<String>,
 
-    /// Which channel of a multi-channel input to decode: mono (default, averages
-    /// L+R like WSJT-X), left, or right. Pick left/right for FlexRadio DAX and other
-    /// virtual cables whose stereo channels aren't an in-phase copy.
+    /// Input channel: mono (default, requests mono or uses channel 1), left,
+    /// right, or mix (explicitly averages all channels).
     #[arg(long, default_value = "mono", help_heading = "Input")]
     channel: String,
 
@@ -260,7 +259,7 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
 
     let channel = InputChannel::parse(&args.channel).ok_or_else(|| {
         format!(
-            "invalid --channel '{}': use left, right, or mono",
+            "invalid --channel '{}': use mono, left, right, or mix",
             args.channel
         )
     })?;

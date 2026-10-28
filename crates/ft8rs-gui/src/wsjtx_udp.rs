@@ -47,19 +47,22 @@ impl UdpIn {
         let socket = UdpSocket::bind((host, port))
             .map_err(|err| format!("UDP listen on {host}:{port} failed: {err}"))?;
         // Periodic timeout so the loop can observe the stop flag.
-        let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));
+        socket
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .map_err(|err| format!("UDP receive timeout: {err}"))?;
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(4096);
         let handle = thread::spawn(move || {
             let mut buf = [0u8; 2048];
             while !stop_thread.load(Ordering::Relaxed) {
                 match socket.recv_from(&mut buf) {
                     Ok((n, _)) => {
                         if let Some(decode) = parse_decode(&buf[..n]) {
-                            if tx.send(decode).is_err() {
-                                break; // receiver dropped
+                            match tx.try_send(decode) {
+                                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+                                Err(mpsc::TrySendError::Disconnected(_)) => break,
                             }
                         }
                     }
@@ -112,11 +115,24 @@ fn parse_decode(buf: &[u8]) -> Option<ExternalDecode> {
         return None;
     }
     let ms_since_midnight = p.u32()?;
+    if ms_since_midnight >= 86_400_000 {
+        return None;
+    }
     let snr = p.i32()?;
     let dt = p.f64()?;
+    if !dt.is_finite() {
+        return None;
+    }
     let freq = p.u32()?;
-    p.skip_string()?; // mode
+    if p.string()? != "FT8" {
+        return None;
+    }
     let message = p.string()?;
+    // Comparison must use live, normal-confidence FT8 rows. The two trailing
+    // flags are part of the Decode packet, not annotations in the message text.
+    if p.u8()? != 0 || p.u8()? != 0 {
+        return None;
+    }
     Some(ExternalDecode {
         ms_since_midnight,
         snr,
@@ -238,6 +254,22 @@ mod tests {
         let mut bad = decode_packet(true, 0, 0, 0.0, 1000, "CQ");
         bad[0] = 0; // corrupt magic
         assert!(parse_decode(&bad).is_none());
+    }
+
+    #[test]
+    fn excludes_non_ft8_low_confidence_off_air_and_invalid_times() {
+        let mut packet = decode_packet(true, 0, -8, 0.2, 1000, "CQ K1ABC FN42");
+        let mode = packet.windows(3).position(|w| w == b"FT8").unwrap();
+        packet[mode..mode + 3].copy_from_slice(b"FT4");
+        assert!(parse_decode(&packet).is_none());
+        for flag in [1, 2] {
+            let mut packet = decode_packet(true, 0, -8, 0.2, 1000, "CQ K1ABC FN42");
+            let index = packet.len() - flag;
+            packet[index] = 1;
+            assert!(parse_decode(&packet).is_none());
+        }
+        assert!(parse_decode(&decode_packet(true, 86_400_000, 0, 0.0, 1000, "CQ")).is_none());
+        assert!(parse_decode(&decode_packet(true, 0, 0, f64::NAN, 1000, "CQ")).is_none());
     }
 
     #[test]
