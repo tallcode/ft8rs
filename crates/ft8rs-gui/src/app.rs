@@ -7,7 +7,7 @@
 //! the next slot boundary). The decode table mirrors the CLI columns; slot
 //! separators show only the time.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Color32, RichText};
 
@@ -17,7 +17,7 @@ use ft8rs_engine::protocol::{
 };
 use ft8rs_engine::reconfig::{plan_reconfig, EngineState};
 use ft8rs_engine::report::UdpConfig;
-use ft8rs_engine::soundcard::{InputChannel, SoundcardDeviceInfo};
+use ft8rs_engine::soundcard::{InputChannel, SoundcardDeviceInfo, SoundcardFormatInfo};
 use ft8rs_engine::EngineHandle;
 
 /// Hard cap on retained decode rows. Rendering is virtualized (see `decode_rows`)
@@ -55,8 +55,8 @@ struct Row {
     parity: u8,
     // Merge keys (compare mode): same real slot + freq within tolerance +
     // compatible message tokens identify the same transmission across the two
-    // decoders. `gen` is a monotonic batch id for the real slot (the raw
-    // time-of-day slot wraps every 24 h, so it can't be a stable fold key).
+    // decoders. `gen` is the absolute UTC slot number, so adjacent slots can
+    // arrive out of order and rows from different days cannot collide.
     gen: u64,
     freq: f64,
     tokens: Vec<String>,
@@ -97,21 +97,18 @@ pub struct Ft8rsApp {
     devices: Vec<SoundcardDeviceInfo>,
     selected_device: Option<String>, // device name; None = default
     input_channel: InputChannel,     // which channel of a multi-channel device to decode
-    input_peak: Option<f32>,         // last per-slot captured peak (0..1); None until first slot
+    input_peak: Option<f32>,         // recent capture peak; None until audio arrives
+    capture_format: Option<(String, SoundcardFormatInfo)>,
+    channel_peaks: Vec<f32>,
     // Last slot's capture diagnostics (samples, blocks, avg_block, jitter_ms) and
     // decode count — an at-a-glance readout for locating capture/alignment issues.
-    capture_diag: Option<(usize, u32, u32, i64)>,
+    capture_diag: Option<(usize, u32, u32, i64, u32)>,
     last_slot_decodes: Option<usize>,
 
     // Runtime.
     status: EngineStatus,
     applied: Option<EngineState>,
     rows: Vec<Row>,
-    // Dedupe batch tracking: `merge_gen` advances each time decodes for a new
-    // real slot start arriving, so `ingest` only folds within the current slot
-    // and never collapses a same-time-of-day row from a previous day.
-    merge_slot_key: Option<u32>,
-    merge_gen: u64,
     error: Option<String>,
     dx: Option<DxContextSnapshot>,
     pending_confirm: Option<EngineState>,
@@ -138,6 +135,7 @@ pub struct Ft8rsApp {
     logo: Option<egui::TextureHandle>,
     // Running WSJT-X UDP listener (compare mode); None when disabled/stopped.
     udp_in: Option<crate::wsjtx_udp::UdpIn>,
+    udp_in_dirty: bool,
     // Windows: HWND awaiting menu attachment on the first frame (deferred so the
     // native menu's client-area resize is processed inside the running event
     // loop, avoiding a black strip). Taken once, then None.
@@ -159,8 +157,8 @@ impl Ft8rsApp {
         let engine = EngineHandle::spawn();
         let _ = engine.send(EngineCommand::RefreshDevices);
 
-        // Restore persisted settings (P5.2). Devices are keyed by name; if the
-        // saved device is gone at startup it simply falls back to default.
+        // Restore persisted settings. Devices are keyed by name; a missing
+        // saved device is reported on Start, so we never listen to the wrong rig.
         let storage = cc.storage;
         let load = |key: &str, default: &str| -> String {
             storage
@@ -219,17 +217,17 @@ impl Ft8rsApp {
             udp_in_tol: load("udp_in_tol", "7").trim().parse().unwrap_or(7.0),
             devices: Vec::new(),
             selected_device: (!device.is_empty()).then_some(device),
-            // New key (v0.0.19) so v0.0.18's stored "left" doesn't override the new
-            // Mono default — Left turned out wrong for DAX and shouldn't stick.
+            // Preserve the operator's channel choice; Mono negotiates a native
+            // mono stream and otherwise takes the first capture channel.
             input_channel: InputChannel::parse(&load("audio_channel", "mono")).unwrap_or_default(),
             input_peak: None,
+            capture_format: None,
+            channel_peaks: Vec::new(),
             capture_diag: None,
             last_slot_decodes: None,
             status: EngineStatus::Idle,
             applied: None,
             rows: Vec::new(),
-            merge_slot_key: None,
-            merge_gen: 0,
             error: None,
             dx: None,
             pending_confirm: None,
@@ -246,6 +244,7 @@ impl Ft8rsApp {
             last_title: String::new(),
             logo,
             udp_in: None,
+            udp_in_dirty: true,
             #[cfg(target_os = "windows")]
             pending_menu_hwnd: hwnd,
             #[cfg(target_os = "windows")]
@@ -278,7 +277,7 @@ impl Ft8rsApp {
         self.profile == DecodeProfile::Dx && norm(&self.hiscall).is_none()
     }
 
-    fn build_state(&self) -> EngineState {
+    fn build_state(&self) -> Result<EngineState, String> {
         let mut config = StreamDecodeConfig {
             profile: self.profile,
             mycall: norm(&self.mycall),
@@ -293,12 +292,7 @@ impl Ft8rsApp {
             hide_hash: self.hide_hash,
             ..StreamDecodeConfig::default()
         };
-        if let Ok(value) = self.nfa.trim().parse::<f64>() {
-            config.nfa = value;
-        }
-        if let Ok(value) = self.nfb.trim().parse::<f64>() {
-            config.nfb = value;
-        }
+        (config.nfa, config.nfb) = parse_frequency_range(&self.nfa, &self.nfb)?;
         // nfqso only counts inside the [nfa, nfb] band; 0 or out-of-band means
         // "no QSO focus" (passed as 0) so it never perturbs the decode.
         let nfqso = self.nfqso.trim().parse::<f64>().unwrap_or(0.0);
@@ -307,22 +301,25 @@ impl Ft8rsApp {
         } else {
             0.0
         };
-        EngineState {
+        Ok(EngineState {
             device: self.selected_device.clone(),
             channel: self.input_channel,
             config,
-            udp: self.udp_config(),
-        }
+            udp: self.udp_config()?,
+        })
     }
 
-    fn udp_config(&self) -> Option<UdpConfig> {
+    fn udp_config(&self) -> Result<Option<UdpConfig>, String> {
         if !self.udp_on {
-            return None;
+            return Ok(None);
         }
-        Some(UdpConfig {
+        if self.udp_host.trim().is_empty() {
+            return Err("UDP report host is required".to_string());
+        }
+        Ok(Some(UdpConfig {
             host: self.udp_host.trim().to_string(),
-            port: self.udp_port.trim().parse().unwrap_or(2238),
-        })
+            port: parse_port(&self.udp_port)?,
+        }))
     }
 
     fn toggle_monitor(&mut self) {
@@ -330,16 +327,32 @@ impl Ft8rsApp {
             let _ = self.engine.send(EngineCommand::StopMonitor);
             self.status = EngineStatus::Idle;
             self.applied = None;
+            self.pending_confirm = None;
+            self.input_peak = None;
+            self.capture_format = None;
+            self.channel_peaks.clear();
+            self.capture_diag = None;
             return;
         }
         if self.dx_needs_hiscall() {
             self.error = Some("profile dx requires His Call".to_string());
             return;
         }
-        let state = self.build_state();
+        let state = match self.build_state() {
+            Ok(state) => state,
+            Err(err) => {
+                self.error = Some(err);
+                return;
+            }
+        };
         self.error = None;
         self.rows.clear();
         self.dx = None;
+        self.input_peak = None;
+        self.capture_format = None;
+        self.capture_diag = None;
+        self.channel_peaks.clear();
+        self.last_slot_decodes = None;
         if self
             .engine
             .send(EngineCommand::StartMonitor(state.clone()))
@@ -354,13 +367,21 @@ impl Ft8rsApp {
     /// A change that discards DX intel (target switch) is deferred to a confirm
     /// dialog instead of applied immediately (decision 4 / §6.1).
     fn apply_if_changed(&mut self) {
+        if self.dx_needs_hiscall() {
+            self.error = Some("profile dx requires His Call".to_string());
+            return; // would be invalid; leave the running session as-is
+        }
+        let desired = match self.build_state() {
+            Ok(state) => state,
+            Err(err) => {
+                self.error = Some(err);
+                return;
+            }
+        };
+        self.error = None;
         if !self.is_monitoring() {
             return;
         }
-        if self.dx_needs_hiscall() {
-            return; // would be invalid; leave the running session as-is
-        }
-        let desired = self.build_state();
         let Some(applied) = &self.applied else {
             return;
         };
@@ -384,15 +405,64 @@ impl Ft8rsApp {
     fn pump_events(&mut self) {
         while let Some(event) = self.engine.try_recv() {
             match event {
-                EngineEvent::Status(status) => self.status = status,
+                EngineEvent::Status(status) => {
+                    if status == EngineStatus::Idle {
+                        self.pending_confirm = None;
+                        self.applied = None;
+                        self.input_peak = None;
+                        self.capture_format = None;
+                        self.channel_peaks.clear();
+                        self.capture_diag = None;
+                    }
+                    self.status = status;
+                }
                 EngineEvent::DevicesRefreshed(devices) => self.devices = devices,
                 EngineEvent::InputLevel(peak) => self.input_peak = Some(peak),
+                EngineEvent::CaptureStarted {
+                    device_name,
+                    format,
+                } => {
+                    self.capture_format = Some((device_name, format));
+                    self.input_peak = None;
+                    self.channel_peaks.clear();
+                    self.capture_diag = None;
+                    self.last_slot_decodes = None;
+                }
+                EngineEvent::CaptureLevels {
+                    channel_peaks,
+                    peak,
+                } => {
+                    self.channel_peaks = channel_peaks;
+                    self.input_peak = Some(peak);
+                }
+                EngineEvent::CaptureSelectionRejected {
+                    requested_device,
+                    requested_channel,
+                    active_device,
+                    active_channel,
+                } => {
+                    if self.selected_device == requested_device
+                        && self.input_channel == requested_channel
+                    {
+                        self.selected_device = active_device.clone();
+                        self.input_channel = active_channel;
+                    }
+                    if let Some(applied) = &mut self.applied {
+                        if applied.device == requested_device
+                            && applied.channel == requested_channel
+                        {
+                            applied.device = active_device;
+                            applied.channel = active_channel;
+                        }
+                    }
+                }
                 EngineEvent::CaptureDiag {
                     samples,
                     blocks,
                     avg_block,
                     jitter_ms,
-                } => self.capture_diag = Some((samples, blocks, avg_block, jitter_ms)),
+                    sample_rate,
+                } => self.capture_diag = Some((samples, blocks, avg_block, jitter_ms, sample_rate)),
                 EngineEvent::Decode(record) => self.push_decode(record),
                 EngineEvent::SlotComplete { count, .. } => self.last_slot_decodes = Some(count),
                 EngineEvent::Reconfigured(_) => {}
@@ -461,11 +531,8 @@ impl Ft8rsApp {
     /// decode that differs from a WSJT-X row only in dt (the fold key has no dt
     /// term). No match appends a new row.
     ///
-    /// The fold is scoped to the current slot batch (`merge_gen`): `slot_key` is
-    /// time-of-day only and wraps every 24 h, so without this a recurring signal
-    /// at the same time-of-day/freq on a later day would be folded into a stale
-    /// row still in the buffer. Decodes arrive in slot order, so a change in
-    /// `slot_key` marks a new real slot and bumps the gen.
+    /// UTC day resolution prevents a recurring transmission from merging with
+    /// yesterday's retained rows, while tolerating different source latencies.
     fn ingest(
         &mut self,
         slot_key: u32,
@@ -474,11 +541,13 @@ impl Ft8rsApp {
         tokens: Vec<String>,
         source: DecodeSource,
     ) {
-        if self.merge_slot_key != Some(slot_key) {
-            self.merge_slot_key = Some(slot_key);
-            self.merge_gen += 1;
-        }
-        let gen = self.merge_gen;
+        // The two sources can deliver adjacent slots out of order. Resolve the
+        // time-of-day against today's nearest UTC slot, including midnight.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let gen = absolute_slot(slot_key, now);
 
         if fold_into_cross_source(&mut self.rows, gen, freq, self.udp_in_tol, &tokens, source) {
             return;
@@ -501,12 +570,25 @@ impl Ft8rsApp {
     /// Start/stop/restart the WSJT-X listener to match the current settings.
     /// Called every frame; cheap when nothing changed.
     fn sync_udp_in(&mut self) {
+        if !std::mem::take(&mut self.udp_in_dirty) {
+            return;
+        }
         if !self.udp_in_on {
             self.udp_in = None; // drop stops the thread
             return;
         }
-        let port: u16 = self.udp_in_port.trim().parse().unwrap_or(2237);
+        let port = match parse_port(&self.udp_in_port) {
+            Ok(port) => port,
+            Err(err) => {
+                self.error = Some(err);
+                return;
+            }
+        };
         let host = self.udp_in_host.trim();
+        if host.is_empty() {
+            self.error = Some("UDP listen host is required".to_string());
+            return;
+        }
         let needs_restart = match &self.udp_in {
             Some(udp) => udp.host != host || udp.port != port,
             None => true,
@@ -754,13 +836,7 @@ impl Ft8rsApp {
     /// the DX callsign, its grid (when the message carries one), and the RX
     /// frequency, then applies it to a running session (like editing the fields).
     fn apply_double_click_fill(&mut self, tokens: &[String], freq: f64) {
-        let (call, grid) = dx_call_and_grid(tokens);
-        if let Some(call) = call {
-            self.hiscall = call;
-        }
-        if let Some(grid) = grid {
-            self.hisgrid = grid;
-        }
+        fill_target_context(&mut self.hiscall, &mut self.hisgrid, tokens);
         self.nfqso = format!("{}", freq.round() as i64);
         self.apply_if_changed();
     }
@@ -782,22 +858,34 @@ impl Ft8rsApp {
 
         ui.horizontal_centered(|ui| {
             let mut commit = false;
-            ui.label("Callsign");
+            let call_label = ui.label("Callsign");
             // The first field's measured height is the canonical row height; every
             // other control is forced to match it exactly.
-            let r = callsign_field(ui, &mut self.hiscall, 88.0);
+            let old_call = norm(&self.hiscall);
+            let r = callsign_field(ui, &mut self.hiscall, 88.0).labelled_by(call_label.id);
+            if r.changed() && norm(&self.hiscall) != old_call {
+                self.hisgrid.clear();
+            }
             commit |= r.lost_focus();
             let ctrl_h = r.rect.height();
-            ui.label("Grid");
-            commit |= grid_field(ui, &mut self.hisgrid, 40.0).lost_focus();
-            ui.label("RX");
-            // A normal text field (typeable, same tailwind style as the others) +
-            // a tight ▲/▼ stepper, then the unit label.
-            let r = rx_text_field(ui, &mut self.nfqso, 52.0);
-            commit |= r.lost_focus();
-            ui.spacing_mut().item_spacing.x = 1.0;
-            commit |= rx_stepper(ui, &mut self.nfqso, r.rect.height());
-            ui.spacing_mut().item_spacing.x = 4.0;
+            let grid_label = ui.label("Grid");
+            commit |= grid_field(ui, &mut self.hisgrid, 40.0)
+                .labelled_by(grid_label.id)
+                .lost_focus();
+            let rx_label = ui.label("RX");
+            let mut frequency = self.nfqso.parse::<u32>().unwrap_or(0);
+            let response = ui
+                .add(
+                    egui::DragValue::new(&mut frequency)
+                        .range(0..=3000)
+                        .speed(1),
+                )
+                .labelled_by(rx_label.id)
+                .on_hover_text("Drag to adjust the receive frequency, or click to type.");
+            if response.changed() {
+                self.nfqso = frequency.to_string();
+                commit = true;
+            }
             ui.label("Hz");
 
             // Right-aligned state button — square, height matched to the row.
@@ -813,12 +901,26 @@ impl Ft8rsApp {
                 let button = egui::Button::new(RichText::new(icon).color(Color32::WHITE))
                     .fill(fill)
                     .min_size(egui::vec2(ctrl_h, ctrl_h));
-                if ui.add_enabled(enabled, button).clicked() {
+                let response =
+                    ui.add_enabled(enabled, button)
+                        .on_hover_text(if self.is_monitoring() {
+                            "Stop monitoring"
+                        } else {
+                            "Start monitoring"
+                        });
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        enabled,
+                        if self.is_monitoring() {
+                            "Stop monitoring"
+                        } else {
+                            "Start monitoring"
+                        },
+                    )
+                });
+                if response.clicked() {
                     self.toggle_monitor();
-                }
-                if let Some(err) = &self.error {
-                    ui.add_space(8.0);
-                    ui.colored_label(Color32::from_rgb(0xf8, 0x71, 0x71), format!("⚠ {err}"));
                 }
             });
             if commit {
@@ -833,42 +935,53 @@ impl Ft8rsApp {
         }
         let mut commit = false;
         let mut close = false;
-        // A real OS window (own viewport), fixed size, native title bar. The tabs
+        // A resizable OS window (own viewport) with a native title bar. The tabs
         // live in a left SidePanel whose edge separator spans the full height.
         ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("settings"),
             egui::ViewportBuilder::default()
                 .with_title("Settings")
                 .with_inner_size([560.0, 400.0])
-                .with_resizable(false)
+                .with_min_inner_size([480.0, 320.0])
+                .with_resizable(true)
                 .with_minimize_button(false)
                 .with_maximize_button(false)
                 .with_active(true),
             |vctx, _class| {
                 focus_dialog_viewport(vctx, &mut self.settings_focus_frames);
                 egui::Panel::left("settings_tabs")
-                    .resizable(false)
-                    .exact_size(150.0)
+                    .resizable(true)
+                    .default_size(150.0)
+                    .min_size(112.0)
+                    .max_size(200.0)
                     .frame(
                         egui::Frame::side_top_panel(&vctx.global_style())
                             .inner_margin(egui::Margin::symmetric(12, 14)),
                     )
                     .show(vctx, |ui| {
-                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                            for (tab, label) in [
-                                (SettingsTab::Station, "Station"),
-                                (SettingsTab::Audio, "Audio"),
-                                (SettingsTab::Decode, "Decode"),
-                                (SettingsTab::Frequency, "Frequency"),
-                                (SettingsTab::Output, "Output"),
-                                (SettingsTab::Compare, "Compare"),
-                                (SettingsTab::Advanced, "Advanced"),
-                            ] {
-                                if ui.selectable_label(self.tab == tab, label).clicked() {
-                                    self.tab = tab;
-                                }
-                            }
-                        });
+                        egui::ScrollArea::vertical()
+                            .id_salt("settings_navigation")
+                            .show(ui, |ui| {
+                                ui.with_layout(
+                                    egui::Layout::top_down_justified(egui::Align::LEFT),
+                                    |ui| {
+                                        for (tab, label) in [
+                                            (SettingsTab::Station, "Station"),
+                                            (SettingsTab::Audio, "Audio"),
+                                            (SettingsTab::Decode, "Decode"),
+                                            (SettingsTab::Frequency, "Frequency"),
+                                            (SettingsTab::Output, "Output"),
+                                            (SettingsTab::Compare, "Compare"),
+                                            (SettingsTab::Advanced, "Advanced"),
+                                        ] {
+                                            if ui.selectable_label(self.tab == tab, label).clicked()
+                                            {
+                                                self.tab = tab;
+                                            }
+                                        }
+                                    },
+                                );
+                            });
                     });
                 egui::CentralPanel::default()
                     .frame(
@@ -876,7 +989,16 @@ impl Ft8rsApp {
                             .inner_margin(egui::Margin::symmetric(18, 14)),
                     )
                     .show(vctx, |ui| {
-                        commit = self.settings_tab_ui(ui);
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                            ui.add_enabled_ui(self.pending_confirm.is_none(), |ui| {
+                                commit = self.settings_tab_ui(ui);
+                            });
+                            if let Some(err) = &self.error {
+                                ui.add_space(6.0);
+                                ui.colored_label(ui.visuals().error_fg_color, err);
+                            }
+                        });
                     });
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;
@@ -886,7 +1008,8 @@ impl Ft8rsApp {
         if close {
             self.settings_open = false;
         }
-        if commit {
+        if commit || close {
+            self.udp_in_dirty = true;
             self.apply_if_changed();
         }
     }
@@ -896,44 +1019,61 @@ impl Ft8rsApp {
         match self.tab {
             SettingsTab::Audio => {
                 section_heading(ui, "Audio");
-                commit |= setting_row(ui, "Input device", |ui| self.device_combo(ui));
-                commit |= setting_row(ui, "Channel", |ui| {
-                    let before = self.input_channel;
-                    egui::ComboBox::from_id_salt("input_channel")
-                        .width(140.0)
-                        .selected_text(match self.input_channel {
-                            InputChannel::Mono => "Mono",
-                            InputChannel::Left => "Left",
-                            InputChannel::Right => "Right",
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.input_channel,
-                                InputChannel::Mono,
-                                "Mono",
-                            );
-                            ui.selectable_value(
-                                &mut self.input_channel,
-                                InputChannel::Left,
-                                "Left",
-                            );
-                            ui.selectable_value(
-                                &mut self.input_channel,
-                                InputChannel::Right,
-                                "Right",
-                            );
-                        });
-                    self.input_channel != before
+                settings_form(ui, |ui| {
+                    commit |= setting_row(ui, "Input device", |ui| self.device_combo(ui));
+                    commit |= setting_row(ui, "Channel", |ui| {
+                        let before = self.input_channel;
+                        egui::ComboBox::from_id_salt("input_channel")
+                            .width(ui.available_width())
+                            .truncate()
+                            .selected_text(match self.input_channel {
+                                InputChannel::Mono => "Mono",
+                                InputChannel::Left => "Left",
+                                InputChannel::Right => "Right",
+                                InputChannel::Mix => "Mix (average)",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.input_channel,
+                                    InputChannel::Mono,
+                                    "Mono",
+                                );
+                                ui.selectable_value(
+                                    &mut self.input_channel,
+                                    InputChannel::Left,
+                                    "Left",
+                                );
+                                ui.selectable_value(
+                                    &mut self.input_channel,
+                                    InputChannel::Right,
+                                    "Right",
+                                );
+                                ui.selectable_value(
+                                    &mut self.input_channel,
+                                    InputChannel::Mix,
+                                    "Mix (average)",
+                                );
+                            });
+                        self.input_channel != before
+                    });
                 });
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if ui.button("Refresh").clicked() {
                         let _ = self.engine.send(EngineCommand::RefreshDevices);
                     }
-                    if let Some(dev) = self.current_device_info() {
+                    if let Some((name, format)) = &self.capture_format {
                         ui.label(
                             RichText::new(format!(
-                                "{} · {}ch / {} Hz / {}",
+                                "Active: {name} · {}ch / {} Hz / {}",
+                                format.channels, format.sample_rate, format.sample_format
+                            ))
+                            .weak(),
+                        );
+                    } else if let Some(dev) = self.current_device_info() {
+                        ui.label(
+                            RichText::new(format!(
+                                "Default format: {} · {}ch / {} Hz / {}",
                                 dev.host,
                                 dev.input.channels,
                                 dev.input.sample_rate,
@@ -951,12 +1091,17 @@ impl Ft8rsApp {
                             let dbfs = 20.0 * peak.log10();
                             // Green if we're clearly getting signal; red near silence
                             // (a dead capture — e.g. a virtual driver handing back zeros).
-                            let color = if dbfs > -60.0 {
+                            let color = if dbfs >= -0.1 {
+                                Color32::from_rgb(0xdc, 0x26, 0x26)
+                            } else if dbfs > -60.0 {
                                 Color32::from_rgb(0x16, 0xa3, 0x4a)
                             } else {
                                 Color32::from_rgb(0xdc, 0x26, 0x26)
                             };
-                            ui.label(RichText::new(format!("{dbfs:.1} dBFS")).color(color));
+                            let clipped = if dbfs >= -0.1 { " (near clipping)" } else { "" };
+                            ui.label(
+                                RichText::new(format!("{dbfs:.1} dBFS{clipped}")).color(color),
+                            );
                         }
                         Some(_) => {
                             ui.label(
@@ -969,17 +1114,25 @@ impl Ft8rsApp {
                         }
                     }
                 });
+                if !self.channel_peaks.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, &peak) in self.channel_peaks.iter().enumerate() {
+                            ui.label(
+                                RichText::new(format!("Ch {}: {} dBFS", i + 1, format_dbfs(peak)))
+                                    .weak(),
+                            );
+                        }
+                    });
+                }
                 // Per-slot capture diagnostics: window length (should be ~14–15 s),
                 // driver block size/count, arrival jitter (large ⇒ unreliable capture
                 // timestamps), and decodes in the last slot. One live run locates most
                 // capture/alignment issues.
-                if let Some((samples, blocks, avg_block, jitter_ms)) = self.capture_diag {
+                if let Some((samples, blocks, avg_block, jitter_ms, sample_rate)) =
+                    self.capture_diag
+                {
                     ui.add_space(2.0);
-                    let secs = samples as f64
-                        / self
-                            .current_device_info()
-                            .map(|d| d.input.sample_rate as f64)
-                            .unwrap_or(48_000.0);
+                    let secs = samples as f64 / f64::from(sample_rate);
                     let decodes = self
                         .last_slot_decodes
                         .map(|n| n.to_string())
@@ -1003,12 +1156,14 @@ impl Ft8rsApp {
                         ui.label(RichText::new(format!(" · {decodes} dec")).weak());
                     });
                 }
-                if self.input_channel == InputChannel::Mono {
+                if self.input_channel == InputChannel::Mono
+                    || self.input_channel == InputChannel::Mix
+                {
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(
-                            "Mono averages L+R. If a virtual cable (e.g. FlexRadio DAX) \
-                             puts audio on one channel, use Left/Right instead.",
+                            "Mono requests one channel; if unavailable, uses channel 1. \
+                             Mix averages all channels and can cancel opposite-phase audio.",
                         )
                         .weak(),
                     );
@@ -1016,40 +1171,48 @@ impl Ft8rsApp {
             }
             SettingsTab::Decode => {
                 section_heading(ui, "Decode");
-                commit |= setting_row(ui, "Profile", |ui| {
-                    let before = self.profile;
-                    egui::ComboBox::from_id_salt("profile")
-                        .width(140.0)
-                        .selected_text(self.profile.as_str())
-                        .show_ui(ui, |ui| {
-                            for profile in [
-                                DecodeProfile::Wsjtx,
-                                DecodeProfile::Jtdx,
-                                DecodeProfile::Hybrid,
-                                DecodeProfile::Dx,
-                            ] {
-                                ui.selectable_value(&mut self.profile, profile, profile.as_str());
-                            }
-                        });
-                    self.profile != before
-                });
                 let dx = self.profile == DecodeProfile::Dx;
-                if self.profile == DecodeProfile::Hybrid {
-                    commit |= setting_row(ui, "Cross cancellation", |ui| {
-                        ui.add(egui::Checkbox::without_text(&mut self.hybrid_sic))
+                settings_form(ui, |ui| {
+                    commit |= setting_row(ui, "Profile", |ui| {
+                        let before = self.profile;
+                        egui::ComboBox::from_id_salt("profile")
+                            .width(ui.available_width())
+                            .truncate()
+                            .selected_text(self.profile.as_str())
+                            .show_ui(ui, |ui| {
+                                for profile in [
+                                    DecodeProfile::Wsjtx,
+                                    DecodeProfile::Jtdx,
+                                    DecodeProfile::Hybrid,
+                                    DecodeProfile::Dx,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut self.profile,
+                                        profile,
+                                        profile.as_str(),
+                                    );
+                                }
+                            });
+                        self.profile != before
+                    });
+                    if self.profile == DecodeProfile::Hybrid {
+                        commit |= setting_row(ui, "Cross cancellation", |ui| {
+                            ui.add(egui::Checkbox::without_text(&mut self.hybrid_sic))
+                                .changed()
+                        });
+                    }
+                    commit |= setting_row(ui, "SWL", |ui| {
+                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.swl))
+                            .on_hover_text(
+                                "Controls both JTDX paths in Hybrid. DX manages SWL internally.",
+                            )
                             .changed()
                     });
-                }
-                commit |= setting_row(ui, "SWL", |ui| {
-                    ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.swl))
-                        .on_hover_text(
-                            "Controls both JTDX paths in Hybrid. DX manages SWL internally.",
-                        )
-                        .changed()
-                });
-                commit |= setting_row(ui, "nagain (deep)", |ui| {
-                    ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.nagain))
-                        .changed()
+                    commit |= setting_row(ui, "Deep decode", |ui| {
+                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.nagain))
+                            .on_hover_text("Enable JTDX focused deep decoding (nagain).")
+                            .changed()
+                    });
                 });
                 if dx {
                     ui.add_space(4.0);
@@ -1058,50 +1221,50 @@ impl Ft8rsApp {
             }
             SettingsTab::Frequency => {
                 section_heading(ui, "Frequency");
-                commit |= setting_row(ui, "Low (nfa) Hz", |ui| {
-                    text_field(ui, &mut self.nfa, 140.0)
-                });
-                commit |= setting_row(ui, "High (nfb) Hz", |ui| {
-                    text_field(ui, &mut self.nfb, 140.0)
+                settings_form(ui, |ui| {
+                    commit |= setting_row(ui, "Low (Hz)", |ui| text_field(ui, &mut self.nfa));
+                    commit |= setting_row(ui, "High (Hz)", |ui| text_field(ui, &mut self.nfb));
                 });
             }
             SettingsTab::Station => {
                 section_heading(ui, "Station");
-                commit |= setting_row(ui, "My Callsign", |ui| {
-                    callsign_field(ui, &mut self.mycall, 140.0).lost_focus()
-                });
-                commit |= setting_row(ui, "My Grid", |ui| {
-                    grid_field(ui, &mut self.mygrid, 140.0).lost_focus()
+                settings_form(ui, |ui| {
+                    commit |= setting_row(ui, "My Callsign", |ui| {
+                        callsign_field(ui, &mut self.mycall, f32::INFINITY).lost_focus()
+                    });
+                    commit |= setting_row(ui, "My Grid", |ui| {
+                        grid_field(ui, &mut self.mygrid, f32::INFINITY).lost_focus()
+                    });
                 });
             }
             SettingsTab::Output => {
                 section_heading(ui, "Output");
-                commit |= setting_row(ui, "UDP reports", |ui| {
-                    ui.add(egui::Checkbox::without_text(&mut self.udp_on))
-                        .changed()
+                settings_form(ui, |ui| {
+                    commit |= setting_row(ui, "UDP reports", |ui| {
+                        ui.add(egui::Checkbox::without_text(&mut self.udp_on))
+                            .changed()
+                    });
+                    commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_host));
+                    commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_port));
                 });
-                commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_host, 160.0));
-                commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_port, 100.0));
             }
             SettingsTab::Compare => {
                 section_heading(ui, "Compare");
-                commit |= setting_row(ui, "Listen to WSJT-X (UDP)", |ui| {
-                    ui.add(egui::Checkbox::without_text(&mut self.udp_in_on))
+                settings_form(ui, |ui| {
+                    commit |= setting_row(ui, "Listen to WSJT-X (UDP)", |ui| {
+                        ui.add(egui::Checkbox::without_text(&mut self.udp_in_on))
+                            .changed()
+                    });
+                    commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_in_host));
+                    commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_in_port));
+                    commit |= setting_row(ui, "Match ± Hz", |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut self.udp_in_tol)
+                                .speed(0.25)
+                                .range(0.0..=10.0),
+                        )
                         .changed()
-                });
-                commit |= setting_row(ui, "Host", |ui| {
-                    text_field(ui, &mut self.udp_in_host, 160.0)
-                });
-                commit |= setting_row(ui, "Port", |ui| {
-                    text_field(ui, &mut self.udp_in_port, 100.0)
-                });
-                commit |= setting_row(ui, "Match ± Hz", |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut self.udp_in_tol)
-                            .speed(0.25)
-                            .range(0.0..=10.0),
-                    )
-                    .changed()
+                    });
                 });
                 ui.add_space(10.0);
                 ui.label(
@@ -1123,147 +1286,41 @@ impl Ft8rsApp {
             }
             SettingsTab::Advanced => {
                 section_heading(ui, "Advanced");
-                let dx = self.profile == DecodeProfile::Dx;
-                commit |= setting_row(ui, "filter (narrow band)", |ui| {
-                    ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.filter))
-                        .changed()
-                });
-                commit |= setting_row(ui, "hide dupes", |ui| {
-                    ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_dupes))
-                        .changed()
-                });
-                commit |= setting_row(ui, "hide <...> hash", |ui| {
-                    ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_hash))
-                        .changed()
+                settings_form(ui, |ui| {
+                    let dx = self.profile == DecodeProfile::Dx;
+                    commit |= setting_row(ui, "Narrow-band filter", |ui| {
+                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.filter))
+                            .changed()
+                    });
+                    commit |= setting_row(ui, "Hide duplicates", |ui| {
+                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_dupes))
+                            .changed()
+                    });
+                    commit |= setting_row(ui, "Hide <...> calls", |ui| {
+                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_hash))
+                            .changed()
+                    });
                 });
                 ui.add_space(6.0);
-                ui.label(RichText::new("Kernel decode switches (rebuild session).").weak());
+                ui.label(RichText::new("Changes take effect at the next slot.").weak());
             }
         }
         commit
     }
 
-    /// The input-device picker. A combo-styled trigger (truncated text + ▼) whose
-    /// dropdown is *right*-aligned to the trigger and grows leftward, hugging its
-    /// content within [trigger width, half the window]. egui's ComboBox always
-    /// left-aligns its popup and lays items out justified, so we render both the
-    /// trigger and the popup ourselves. Returns true when the selection changed.
+    /// Standard picker: egui handles focus, keyboard input, popup sizing and
+    /// truncation. Long endpoint names remain available in the hover text.
     fn device_combo(&mut self, ui: &mut egui::Ui) -> bool {
-        const TRIGGER_W: f32 = 190.0;
         let before = self.selected_device.clone();
-        let font = egui::TextStyle::Button.resolve(ui.style());
-        let names: Vec<String> = self.devices.iter().map(|d| d.name.clone()).collect();
-
-        // Menu width: fit the longest item, clamped to [trigger, half window].
-        let measure = |ui: &egui::Ui, s: String| {
-            ui.ctx().fonts_mut(|f| {
-                f.layout_no_wrap(s, font.clone(), egui::Color32::WHITE)
-                    .size()
-                    .x
-            })
-        };
-        let mut content_w = measure(ui, "Default".to_string());
-        for name in &names {
-            content_w = content_w.max(measure(ui, name.clone()));
-        }
-        let pad_x = ui.spacing().button_padding.x;
-        let icon_w = ui.spacing().icon_width;
-        let menu_w = (content_w + 2.0 * pad_x + icon_w + 8.0)
-            .clamp(TRIGGER_W, ui.ctx().content_rect().width() * 0.5);
-
-        // Combo-styled trigger button.
-        let h =
-            ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
-        let (rect, trigger) =
-            ui.allocate_exact_size(egui::vec2(TRIGGER_W, h), egui::Sense::click());
-        let popup_id = ui.make_persistent_id("device_popup");
-        let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
-        if ui.is_rect_visible(rect) {
-            let visuals = if open {
-                ui.visuals().widgets.open
-            } else {
-                *ui.style().interact(&trigger)
-            };
-            ui.painter().rect(
-                rect,
-                visuals.corner_radius,
-                visuals.weak_bg_fill,
-                visuals.bg_stroke,
-                egui::StrokeKind::Inside,
-            );
-            // Selected text, truncated with an ellipsis to leave room for the icon.
-            let selected = self
-                .selected_device
-                .clone()
-                .unwrap_or_else(|| "Default".to_string());
-            let mut job = egui::text::LayoutJob::single_section(
-                selected,
-                egui::TextFormat {
-                    font_id: font.clone(),
-                    color: visuals.text_color(),
-                    ..Default::default()
-                },
-            );
-            job.wrap.max_width = (TRIGGER_W - 2.0 * pad_x - icon_w).max(0.0);
-            job.wrap.max_rows = 1;
-            job.wrap.break_anywhere = true;
-            job.wrap.overflow_character = Some('…');
-            let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
-            let text_pos = egui::Align2::LEFT_CENTER
-                .align_size_within_rect(galley.size(), rect.shrink2(egui::vec2(pad_x, 0.0)))
-                .min;
-            ui.painter().galley(text_pos, galley, visuals.text_color());
-            // ▼ at the right.
-            let c = egui::pos2(rect.right() - pad_x - icon_w * 0.5, rect.center().y);
-            let r = icon_w * 0.3;
-            ui.painter().add(egui::Shape::convex_polygon(
-                vec![
-                    egui::pos2(c.x - r, c.y - r * 0.6),
-                    egui::pos2(c.x + r, c.y - r * 0.6),
-                    egui::pos2(c.x, c.y + r * 0.7),
-                ],
-                visuals.text_color(),
-                egui::Stroke::NONE,
-            ));
-        }
-        if let Some(name) = &self.selected_device {
-            trigger.clone().on_hover_text(name);
-        }
-
-        // Right-aligned dropdown via the egui 0.35 Popup API. `Popup::menu`
-        // toggles open on the trigger's click and carries the "just-opened" guard
-        // that prevents the immediate self-close (the flicker the old raw-Area
-        // approach caused). RectAlign::BOTTOM_END puts the menu's right edge under
-        // the trigger's right edge; CloseOnClick closes it when an item is picked.
-        egui::Popup::menu(&trigger)
-            .id(popup_id)
-            .align(egui::RectAlign::BOTTOM_END)
-            .gap(2.0)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| {
-                ui.set_max_width(menu_w);
-                ui.set_min_width(TRIGGER_W.min(menu_w));
-                egui::ScrollArea::vertical()
-                    .max_height(ui.spacing().combo_height)
-                    .show(ui, |ui| {
-                        let cur = self.selected_device.clone();
-                        if ui.selectable_label(cur.is_none(), "Default").clicked() {
-                            self.selected_device = None;
-                        }
-                        for name in &names {
-                            let sel = cur.as_deref() == Some(name.as_str());
-                            if ui.selectable_label(sel, name).on_hover_text(name).clicked() {
-                                self.selected_device = Some(name.clone());
-                            }
-                        }
-                    });
-            });
+        input_device_combo(ui, &mut self.selected_device, &self.devices);
         self.selected_device != before
     }
 
     fn current_device_info(&self) -> Option<&SoundcardDeviceInfo> {
-        let name = self.selected_device.as_ref()?;
-        self.devices.iter().find(|dev| &dev.name == name)
+        match &self.selected_device {
+            Some(name) => self.devices.iter().find(|dev| &dev.name == name),
+            None => self.devices.iter().find(|dev| dev.is_default_input),
+        }
     }
 
     fn confirm_window(&mut self, ctx: &egui::Context) {
@@ -1271,32 +1328,29 @@ impl Ft8rsApp {
             return;
         }
         let mut decided: Option<bool> = None;
-        egui::Window::new("confirm")
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                ui.add_space(4.0);
-                ui.label(RichText::new("Switch DX target").size(15.0).strong());
-                ui.add_space(8.0);
-                ui.label("This discards the collected DX intel.");
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        decided = Some(false);
+        let modal = egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.label(RichText::new("Switch DX target").size(15.0).strong());
+            ui.add_space(8.0);
+            ui.label("This discards the collected DX intel.");
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    decided = Some(false);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let confirm =
+                        egui::Button::new(RichText::new("Switch").strong().color(Color32::WHITE))
+                            .fill(Color32::from_rgb(0x25, 0x63, 0xeb));
+                    if ui.add(confirm).clicked() {
+                        decided = Some(true);
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let confirm = egui::Button::new(
-                            RichText::new("Switch").strong().color(Color32::WHITE),
-                        )
-                        .fill(Color32::from_rgb(0x25, 0x63, 0xeb));
-                        if ui.add(confirm).clicked() {
-                            decided = Some(true);
-                        }
-                    });
                 });
             });
+        });
+        if modal.should_close() {
+            decided = Some(false);
+        }
         match decided {
             Some(true) => {
                 if let Some(desired) = self.pending_confirm.take() {
@@ -1312,13 +1366,11 @@ impl Ft8rsApp {
             }
             Some(false) => {
                 self.pending_confirm = None;
-                // Revert the edited target to the running value.
-                let running = self
-                    .applied
-                    .as_ref()
-                    .and_then(|state| state.config.hiscall.clone())
-                    .unwrap_or_default();
-                self.hiscall = running;
+                if let Some(running) = &self.applied {
+                    self.hiscall = running.config.hiscall.clone().unwrap_or_default();
+                    self.hisgrid = running.config.hisgrid.clone().unwrap_or_default();
+                    self.profile = running.config.profile;
+                }
             }
             None => {}
         }
@@ -1591,6 +1643,16 @@ impl eframe::App for Ft8rsApp {
         egui::Panel::bottom("controls")
             .exact_size(42.0)
             .show(ui, |ui| self.bottom_bar(ui));
+        if let Some(err) = &self.error {
+            egui::Panel::bottom("error_status").show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!("⚠ {err}")).color(ui.visuals().error_fg_color),
+                    )
+                    .wrap(),
+                );
+            });
+        }
         if self.profile == DecodeProfile::Dx {
             egui::Panel::right("dx_panel")
                 .resizable(false)
@@ -1622,94 +1684,6 @@ impl eframe::App for Ft8rsApp {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
-
-/// The RX-frequency field: a normal numeric text field (digits only, clamped
-/// 0..=3000) styled exactly like the other input fields — so it stays typeable
-/// and visually consistent. Returns the Response.
-fn rx_text_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Response {
-    let resp = ui.add(
-        egui::TextEdit::singleline(value)
-            .desired_width(width)
-            .margin(egui::Margin::symmetric(8, 4)),
-    );
-    if resp.changed() {
-        value.retain(|c| c.is_ascii_digit());
-        if value.parse::<f64>().is_ok_and(|v| v > 3000.0) {
-            *value = "3000".to_string();
-        }
-    }
-    resp
-}
-
-/// A tight ▲/▼ stepper sitting next to the RX field: two equal clickable halves
-/// (combined height == `height`), painted to match. Steps the parsed value 1 Hz
-/// within 0..=3000. Returns true when a click changed it.
-fn rx_stepper(ui: &mut egui::Ui, value: &mut String, height: f32) -> bool {
-    use egui::{pos2, vec2, Pos2, Rect, Sense, Shape, Stroke};
-    let (rect, _) = ui.allocate_exact_size(vec2(14.0, height), Sense::hover());
-    let mid = rect.center().y;
-    let up_rect = Rect::from_min_max(rect.min, pos2(rect.max.x, mid - 0.5));
-    let dn_rect = Rect::from_min_max(pos2(rect.min.x, mid + 0.5), rect.max);
-    let up = ui.interact(up_rect, ui.id().with("rx_up"), Sense::click());
-    let dn = ui.interact(dn_rect, ui.id().with("rx_dn"), Sense::click());
-
-    let (fg, hover_bg, corner_radius) = {
-        let v = ui.visuals();
-        (
-            v.text_color(),
-            v.widgets.hovered.weak_bg_fill,
-            v.widgets.inactive.corner_radius,
-        )
-    };
-    let p = ui.painter();
-    if up.hovered() {
-        p.rect_filled(up_rect, corner_radius, hover_bg);
-    }
-    if dn.hovered() {
-        p.rect_filled(dn_rect, corner_radius, hover_bg);
-    }
-    let tri = |c: Pos2, pointing_up: bool| {
-        let (hw, hh) = (3.0, 2.0);
-        if pointing_up {
-            vec![
-                pos2(c.x - hw, c.y + hh),
-                pos2(c.x + hw, c.y + hh),
-                pos2(c.x, c.y - hh),
-            ]
-        } else {
-            vec![
-                pos2(c.x - hw, c.y - hh),
-                pos2(c.x + hw, c.y - hh),
-                pos2(c.x, c.y + hh),
-            ]
-        }
-    };
-    p.add(Shape::convex_polygon(
-        tri(up_rect.center(), true),
-        fg,
-        Stroke::NONE,
-    ));
-    p.add(Shape::convex_polygon(
-        tri(dn_rect.center(), false),
-        fg,
-        Stroke::NONE,
-    ));
-
-    let step = |value: &mut String, delta: f64| {
-        let v = (value.trim().parse::<f64>().unwrap_or(0.0) + delta).clamp(0.0, 3000.0);
-        *value = (v as i64).to_string();
-    };
-    let mut changed = false;
-    if up.clicked() {
-        step(value, 1.0);
-        changed = true;
-    }
-    if dn.clicked() {
-        step(value, -1.0);
-        changed = true;
-    }
-    changed
-}
 
 /// A callsign field: forces ASCII uppercase live. Returns the Response (use
 /// `.lost_focus()` for the commit signal, `.rect.height()` for sizing).
@@ -1766,36 +1740,58 @@ fn section_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(10.0);
 }
 
-/// A settings row: label on the left, control right-aligned. Returns the
-/// control's commit signal.
-fn setting_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
-    let mut commit = false;
-    // Make every control the same height as a text field so they all center on
-    // the label's baseline. A combo box / drag value defaults to a taller
-    // vertical button_padding (8 vs a field's 4px margin) and — because the combo
-    // lays itself out via button_frame rather than the standard centered add —
-    // ends up sitting below the label. Pinning button_padding.y to 4 here makes
-    // those controls field-height, so the proven label↔field alignment applies
-    // to them too. Row height is then just the field height.
+/// Use standard ComboBox sizing for the field and its scrollable menu. Long
+/// names wrap automatically in the open menu; the collapsed field truncates.
+fn input_device_combo(
+    ui: &mut egui::Ui,
+    selected_device: &mut Option<String>,
+    devices: &[SoundcardDeviceInfo],
+) -> egui::Response {
+    let selected = selected_device.as_deref().unwrap_or("Default").to_string();
+    egui::ComboBox::from_id_salt("input_device")
+        .width(ui.available_width())
+        .truncate()
+        .selected_text(&selected)
+        .show_ui(ui, |ui| {
+            // ComboBox menus default to Extend. Keep their standard width and
+            // ask the text layout engine to wrap rather than grow offscreen.
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            ui.selectable_value(selected_device, None, "Default");
+            for device in devices {
+                ui.selectable_value(selected_device, Some(device.name.clone()), &device.name)
+                    .on_hover_text(&device.name);
+            }
+        })
+        .response
+        .on_hover_text(selected)
+}
+
+/// Let egui measure labels as one column and give controls the remaining width.
+/// The surrounding ScrollArea handles vertical overflow at smaller heights.
+fn settings_form(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     ui.spacing_mut().button_padding.y = 4.0;
-    let row_h = ui.text_style_height(&egui::TextStyle::Body) + 8.0;
-    ui.horizontal(|ui| {
-        ui.set_min_height(row_h);
-        ui.label(label);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            commit = add(ui);
-        });
-    });
-    ui.add_space(6.0);
+    egui::Grid::new("settings_form")
+        .num_columns(2)
+        .spacing(egui::vec2(16.0, 10.0))
+        .min_col_width(0.0)
+        .show(ui, add);
+    ui.add_space(10.0);
+}
+
+/// One row in the standard settings Grid, returning the control's commit signal.
+fn setting_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
+    ui.add(egui::Label::new(label).extend());
+    let commit = add(ui);
+    ui.end_row();
     commit
 }
 
 /// A bare single-line field. Symmetric margin gives it a uniform height with the
 /// text vertically centered. Returns true on edit commit (focus left / Enter).
-fn text_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> bool {
+fn text_field(ui: &mut egui::Ui, value: &mut String) -> bool {
     ui.add(
         egui::TextEdit::singleline(value)
-            .desired_width(width)
+            .desired_width(f32::INFINITY)
             .margin(egui::Margin::symmetric(8, 4)),
     )
     .lost_focus()
@@ -1808,6 +1804,51 @@ fn norm(value: &str) -> Option<String> {
     } else {
         Some(trimmed.to_ascii_uppercase())
     }
+}
+
+fn parse_frequency_range(low: &str, high: &str) -> Result<(f64, f64), String> {
+    let parse = |value: &str| {
+        value
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && (0.0..=5000.0).contains(v))
+    };
+    match (parse(low), parse(high)) {
+        (Some(low), Some(high)) if low < high => Ok((low, high)),
+        _ => Err("Frequency range must satisfy 0 ≤ Low < High ≤ 5000 Hz".to_string()),
+    }
+}
+
+fn parse_port(value: &str) -> Result<u16, String> {
+    value
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|&port| port != 0)
+        .ok_or_else(|| "UDP port must be an integer from 1 to 65535".to_string())
+}
+
+fn format_dbfs(peak: f32) -> String {
+    if peak > 0.0 {
+        format!("{:.1}", 20.0 * peak.log10())
+    } else {
+        "−inf".to_string()
+    }
+}
+
+fn absolute_slot(slot_key: u32, now_seconds: u64) -> u64 {
+    const SLOTS_PER_DAY: u64 = 5760;
+    let current = now_seconds / 15;
+    let today = current / SLOTS_PER_DAY * SLOTS_PER_DAY + u64::from(slot_key);
+    [
+        today.saturating_sub(SLOTS_PER_DAY),
+        today,
+        today + SLOTS_PER_DAY,
+    ]
+    .into_iter()
+    .min_by_key(|candidate| candidate.abs_diff(current))
+    .unwrap()
 }
 
 /// Provenance tag shown as a trailing column after the message
@@ -1850,8 +1891,11 @@ fn fold_into_cross_source(
     source: DecodeSource,
 ) -> bool {
     for row in rows.iter_mut() {
-        if row.source != source
-            && row.gen == gen
+        if matches!(
+            (row.source, source),
+            (DecodeSource::Local, DecodeSource::External)
+                | (DecodeSource::External, DecodeSource::Local)
+        ) && row.gen == gen
             && (row.freq - freq).abs() <= tol
             && tokens_compatible(&row.tokens, tokens)
         {
@@ -1865,7 +1909,13 @@ fn fold_into_cross_source(
 fn norm_tokens(msg: &str) -> Vec<String> {
     msg.split_whitespace()
         .filter(|t| !is_annotation(t))
-        .map(|t| t.to_ascii_uppercase())
+        .map(|t| {
+            if t == "<...>" {
+                t.to_string()
+            } else {
+                t.trim_matches(['<', '>']).to_ascii_uppercase()
+            }
+        })
         .collect()
 }
 
@@ -1925,6 +1975,19 @@ fn dx_call_and_grid(tokens: &[String]) -> (Option<String>, Option<String>) {
     }
 }
 
+fn fill_target_context(call: &mut String, grid: &mut String, tokens: &[String]) {
+    let (new_call, new_grid) = dx_call_and_grid(tokens);
+    if let Some(new_call) = new_call {
+        if norm(call).as_ref() != Some(&new_call) {
+            grid.clear();
+        }
+        *call = new_call;
+        if let Some(new_grid) = new_grid {
+            *grid = new_grid;
+        }
+    }
+}
+
 /// The token at `idx` as a grid, or `None`. `is_grid4` is purely structural, so
 /// `RR73` (the ack) matches it — exclude report/marker tokens here.
 fn grid_after(tokens: &[String], idx: usize) -> Option<String> {
@@ -1954,10 +2017,8 @@ fn is_annotation(token: &str) -> bool {
             && token[1..].bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Whether two normalized messages describe the same transmission, lenient on
-/// hashed-call format: equal token counts and, per position, equal tokens or
-/// either side being a `<...>` hash token (so `<...>` ↔ `<K1ABC>` ↔ a resolved
-/// call all match).
+/// Whether two normalized messages describe the same transmission. Only an
+/// unresolved `<...>` is a wildcard; two different resolved calls never match.
 fn tokens_compatible(a: &[String], b: &[String]) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -1966,7 +2027,7 @@ fn tokens_compatible(a: &[String], b: &[String]) -> bool {
 }
 
 fn is_hash_token(token: &str) -> bool {
-    token.starts_with('<') && token.ends_with('>')
+    token == "<...>"
 }
 
 /// Compare-mode row color: external-only = sky, local-only = rose (tailwind,
@@ -2330,6 +2391,14 @@ mod tests {
             &norm_tokens("CQ K1ABC FN42"),
             &norm_tokens("CQ W1AW EM73"),
         ));
+        assert!(!tokens_compatible(
+            &norm_tokens("<PJ4X> K1ABC RR73"),
+            &norm_tokens("<W1AW> K1ABC RR73"),
+        ));
+        assert!(tokens_compatible(
+            &norm_tokens("<PJ4X> K1ABC RR73"),
+            &norm_tokens("PJ4X K1ABC RR73"),
+        ));
     }
 
     #[test]
@@ -2367,6 +2436,17 @@ mod tests {
             DecodeSource::External,
         ));
         assert_eq!(rows[0].source, DecodeSource::Both);
+        // The matched pair is complete: neither source can consume it again.
+        for source in [DecodeSource::Local, DecodeSource::External] {
+            assert!(!fold_into_cross_source(
+                &mut rows,
+                1,
+                1001.0,
+                7.0,
+                &norm_tokens("CQ K1ABC FN42"),
+                source
+            ));
+        }
 
         // A different gen (different slot) never folds.
         assert!(!fold_into_cross_source(
@@ -2424,5 +2504,172 @@ mod tests {
         let in94 = ["X".to_string(), "IN94".to_string()];
         assert_eq!(grid_after(&rr73, 1), None);
         assert_eq!(grid_after(&in94, 1), Some("IN94".to_string()));
+    }
+
+    #[test]
+    fn validates_numeric_settings_without_silent_defaults() {
+        assert_eq!(parse_frequency_range("200", "3000"), Ok((200.0, 3000.0)));
+        for (low, high) in [
+            ("NaN", "3000"),
+            ("200", "inf"),
+            ("bad", "3000"),
+            ("3000", "200"),
+            ("200", "200"),
+            ("-1", "3000"),
+            ("200", "5001"),
+        ] {
+            assert!(parse_frequency_range(low, high).is_err());
+        }
+        assert_eq!(parse_port(" 2237 "), Ok(2237));
+        for value in ["", "0", "65536", "-1", "abc"] {
+            assert!(parse_port(value).is_err());
+        }
+    }
+
+    #[test]
+    fn new_target_does_not_inherit_the_previous_grid() {
+        let mut call = "W1AW".to_string();
+        let mut grid = "FN31".to_string();
+        fill_target_context(&mut call, &mut grid, &norm_tokens("K1ABC W1AW RR73"));
+        assert_eq!(grid, "FN31");
+        fill_target_context(&mut call, &mut grid, &norm_tokens("K1ABC F5BZB RR73"));
+        assert_eq!(call, "F5BZB");
+        assert_eq!(grid, "");
+        fill_target_context(&mut call, &mut grid, &norm_tokens("CQ F5BZB IN94"));
+        assert_eq!(grid, "IN94");
+        fill_target_context(&mut call, &mut grid, &norm_tokens("K1ABC <...> FN42"));
+        assert_eq!((call.as_str(), grid.as_str()), ("F5BZB", "IN94"));
+    }
+
+    #[test]
+    fn slot_identity_survives_source_delay_midnight_and_next_day() {
+        let day = 20_000 * 86_400;
+        let previous = absolute_slot(5759, day - 1);
+        assert_eq!(previous, absolute_slot(5759, day + 2));
+        assert_eq!(absolute_slot(0, day - 1), absolute_slot(0, day + 2));
+        assert_ne!(absolute_slot(0, day), absolute_slot(0, day + 86_400));
+        assert_eq!(
+            absolute_slot(120, day + 1801),
+            absolute_slot(120, day + 1817)
+        );
+    }
+
+    #[test]
+    fn standard_form_reflows_after_window_width_changes() {
+        let ctx = egui::Context::default();
+        apply_style(&ctx, egui::Theme::Light);
+        let mut value = String::new();
+        let mut widths = Vec::new();
+        for width in [360.0, 240.0, 640.0, 280.0] {
+            let mut fields = [egui::Rect::NOTHING; 2];
+            for _ in 0..4 {
+                let _ = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 400.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        settings_form(ui, |ui| {
+                            setting_row(ui, "My Callsign", |ui| {
+                                fields[0] = callsign_field(ui, &mut value, f32::INFINITY).rect;
+                                false
+                            });
+                            setting_row(ui, "Input device", |ui| {
+                                fields[1] = egui::ComboBox::from_id_salt("test_device")
+                                    .width(ui.available_width())
+                                    .truncate()
+                                    .selected_text("DAX RX 1 (a deliberately long endpoint name)")
+                                    .show_ui(ui, |_| {})
+                                    .response
+                                    .rect;
+                                false
+                            });
+                        });
+                    },
+                );
+            }
+            for field in fields {
+                assert!(
+                    field.right() <= width + 1.0,
+                    "control overflow at {width}: {field:?}"
+                );
+                assert!(field.width() > 30.0);
+            }
+            assert!((fields[1].left() - fields[0].left()).abs() < 1.0);
+            assert!(
+                fields[1].top() - fields[0].top() < 50.0,
+                "labels must stay on one line"
+            );
+            widths.push(fields[0].width());
+        }
+        assert!(widths[1] < widths[0] && widths[2] > widths[0] && widths[3] < widths[2]);
+    }
+
+    #[test]
+    fn long_device_names_keep_both_field_and_popup_inside_window() {
+        let ctx = egui::Context::default();
+        apply_style(&ctx, egui::Theme::Light);
+        let devices = [
+            "DAX RX 1 (FlexRadio DAX) ".repeat(12),
+            "A".repeat(240),
+            "很长的设备名称".repeat(30),
+        ]
+        .map(|name| SoundcardDeviceInfo {
+            index: 0,
+            host: "Test".to_string(),
+            name,
+            is_default_input: false,
+            input: SoundcardFormatInfo {
+                channels: 2,
+                sample_rate: 48_000,
+                sample_format: "f32".to_string(),
+            },
+        });
+        let mut selected = Some(devices[0].name.clone());
+        for width in [240.0, 640.0, 280.0] {
+            let mut response = None;
+            for frame in 0..8 {
+                let _ = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 400.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        settings_form(ui, |ui| {
+                            setting_row(ui, "Input device", |ui| {
+                                response = Some(input_device_combo(ui, &mut selected, &devices));
+                                false
+                            });
+                        });
+                    },
+                );
+                let response = response.as_ref().unwrap();
+                // Use the standard ComboBox popup ID to open the actual menu.
+                let popup_id = response.id.with("popup");
+                if frame >= 3 {
+                    egui::Popup::open_id(&ctx, popup_id);
+                }
+                if frame == 7 {
+                    assert!(response.rect.right() <= width + 1.0);
+                    let menu = ctx
+                        .memory(|memory| memory.area_rect(popup_id))
+                        .expect("open menu");
+                    assert!(
+                        menu.width() <= width + 1.0,
+                        "menu overflow at {width}: {menu:?}"
+                    );
+                    assert!(menu.left() >= -1.0 && menu.right() <= width + 1.0);
+                    assert!(menu.height() <= 400.0, "long items must scroll vertically");
+                }
+            }
+        }
+        assert_eq!(selected.as_deref(), Some(devices[0].name.as_str()));
     }
 }

@@ -19,7 +19,19 @@ const SLOT_MS: i64 = SLOT_SECONDS as i64 * 1000;
 /// the moment the input callback delivered it (≈ the last sample's capture time).
 /// The timestamp is what lets the accumulator place each block on the UTC grid
 /// without draining — the way WSJT-X keys its buffer off `currentMSecsSinceEpoch`.
-pub(crate) type AudioChunk = (Vec<f32>, i64);
+pub(crate) struct AudioChunk {
+    pub samples: Vec<f32>,
+    pub capture_ms: i64,
+    pub channel_peaks: Vec<f32>,
+    pub error: Option<String>,
+}
+
+pub(crate) struct AudioCapture {
+    pub stream: cpal::Stream,
+    pub rx: Receiver<AudioChunk>,
+    pub format: SoundcardFormatInfo,
+    pub device_name: String,
+}
 
 /// Which staged decode a ready window corresponds to (nzhsym 41/47/50).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,23 +228,20 @@ pub struct SoundcardDecodeOptions {
 
 /// Which physical channel of a multi-channel capture device feeds the decoder.
 ///
-/// WSJT-X never averages a stereo input — it opens the device mono or picks a
-/// single channel (`Audio/AudioDevice.hpp`). We mirror that: some rigs' virtual
-/// cables (notably FlexRadio DAX) put the receive audio on one channel and
-/// silence / an anti-phase copy / a different slice on the other, so averaging
-/// `(L+R)/2` cancels or corrupts the signal and nothing decodes. Defaulting to
-/// the left channel matches WSJT-X's out-of-the-box behavior.
+/// Mono requests a one-channel stream, as WSJT-X does in `Audio/soundin.cpp`.
+/// If the backend only supports multichannel capture, use its first channel;
+/// averaging is an explicit opt-in because it can attenuate or cancel audio.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InputChannel {
-    /// Downmix all channels into one by averaging — the default, matching WSJT-X's
-    /// out-of-the-box "Mono". If a virtual cable puts the audio on a single channel
-    /// (or the two are anti-phase), pick Left/Right instead.
+    /// Request mono; take the first channel if native mono is unavailable.
     #[default]
     Mono,
     /// Left channel only (frame index 0).
     Left,
     /// Right channel only (frame index 1).
     Right,
+    /// Explicitly average all input channels.
+    Mix,
 }
 
 impl InputChannel {
@@ -241,6 +250,7 @@ impl InputChannel {
             InputChannel::Left => "left",
             InputChannel::Right => "right",
             InputChannel::Mono => "mono",
+            InputChannel::Mix => "mix",
         }
     }
 
@@ -249,6 +259,7 @@ impl InputChannel {
             "left" => Some(InputChannel::Left),
             "right" => Some(InputChannel::Right),
             "mono" => Some(InputChannel::Mono),
+            "mix" => Some(InputChannel::Mix),
             _ => None,
         }
     }
@@ -286,7 +297,10 @@ where
     F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
     G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
 {
-    let (stream, rx, sample_rate) = start_input_stream(options.device.as_deref(), options.channel)?;
+    let AudioCapture {
+        stream, rx, format, ..
+    } = start_input_stream(options.device.as_deref(), options.channel)?;
+    let sample_rate = format.sample_rate;
     let (cmd_tx, event_rx) = start_decode_worker(options.config);
 
     // WSJT-X-style: no sleep-to-boundary / drain. Feed every captured block to the
@@ -299,11 +313,14 @@ where
         // Surface any decodes the worker has finished.
         drain_available_decode_events(&event_rx, &mut on_decode, &mut on_slot_complete)?;
 
-        let (chunk, capture_ms) = match rx.recv() {
+        let chunk = match rx.recv() {
             Ok(block) => block,
             Err(_) => break, // capture stopped
         };
-        let out = acc.push(&chunk, capture_ms);
+        if let Some(err) = chunk.error {
+            return Err(err);
+        }
+        let out = acc.push(&chunk.samples, chunk.capture_ms);
         for (stage, timestamp, samples_12k) in out.stages {
             send_worker_command(&cmd_tx, worker_command(stage, timestamp, samples_12k))?;
         }
@@ -614,35 +631,54 @@ where
 pub(crate) fn start_input_stream(
     selector: Option<&str>,
     channel: InputChannel,
-) -> Result<(cpal::Stream, Receiver<AudioChunk>, u32), String> {
+) -> Result<AudioCapture, String> {
     let selector = selector.unwrap_or("default");
     let (device, info) = select_input_device(selector)?;
-    let supported_config = select_input_config(&device, &info)?;
-    let sample_rate = supported_config.sample_rate();
+    let supported_config = select_input_config(&device, &info, channel)?;
+    let format = SoundcardFormatInfo {
+        channels: supported_config.channels(),
+        sample_rate: supported_config.sample_rate(),
+        sample_format: supported_config.sample_format().to_string(),
+    };
     let channels = supported_config.channels() as usize;
 
     let (tx, rx) = mpsc::channel();
     let stream_config = supported_config.into();
-    let err_fn = |err| eprintln!("soundcard input stream error: {err}");
+    let error_tx = tx.clone();
+    let err_fn = move |err| {
+        let _ = error_tx.send(AudioChunk {
+            samples: Vec::new(),
+            capture_ms: capture_now_ms(),
+            channel_peaks: Vec::new(),
+            error: Some(format!("soundcard input stream error: {err}")),
+        });
+    };
+    // Use CPAL's conversions for each PCM width, including 24-bit samples in
+    // 32-bit containers. Never interpret float samples as 16-bit PCM or divide
+    // already-normalized floats by 32768.
+    macro_rules! build {
+        ($ty:ty) => {
+            device.build_input_stream(
+                stream_config,
+                move |data: &[$ty], _| send_samples(data, channels, channel, &tx),
+                err_fn,
+                None,
+            )
+        };
+    }
     let stream = match supported_config.sample_format() {
-        cpal::SampleFormat::F32 => device.build_input_stream(
-            stream_config,
-            move |data: &[f32], _| send_f32(data, channels, channel, &tx),
-            err_fn,
-            None,
-        ),
-        cpal::SampleFormat::I16 => device.build_input_stream(
-            stream_config,
-            move |data: &[i16], _| send_i16(data, channels, channel, &tx),
-            err_fn,
-            None,
-        ),
-        cpal::SampleFormat::U16 => device.build_input_stream(
-            stream_config,
-            move |data: &[u16], _| send_u16(data, channels, channel, &tx),
-            err_fn,
-            None,
-        ),
+        cpal::SampleFormat::F32 => build!(f32),
+        cpal::SampleFormat::F64 => build!(f64),
+        cpal::SampleFormat::I8 => build!(i8),
+        cpal::SampleFormat::I16 => build!(i16),
+        cpal::SampleFormat::I24 => build!(cpal::I24),
+        cpal::SampleFormat::I32 => build!(i32),
+        cpal::SampleFormat::I64 => build!(i64),
+        cpal::SampleFormat::U8 => build!(u8),
+        cpal::SampleFormat::U16 => build!(u16),
+        cpal::SampleFormat::U24 => build!(cpal::U24),
+        cpal::SampleFormat::U32 => build!(u32),
+        cpal::SampleFormat::U64 => build!(u64),
         sample_format => {
             return Err(format!(
                 "unsupported default input sample format for {}: {sample_format:?}",
@@ -656,45 +692,63 @@ pub(crate) fn start_input_stream(
         .play()
         .map_err(|err| format!("failed to start input stream for {}: {err}", info.name))?;
 
-    Ok((stream, rx, sample_rate))
+    Ok(AudioCapture {
+        stream,
+        rx,
+        format,
+        device_name: info.name,
+    })
 }
 
-/// Choose the capture format, preferring 48 kHz / f32. FlexRadio DAX (and many
-/// virtual cables) advertise that as their only real format and, in shared mode,
-/// won't resample or reformat. `default_input_config()` returns whatever Windows
-/// currently reports as the endpoint's mix format — which the operator can change
-/// (Sound → device → Advanced → Default Format) and which need not be the rate the
-/// driver actually streams; opening a mismatched format there yields a *silent*
-/// stream rather than an error. Explicitly matching a device-supported f32/48k
-/// config (per the DAX guidance) avoids that. Falls back to the device default for
-/// ordinary cards and other platforms.
+/// Request 48 kHz with the channel layout used by WSJT-X (mono for Mono,
+/// stereo for Left/Right). WASAPI can expose f32 even when WSJT-X's Qt backend
+/// exposes i16; both represent the same full scale after conversion. Prefer a
+/// supported channel layout before sample type; do not open a device's maximum
+/// rate just because it supports float there.
 fn select_input_config(
     device: &cpal::Device,
     info: &SoundcardDeviceInfo,
+    channel: InputChannel,
 ) -> Result<cpal::SupportedStreamConfig, String> {
-    const PREFERRED_RATE: u32 = 48_000;
     if let Ok(configs) = device.supported_input_configs() {
         let configs: Vec<_> = configs.collect();
-        // 1) f32 @ 48 kHz — DAX's native format. (cpal's SampleRate is a u32 alias.)
-        if let Some(range) = configs.iter().find(|c| {
-            c.sample_format() == cpal::SampleFormat::F32
-                && c.min_sample_rate() <= PREFERRED_RATE
-                && c.max_sample_rate() >= PREFERRED_RATE
-        }) {
-            return Ok((*range).with_sample_rate(PREFERRED_RATE));
-        }
-        // 2) Any f32 config (still avoids an int format the driver may not stream).
-        if let Some(range) = configs
-            .iter()
-            .find(|c| c.sample_format() == cpal::SampleFormat::F32)
-        {
-            return Ok((*range).with_max_sample_rate());
+        if let Some(config) = preferred_input_config(&configs, channel) {
+            return Ok(config);
         }
     }
     // 3) Fall back to the device default.
     device
         .default_input_config()
         .map_err(|err| format!("failed to read input config for {}: {err}", info.name))
+}
+
+fn preferred_input_config(
+    configs: &[cpal::SupportedStreamConfigRange],
+    channel: InputChannel,
+) -> Option<cpal::SupportedStreamConfig> {
+    let wanted_channels = if channel == InputChannel::Mono { 1 } else { 2 };
+    configs
+        .iter()
+        .filter(|c| {
+            c.channels() > 0 && c.min_sample_rate() <= 48_000 && c.max_sample_rate() >= 48_000
+        })
+        .filter(|c| {
+            !matches!(
+                c.sample_format(),
+                cpal::SampleFormat::DsdU8 | cpal::SampleFormat::DsdU16 | cpal::SampleFormat::DsdU32
+            )
+        })
+        .min_by_key(|c| {
+            (
+                c.channels().abs_diff(wanted_channels),
+                match c.sample_format() {
+                    cpal::SampleFormat::F32 => 0,
+                    cpal::SampleFormat::I16 => 1,
+                    _ => 2,
+                },
+            )
+        })
+        .map(|c| (*c).with_sample_rate(48_000))
 }
 
 /// Peak absolute amplitude of a sample buffer (0.0 when empty) — feeds the GUI
@@ -807,29 +861,27 @@ fn capture_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn send_f32(data: &[f32], channels: usize, channel: InputChannel, tx: &mpsc::Sender<AudioChunk>) {
-    let _ = tx.send((
-        fold_channels(data.iter().copied(), channels, channel),
-        capture_now_ms(),
-    ));
-}
-
-fn send_i16(data: &[i16], channels: usize, channel: InputChannel, tx: &mpsc::Sender<AudioChunk>) {
-    let folded = fold_channels(
-        data.iter().map(|sample| *sample as f32 / 32768.0),
-        channels,
-        channel,
-    );
-    let _ = tx.send((folded, capture_now_ms()));
-}
-
-fn send_u16(data: &[u16], channels: usize, channel: InputChannel, tx: &mpsc::Sender<AudioChunk>) {
-    let folded = fold_channels(
-        data.iter().map(|sample| *sample as f32 / 32768.0 - 1.0),
-        channels,
-        channel,
-    );
-    let _ = tx.send((folded, capture_now_ms()));
+fn send_samples<T>(data: &[T], channels: usize, channel: InputChannel, tx: &Sender<AudioChunk>)
+where
+    T: cpal::Sample,
+    f32: cpal::FromSample<T>,
+{
+    let capture_ms = capture_now_ms();
+    let mut channel_peaks = vec![0.0f32; channels];
+    let samples = data.iter().enumerate().map(|(i, &sample)| {
+        let value = sample.to_sample::<f32>();
+        // A malformed float from a driver must not poison an entire slot's FFT.
+        let value = if value.is_finite() { value } else { 0.0 };
+        channel_peaks[i % channels] = channel_peaks[i % channels].max(value.abs());
+        value
+    });
+    let samples = fold_channels(samples, channels, channel);
+    let _ = tx.send(AudioChunk {
+        samples,
+        capture_ms,
+        channel_peaks,
+        error: None,
+    });
 }
 
 /// Reduce an interleaved multi-channel frame stream to one channel per the
@@ -843,7 +895,7 @@ where
     }
 
     match channel {
-        InputChannel::Mono => {
+        InputChannel::Mix => {
             let mut out = Vec::new();
             let mut acc = 0.0f32;
             let mut pos = 0usize;
@@ -858,7 +910,7 @@ where
             }
             out
         }
-        InputChannel::Left | InputChannel::Right => {
+        InputChannel::Mono | InputChannel::Left | InputChannel::Right => {
             // Right clamps to the last channel on mono-but-reported-multichannel
             // edge cases so we never silently emit an empty buffer.
             let target = match channel {
@@ -968,15 +1020,14 @@ mod tests {
         assert!(done.contains(&ts_b1));
     }
 
-    // Interleaved stereo where the right channel is the left, inverted — the
-    // shape FlexRadio DAX can present. Averaging cancels it to silence; picking a
-    // single channel recovers the real audio. This is the whole point of the fix.
+    // Synthetic opposite-phase input: averaging cancels it; Mono must retain
+    // signal. This is a regression case, not a claim about every DAX driver.
     #[test]
     fn antiphase_stereo_cancels_under_mono_but_survives_single_channel() {
         let left = [0.1f32, -0.2, 0.3, -0.4];
         let interleaved: Vec<f32> = left.iter().flat_map(|&l| [l, -l]).collect();
 
-        let mono = fold_channels(interleaved.iter().copied(), 2, InputChannel::Mono);
+        let mono = fold_channels(interleaved.iter().copied(), 2, InputChannel::Mix);
         assert!(
             mono.iter().all(|&s| s.abs() < 1e-6),
             "anti-phase average should cancel to ~0, got {mono:?}"
@@ -984,6 +1035,10 @@ mod tests {
 
         let l = fold_channels(interleaved.iter().copied(), 2, InputChannel::Left);
         assert_eq!(l, left);
+        assert_eq!(
+            fold_channels(interleaved.iter().copied(), 2, InputChannel::Mono),
+            left
+        );
         let r = fold_channels(interleaved.iter().copied(), 2, InputChannel::Right);
         assert_eq!(r, left.iter().map(|&s| -s).collect::<Vec<_>>());
     }
@@ -991,8 +1046,78 @@ mod tests {
     #[test]
     fn mono_device_passes_through_regardless_of_selection() {
         let samples = [0.5f32, -0.25, 0.125];
-        for ch in [InputChannel::Left, InputChannel::Right, InputChannel::Mono] {
+        for ch in [
+            InputChannel::Left,
+            InputChannel::Right,
+            InputChannel::Mono,
+            InputChannel::Mix,
+        ] {
             assert_eq!(fold_channels(samples.iter().copied(), 1, ch), samples);
         }
+    }
+
+    #[test]
+    fn mono_does_not_halve_single_sided_audio() {
+        let data = [0.25, 0.0, -0.5, 0.0];
+        assert_eq!(fold_channels(data, 2, InputChannel::Mono), [0.25, -0.5]);
+        assert_eq!(fold_channels(data, 2, InputChannel::Mix), [0.125, -0.25]);
+    }
+
+    #[test]
+    fn capture_format_prefers_requested_layout_at_48k_and_uses_device_fallback() {
+        use cpal::{SampleFormat, SupportedBufferSize, SupportedStreamConfigRange};
+        let range = |channels, rate, format| {
+            SupportedStreamConfigRange::new(
+                channels,
+                rate,
+                rate,
+                SupportedBufferSize::Unknown,
+                format,
+            )
+        };
+        let configs = [
+            range(2, 48_000, SampleFormat::F32),
+            range(1, 48_000, SampleFormat::I16),
+            range(1, 192_000, SampleFormat::F32),
+        ];
+        let mono = super::preferred_input_config(&configs, InputChannel::Mono).unwrap();
+        assert_eq!(
+            (mono.channels(), mono.sample_rate(), mono.sample_format()),
+            (1, 48_000, SampleFormat::I16)
+        );
+        for ch in [InputChannel::Left, InputChannel::Right, InputChannel::Mix] {
+            let config = super::preferred_input_config(&configs, ch).unwrap();
+            assert_eq!(config.channels(), 2);
+        }
+        let stereo_only = super::preferred_input_config(&configs[..1], InputChannel::Mono).unwrap();
+        assert_eq!(stereo_only.channels(), 2);
+        assert!(super::preferred_input_config(&configs[2..], InputChannel::Mono).is_none());
+    }
+
+    #[test]
+    fn pcm_widths_and_float_capture_have_equal_amplitudes_and_channel_levels() {
+        fn capture<T: cpal::Sample>(data: &[T]) -> super::AudioChunk
+        where
+            f32: cpal::FromSample<T>,
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            super::send_samples(data, 2, InputChannel::Mono, &tx);
+            rx.recv().unwrap()
+        }
+        let expected = [0.25, -0.5];
+        let floats = capture(&[0.25f32, -0.25, -0.5, 0.5]);
+        assert_eq!(floats.samples, expected);
+        assert_eq!(floats.channel_peaks, [0.5, 0.5]);
+        assert_eq!(capture(&[8192i16, -8192, -16384, 16384]).samples, expected);
+        assert_eq!(capture(&[40960u16, 24576, 16384, 49152]).samples, expected);
+        assert_eq!(
+            capture(&[536870912i32, -536870912, -1073741824, 1073741824]).samples,
+            expected
+        );
+        assert_eq!(capture(&[0.25f64, -0.25, -0.5, 0.5]).samples, expected);
+        let quiet = capture(&[1e-7f32, 0.0, -1e-7, 0.0]);
+        assert_eq!(quiet.samples, [1e-7, -1e-7]);
+        let invalid = capture(&[f32::NAN, 0.0, f32::INFINITY, 0.0]);
+        assert_eq!(invalid.samples, [0.0, 0.0]);
     }
 }

@@ -13,7 +13,7 @@ use ft8rs::stream::StreamDecodedMessage;
 use ft8rs::SlotTimestamp;
 
 use crate::reconfig::{EngineState, ReconfigOutcome};
-use crate::soundcard::SoundcardDeviceInfo;
+use crate::soundcard::{InputChannel, SoundcardDeviceInfo, SoundcardFormatInfo};
 
 /// Commands the GUI sends to the engine. The GUI submits a full desired
 /// [`EngineState`]; the engine diffs it (see `reconfig::plan_reconfig`) and
@@ -114,6 +114,24 @@ pub enum EngineEvent {
     /// Per-slot captured-audio peak amplitude (0.0..=1.0) so the GUI can show an
     /// input level and the operator can tell silence (dead capture) from signal.
     InputLevel(f32),
+    /// Actual opened format (device enumeration only describes the OS default).
+    CaptureStarted {
+        device_name: String,
+        format: SoundcardFormatInfo,
+    },
+    /// Native channel peaks before extraction, and peak delivered to decoding.
+    CaptureLevels {
+        channel_peaks: Vec<f32>,
+        peak: f32,
+    },
+    /// A failed capture switch kept the previous device; reconcile the picker
+    /// only if the operator has not requested a newer selection meanwhile.
+    CaptureSelectionRejected {
+        requested_device: Option<String>,
+        requested_channel: InputChannel,
+        active_device: Option<String>,
+        active_channel: InputChannel,
+    },
     /// Per-slot capture diagnostics (window length, driver block size/count, and
     /// arrival-time jitter) for locating capture/alignment problems from one live run.
     CaptureDiag {
@@ -121,6 +139,7 @@ pub enum EngineEvent {
         blocks: u32,
         avg_block: u32,
         jitter_ms: i64,
+        sample_rate: u32,
     },
     DxContext(DxContextSnapshot),
     /// What a just-applied `ApplyState` actually did (level + reset/migrate buckets).
