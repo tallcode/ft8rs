@@ -3,6 +3,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::decode::cooperative::observation::{jtdx_branch_configs, NativeObservation};
 use crate::decode::cooperative::recovery::{self, CancellationStats};
 use crate::decode::cooperative::{same_signal, OutputLedger, SignalSource};
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
@@ -247,8 +248,8 @@ impl HybridStreamDecodeSession {
                                     })
                                     .collect()
                             }),
-                        None => wsjtx
-                            .decode_slot_streaming_with_provenance_at(timestamp, samples, &mut emit)
+                        None => NativeObservation::Wsjtx(wsjtx)
+                            .decode(timestamp, samples, &mut emit)
                             .map(|mut rows| {
                                 for row in &mut rows {
                                     if row.provenance == StreamDecodeProvenance::Regular {
@@ -264,7 +265,7 @@ impl HybridStreamDecodeSession {
             let j_tx = tx.clone();
             scope.spawn(move || {
                 let result = guard_worker(|| {
-                    jtdx.decode_slot_streaming_with_provenance_at(timestamp, samples, |row| {
+                    NativeObservation::Jtdx(jtdx).decode(timestamp, samples, |row| {
                         j_tx.send(WorkerEvent::Row(SignalSource::Jtdx, row.clone()))
                             .map_err(|_| "hybrid event receiver closed".to_string())
                     })
@@ -274,7 +275,7 @@ impl HybridStreamDecodeSession {
             let agc_tx = tx.clone();
             scope.spawn(move || {
                 let result = guard_worker(|| {
-                    jtdx_agc.decode_slot_streaming_with_provenance_at(timestamp, samples, |row| {
+                    NativeObservation::Jtdx(jtdx_agc).decode(timestamp, samples, |row| {
                         agc_tx
                             .send(WorkerEvent::AgcRow(row.clone()))
                             .map_err(|_| "hybrid event receiver closed".to_string())
@@ -527,14 +528,6 @@ impl HybridStreamDecodeSession {
             Ok(ledger.into_sorted())
         }
     }
-}
-
-fn jtdx_branch_configs(config: &StreamDecodeConfig) -> [StreamDecodeConfig; 2] {
-    let mut no_agc = config.clone_for_profile_jtdx();
-    no_agc.nagcc = false;
-    let mut agc = no_agc.clone();
-    agc.nagcc = true;
-    [no_agc, agc]
 }
 
 fn cancellation_seeds(
