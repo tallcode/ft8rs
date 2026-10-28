@@ -31,7 +31,7 @@ const DECODE_FONT_SIZE: f32 = 12.0;
 /// Internal left padding for the decode table (header + rows go edge-to-edge).
 const TABLE_PAD: f32 = 12.0;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum SettingsTab {
     Audio,
     Decode,
@@ -151,6 +151,7 @@ pub struct Ft8rsApp {
 
 impl Ft8rsApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         install_fonts(&cc.egui_ctx);
         let theme = cc.egui_ctx.theme();
         apply_style(&cc.egui_ctx, theme);
@@ -891,23 +892,27 @@ impl Ft8rsApp {
             // Right-aligned state button — square, height matched to the row.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (icon, fill) = match self.status {
-                    EngineStatus::Monitoring => ("■", Color32::from_rgb(0x16, 0xa3, 0x4a)),
-                    EngineStatus::Aligning => ("■", Color32::from_rgb(0xd9, 0x77, 0x06)),
-                    EngineStatus::Idle | EngineStatus::Error(_) => {
-                        ("▶", Color32::from_rgb(0x25, 0x63, 0xeb))
-                    }
+                    EngineStatus::Monitoring => (
+                        egui::include_image!("../assets/stop.svg"),
+                        Color32::from_rgb(0x16, 0xa3, 0x4a),
+                    ),
+                    EngineStatus::Aligning => (
+                        egui::include_image!("../assets/stop.svg"),
+                        Color32::from_rgb(0xd9, 0x77, 0x06),
+                    ),
+                    EngineStatus::Idle | EngineStatus::Error(_) => (
+                        egui::include_image!("../assets/play.svg"),
+                        Color32::from_rgb(0x25, 0x63, 0xeb),
+                    ),
                 };
                 let enabled = self.is_monitoring() || !self.dx_needs_hiscall();
-                let button = egui::Button::new(RichText::new(icon).color(Color32::WHITE))
-                    .fill(fill)
-                    .min_size(egui::vec2(ctrl_h, ctrl_h));
-                let response =
-                    ui.add_enabled(enabled, button)
-                        .on_hover_text(if self.is_monitoring() {
-                            "Stop monitoring"
-                        } else {
-                            "Start monitoring"
-                        });
+                let response = monitor_button(ui, icon, fill, ctrl_h, enabled).on_hover_text(
+                    if self.is_monitoring() {
+                        "Stop monitoring"
+                    } else {
+                        "Start monitoring"
+                    },
+                );
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(
                         egui::WidgetType::Button,
@@ -989,8 +994,7 @@ impl Ft8rsApp {
                             .inner_margin(egui::Margin::symmetric(18, 14)),
                     )
                     .show(vctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        settings_page(ui, self.tab, |ui| {
                             ui.add_enabled_ui(self.pending_confirm.is_none(), |ui| {
                                 commit = self.settings_tab_ui(ui);
                             });
@@ -1733,6 +1737,28 @@ fn sanitize_grid(input: &str) -> String {
     out
 }
 
+/// Use image geometry instead of font baselines and side bearings. Symmetric
+/// padding keeps the hit target square even with the bottom bar's text padding.
+fn monitor_button(
+    ui: &mut egui::Ui,
+    icon: egui::ImageSource<'_>,
+    fill: Color32,
+    side: f32,
+    enabled: bool,
+) -> egui::Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = egui::Vec2::ZERO;
+        let image = egui::Image::new(icon).fit_to_exact_size(egui::Vec2::splat(side * 0.68));
+        // Button::new(Image) preserves the requested size; Button::image would
+        // clamp it to the text font height.
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.add_sized(egui::Vec2::splat(side), egui::Button::new(image).fill(fill))
+        })
+        .inner
+    })
+    .inner
+}
+
 /// A bold section heading for the settings content pane.
 fn section_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
@@ -1740,30 +1766,90 @@ fn section_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(10.0);
 }
 
-/// Use standard ComboBox sizing for the field and its scrollable menu. Long
-/// names wrap automatically in the open menu; the collapsed field truncates.
+/// Standard Button + Popup controls allow the menu to size independently of
+/// its trigger, including shrinking an open menu when the window gets smaller.
 fn input_device_combo(
     ui: &mut egui::Ui,
     selected_device: &mut Option<String>,
     devices: &[SoundcardDeviceInfo],
 ) -> egui::Response {
     let selected = selected_device.as_deref().unwrap_or("Default").to_string();
-    egui::ComboBox::from_id_salt("input_device")
-        .width(ui.available_width())
-        .truncate()
-        .selected_text(&selected)
-        .show_ui(ui, |ui| {
-            // ComboBox menus default to Extend. Keep their standard width and
-            // ask the text layout engine to wrap rather than grow offscreen.
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            ui.selectable_value(selected_device, None, "Default");
-            for device in devices {
-                ui.selectable_value(selected_device, Some(device.name.clone()), &device.name)
-                    .on_hover_text(&device.name);
-            }
+    let field_width = ui.available_width();
+    let popup_margin = egui::Frame::popup(ui.style()).total_margin().sum().x;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let text_width = std::iter::once("Default")
+        .chain(devices.iter().map(|device| device.name.as_str()))
+        .map(|name| {
+            ui.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap(name.to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            })
         })
-        .response
-        .on_hover_text(selected)
+        .fold(0.0f32, f32::max);
+    // The open menu can be wider than its trigger. Keep one line per endpoint,
+    // bounded by this viewport; only exceptionally long names need an ellipsis.
+    let menu_width = (text_width + 2.0 * ui.spacing().button_padding.x)
+        .max((field_width - popup_margin).max(0.0))
+        .min((ui.ctx().content_rect().width() - popup_margin - 16.0).max(0.0));
+    let response = ui
+        .push_id("input_device", |ui| {
+            ui.add(
+                egui::Button::new(&selected)
+                    .right_text("▾")
+                    .truncate()
+                    .min_size(egui::vec2(field_width, ui.spacing().interact_size.y)),
+            )
+        })
+        .inner;
+    response.widget_info(|| {
+        let mut info =
+            egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), "Input device");
+        info.current_text_value = Some(selected.clone());
+        info
+    });
+    egui::Popup::menu(&response)
+        .align(egui::RectAlign::BOTTOM_END)
+        .width(menu_width + popup_margin)
+        .show(|ui| {
+            ui.set_width(menu_width);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+            egui::ScrollArea::vertical()
+                .max_height(ui.spacing().combo_height)
+                .show(ui, |ui| {
+                    ui.selectable_value(selected_device, None, "Default");
+                    for device in devices {
+                        ui.selectable_value(
+                            selected_device,
+                            Some(device.name.clone()),
+                            &device.name,
+                        )
+                        .on_hover_text(&device.name);
+                    }
+                });
+        });
+    response.on_hover_text(selected)
+}
+
+/// Each page owns its grid measurements, widget IDs and scroll position.
+/// Filling the available area keeps content width independent of page contents.
+fn settings_page<R>(
+    ui: &mut egui::Ui,
+    tab: SettingsTab,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.push_id(tab, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("settings_content")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                add(ui)
+            })
+            .inner
+    })
+    .inner
 }
 
 /// Let egui measure labels as one column and give controls the remaining width.
@@ -2633,7 +2719,7 @@ mod tests {
         for width in [240.0, 640.0, 280.0] {
             let mut response = None;
             for frame in 0..8 {
-                let _ = ctx.run_ui(
+                let output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
@@ -2667,9 +2753,235 @@ mod tests {
                     );
                     assert!(menu.left() >= -1.0 && menu.right() <= width + 1.0);
                     assert!(menu.height() <= 400.0, "long items must scroll vertically");
+                    for shape in &output.shapes {
+                        assert_single_line_device_text(&shape.shape, &devices);
+                    }
                 }
             }
         }
         assert_eq!(selected.as_deref(), Some(devices[0].name.as_str()));
+    }
+
+    fn assert_single_line_device_text(shape: &egui::Shape, devices: &[SoundcardDeviceInfo]) {
+        match shape {
+            egui::Shape::Text(text)
+                if devices
+                    .iter()
+                    .any(|device| device.name == text.galley.job.text) =>
+            {
+                assert_eq!(text.galley.rows.len(), 1, "device names must never wrap");
+            }
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    assert_single_line_device_text(shape, devices);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn device_popup_can_be_wider_than_trigger_and_show_complete_name() {
+        let ctx = egui::Context::default();
+        apply_style(&ctx, egui::Theme::Light);
+        let devices = [SoundcardDeviceInfo {
+            index: 0,
+            host: "Test".to_owned(),
+            name: "DAX Audio RX 1 (FlexRadio Systems DAX Audio)".to_owned(),
+            is_default_input: false,
+            input: SoundcardFormatInfo {
+                channels: 2,
+                sample_rate: 48_000,
+                sample_format: "f32".to_owned(),
+            },
+        }];
+        let mut selected = None;
+        for frame in 0..8 {
+            let mut response = None;
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.allocate_ui(egui::vec2(140.0, 30.0), |ui| {
+                        response = Some(input_device_combo(ui, &mut selected, &devices));
+                    });
+                },
+            );
+            let response = response.unwrap();
+            let popup_id = response.id.with("popup");
+            if frame >= 3 {
+                egui::Popup::open_id(&ctx, popup_id);
+            }
+            if frame == 7 {
+                let menu = ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+                assert!(menu.width() > response.rect.width() + 50.0);
+                let device_text = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.job.text == devices[0].name => {
+                            Some(text)
+                        }
+                        _ => None,
+                    })
+                    .expect("the open menu must render the device name");
+                assert_eq!(device_text.galley.rows.len(), 1);
+                assert!(
+                    !device_text.galley.elided,
+                    "the name fits the viewport and should be complete"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn switching_settings_pages_keeps_the_first_presented_frame_stable() {
+        let ctx = egui::Context::default();
+        apply_style(&ctx, egui::Theme::Light);
+        let render = |tab: SettingsTab| {
+            let mut control = egui::Rect::NOTHING;
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(360.0, 400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    settings_page(ui, tab, |ui| {
+                        let label = match tab {
+                            SettingsTab::Audio => "Input device",
+                            SettingsTab::Compare => "Listen to WSJT-X (UDP)",
+                            SettingsTab::Frequency => "Low (Hz)",
+                            _ => "My Callsign",
+                        };
+                        settings_form(ui, |ui| {
+                            setting_row(ui, label, |ui| {
+                                control =
+                                    callsign_field(ui, &mut String::new(), f32::INFINITY).rect;
+                                false
+                            });
+                        });
+                    });
+                },
+            );
+            control
+        };
+        for tab in [
+            SettingsTab::Audio,
+            SettingsTab::Compare,
+            SettingsTab::Frequency,
+            SettingsTab::Station,
+            SettingsTab::Compare,
+            SettingsTab::Audio,
+            SettingsTab::Station,
+            SettingsTab::Frequency,
+        ] {
+            let first = render(tab);
+            let second = render(tab);
+            assert_eq!(
+                first, second,
+                "page {tab:?} shifts after its first displayed frame"
+            );
+        }
+    }
+
+    #[test]
+    fn svg_monitor_icons_have_centered_visual_weight_at_multiple_resolutions() {
+        for bytes in [
+            include_bytes!("../assets/play.svg").as_slice(),
+            include_bytes!("../assets/stop.svg").as_slice(),
+        ] {
+            for pixels in [12, 15, 18, 24, 36, 48] {
+                let image = egui_extras::image::load_svg_bytes_with_size(
+                    bytes,
+                    egui::SizeHint::Width(pixels),
+                    &Default::default(),
+                )
+                .unwrap();
+                let mut mass = 0.0;
+                let mut center = egui::Vec2::ZERO;
+                for (i, color) in image.pixels.iter().enumerate() {
+                    let alpha = f32::from(color.a());
+                    mass += alpha;
+                    center += egui::vec2(
+                        (i % image.size[0]) as f32 + 0.5,
+                        (i / image.size[0]) as f32 + 0.5,
+                    ) * alpha;
+                }
+                assert!(mass > 0.0);
+                center /= mass;
+                let expected = egui::vec2(image.size[0] as f32, image.size[1] as f32) / 2.0;
+                assert!(
+                    (center - expected).length() < 0.5,
+                    "icon drifts from its center at {pixels}px: {center:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn svg_monitor_button_stays_square_and_centered_across_fonts_and_dpi() {
+        fn image_bounds(shape: &egui::Shape) -> Option<egui::Rect> {
+            match shape {
+                egui::Shape::Rect(rect) if rect.brush.is_some() => Some(rect.rect),
+                egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                    Some(mesh.calc_bounds())
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(image_bounds),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&ctx);
+        for scale in [1.0, 1.25, 1.5, 2.0, 3.0] {
+            ctx.set_pixels_per_point(scale);
+            for font_size in [9.0, 11.0, 18.0] {
+                for icon in [
+                    egui::include_image!("../assets/play.svg"),
+                    egui::include_image!("../assets/stop.svg"),
+                ] {
+                    let mut button_rect = egui::Rect::NOTHING;
+                    let output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(400.0, 200.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            ui.style_mut().override_font_id =
+                                Some(egui::FontId::monospace(font_size));
+                            ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+                            ui.spacing_mut().interact_size.y = 0.0;
+                            let field = callsign_field(ui, &mut String::new(), 80.0);
+                            button_rect = monitor_button(
+                                ui,
+                                icon.clone(),
+                                Color32::BLUE,
+                                field.rect.height(),
+                                true,
+                            )
+                            .rect;
+                        },
+                    );
+                    assert!((button_rect.width() - button_rect.height()).abs() < 0.01);
+                    let image_rect = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| image_bounds(&shape.shape))
+                        .expect("SVG must load and render as an image");
+                    assert!((image_rect.center() - button_rect.center()).length() < 0.6 / scale,
+                        "icon is not centered at {scale}x / {font_size}pt: {image_rect:?} vs {button_rect:?}");
+                }
+            }
+        }
     }
 }
