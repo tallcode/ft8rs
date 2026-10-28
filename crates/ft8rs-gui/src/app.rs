@@ -1042,6 +1042,9 @@ impl Ft8rsApp {
                 }
                 commit |= setting_row(ui, "SWL", |ui| {
                     ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.swl))
+                        .on_hover_text(
+                            "Controls both JTDX paths in Hybrid. DX manages SWL internally.",
+                        )
                         .changed()
                 });
                 commit |= setting_row(ui, "nagain (deep)", |ui| {

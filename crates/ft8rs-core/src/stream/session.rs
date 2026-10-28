@@ -165,6 +165,8 @@ pub struct StreamDecodeConfig {
     pub nagcc: bool,
     pub lforcesync: bool,
     pub lhound: bool,
+    /// Logical JTDX frequency partitions. One by default; explicit zero selects
+    /// the original decoder's CPU-dependent automatic partition count.
     pub jtdx_threads: usize,
     pub lenabledxcsearch: bool,
     pub lwidedxcsearch: bool,
@@ -212,7 +214,7 @@ impl Default for StreamDecodeConfig {
             nagcc: false,
             lforcesync: false,
             lhound: false,
-            jtdx_threads: 0,
+            jtdx_threads: 1,
             lenabledxcsearch: false,
             lwidedxcsearch: false,
             stophint: false,
@@ -1138,6 +1140,21 @@ mod tests {
             assert_eq!(jtdx.nagcc, nagcc);
             assert!(jtdx.lft8lowth && jtdx.lft8subpass);
         }
+    }
+
+    #[test]
+    fn jtdx_defaults_to_one_partition_and_preserves_explicit_auto() {
+        assert_eq!(StreamDecodeConfig::default().jtdx_threads, 1);
+        let automatic = StreamDecodeConfig {
+            jtdx_threads: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            automatic
+                .clone_for_profile_jtdx_high_sensitivity()
+                .jtdx_threads,
+            0
+        );
     }
 
     #[test]

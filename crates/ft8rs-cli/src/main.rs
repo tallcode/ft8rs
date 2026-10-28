@@ -91,10 +91,15 @@ struct DecodeArgs {
     #[arg(short = 'f', long, help_heading = "Frequency")]
     rx_frequency: Option<f64>,
 
-    /// Enable JTDX SWL mode for profile=jtdx or profile=hybrid.
+    /// Enable JTDX SWL mode (both JTDX paths for profile=hybrid).
     /// The dx profile enables its own SWL listen pass automatically.
     #[arg(long, help_heading = "Decode")]
     swl: bool,
+
+    /// Logical JTDX partitions (default 1); pass 0 for CPU-dependent automatic
+    /// selection. Applies to both JTDX paths in Hybrid, not FFT threads.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=24), help_heading = "Decode")]
+    jtdx_threads: Option<u8>,
 
     /// Enable JTDX "decode again" deep mode (nagainfil): OSD ndeep=5 plus a
     /// focused nfqso+/-25 Hz window. Combine with --swl for max sensitivity.
@@ -220,6 +225,9 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
         config.nfqso = rx_frequency;
     }
     config.swl = args.swl;
+    if let Some(partitions) = args.jtdx_threads {
+        config.jtdx_threads = usize::from(partitions);
+    }
     config.nagain = args.nagain;
     config.hybrid_sic = !args.no_hybrid_sic;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
@@ -307,4 +315,33 @@ fn format_soundcard_format(format: &SoundcardFormatInfo) -> String {
         "{}ch/{}Hz/{}",
         format.channels, format.sample_rate, format.sample_format
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partition_default_and_explicit_auto_reach_the_decoder_config() {
+        for profile in ["jtdx", "hybrid"] {
+            for (option, expected) in [(None, 1), (Some("0"), 0), (Some("4"), 4)] {
+                let mut argv = vec!["ft8rs", "file", "recording.wav", "--profile", profile];
+                if let Some(partitions) = option {
+                    argv.extend(["--jtdx-threads", partitions]);
+                }
+                let cli = Cli::try_parse_from(argv).unwrap();
+                let Command::File(args) = cli.command else {
+                    unreachable!()
+                };
+                assert_eq!(
+                    stream_decode_config(&args.decode).unwrap().jtdx_threads,
+                    expected
+                );
+            }
+        }
+        assert!(
+            Cli::try_parse_from(["ft8rs", "file", "recording.wav", "--jtdx-threads", "25"])
+                .is_err()
+        );
+    }
 }

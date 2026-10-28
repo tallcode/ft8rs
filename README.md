@@ -151,8 +151,9 @@ target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --
 | `--my-grid` | `-G` | local grid context |
 | `--his-call` | `-x` | DX callsign context (required by `dx`) |
 | `--his-grid` | `-g` | DX grid context |
-| `--swl` | | enable JTDX SWL mode for `jtdx`/`hybrid` |
-| `--no-hybrid-sic` | | disable Hybrid cross cancellation; retain both baseline decoders |
+| `--swl` | | enable JTDX SWL mode; controls both JTDX paths in `hybrid` |
+| `--jtdx-threads` | | logical JTDX partitions, default `1`; explicit `0` selects CPU-dependent automatic mode (not FFT threads) |
+| `--no-hybrid-sic` | | disable Hybrid cross cancellation; retain WSJT-X and both JTDX baseline paths |
 | `--nagain` | | JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
 | `--udp` | `-u` | enable UDP output |
 | `--udp-host` | `-o` | UDP destination host |
@@ -200,8 +201,9 @@ dx a8d fixture              -> target row recovered
 
 The JTDX long-fixture calibration fixes `jtdx_threads=4`, the 2022 CallDB,
 200–3000 Hz and no user QSO context, with SWL and AGC compensation disabled.
-Production still defaults to automatic partition selection. Record visible cores
-and actual partitions when comparing automatic-mode results; the parameter
+Production defaults to one partition. Pass `--jtdx-threads 0` explicitly for
+automatic selection. Record visible cores and actual partitions when comparing
+automatic-mode results; the parameter
 changes decode search, not just execution speed. See
 [JTDX notes](crates/ft8rs-core/JTDX.md).
 
