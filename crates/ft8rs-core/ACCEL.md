@@ -1,5 +1,11 @@
 # ACCEL — 解码加速可行性研究与成果
 
+本文为历史性能研究档案；下文时间、比例、测试数量和探针方案均对应各自记录的
+提交与实验条件，不代表当前默认分区、三路 Hybrid/DX 或实时端到端耗时。
+profiling 子系统已经移除，早期 `19` 短录音门槛也已由严格 `21/21` 替代。
+当前运行方式见 [开发指南](../../docs/DEVELOPMENT.md)，校准条件见
+[验证基线](../../docs/VALIDATION.md)，近期编排实验见 [文档索引](../../docs/README.md)。
+
 研究 FT8 解码"硬件加速"（特殊 CPU 指令集 / 厂商数学库 / GPU）的可行性，并在
 **不破坏与上游 WSJT-X/JTDX 字节级对齐、不降灵敏度**的前提下落地优化。
 
@@ -316,6 +322,10 @@ profiling 子系统（`profiling` feature + `profile.rs` + 探针）收官后已
 dump 真实 `(llr, apmask, ndeep)` 入参，criterion 紧循环跑 `osd_decode174_91`），
 比全流程解码稳定得多，免受热节流干扰。对齐复验仍用基线：
 ```
-cargo test --profile fast -p ft8rs-core test_jtdx_profile -- --ignored   # 2 passed
-cargo test --profile fast -p ft8rs-core test_stream_decode                # 3 passed (wsjtx 19/424)
+scripts/test-decoders.sh fast
+scripts/test-decoders.sh release --include-ignored
 ```
+
+上述为当前统一入口；早期实验中的 `wsjtx 19/424` 只保留为历史测量记录，不能
+用作当前验收门槛。性能 A/B 还需在固定录音、配置、CallDB、构建和电源条件下
+逐条比较信号，并将消息回调与全部后台完成分开计时。

@@ -1,0 +1,14 @@
+# id	file	message	freq	dt	snr	channel	sha256
+cq	jtdx_cq.wav	CQ K1ABC FN42	1000.0	0.0	-10.0	awgn	f523e004bf008ea7c17c9cdd63c8a69e45df2f78dd883ccd85fd111b2ba09cb4
+report	jtdx_report.wav	W9XYZ K1ABC -11	1513.0	0.7	-14.0	awgn	d1864b6cdf6cf396c9fc69a759ee11481104b9c488b97cd1e9607faabddd0c53
+roger	jtdx_roger.wav	K1ABC W9XYZ R-09	244.0	-0.2	-14.0	awgn	5cb296227c07c0c25213efeca898194bf6f0940387b458c3e34d59d290d59881
+rr73	jtdx_rr73.wav	K1ABC W9XYZ RR73	2852.0	0.3	-14.0	awgn	50ea336b0c44ebc637d13b364a8f46ed6687cdb602da76d192171026fff53eaa
+free_text	jtdx_free_text.wav	TNX BOB 73 GL	600.0	0.1	-10.0	awgn	959b93e492e27f353ae80b655d35307961c4dc60073f94480f08c3c78c4f5465
+telemetry	jtdx_telemetry.wav	123456789ABCDEF012	1800.0	0.2	-10.0	awgn	e7de5d1e0e948b9c77a0c48f43daa9efec22b8581dd57b78ab937e3f1283e341
+field_day	jtdx_field_day.wav	K1ABC W9XYZ 6A WI	2200.0	0.0	-10.0	awgn	aab51c018e808c91a50eefbe928628aeb2788bfa26aa5dfdc1f527e41eacfcd1
+nonstandard	jtdx_nonstandard.wav	CQ KH1/KH7Z	1200.0	0.0	-10.0	awgn	2f2f5900c8052ea5b63e75d76a188793e487566b2a69c69605d86d08e56dda10
+late	jtdx_late.wav	CQ K1ABC FN42	2990.0	1.2	-12.0	awgn	deac7eb968fea5d07f10a35eef484409e84643f931284ef7d21e2774e8ca0358
+multipath	jtdx_multipath.wav	CQ K1ABC FN42	1000.0	0.0	-14.0	echo	b90ecdedd6b5e6ba43f0281da9086c169a7628661c88080bed6ff0cbebff6909
+fading	jtdx_fading.wav	CQ K1ABC FN42	1000.0	0.0	-14.0	fading	f56121eeda69fe4b194d942437f4dcde35620e6f6dd7148c664ae7c0d2ac01e8
+weak	jtdx_weak.wav	CQ K1ABC FN42	1000.0	0.0	-20.0	awgn	8d1884e65fe5ddc89e22805a89ac6fbebc685177e92555f2a913d31c1f62fd24
+neighbor	jtdx_neighbor.wav	CQ W9XYZ EN37	1025.0	0.0	-6.0	awgn	2ea4ef9523d8e8145fb5e7376e2e38bbd1225f3db7dbd09768c48423619b4b37

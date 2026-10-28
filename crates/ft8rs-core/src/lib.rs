@@ -4,6 +4,12 @@ pub mod input;
 pub mod stream;
 pub(crate) mod util;
 
+// Test-only adapters can exercise private native routines without widening the
+// public API or modifying the mirrored decoder source trees.
+#[cfg(test)]
+#[path = "../tests/decoder/protocol.rs"]
+mod decoder_protocol_tests;
+
 pub use decode::ft8_decode::{decode_with_sbase, DecodeOptions, DecodedMessage};
 pub use decode::HashCallBook;
 pub use stream::session::{

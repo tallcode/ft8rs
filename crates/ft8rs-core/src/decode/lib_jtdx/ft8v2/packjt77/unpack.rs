@@ -53,29 +53,6 @@ fn bits_to_uint(bits: &[u8], start: usize, len: usize) -> usize {
     val
 }
 
-fn callok(call: &str) -> bool {
-    let w = call.trim();
-    let bytes = w.as_bytes();
-    let n = bytes.len();
-    if n < 3 || bytes.first() == Some(&b'Q') {
-        return false;
-    }
-
-    let Some(i0) = bytes.iter().rposition(|b| b.is_ascii_digit()) else {
-        return false;
-    };
-    if i0 != 1 && i0 != 2 {
-        return false;
-    }
-
-    let pfx = &bytes[..i0];
-    if !pfx.iter().any(|b| b.is_ascii_alphabetic()) {
-        return false;
-    }
-
-    bytes[i0 + 1..].iter().all(|b| b.is_ascii_alphabetic())
-}
-
 fn finish_message(msg: String) -> Option<String> {
     if msg.starts_with("CQ <") {
         None
@@ -104,7 +81,7 @@ pub(super) fn unpack28(n28: usize, context: UnpackContext<'_>) -> Option<String>
         return Some(format!("CQ {:03}", nqsy));
     }
 
-    if (1003..N_TOKENS).contains(&n28) {
+    if (1003..=532_443).contains(&n28) {
         let mut m = n28 - 1003;
         let mut chars = String::new();
         for _ in 0..4 {
@@ -121,6 +98,10 @@ pub(super) fn unpack28(n28: usize, context: UnpackContext<'_>) -> Option<String>
             return Some("CQ".into());
         }
         return Some(format!("CQ {}", directed));
+    }
+
+    if (532_444..N_TOKENS).contains(&n28) {
+        return Some("<...>".into());
     }
 
     if (N_TOKENS..N_TOKENS + MAX22).contains(&n28) {
@@ -168,7 +149,11 @@ pub(super) fn unpack28(n28: usize, context: UnpackContext<'_>) -> Option<String>
     );
     let call = call.trim().to_string();
 
-    if call.is_empty() || !callok(&call) || call.contains(' ') {
+    // JTDX's raw unpack28 checks internal spaces and two leading digits.
+    // It does not call WSJT-X's callok; other JTDX receiver filters run later.
+    let two_leading_digits = call.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        && call.as_bytes().get(1).is_some_and(u8::is_ascii_digit);
+    if call.contains(' ') || two_leading_digits {
         None
     } else {
         Some(call)
@@ -553,6 +538,13 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
                 _ => format!("{} {} 73", call1, call2),
             }
         };
+        // JTDX packjt77.f90 rejects Type 4 messages ending in a hashed
+        // callsign unless its /P exception applies. A resolved hash is still
+        // subject to this protocol check; resolution alone is not acceptance.
+        let portable_exception = msg.find("/P ").is_some_and(|offset| offset < 7);
+        if (icq == 1 || (nrpt == 0 && !portable_exception)) && msg.ends_with('>') {
+            return None;
+        }
         finish_message(msg)
     } else if i3 == 5 {
         let n12 = bits_to_uint(bits77, 0, 12);

@@ -293,8 +293,12 @@ pub fn pack28(token: &str) -> usize {
 
     // Standard callsign
     let parsed = parse_callsign(&t);
-    if parsed.is_standard {
-        let basecall = &parsed.basecall;
+    // Native pack28 permits an empty suffix (e.g. A0). Receive validation
+    // is separate; WSJT-X and JTDX intentionally have different rules there.
+    let empty_suffix =
+        t.len() == 2 && t.as_bytes()[0].is_ascii_uppercase() && t.as_bytes()[1].is_ascii_digit();
+    if parsed.is_standard || empty_suffix {
+        let basecall = if empty_suffix { &t } else { &parsed.basecall };
         let chars: Vec<char> = basecall.chars().collect();
         let mut iarea_d: i32 = -1;
         for i in (1..chars.len()).rev() {
@@ -666,6 +670,11 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
         return None;
     }
 
+    // pack77_1 accepts a fourth word only for "CALL CALL R GRID".
+    if parts.len() == 4 && parts[2] != "R" {
+        return None;
+    }
+
     let w1 = &parts[0];
     let w2 = &parts[1];
 
@@ -708,7 +717,8 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
         (MAXGRID4 + 3, 0)
     } else if last_upper == "73" {
         (MAXGRID4 + 4, 0)
-    } else if let Some(rest) = last_upper.strip_prefix('R') {
+    } else if last_upper.starts_with("R+") || last_upper.starts_with("R-") {
+        let rest = &last_upper[1..];
         if let Ok(irpt) = rest.parse::<i32>() {
             let irpt = if (-50..=-31).contains(&irpt) {
                 irpt + 101
@@ -719,7 +729,8 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
         } else {
             return None;
         }
-    } else if let Ok(irpt) = last_upper.parse::<i32>() {
+    } else if last_upper.starts_with('+') || last_upper.starts_with('-') {
+        let irpt = last_upper.parse::<i32>().ok()?;
         let irpt = if (-50..=-31).contains(&irpt) {
             irpt + 101
         } else {
@@ -1209,7 +1220,7 @@ fn unpack28(n28: usize, context: UnpackContext<'_>) -> Option<String> {
         return Some(format!("CQ {:03}", nqsy));
     }
 
-    if (1003..N_TOKENS).contains(&n28) {
+    if (1003..=532_443).contains(&n28) {
         let mut m = n28 - 1003;
         let mut chars = String::new();
         for _ in 0..4 {
@@ -1226,6 +1237,12 @@ fn unpack28(n28: usize, context: UnpackContext<'_>) -> Option<String> {
             return Some("CQ".into());
         }
         return Some(format!("CQ {}", directed));
+    }
+
+    // Native unpack28 falls through reserved token space to an unresolved
+    // hash, rather than aliasing it modulo 27^4 to a directed CQ token.
+    if (532_444..N_TOKENS).contains(&n28) {
+        return Some("<...>".into());
     }
 
     if (N_TOKENS..N_TOKENS + MAX22).contains(&n28) {
@@ -1700,6 +1717,21 @@ fn is_rtty_call_token(call: &str) -> bool {
 
 #[cfg(test)]
 mod unpack_tests {
+    #[test]
+    fn original_test28_calls_and_integer_boundaries() {
+        crate::decoder_protocol_tests::assert_original_pack28_vectors(
+            "wsjtx",
+            super::pack28,
+            |number, seed| {
+                let book = super::HashCallBook::new();
+                if let Some(call) = seed {
+                    book.save(call);
+                }
+                super::unpack28(number, super::UnpackContext::new(Some(&book)))
+            },
+        );
+    }
+
     use super::unpack77;
     use super::HashCallBook;
     use super::{pack28, pack77, C38};

@@ -416,10 +416,11 @@ pub(crate) fn normalize_bmet(bmet: &mut [f64]) {
     } else {
         avg2.sqrt()
     };
-    if sigma > 0.0 {
-        for bmet_value in bmet.iter_mut().take(n) {
-            *bmet_value = ((*bmet_value as f32) / sigma) as f64;
-        }
+    // Upstream always divides, including sigma=0. Preserve NaNs for
+    // uninformative metrics: replacing them with zeros lets a7's distance
+    // comparison select a remembered message on digitally silent audio.
+    for bmet_value in bmet.iter_mut().take(n) {
+        *bmet_value = ((*bmet_value as f32) / sigma) as f64;
     }
 }
 

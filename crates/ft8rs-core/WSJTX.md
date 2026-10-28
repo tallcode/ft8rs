@@ -12,6 +12,10 @@ rules, and known maintenance constraints for that profile.
 Other profiles have separate technical reports and must not add design notes to
 this file.
 
+For user controls and builds, see [usage](../../docs/USAGE.md) and
+[development](../../docs/DEVELOPMENT.md). Shared calibration conditions and the
+latest dated local result are maintained in [validation](../../docs/VALIDATION.md).
+
 Priority order:
 
 1. source-level architecture differences;
@@ -42,7 +46,7 @@ Release tests protect the active alignment baseline.
 
 | Fixture | Active target |
 |---|---:|
-| `tests/ft8/210703_133430.wav` | `21/21` WSJT-X target rows, minimum accepted `19` |
+| `tests/ft8/210703_133430.wav` | `21/21` WSJT-X target rows; every target row is required |
 | `tests/ft8/230208_140300.wav` | `424/424` WSJT-X target rows |
 
 CSV `Extra` semantics:
@@ -57,6 +61,29 @@ marker counts are:
 
 - `210703_133430.csv`: blank `20`, `W` `1`;
 - `230208_140300.csv`: blank `411`, `W` `13`, `J` `20`, `E` `14`.
+
+The short test's old `19` acceptance floor was inherited from the early
+streaming decoder and remained after the documented `21/21` milestone. The
+2026-10-28 local replay again matched all 21 rows with no extras; the test now
+asserts the complete required set instead of a permissive count floor.
+
+The shared [FT8 decoder tests](tests/decoder/README.md) retain independent native
+Fortran/C++ protocol and waveform oracles. Their initial comparisons identified
+two porting differences: standard Type 1 packing accepted unsigned contest
+serials, and zero bit metrics skipped upstream normalization's division. The
+former prevented Type 3 packing of `KA1ABC G3AAA 529 0013`; the latter could make
+a7 select a remembered message on a later digitally silent slot. Both corrections
+restore the reference behavior without changing decoder thresholds or AP search
+schedules. The JTDX oracle also protects its original Type 4 trailing-hash
+rejection rule.
+
+The original `test28` corpus also covers raw `pack28`/`unpack28`, including
+empty-suffix packing (`A0`) and the reserved range `532444..2063591`. The latter
+must remain unresolved rather than wrapping into directed CQ tokens. Native
+Watterson waveforms and `degrade_snr` recording variants extend the shared audio
+matrix; their generation scripts and provenance are retained with the tests.
+Per-message retention expectations for degraded recordings are explicitly Rust
+regression baselines, separate from native codec and waveform references.
 
 The active long WAV is normalized to `12 kHz / mono / 16-bit`, and sample 0 is
 aligned with the filename timestamp.
@@ -318,10 +345,12 @@ Keep these in mind during future audits:
 
 ## Remaining Risks
 
-- LDPC/OSD has source-shape tests and release audio coverage, but still lacks a
-  broad independent set of WSJT-X-generated golden vectors.
-- More fixtures would help for contest messages, hash calls, high drift,
-  collisions, AP progression, and band-edge signals.
+- Native-generated pack/CRC/codeword/tone vectors, raw-call boundaries and
+  deterministic BP/OSD experiments now supplement source-shape and release audio
+  checks. The finite corpus is not exhaustive numerical or sensitivity coverage.
+- More independent fixtures would help for high drift, collisions, AP progression
+  and band-edge signals. Contest and hash cases are covered, but their full
+  combinations with those channel conditions are not.
 - AP mask tests cover active bit positions and gates, but not every
   `ncontest/iaptype` byte-for-byte generated pattern.
 
@@ -330,11 +359,11 @@ Keep these in mind during future audits:
 Run these before accepting decode-core changes:
 
 ```bash
-cargo fmt --check
+cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --profile fast -- -D warnings
-cargo test --release test_stream_decode_short_audio
-cargo test --release test_stream_decode_long_audio
-FT8RS_REQUIRE_WSJTX_SOURCE=1 cargo test --release --test wsjtx_source_audit_test
+scripts/test-decoders.sh fast
+scripts/test-decoders.sh release --include-ignored
+FT8RS_REQUIRE_WSJTX_SOURCE=1 cargo test --release -p ft8rs-core --test wsjtx_source_audit_test
 ```
 
 The source audit discovers a sibling `wsjtx` checkout from the crate/workspace
@@ -356,6 +385,6 @@ crate/module lint allowances; an obsolete local expectation should itself warn.
 For FFTW alignment:
 
 ```bash
-cargo test --release --features fftw test_stream_decode_short_audio
-cargo test --release --features fftw test_stream_decode_long_audio
+cargo test --release -p ft8rs-core --features fftw test_stream_decode_short_audio
+cargo test --release -p ft8rs-core --features fftw test_stream_decode_long_audio
 ```

@@ -4,7 +4,7 @@ use ft8rs::stream::{
     DecodeProfile, ProfileStreamDecodeSession, SlotTimestamp, StreamDecodeConfig,
     StreamDecodeSession,
 };
-const SHORT_TARGET_ACCEPTED_FLOOR: usize = 19;
+const SHORT_TARGET_COUNT: usize = 21;
 const LONG_TARGET_ACCEPTED_FLOOR: usize = 424;
 const JTDX_SHORT_TARGET_ACCEPTED_FLOOR: usize = 20;
 const JTDX_LONG_TARGET_ACCEPTED_FLOOR: usize = 430;
@@ -213,6 +213,7 @@ fn test_stream_decode_short_audio() {
 
     let baseline = parse_baseline("tests/ft8/210703_133430.csv");
     let target: Vec<_> = baseline.iter().filter(|row| !row.ignored).collect();
+    assert_eq!(target.len(), SHORT_TARGET_COUNT);
     let mut used_results = vec![false; results.len()];
     let mut matched = 0;
     let mut misses = Vec::new();
@@ -230,16 +231,21 @@ fn test_stream_decode_short_audio() {
     }
     let plus_count = used_results.iter().filter(|used| !**used).count();
 
+    eprintln!(
+        "STREAM SHORT: matched {matched}/{} | extra {plus_count} | misses {misses:?} | {:.3}s",
+        target.len(),
+        elapsed.as_secs_f64()
+    );
+
     assert!(
-        matched >= SHORT_TARGET_ACCEPTED_FLOOR,
-        "STREAM SHORT: decoded {} | matched {}/{} | plus {} | misses {:?} | {:.1}s < floor {}",
+        misses.is_empty(),
+        "STREAM SHORT: decoded {} | matched {}/{} | plus {} | misses {:?} | {:.1}s; every target row is required",
         results.len(),
         matched,
         target.len(),
         plus_count,
         misses,
-        elapsed.as_secs_f64(),
-        SHORT_TARGET_ACCEPTED_FLOOR
+        elapsed.as_secs_f64()
     );
 }
 
