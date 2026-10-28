@@ -12,19 +12,19 @@ path = "src/main.rs"
 [dependencies]
 ft8rs-core = { path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
-eframe = { version = "0.35", features = ["persistence"] }
-egui_extras = { version = "0.35", default-features = false, features = ["svg"] }
-muda = "0.19"
+eframe = { version = "0.37.0", features = ["persistence"] }
+egui_extras = { version = "0.37.0", default-features = false, features = ["svg"] }
+muda = "0.21.2"
 # Read a font's vertical metrics (line gap) at load time so we can re-center its
 # glyphs in the row box — fixes the top-shifted text with large-line-gap faces
 # like Windows Consolas. Version matches epaint's ab_glyph.
-ab_glyph = "0.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
+ab_glyph = "0.2.32"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # Windows-only: extract the HWND from eframe's window handle to attach a native
 # Win32 menu bar (muda init_for_hwnd). Version matches eframe's raw-window-handle.
 [target.'cfg(windows)'.dependencies]
-raw-window-handle = "0.6"
+raw-window-handle = "0.6.2"
 
 [build-dependencies]
 ft8rs-build = { path = "../ft8rs-build" }
@@ -32,9 +32,9 @@ ft8rs-build = { path = "../ft8rs-build" }
 # Windows-only: embed the app icon into the .exe so it shows in Explorer / the
 # taskbar pin. The .ico is generated from assets/ft8rs.png at build time.
 [target.'cfg(windows)'.build-dependencies]
-winresource = "0.1"
-ico = "0.5"
-image = { version = "0.25", default-features = false, features = ["png"] }
+winresource = "0.1.34"
+ico = "0.6.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [features]
 default = []

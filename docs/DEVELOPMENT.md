@@ -92,9 +92,69 @@ scripts/bundle-macos.sh
 
 This builds the release GUI and assembles `dist/ft8.rs.app` with icon, microphone
 usage metadata and CallDB. macOS can require input permission; local bundles are
-unsigned. The release workflow in `.github/workflows/release.yml` packages tagged
-Windows and Linux assets. This guide describes packaging; it does not publish a
-release when running tests or editing documentation.
+unsigned. The `Build packages` workflow in `.github/workflows/release.yml` builds
+Windows CLI + GUI in one Cargo invocation; Linux always builds and packages only
+the CLI. Both use the existing release optimization settings.
+
+### Development packages and cache warming
+
+In GitHub Actions, select **Build packages → Run workflow**, then choose `main`
+or a branch in **Use workflow from**. The same operation is available from the
+CLI:
+
+```sh
+gh workflow run release.yml --ref main
+gh workflow run release.yml --ref codex/your-branch
+```
+
+The workflow must first exist on the default branch; the selected branch must
+also contain the workflow and packaging helper. Manual runs create development
+artifacts only, including when the selected ref is a tag. They do not create
+GitHub Releases or tags.
+
+Development version format:
+
+```text
+0.0.0-dev.<github.run_number>.g<first 12 characters of commit SHA>
+0.0.0-dev.31.g97e82bd12345
+```
+
+The number is the workflow's visible build number, such as **#31**, rather than
+GitHub's larger unique run ID. This is a SemVer prerelease version. It appears
+in CLI `--version`, GUI About
+and development archive filenames. A rerun keeps the same version and replaces
+that run's same-named artifacts; there is no attempt number in the version.
+Every archive includes `BUILD-INFO.json` and a README recording the full commit,
+source ref, workflow build number, unique run ID and Actions run URL, plus a
+companion SHA-256 checksum file.
+
+Download the packages from the run's **Artifacts** section. Packages and build
+timing reports are retained for **one day**. This artifact lifetime does not
+shorten the Cargo build-cache lifetime, which follows GitHub's cache policy.
+
+Pushes to `main` run the same builds automatically to warm Linux and Windows
+release caches, and also provide one-day development artifacts. Cache keys
+include OS/architecture, the installed Rust compiler, Cargo manifests/lockfile,
+Cargo configuration and source commit. Compatible restore prefixes allow tag
+and branch builds to reuse default-branch caches and retain unaffected build
+data across dependency updates. Branch caches remain branch-scoped; they do not
+populate `main` or other sibling branches/tags.
+
+### Tagged releases
+
+Only pushing a `v`-prefixed SemVer tag, such as `v0.0.23`, publishes a GitHub
+Release. Tagged releases keep the existing download filenames
+`ft8rs-linux-x86_64.tar.gz` and `ft8rs-windows-x86_64.zip`. The temporary Actions
+artifacts expire after one day; the files published to Releases remain there.
+This guide describes packaging; it does not publish a release when running
+tests or editing documentation.
+
+The packaging contract and version validation can be checked locally with:
+
+```sh
+python3 -B -m unittest discover -s scripts -p test_package_release.py -v
+cargo test --profile fast -p ft8rs-build
+```
 
 ## Local checks
 

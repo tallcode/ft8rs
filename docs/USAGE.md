@@ -198,6 +198,11 @@ and colors local-only, WSJT-X-only and shared rows; its legend shows the colors.
 This feed does not seed the local decoder's hash/AP state or change its results.
 Only new FT8 Decode packets without low-confidence or off-air flags are accepted;
 replays and other packet types are ignored. A free listening port is required.
+The incoming Decode mode accepts the native WSJT-X/JTDX symbol `~` as well as
+`FT8`. Matching uses the same UTC slot, message tokens and frequency tolerance;
+the trailing provenance column does not participate. Unknown local provenance
+has no visible tag and remains unknown internally; it is separate from the
+incoming UDP low-confidence flag.
 
 Display comparison is not an independent truth label. For reproducible decoder
 acceptance, use identical audio, context and database with the

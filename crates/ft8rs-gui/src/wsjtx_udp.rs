@@ -124,7 +124,9 @@ fn parse_decode(buf: &[u8]) -> Option<ExternalDecode> {
         return None;
     }
     let freq = p.u32()?;
-    if p.string()? != "FT8" {
+    // WSJT-X/JTDX postDecode forwards the decoded-line mode symbol (`~` for
+    // FT8), whereas ft8rs and some other senders use the full mode name.
+    if !matches!(p.string()?.as_str(), "~" | "FT8") {
         return None;
     }
     let message = p.string()?;
@@ -236,6 +238,41 @@ mod tests {
         assert_eq!(d.message, "CQ BG5ATV PM00");
     }
 
+    fn native_wsjtx_packet() -> Vec<u8> {
+        // WSJT-X MainWindow::postDecode uses parts[4] from the displayed line
+        // as the UDP mode. Build that wire format rather than our `FT8` alias.
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&MAGIC.to_be_bytes());
+        packet.extend_from_slice(&2u32.to_be_bytes());
+        packet.extend_from_slice(&TYPE_DECODE.to_be_bytes());
+        put_string(&mut packet, "WSJT-X");
+        packet.push(1);
+        packet.extend_from_slice(&50_430_000u32.to_be_bytes()); // 14:00:30 UTC
+        packet.extend_from_slice(&2i32.to_be_bytes());
+        packet.extend_from_slice(&0.2f64.to_be_bytes());
+        packet.extend_from_slice(&2367u32.to_be_bytes());
+        put_string(&mut packet, "~");
+        put_string(&mut packet, "CQ BA7SAY OL53");
+        packet.extend_from_slice(&[0, 0]);
+        packet
+    }
+
+    #[test]
+    fn parses_wsjtx_mode_symbol_and_rejects_other_symbols() {
+        let mut packet = native_wsjtx_packet();
+        let decode = parse_decode(&packet).expect("native WSJT-X FT8 decode");
+        assert_eq!(decode.ms_since_midnight, 50_430_000);
+        assert_eq!(decode.freq, 2367);
+        assert_eq!(decode.message, "CQ BA7SAY OL53");
+
+        // Other single-character decoder modes must still be rejected.
+        let mode_offset = 12 + 4 + "WSJT-X".len() + 1 + 4 + 4 + 8 + 4 + 4;
+        for mode in *b"+#@&" {
+            packet[mode_offset] = mode;
+            assert!(parse_decode(&packet).is_none());
+        }
+    }
+
     #[test]
     fn ignores_replays_and_other_types() {
         let replay = decode_packet(false, 0, 0, 0.0, 1000, "CQ TEST");
@@ -283,7 +320,7 @@ mod tests {
         let udp = UdpIn::spawn("127.0.0.1", port).expect("spawn listener");
 
         let client = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let pkt = decode_packet(true, 1000, -5, 0.1, 1200, "CQ TEST AA00");
+        let pkt = native_wsjtx_packet();
         client.send_to(&pkt, ("127.0.0.1", port)).unwrap();
 
         // Poll until it arrives (instant on loopback; bounded so it can't hang).
@@ -296,7 +333,8 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         let d = got.expect("received decode over socket");
-        assert_eq!(d.freq, 1200);
-        assert_eq!(d.message, "CQ TEST AA00");
+        assert_eq!(d.ms_since_midnight, 50_430_000);
+        assert_eq!(d.freq, 2367);
+        assert_eq!(d.message, "CQ BA7SAY OL53");
     }
 }

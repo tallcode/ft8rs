@@ -18,6 +18,6 @@ default = []
 fftw = []
 
 [dependencies]
-rustfft = "6"
-hound = "3"
-num-bigint = "0.4"
+rustfft = "6.4.1"
+hound = "3.5.1"
+num-bigint = "0.5.1"

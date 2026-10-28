@@ -1,12 +1,16 @@
-name: Release
+name: Build packages
+run-name: Packages · ${{ github.ref_name }} · ${{ github.event_name }}
 
 on:
+  workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -17,26 +21,26 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            platform: linux
             package_name: ft8rs-linux-x86_64
-            artifact_name: ft8rs-linux-x86_64.tar.gz
-            binary_name: ft8rs
-          # macOS runners are temporarily disabled because queue times are too
-          # long. Re-enable this matrix entry when release coverage needs it.
-          # - os: macos-13
-          #   package_name: ft8rs-macos-x86_64
-          #   artifact_name: ft8rs-macos-x86_64.tar.gz
-          #   binary_name: ft8rs
           - os: windows-latest
+            platform: windows
             package_name: ft8rs-windows-x86_64
-            artifact_name: ft8rs-windows-x86_64.zip
-            binary_name: ft8rs.exe
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Rust
+        id: rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare version and provenance
+        id: metadata
+        run: >-
+          python scripts/package_release.py metadata
+          --platform "${{ matrix.platform }}"
+          --output "${{ runner.temp }}/ft8rs-build-info.json"
 
       - name: Cache Cargo build data
         uses: actions/cache@v5
@@ -45,9 +49,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          # Each source snapshot can save fresh build data. Tag/branch builds
+          # restore compatible main caches; GitHub cannot share sibling-tag caches.
+          key: cargo-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', '.cargo/config.toml') }}-${{ github.sha }}
           restore-keys: |
-            cargo-release-${{ runner.os }}-
+            cargo-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', '.cargo/config.toml') }}-
+            cargo-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}-
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -56,67 +63,61 @@ jobs:
           sudo apt-get install -y libasound2-dev pkg-config
 
       - name: Build CLI release binary
+        if: runner.os == 'Linux'
         env:
-          FT8RS_RELEASE_TAG: ${{ github.ref_name }}
-        run: cargo build --release -p ft8rs-cli
+          FT8RS_RELEASE_TAG: ${{ steps.metadata.outputs.release_tag }}
+        run: cargo build --release --locked -p ft8rs-cli --timings
 
       # The GUI is shipped on Windows this phase (macOS is built locally; Linux
       # GUI packaging is out of scope).
-      - name: Build GUI release binary (Windows)
+      - name: Build CLI and GUI together (Windows)
         if: runner.os == 'Windows'
         env:
-          FT8RS_RELEASE_TAG: ${{ github.ref_name }}
-        run: cargo build --release -p ft8rs-gui
+          FT8RS_RELEASE_TAG: ${{ steps.metadata.outputs.release_tag }}
+        run: cargo build --release --locked -p ft8rs-cli -p ft8rs-gui --timings
 
-      - name: Package Unix release
-        if: runner.os != 'Windows'
-        run: |
-          set -eux
-          pkg="${{ matrix.package_name }}"
-          mkdir -p "dist/$pkg"
-          cp "target/release/${{ matrix.binary_name }}" "dist/$pkg/"
-          cp "crates/ft8rs-core/ALLCALL7.TXT" "dist/$pkg/"
-          chmod +x "dist/$pkg/${{ matrix.binary_name }}"
-          printf '%s\n' 'Run ./ft8rs from this directory. Keep ALLCALL7.TXT next to the binary for JTDX callsign filtering. This build uses rustfft@3840 and has no FFTW runtime dependency.' > "dist/$pkg/README.txt"
-          tar -czf "${{ matrix.artifact_name }}" -C dist "$pkg"
+      - name: Package binaries and source information
+        run: >-
+          python scripts/package_release.py package
+          --metadata "${{ runner.temp }}/ft8rs-build-info.json"
 
-      - name: Package Windows release
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $pkg = "${{ matrix.package_name }}"
-          New-Item -ItemType Directory -Force -Path "dist\$pkg" | Out-Null
-          Copy-Item "target\release\${{ matrix.binary_name }}" "dist\$pkg\"
-          Copy-Item "target\release\ft8rs-gui.exe" "dist\$pkg\"
-          Copy-Item "crates\ft8rs-core\ALLCALL7.TXT" "dist\$pkg\"
-          @"
-          ft8.rs — FT8 decoder
-
-          - ft8rs-gui.exe  : graphical live monitor (double-click to run)
-          - ft8rs.exe      : command-line decoder (file + monitor modes)
-
-          Keep ALLCALL7.TXT next to the binaries for JTDX callsign filtering.
-          This build uses rustfft@3840 and has no FFTW runtime dependency.
-          "@ | Out-File -FilePath "dist\$pkg\README.txt" -Encoding utf8
-          Compress-Archive -Path "dist\$pkg" -DestinationPath "${{ matrix.artifact_name }}" -Force
+      - name: Upload build timings
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-timings-${{ matrix.platform }}
+          path: target/cargo-timings/*.html
+          if-no-files-found: ignore
+          retention-days: 1
+          overwrite: true
 
       - name: Upload packaged binary
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ matrix.package_name }}
-          path: ${{ matrix.artifact_name }}
+          name: ${{ steps.metadata.outputs.artifact_name }}
+          path: |
+            dist/${{ steps.metadata.outputs.archive_name }}
+            dist/${{ steps.metadata.outputs.archive_name }}.sha256
           if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   release:
+    # Manual/main builds only upload short-lived artifacts. A manual dispatch
+    # against a tag must never publish a release either.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     name: Publish GitHub release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Download packaged binaries
         uses: actions/download-artifact@v7
         with:
           path: artifacts
+          pattern: ft8rs-*
 
       - name: Prepare checksums
         run: |
