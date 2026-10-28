@@ -106,6 +106,45 @@ Local evidence is saved under the ignored directory
 not required in a fresh checkout. Regenerate local evidence with the documented
 runners; the accepted fixtures/provenance remain versioned in the test tree.
 
+## Dependency/toolchain refresh — 2026-10-28
+
+The subsequent local refresh updated the default stable toolchain from Rust
+1.98.1 to 1.99.1 and rustup from 1.29.1 to 1.29.2. All 13 direct registry
+dependencies were checked against crates.io's highest non-yanked stable version;
+eight changed: `num-bigint`, `cpal`, `clap`, `eframe`, `egui_extras`, `muda`,
+`winresource` and `ico`. The remaining five were already current.
+
+The final online `cargo update --dry-run --verbose` resolved zero further
+updates. Older transitive `toml 0.8.2`, `toml_datetime 0.6.3` and
+`toml_edit 0.20.2` remain constrained by upstream exact requirements, including
+`proc-macro-crate 2.0.2`'s TOML pins. This does not claim every transitive package
+can move to its latest incompatible branch.
+
+Validation used optimized `fast` builds, the default RustFFT backend and this
+macOS ARM host. Experimental processes ran serially; core recording checks used
+the private 2022 CallDB, without replacing the runtime database.
+
+| Check | Result |
+|---|---|
+| Workspace library/binary tests | 220 passed, zero failures |
+| Complete core suite, including every ignored gate | 205 passed, zero failures |
+| Separate engine long Hybrid delivery gate | Passed |
+| Workspace documentation tests | Passed; no executable doctest cases |
+| Two historical recordings across all four adapters | All eight before/after snapshots byte-identical |
+| Degraded-recording retention | All 1458 required rows retained in 24 cases |
+| Native Watterson replay | 64/64 known-message recoveries, no wrong-content output |
+| Formatting and all-target Clippy with `-D warnings` | Passed |
+
+Workspace and core totals overlap. The snapshot comparison retains the existing
+pure JTDX long-recording miss; the refresh does not claim new sensitivity gains.
+Windows hardware capture/window activation and the optional runtime FFTW backend
+were not exercised by this run.
+
+Local evidence is under the ignored directory
+`target/dependency-upgrade-2026-10-28/`: dependency/version audits,
+`workspace-fast.log`, `core-fast-all.log`, `engine-long.log`, `doctests.log`,
+`before/`, `after/`, `compare.log` and `validation.json`.
+
 ## Limits and follow-up validation
 
 The JTDX geography filter remains a deliberate partial port; implausible

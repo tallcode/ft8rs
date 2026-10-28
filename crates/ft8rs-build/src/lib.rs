@@ -83,11 +83,8 @@ fn release_tag() -> Option<String> {
 
 fn valid_release_tag(tag: &str) -> Option<String> {
     let tag = tag.trim();
-    if tag.starts_with('v') && tag[1..].split('.').count() == 3 {
-        Some(tag.to_string())
-    } else {
-        None
-    }
+    semver::Version::parse(tag.strip_prefix('v')?).ok()?;
+    Some(tag.to_string())
 }
 
 fn strip_v_prefix(tag: &str) -> &str {
@@ -112,5 +109,37 @@ fn git_dirty() -> bool {
     match Command::new("git").args(["status", "--porcelain"]).output() {
         Ok(output) if output.status.success() => !output.stdout.is_empty(),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_release_and_traceable_development_versions() {
+        for tag in [
+            "v0.0.22",
+            "v0.0.0-dev.31.g97e82bd12345",
+            "v1.2.3-rc.1+build.7",
+        ] {
+            assert_eq!(valid_release_tag(tag).as_deref(), Some(tag));
+            assert_eq!(strip_v_prefix(tag), &tag[1..]);
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_versions_instead_of_embedding_them() {
+        for tag in [
+            "0.0.22",
+            "vmain",
+            "v1.2.x",
+            "v01.2.3",
+            "v1.2.3-dev.01",
+            "v1.2.3-dev..7",
+            "v1.2.3\ninvalid",
+        ] {
+            assert!(valid_release_tag(tag).is_none(), "accepted {tag}");
+        }
     }
 }

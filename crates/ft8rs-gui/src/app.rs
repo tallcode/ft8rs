@@ -7,7 +7,8 @@
 //! the next slot boundary). The decode table mirrors the CLI columns; slot
 //! separators show only the time.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Color32, RichText};
 
@@ -24,9 +25,8 @@ use ft8rs_engine::EngineHandle;
 /// so this only bounds memory and the per-decode dedupe scan, not scroll cost;
 /// the oldest rows are dropped once the list grows past it (see `ingest`).
 const MAX_ROWS: usize = 20_000;
-/// Frames to keep re-sending `ViewportCommand::Focus` after a dialog opens, so it
-/// reliably comes to the front even if the WM ignores the first request.
-const DIALOG_FOCUS_FRAMES: u8 = 3;
+const DIALOG_FOCUS_ATTEMPTS: u8 = 3;
+const DIALOG_FOCUS_INTERVAL: Duration = Duration::from_millis(100);
 const DECODE_FONT_SIZE: f32 = 12.0;
 /// Internal left padding for the decode table (header + rows go edge-to-edge).
 const TABLE_PAD: f32 = 12.0;
@@ -114,15 +114,15 @@ pub struct Ft8rsApp {
     pending_confirm: Option<EngineState>,
 
     settings_open: bool,
-    // Frames left to keep re-issuing a Focus command after a dialog is (re)opened,
-    // so it reliably rises to the front despite window-manager focus timing.
-    settings_focus_frames: u8,
-    about_focus_frames: u8,
-    copyright_focus_frames: u8,
+    settings_focus: DialogFocus,
+    about_focus: DialogFocus,
+    copyright_focus: DialogFocus,
     about_open: bool,
     // The (mandatory) WSJT-X copyright notice, shown in its own popup from About.
     copyright_open: bool,
     tab: SettingsTab,
+
+    menu_events: Receiver<muda::MenuEvent>,
 
     // Native Profile menu checkmarks (macOS); empty elsewhere.
     profile_menu: Vec<(DecodeProfile, muda::CheckMenuItem)>,
@@ -178,6 +178,7 @@ impl Ft8rsApp {
         // Native menu bar: macOS via the system menu (attached now), Windows via
         // the window's HWND (deferred to the first frame), Linux falls back to
         // the in-window menu.
+        let menu_events = native_menu_events(&cc.egui_ctx);
         let hwnd = window_hwnd(cc);
         #[cfg(target_os = "windows")]
         let profile_menu: Vec<(DecodeProfile, muda::CheckMenuItem)> = Vec::new();
@@ -233,12 +234,13 @@ impl Ft8rsApp {
             dx: None,
             pending_confirm: None,
             settings_open: false,
-            settings_focus_frames: 0,
-            about_focus_frames: 0,
-            copyright_focus_frames: 0,
+            settings_focus: DialogFocus::default(),
+            about_focus: DialogFocus::default(),
+            copyright_focus: DialogFocus::default(),
             about_open: false,
             copyright_open: false,
             tab: SettingsTab::Station,
+            menu_events,
             profile_menu,
             menu_profile_synced: profile,
             styled_theme: theme,
@@ -614,7 +616,7 @@ impl Ft8rsApp {
     // ── UI ──────────────────────────────────────────────────────────────────
 
     fn pump_menu(&mut self) {
-        while let Ok(event) = muda::MenuEvent::receiver().try_recv() {
+        while let Ok(event) = self.menu_events.try_recv() {
             match event.id.0.as_str() {
                 // Re-arm the focus request on every click, not just the first: the
                 // dialog may already be open but sitting behind the main window
@@ -622,11 +624,11 @@ impl Ft8rsApp {
                 // second click must still bring it to the front.
                 "settings" => {
                     self.settings_open = true;
-                    self.settings_focus_frames = DIALOG_FOCUS_FRAMES;
+                    self.settings_focus.request();
                 }
                 "about" => {
                     self.about_open = true;
-                    self.about_focus_frames = DIALOG_FOCUS_FRAMES;
+                    self.about_focus.request();
                 }
                 id => {
                     if let Some(name) = id.strip_prefix("profile:") {
@@ -662,11 +664,11 @@ impl Ft8rsApp {
         ui.horizontal(|ui| {
             if ui.button("Settings").clicked() {
                 self.settings_open = true;
-                self.settings_focus_frames = DIALOG_FOCUS_FRAMES;
+                self.settings_focus.request();
             }
             if ui.button("About").clicked() {
                 self.about_open = true;
-                self.about_focus_frames = DIALOG_FOCUS_FRAMES;
+                self.about_focus.request();
             }
         });
     }
@@ -915,7 +917,7 @@ impl Ft8rsApp {
                 );
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
+                        egui::Role::Button,
                         enabled,
                         if self.is_monitoring() {
                             "Stop monitoring"
@@ -953,7 +955,7 @@ impl Ft8rsApp {
                 .with_maximize_button(false)
                 .with_active(true),
             |vctx, _class| {
-                focus_dialog_viewport(vctx, &mut self.settings_focus_frames);
+                self.settings_focus.update(vctx, Instant::now());
                 egui::Panel::left("settings_tabs")
                     .resizable(true)
                     .default_size(150.0)
@@ -1332,7 +1334,7 @@ impl Ft8rsApp {
             return;
         }
         let mut decided: Option<bool> = None;
-        let modal = egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::unique("confirm")).show(ctx, |ui| {
             ui.add_space(4.0);
             ui.label(RichText::new("Switch DX target").size(15.0).strong());
             ui.add_space(8.0);
@@ -1397,7 +1399,7 @@ impl Ft8rsApp {
                 .with_maximize_button(false)
                 .with_active(true),
             |vctx, _class| {
-                focus_dialog_viewport(vctx, &mut self.about_focus_frames);
+                self.about_focus.update(vctx, Instant::now());
                 egui::CentralPanel::default()
                     // No panel margin: the scroll area reaches the window edge so
                     // its scrollbar sits flush to the right. Content padding is
@@ -1518,7 +1520,7 @@ impl Ft8rsApp {
                                             .clicked()
                                         {
                                             self.copyright_open = true;
-                                            self.copyright_focus_frames = DIALOG_FOCUS_FRAMES;
+                                            self.copyright_focus.request();
                                         }
                                     }); // content Frame
                             }); // ScrollArea
@@ -1550,7 +1552,7 @@ impl Ft8rsApp {
                 .with_maximize_button(false)
                 .with_active(true),
             |vctx, _class| {
-                focus_dialog_viewport(vctx, &mut self.copyright_focus_frames);
+                self.copyright_focus.update(vctx, Instant::now());
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::central_panel(&vctx.global_style())
@@ -1805,7 +1807,7 @@ fn input_device_combo(
         .inner;
     response.widget_info(|| {
         let mut info =
-            egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), "Input device");
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, ui.is_enabled(), "Input device");
         info.current_text_value = Some(selected.clone());
         info
     });
@@ -1938,10 +1940,11 @@ fn absolute_slot(slot_key: u32, now_seconds: u64) -> u64 {
 }
 
 /// Provenance tag shown as a trailing column after the message
-/// (`a7`/`ap`/`a8`/deep/imported), blank for ordinary decodes.
+/// (`a7`/`ap`/`a8`/deep/imported). Unknown provenance stays unknown internally,
+/// but has no visible tag: it is not a low-confidence message annotation.
 fn provenance_tag(provenance: StreamDecodeProvenance) -> &'static str {
     match provenance {
-        StreamDecodeProvenance::Unknown => "?",
+        StreamDecodeProvenance::Unknown => "",
         StreamDecodeProvenance::CooperativeRecovery => "sic",
         StreamDecodeProvenance::ContextRecovery => "ctx",
         StreamDecodeProvenance::A7Memory => "a7",
@@ -2116,20 +2119,56 @@ fn is_hash_token(token: &str) -> bool {
     token == "<...>"
 }
 
-/// Compare-mode row color: external-only = sky, local-only = rose (tailwind,
-/// lighter -300 on dark themes / darker -900 on light), both = default.
-/// Raise a dialog viewport to the front for the first few frames after it opens.
-/// One `Focus` is often dropped by the window manager (the window may not be
-/// realized yet), so we re-send it for `DIALOG_FOCUS_FRAMES` frames and pump a
-/// repaint to guarantee those frames actually run while the app is otherwise idle.
-fn focus_dialog_viewport(vctx: &egui::Context, frames: &mut u8) {
-    if *frames > 0 {
-        vctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        *frames -= 1;
-        vctx.request_repaint();
+/// Deliver native menu events and wake the root UI immediately. Muda's default
+/// receiver alone does not wake winit, so polling it waits for an unrelated frame.
+fn native_menu_events(ctx: &egui::Context) -> Receiver<muda::MenuEvent> {
+    let (tx, rx) = mpsc::channel();
+    let ctx = ctx.clone();
+    muda::MenuEvent::set_event_handler(Some(move |event| {
+        if tx.send(event).is_ok() {
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
+        }
+    }));
+    rx
+}
+
+/// Space focus retries in wall time so fast startup frames cannot exhaust them
+/// before Windows has shown/activated the dialog. Reopening a minimized dialog
+/// also needs to restore it: winit ignores Focus on invisible/minimized windows.
+#[derive(Default)]
+struct DialogFocus {
+    remaining: u8,
+    next_attempt: Option<Instant>,
+}
+
+impl DialogFocus {
+    fn request(&mut self) {
+        self.remaining = DIALOG_FOCUS_ATTEMPTS;
+        self.next_attempt = None;
+    }
+
+    fn update(&mut self, ctx: &egui::Context, now: Instant) {
+        if self.remaining == 0 {
+            return;
+        }
+        if self.next_attempt.is_none_or(|next| now >= next) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.remaining -= 1;
+            self.next_attempt = Some(now + DIALOG_FOCUS_INTERVAL);
+        }
+        if self.remaining > 0 {
+            let delay = self.next_attempt.unwrap().saturating_duration_since(now);
+            ctx.request_repaint_after(delay);
+            // Immediate viewports are drawn by their parent, so wake it too.
+            ctx.request_repaint_after_for(delay, egui::ViewportId::ROOT);
+        }
     }
 }
 
+/// Compare-mode row color: external-only = sky, local-only = rose (tailwind,
+/// lighter -300 on dark themes / darker -900 on light), both = default.
 fn source_color(source: DecodeSource, dark: bool, default: Color32) -> Color32 {
     match source {
         DecodeSource::Both => default,
@@ -2255,7 +2294,7 @@ fn install_menu(
     let _ = menu.append(&about);
 
     // SAFETY: `hwnd` is the live main-window handle from eframe; muda subclasses
-    // it to host the menu bar and forward WM_COMMAND to MenuEvent::receiver().
+    // it to host the menu bar and forward WM_COMMAND to our MenuEvent handler.
     unsafe {
         let _ = menu.init_for_hwnd(hwnd);
     }
@@ -2437,6 +2476,84 @@ fn center_tweak(bytes: &[u8]) -> egui::FontTweak {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dialog_focus_restores_before_focusing_and_spaces_retries() {
+        let ctx = egui::Context::default();
+        let mut focus = DialogFocus::default();
+        let now = Instant::now();
+        focus.request();
+        for (millis, expect_focus) in [
+            (0, true),
+            (1, false),
+            (99, false),
+            (100, true),
+            (200, true),
+            (300, false),
+        ] {
+            let output = ctx.run_ui(egui::RawInput::default(), |_ui| {
+                focus.update(&ctx, now + Duration::from_millis(millis));
+            });
+            let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+            let has_focus = commands
+                .iter()
+                .any(|cmd| matches!(cmd, egui::ViewportCommand::Focus));
+            assert_eq!(has_focus, expect_focus, "at {millis} ms: {commands:?}");
+            if expect_focus {
+                // egui may append unrelated viewport commands of its own.
+                let visible = commands
+                    .iter()
+                    .position(|cmd| matches!(cmd, egui::ViewportCommand::Visible(true)));
+                let restored = commands
+                    .iter()
+                    .position(|cmd| matches!(cmd, egui::ViewportCommand::Minimized(false)));
+                let focused = commands
+                    .iter()
+                    .position(|cmd| matches!(cmd, egui::ViewportCommand::Focus));
+                assert!(
+                    matches!((visible, restored, focused), (Some(v), Some(r), Some(f)) if v < r && r < f),
+                    "at {millis} ms: {commands:?}"
+                );
+            }
+        }
+        // Every menu click re-arms focus, including for an existing dialog.
+        focus.request();
+        let output = ctx.run_ui(egui::RawInput::default(), |_ui| focus.update(&ctx, now));
+        assert!(output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, egui::ViewportCommand::Focus)));
+    }
+
+    #[test]
+    fn unknown_provenance_does_not_prevent_compare_matching() {
+        let message = "CQ BA7SAY OL53";
+        for (first, second) in [
+            (DecodeSource::Local, DecodeSource::External),
+            (DecodeSource::External, DecodeSource::Local),
+        ] {
+            let mut rows = vec![Row {
+                text: format!(
+                    "{message} {}",
+                    provenance_tag(StreamDecodeProvenance::Unknown)
+                ),
+                parity: 0,
+                gen: 3362,
+                freq: 2367.0,
+                tokens: norm_tokens(message),
+                source: first,
+            }];
+            assert!(fold_into_cross_source(
+                &mut rows,
+                3362,
+                2369.0,
+                7.0,
+                &norm_tokens("CQ BA7SAY OL53 ? a2"),
+                second
+            ));
+            assert_eq!(rows[0].source, DecodeSource::Both);
+        }
+    }
 
     #[test]
     fn annotation_detection() {
