@@ -1,0 +1,87 @@
+{
+  "decoder": "wsjtx",
+  "revision": "967c85a6119110788b0df3782cf796485b2cee14",
+  "compiler": "GNU Fortran (GCC) 14.2.0",
+  "compile_flags": [
+    "-O2",
+    "-cpp",
+    "-ffree-line-length-none",
+    "-fallow-argument-mismatch",
+    "-fwrapv",
+    "-I",
+    "/Volumes/ZHITAI/Workspace/wsjtx/lib/ft8",
+    "-I",
+    "/Volumes/ZHITAI/Workspace/wsjtx/lib",
+    "-I",
+    "/private/tmp/ft8rs-native-channel-fftw/include"
+  ],
+  "python": "3.9.6 (default, Aug 17 2026, 12:07:42) \n[Clang 21.0.0 (clang-2100.3.34.1)]",
+  "platform": "darwin",
+  "native_byteorder": "little",
+  "macos_deployment_target": "11.0",
+  "calls_cases": 49,
+  "channel_cases": 8,
+  "calls_corpus_sha256": "dba9daa23c06408fa880786b049f1dd77f161fe2d68fe31fad09a4467d5b665e",
+  "recordings": [
+    {
+      "file": "210703_133430.wav",
+      "sha256": "9feb99c275770a6618538026da7decc6b09eb6cf63121e5168fa86dcdf00c2f5"
+    },
+    {
+      "file": "230208_140300.wav",
+      "sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e"
+    }
+  ],
+  "sources": {
+    "lib/crc.f90": "e9c12e0cec0c511440200b158760e80410ddacc499c7a9a71091394af232f9fe",
+    "lib/packjt.f90": "5b77586fea3b312347f29bacb9ff35e73b45406d724c8b5453a41fc25191e852",
+    "lib/77bit/packjt77.f90": "2f6eb9c491cea3f485a9f9760158e28d3203313ab5b1e4c144824e0935a4b57f",
+    "lib/fmtmsg.f90": "599f97baf74e09dd16e54b2609d0e49e54288b6d0e77a26da39b58152f91fbf9",
+    "lib/grid2deg.f90": "59c2c0a210be924b84f6d0578ba42b3dfaf393694d199fc643f5aab4337d1ee7",
+    "lib/deg2grid.f90": "e7ef6cc0ae8782659e503347b29123c8c4748a3358a4cde70997f080de9e555d",
+    "lib/chkcall.f90": "3ffeb7bc24779eec02799835ffba8e36ee55960a9df12f72b72d6fc5cf5043ca",
+    "lib/ft8/encode174_91.f90": "01093195c276c154c5cd8a4006fc342f99d6eff557c6024750101d411bc0a824",
+    "lib/ft8/genft8.f90": "3870f2524b0bde45d274c45ce931e1018f22321cbaafc4d78d6c1cfd37658f6d",
+    "lib/timer_module.f90": "1cd01c58f33c3902ed1096b0b71845992fa2b0f42fb300603f34e225d7079ef4",
+    "lib/ft8/gen_ft8wave.f90": "6e231dff486c96b65385e8053fb23b5f0043c959f5744fad3d251d81c91eef93",
+    "lib/ft2/gfsk_pulse.f90": "2f17dc3eaa2a9a93e53df79459404abf6ddddf5e0ae2c47167540aeda5c9940f",
+    "lib/fftw3mod.f90": "f4ad391d1514413a05b64ab7a64614a256472ec2a2d9a72c751d79d285c390ff",
+    "lib/four2a.f90": "1014d8c10f0d9e6be06629ab2ce4fa058c862d06943e195922998f638364a4a7",
+    "lib/ft8/watterson.f90": "aca4022484e016edc900715e70b391ae66803342204dea02f3f5379e9c08c64f",
+    "lib/degrade_snr.f90": "a306f000762fd372a4bf6590f773a8f77052d0bf8aa8df7b85986b15345598f3",
+    "lib/crc14.cpp": "0066a88d9920bb27d2a4925eee7c581338d5375a30eb943dc890f99bb69715e7",
+    "lib/gran.c": "760767656a8594399c6d40c73f2c495a62820f531671c976089776e17054c341",
+    "lib/pfx.f90": "21b3c4234318f8240a1bf0fe85f78563dc0af19b1963d9497a13e105ddf816b8",
+    "lib/ft8/ldpc_174_91_c_generator.f90": "b061e4428fd89c9d2df3ea7026f03430141c6df36baaf341dc7b84b9f5573bfd",
+    "lib/77bit/test28.txt": "dba9daa23c06408fa880786b049f1dd77f161fe2d68fe31fad09a4467d5b665e"
+  },
+  "generator_sha256": "0352acabe13e9dd7d98f44c60ce41f88cd9fbcf104d41683724b6cbabaadd6d8",
+  "drivers": {
+    "calls": "ec4c48fa5bc7f163cd25bfa476e48ca7b83d4dcce1e2ec600a8ceacc363ba059",
+    "channels": "f598b4f29176dbc4d04e640da3310fb805ff1ea1bfe3780934e5f2fe7f111ce8"
+  },
+  "fftw_library_sha256": "5819a056e04dae7c0ee1f2f522118ce58c53c7c937d925ca7e8f3fd38cd2546c",
+  "fftw_header_sha256": "0dd1b988b681d5797aaf10c2c57c107f7dca510695e4b94b3855eb52550d282c",
+  "seed_contract": "unchanged native gran.c + host C srand/rand; fresh process per case; record platform; Python AWGN uses MT19937 seed 2026102800",
+  "degradation_contract": "unchanged WSJT-X degrade_snr, per <=180000-sample slot, bw=6000; nominal total-audio degradation, not individual-signal SNR",
+  "artifacts": {
+    "ft8/calls/wsjtx.tsv": "e3b87b41ad374e81bb7e73264da1255ae5c962f73de23338c0cff8e92b7a1022",
+    "ft8/calls/inputs.txt": "8bd34b815c42bcec4fccf720edddbc236b6b8339334842df83112b46889a3caf",
+    "ft8/channels/wsjtx_mq_2026102801.wav": "3ebb0f30281bcec79fec5ec4455ba2eb24ca54e22f17fdf392d88a220623d09f",
+    "ft8/channels/wsjtx_mq_2026102809.wav": "26990c4770a2c1394f6127cbf3d0e3eeb528c040241fa23c3a9e7277aa5d843e",
+    "ft8/channels/wsjtx_mm_2026102801.wav": "121221904c99839f6070a58dd02d55758e2f7b04ef7486b392c7fc3d4b6f0715",
+    "ft8/channels/wsjtx_mm_2026102809.wav": "f68ca3de3473fceec11cc13f4d8aa8f291f81399c503f5ab4f6c85f08fd17212",
+    "ft8/channels/wsjtx_md_2026102801.wav": "54fbb3abf41de8d72569fe6adc806156f66c0382972def6d531ad3d6c3d2107e",
+    "ft8/channels/wsjtx_md_2026102809.wav": "e3af35fdc530a8dbbe811b00599fc6c32f78dd533d545a478a18b2a1bccc86ca",
+    "ft8/channels/wsjtx_disturbed_2026102801.wav": "6da070728ef5715899ae0cf65adb94460f0cf53d9bfe7c2501bdd4fa24d31167",
+    "ft8/channels/wsjtx_disturbed_2026102809.wav": "6bd139be29e8b43d35ef98f355fffd46afe9b7dff66b23f44a64448d3d2dd210",
+    "ft8/channels/wsjtx.tsv": "5257c985c9bd2a058d0e38bbf37f4b2e9ac126f38ab02257038d42619810c473",
+    "ft8/degraded/210703_133430_plus_0.5db.wav": "479ecc7481c0626cd8f753845febd587e91cf236fb5add191d2090bbe7755008",
+    "ft8/degraded/210703_133430_plus_1db.wav": "d2e73767425fac2b25374b05ee789127ee5bb0cf4e4e17eba267efe454d9c6dc",
+    "ft8/degraded/210703_133430_plus_2db.wav": "9b06db396dc434b59f7f0ef07db270424c386927bf4ff6d6931ffefa5ddc4cb1",
+    "ft8/degraded/210703_133430_plus_3db.wav": "63b9e6872702f92516406a914039f1e17c0c7fdcfd8b4e170d17a5462557d2ea",
+    "ft8/degraded/230208_140300_plus_1db.wav": "c210ab3e6548605556ab01635ac0a7d15d0bb66197d618f2f7ad520126075720",
+    "ft8/degraded/230208_140300_plus_3db.wav": "5c679ae887ca1a4fd5d7702e68eb1c66637da58f0be52646892f530e2418fcfc",
+    "ft8/degraded/recordings.tsv": "3edc3992897ce8f560d83138a3dee8b9c9b05a666b9016d0ac74c392eb182fe7"
+  }
+}

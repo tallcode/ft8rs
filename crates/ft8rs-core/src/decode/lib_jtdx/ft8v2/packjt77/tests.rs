@@ -90,6 +90,21 @@ mod protocol_tests {
 
 #[cfg(test)]
 mod unpack_tests {
+    #[test]
+    fn original_test28_calls_and_integer_boundaries() {
+        crate::decoder_protocol_tests::assert_original_pack28_vectors(
+            "jtdx",
+            super::pack28,
+            |number, seed| {
+                let book = super::HashCallBook::new();
+                if let Some(call) = seed {
+                    book.save(call);
+                }
+                super::unpack28(number, super::UnpackContext::new(Some(&book)))
+            },
+        );
+    }
+
     use super::unpack77;
     use super::HashCallBook;
     use super::{pack28, pack77, C38};

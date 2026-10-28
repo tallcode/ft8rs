@@ -1,264 +1,143 @@
 # ft8rs
 
-`ft8rs` is a Rust FT8 streaming decoder with a command-line interface. It
-provides:
+`ft8rs` is a receive-only FT8 decoder written in Rust, with a graphical live
+monitor, a command-line interface and a UI-independent decode core. It supports
+live soundcard input, timestamped WAV recordings and optional UDP decode reports.
 
-- live soundcard monitoring aligned to system time;
-- WAV file input decoded by 15-second FT8 slots;
-- a UI-independent FT8 decode core;
-- CLI output by default, with optional UDP decode reports;
-- selectable decode profiles: `wsjtx`, `jtdx`, `hybrid`, and `dx`.
+Four profiles are available: **WSJT-X**, **JTDX**, **Hybrid** and **DX**. The
+default build uses RustFFT with the native 3840-point synchronization FFT and
+has no FFTW runtime dependency. The product supports FT8 reception only.
 
-The default build uses RustFFT at the WSJT-X/JTDX-aligned 3840-point size and
-needs no FFTW at runtime. FFTW can be selected at compile time for alignment
-checks.
+## Build and start
 
-## Build
+Run commands from the repository root with a stable Rust toolchain:
 
-`ft8rs` is a Cargo workspace: `ft8rs-core` (decode core), `ft8rs-engine`
-(soundcard capture + UDP), and the `ft8rs-cli` binary (plus `ft8rs-build`, a
-build-time version helper).
+```sh
+# Graphical live monitor
+cargo build --release -p ft8rs-gui
+target/release/ft8rs-gui
 
-```bash
-cargo build --release -p ft8rs-cli                  # default (RustFFT)
-cargo build --release -p ft8rs-cli --features fftw  # FFTW backend, for alignment checks
-```
-
-The FFTW backend needs system libraries: `brew install fftw` on macOS, or
-`sudo apt-get install -y libasound2-dev libfftw3-dev pkg-config` on Linux. The
-FFT backend is fixed at compile time; a built binary cannot switch at runtime.
-
-## Runtime Files
-
-Keep `ALLCALL7.TXT` beside the `ft8rs` binary when using the JTDX profile.
-Release packages include it; a local `cargo build` copies the repository copy
-(pinned to the JTDX CallDB used for alignment) into the target binary directory.
-
-## CLI
-
-```bash
+# Command-line decoder
+cargo build --release -p ft8rs-cli
 target/release/ft8rs --help
-target/release/ft8rs monitor --help
-target/release/ft8rs file --help
-target/release/ft8rs --version
 ```
 
-Tagged releases print the tag (e.g. `ft8rs 0.0.2`); development builds append git
-metadata (e.g. `ft8rs 0.0.0-dev+3ed8eaa`).
+On Windows the executables have an `.exe` suffix. Linux CLI builds need ALSA
+headers and `pkg-config` (`libasound2-dev` and `pkg-config` on Debian/Ubuntu).
+The repository's Windows/Linux x86-64 target configuration requires x86-64-v3.
+See [build and development](docs/DEVELOPMENT.md) for the workspace, the optional
+FFTW backend, GUI development and macOS app packaging.
 
-## Monitor A Soundcard
+Keep `ALLCALL7.TXT` beside the executable for every profile that uses JTDX,
+including Hybrid and DX. Builds and release packages supply the repository's
+runtime copy. The separate `ALLCALL7.TXT.2022` is used for calibrated regression
+tests; changing the database can change decoded results.
 
-List input devices:
+## Graphical live monitor
 
-```bash
+1. Open **Settings → Audio**, select the receiver's audio input and channel.
+2. Choose a profile in **Settings → Decode** or the **Profile** menu.
+3. Enter your station context in **Settings → Station** if needed. DX also
+   requires the target **Callsign** in the main window.
+4. Press the play button to monitor; press stop to finish. Capture is aligned
+   to UTC 15-second FT8 slots, and decoded messages appear as they arrive.
+
+The GUI monitors live audio; use the CLI for WAV files. Settings changes can be
+applied while listening. Audio diagnostics show the actual opened format,
+input/channel peaks and capture timing. **Compare** can merge an external
+WSJT-X UDP feed into the display; **Output** sends ft8rs decode reports.
+
+[GUI, audio setup and comparison guide →](docs/USAGE.md)
+
+## Command-line examples
+
+```sh
+# List audio input devices
 target/release/ft8rs monitor
-```
 
-Monitor by input device index or exact device name:
-
-```bash
+# Monitor by index or exact device name
 target/release/ft8rs monitor --device 0
-target/release/ft8rs monitor --device "VB-Cable A"
-```
+target/release/ft8rs monitor --device "VB-Cable A" --channel mono --profile hybrid
 
-`monitor` aligns capture to the next UTC 15-second FT8 slot and streams decodes
-as they are produced:
+# Decode a timestamped recording from this repository
+target/release/ft8rs file crates/ft8rs-core/tests/ft8/210703_133430.wav
 
-```text
-HHMMSS SNR DT FREQ MESSAGE
------- slot done: NN decodes ------
-```
-
-```text
-133430  16 +0.3  2571 W1FC F5BZB -08
-133430  14 -0.1  2157 WM3PEN EA6VQ -09
-133430  -2 -0.8  1197 CQ F5RXL IN94
------- slot done: 21 decodes ------
-```
-
-Limit the number of slots (otherwise it runs until stopped):
-
-```bash
-target/release/ft8rs monitor --device "VB-Cable A" --slots 2
-```
-
-The default `--channel mono` requests a native mono stream at 48 kHz. If the
-backend only exposes multiple channels, it uses channel 1 without averaging.
-Use `--channel left` or `--channel right` to select a stereo channel explicitly;
-`--channel mix` opts into averaging all channels. Mixing can attenuate a
-single-sided source by 6 dB or cancel opposite-phase channels. This corrects
-older versions whose "Mono" setting always averaged the input. WSJT-X's
-[input setup](https://github.com/WSJTX/wsjtx/blob/master/Audio/soundin.cpp) requests
-one channel for Mono; its
-[sample extractor](https://github.com/WSJTX/wsjtx/blob/master/Audio/AudioDevice.hpp)
-does not perform an application-side stereo average.
-
-For a FlexRadio on Windows, select the receive endpoint belonging to the slice:
-`DAX Audio RX 1` with DAXv1, or `DAX RX 1 (FlexRadio DAX)` with DAXv2 (substitute
-the assigned channel number). DAX IQ, microphone and reserved endpoints are
-different streams. FlexRadio documents the
-[endpoint names](https://helpdesk.flexradio.com/hc/en-us/articles/47301935880731-DAX-Version-2-Improvements-and-Updates)
-and recommends
-[48 kHz and adjusting levels in the DAX panel](https://helpdesk.flexradio.com/hc/en-us/articles/49847922262427-How-to-Configure-HRD-using-DAXv2).
-
-In the GUI, **Settings → Audio** shows the actual opened format, recent input
-peak and per-channel peaks, then per-slot capture timing. The idle device format
-is only the OS default and can differ from the active format. Peaks are in
-dBFS (0 dBFS is full scale), not WSJT-X's positive noise-level meter units.
-The Mono correction is covered by synthetic channel and PCM conversion tests;
-Windows DAX hardware still needs a live comparison against WSJT-X using the
-same endpoint, slice and signal.
-
-## Decode A WAV File
-
-Offline decoding takes the same decode options as `monitor`, reading a recording
-instead of live audio. A WSJT-X-style filename sets the start time; otherwise
-pass `--start-time` (`YYMMDD_HHMMSS` or `HHMMSS`):
-
-```bash
-target/release/ft8rs file tests/ft8/210703_133430.wav
+# Supply a start time when the filename has no YYMMDD_HHMMSS timestamp
 target/release/ft8rs file recording.wav --start-time 230208_140300
-```
 
-## Profiles
-
-```text
-wsjtx  - WSJT-X-aligned decoder, default
-jtdx   - JTDX-oriented high-sensitivity decoder path
-hybrid - WSJT-X + JTDX/noAGC + JTDX/AGC union with bounded cancellation
-dx     - target-filtered three-way observations + controlled WSJT-X recovery; requires --his-call
-```
-
-`dx` is not a `hybrid` alias. It is a separate single-target chase mode with its
-own orchestration and target filter, so it can be tuned independently.
-
-```bash
-target/release/ft8rs monitor --device "VB-Cable A" --profile jtdx --swl
-target/release/ft8rs monitor --device "VB-Cable A" --profile hybrid
-
-# dx requires --his-call; --my-call unlocks AP/a8d recovery
-target/release/ft8rs monitor --device "VB-Cable A" \
+# Listen for one target, using your call as additional context
+target/release/ft8rs monitor --device 0 \
   --profile dx --my-call F1MLZ --his-call UA3QNA
+
+# Send live decode reports to the default destination, 127.0.0.1:2238
+target/release/ft8rs monitor --device 0 --udp
 ```
 
-## Decode Context
+`--channel mono` requests a native mono stream and uses channel 1 if only a
+multichannel stream is available. `left` and `right` select a channel explicitly;
+`mix` averages all channels. Choose the channel carrying the receiver signal:
+averaging can attenuate single-sided audio or cancel opposite-phase channels.
 
-AP and focused-retry logic can use callsign/grid context:
+[Complete CLI options, audio diagnostics and troubleshooting →](docs/USAGE.md)
 
-```bash
-target/release/ft8rs monitor --device "VB-Cable A" \
-  --profile jtdx \
-  --my-call K1ABC --my-grid FN20 \
-  --his-call W9XYZ --his-grid EN60 \
-  --rx-frequency 1153
+## Decode profiles
+
+| Profile | Behavior | Main controls |
+|---|---|---|
+| `wsjtx` | Default WSJT-X-aligned FT8 path, with staged early/final decoding | Optional call/grid and receive-frequency context |
+| `jtdx` | Independent JTDX FT8 path | Optional SWL and focused `nagain` search |
+| `hybrid` | Independent WSJT-X, JTDX/noAGC and JTDX/AGC sessions, plus bounded cross cancellation | SWL controls both JTDX paths; cancellation can be disabled |
+| `dx` | Target-related output from three-way observations and isolated target recovery | Target call required; a valid full call pair enables additional context recovery |
+
+Hybrid and DX combine existing native capabilities in the orchestration layer.
+Their sessions keep independent hash books, AP memory and residuals. Unknown
+native provenance stays unknown; recovered messages do not become independent
+confirmation. GUI markers `?`, `sic` and `ctx` expose these distinctions.
+
+JTDX defaults to **one logical frequency partition**, including its two Hybrid
+paths. CLI `--jtdx-threads 0` explicitly enables CPU-dependent automatic selection.
+This changes search/state evolution; it is separate from FFT threads and is not
+an OS worker count. SWL-on is not guaranteed to be a superset of SWL-off results.
+
+[WSJT-X](crates/ft8rs-core/WSJTX.md) · [JTDX](crates/ft8rs-core/JTDX.md) ·
+[Hybrid](crates/ft8rs-core/HYBRID.md) · [DX](crates/ft8rs-core/DX.md)
+
+## Local tests and reference data
+
+Decode tests require optimized builds and run locally:
+
+```sh
+# Workspace unit tests
+cargo test --profile fast --workspace --lib --bins -- --test-threads=1
+
+# Serial decoder suite with an isolated 2022 CallDB
+scripts/test-decoders.sh fast
+
+# Final release validation, including slow/manual gates
+scripts/test-decoders.sh release --include-ignored
 ```
 
-## UDP Reports
+Daily tests reuse versioned native WSJT-X/JTDX vectors and WAVs; they do not run
+a simulator or require Fortran. Coverage includes protocol coding, `test28`,
+known-message audio, Watterson channels, state/false-output checks and fixed noisy
+versions of historical recordings. Generation and candidate-review scripts are
+preserved for explicit upstream updates.
 
-UDP output is off by default and can run alongside CLI output. The default
-destination is `127.0.0.1:2238`.
+The WSJT-X reference targets are **21/21** for the short recording and **424/424**
+for the long recording. JTDX's calibrated targets are **20/20** and **430/431**;
+the long case fixes four partitions and the 2022 CallDB. Every required old
+message must remain; added or unlabelled rows cannot offset losses.
 
-```bash
-target/release/ft8rs monitor --device "VB-Cable A" --udp
-target/release/ft8rs monitor --device "VB-Cable A" --udp --udp-host 127.0.0.1 --udp-port 2238
-```
+[Test framework](crates/ft8rs-core/tests/decoder/README.md) ·
+[Reference updates](crates/ft8rs-core/tests/decoder/UPDATING.md) ·
+[Validation conditions and latest run](docs/VALIDATION.md)
 
-## Options
+## Documentation and license
 
-| Option | Alias | Meaning |
-|---|---:|---|
-| `--start-time` | `-s` | file start timestamp |
-| `--device` | `-i` | soundcard input index or name |
-| `--slots` | `-S` | number of slots to decode |
-| `--profile` | | decode profile: `wsjtx`, `jtdx`, `hybrid`, or `dx` |
-| `--low` | `-L` | low decode frequency |
-| `--high` | `-H` | high decode frequency |
-| `--rx-frequency` | `-f` | focused receive frequency |
-| `--my-call` | `-c` | local callsign context |
-| `--my-grid` | `-G` | local grid context |
-| `--his-call` | `-x` | DX callsign context (required by `dx`) |
-| `--his-grid` | `-g` | DX grid context |
-| `--swl` | | enable JTDX SWL mode; controls both JTDX paths in `hybrid` |
-| `--jtdx-threads` | | logical JTDX partitions, default `1`; explicit `0` selects CPU-dependent automatic mode (not FFT threads) |
-| `--no-hybrid-sic` | | disable Hybrid cross cancellation; retain WSJT-X and both JTDX baseline paths |
-| `--nagain` | | JTDX `nagainfil` deep mode (OSD `ndeep=5`, focused `nfqso±25 Hz`); combine with `--swl` for max sensitivity |
-| `--udp` | `-u` | enable UDP output |
-| `--udp-host` | `-o` | UDP destination host |
-| `--udp-port` | `-p` | UDP destination port |
+The [documentation index](docs/README.md) separates usage, development,
+source-alignment notes and dated experiment reports. Listening latency is
+measured separately from all-worker completion; a +2/+3-second display target
+is not a hard deadline for native calls already running.
 
-## Tests
-
-Decode tests must run optimized (they assert non-debug mode and have per-slot time
-budgets). For the day-to-day edit/test loop use the `fast` profile — same optimized,
-byte-identical results, but it compiles in a fraction of the time by dropping the
-shipped binary's LTO + single-codegen-unit last mile:
-
-The baseline tests live in `ft8rs-core`:
-
-```bash
-cargo test --profile fast -p ft8rs-core test_stream_decode_short_audio
-cargo test --profile fast -p ft8rs-core test_stream_decode_long_audio
-```
-
-Use `--release` for the final acceptance run that must match the shipped binary's
-exact optimization, and for the FFTW path:
-
-```bash
-cargo test --release -p ft8rs-core test_stream_decode_short_audio
-cargo test --release -p ft8rs-core --features fftw test_stream_decode_short_audio  # FFTW path
-```
-
-Unit tests for this repository run locally; CI is not a substitute. Run
-`cargo test --profile fast --workspace --lib --bins -- --test-threads=1`.
-
-The profile/DX manual acceptance gates (hybrid baseline preservation, jtdx long, dx) are
-`#[ignore]`d; run them with `cargo test --release -p ft8rs-core -- --ignored`.
-
-Both profiles produce identical decode results; `fast` only changes build speed.
-
-Current release expectations:
-
-```text
-default wsjtx short fixture -> 21/21 target rows
-default wsjtx long fixture  -> 424/424 target rows
-jtdx short fixture          -> 20/20 target rows
-jtdx long fixture           -> 430/431 target rows with 4 logical partitions
-dx a8d fixture              -> target row recovered
-```
-
-The JTDX long-fixture calibration fixes `jtdx_threads=4`, the 2022 CallDB,
-200–3000 Hz and no user QSO context, with SWL and AGC compensation disabled.
-Production defaults to one partition. Pass `--jtdx-threads 0` explicitly for
-automatic selection. Record visible cores and actual partitions when comparing
-automatic-mode results; the parameter
-changes decode search, not just execution speed. See
-[JTDX notes](crates/ft8rs-core/JTDX.md).
-
-The fixture CSV files include an `Extra` marker column:
-
-```text
-blank -> multi-verified baseline
-W     -> WSJT-X-only reference row
-J     -> JTDX target row
-E     -> excluded row
-```
-
-## Developer Notes
-
-- Decoder notes live with the decode core in `crates/ft8rs-core/`:
-  - WSJT-X alignment: `crates/ft8rs-core/WSJTX.md`
-  - JTDX alignment: `crates/ft8rs-core/JTDX.md`
-  - Hybrid result-union: `crates/ft8rs-core/HYBRID.md`
-  - DX chase profile: `crates/ft8rs-core/DX.md`
-- Manual acceptance gates (`#[ignore]`d, e.g. Hybrid baseline preservation, weak DX recovery)
-  are calibrated against the 2022 callsign snapshot. Run them with the calibrated
-  DB via `./scripts/acceptance-gates.sh` (the shipped `ALLCALL7.TXT` is newer and
-  can shift the very weakest DX decode).
-- Cooperative changes require per-message before/after comparison with the same
-  recording, config, CallDB and optimized build. New rows cannot compensate for
-  lost baseline messages. Architecture details are in
-  `crates/ft8rs-core/COOPERATIVE_DECODER_DESIGN.md`.
-- The app only listens. For Hybrid/DX, distinguish callbacks by the next slot
-  +2/+3 seconds from total worker completion. GUI markers `sic`, `ctx`, and `?`
-  identify cancellation recovery, context recovery, and unknown provenance.
-- License: GPL-3.0.
+Licensed under GPL-3.0-only. Run `ft8rs license` or open the GUI's **About**
+window for copyright, attribution and the WSJT-X notice.

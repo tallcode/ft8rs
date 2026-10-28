@@ -1,0 +1,25 @@
+# adapter	file	required_rows	total_reference_targets	unlabelled_observations
+wsjtx	210703_133430_plus_0.5db.wav	10	21	0
+jtdx	210703_133430_plus_0.5db.wav	10	20	0
+hybrid	210703_133430_plus_0.5db.wav	10	21	0
+dx	210703_133430_plus_0.5db.wav	1	1	0
+wsjtx	210703_133430_plus_1db.wav	6	21	0
+jtdx	210703_133430_plus_1db.wav	7	20	0
+hybrid	210703_133430_plus_1db.wav	8	21	0
+dx	210703_133430_plus_1db.wav	1	1	0
+wsjtx	210703_133430_plus_2db.wav	3	21	0
+jtdx	210703_133430_plus_2db.wav	4	20	0
+hybrid	210703_133430_plus_2db.wav	4	21	0
+dx	210703_133430_plus_2db.wav	1	1	0
+wsjtx	210703_133430_plus_3db.wav	3	21	0
+jtdx	210703_133430_plus_3db.wav	3	20	0
+hybrid	210703_133430_plus_3db.wav	3	21	0
+dx	210703_133430_plus_3db.wav	1	1	0
+wsjtx	230208_140300_plus_1db.wav	268	424	1
+jtdx	230208_140300_plus_1db.wav	278	431	0
+hybrid	230208_140300_plus_1db.wav	287	444	1
+dx	230208_140300_plus_1db.wav	0	2	0
+wsjtx	230208_140300_plus_3db.wav	179	424	0
+jtdx	230208_140300_plus_3db.wav	181	431	0
+hybrid	230208_140300_plus_3db.wav	190	444	0
+dx	230208_140300_plus_3db.wav	0	2	0

@@ -1,0 +1,2 @@
+# The all-space callsign is a significant native hash test input.
+crates/ft8rs-core/tests/decoder/data/ft8/protocol/hash.tsv whitespace=-space-before-tab

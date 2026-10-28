@@ -293,8 +293,12 @@ pub fn pack28(token: &str) -> usize {
 
     // Standard callsign
     let parsed = parse_callsign(&t);
-    if parsed.is_standard {
-        let basecall = &parsed.basecall;
+    // Native pack28 permits an empty suffix (e.g. A0). Receive validation
+    // is separate; WSJT-X and JTDX intentionally have different rules there.
+    let empty_suffix =
+        t.len() == 2 && t.as_bytes()[0].is_ascii_uppercase() && t.as_bytes()[1].is_ascii_digit();
+    if parsed.is_standard || empty_suffix {
+        let basecall = if empty_suffix { &t } else { &parsed.basecall };
         let chars: Vec<char> = basecall.chars().collect();
         let mut iarea_d: i32 = -1;
         for i in (1..chars.len()).rev() {
@@ -666,6 +670,11 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
         return None;
     }
 
+    // pack77_1 accepts a fourth word only for "CALL CALL R GRID".
+    if parts.len() == 4 && parts[2] != "R" {
+        return None;
+    }
+
     let w1 = &parts[0];
     let w2 = &parts[1];
 
@@ -708,7 +717,8 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
         (MAXGRID4 + 3, 0)
     } else if last_upper == "73" {
         (MAXGRID4 + 4, 0)
-    } else if let Some(rest) = last_upper.strip_prefix('R') {
+    } else if last_upper.starts_with("R+") || last_upper.starts_with("R-") {
+        let rest = &last_upper[1..];
         if let Ok(irpt) = rest.parse::<i32>() {
             let irpt = if (-50..=-31).contains(&irpt) {
                 irpt + 101
@@ -719,7 +729,8 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
         } else {
             return None;
         }
-    } else if let Ok(irpt) = last_upper.parse::<i32>() {
+    } else if last_upper.starts_with('+') || last_upper.starts_with('-') {
+        let irpt = last_upper.parse::<i32>().ok()?;
         let irpt = if (-50..=-31).contains(&irpt) {
             irpt + 101
         } else {

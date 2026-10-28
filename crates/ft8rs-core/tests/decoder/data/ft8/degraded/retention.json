@@ -1,0 +1,32 @@
+{
+  "kind": "Rust decoder regression baseline, not a native decoder oracle",
+  "profile": "fast",
+  "calldb_sha256": "e647033c0ed4ef2d7c3c56839cfbd819f224805bcd7e0689ac656a0e8b22b298",
+  "report_observations_sha256": "d7b6adcc14f8b1ff028cfd931296a8a9000883a81f7d0d0e6980645219e1e806",
+  "report_curves_sha256": "f813ea3b0b7b7cd9b73df2b5de567e483e60dd26f10cad1cfd5a851958728447",
+  "reference_csvs": {
+    "230208_140300.csv": "e5ff79670f9b46a9dc3132070c0f8577ee2549bfef47795d6ffc7be5da9b2411",
+    "210703_133430.csv": "d01841488180c5ce3eabd8086c61322e84876cf7c0fb09c97dbfa2a7d1f7390b"
+  },
+  "native_fixture_hashes": {
+    "210703_133430_plus_0.5db.wav": "479ecc7481c0626cd8f753845febd587e91cf236fb5add191d2090bbe7755008",
+    "210703_133430_plus_1db.wav": "d2e73767425fac2b25374b05ee789127ee5bb0cf4e4e17eba267efe454d9c6dc",
+    "210703_133430_plus_2db.wav": "9b06db396dc434b59f7f0ef07db270424c386927bf4ff6d6931ffefa5ddc4cb1",
+    "210703_133430_plus_3db.wav": "63b9e6872702f92516406a914039f1e17c0c7fdcfd8b4e170d17a5462557d2ea",
+    "230208_140300_plus_1db.wav": "c210ab3e6548605556ab01635ac0a7d15d0bb66197d618f2f7ad520126075720",
+    "230208_140300_plus_3db.wav": "5c679ae887ca1a4fd5d7702e68eb1c66637da58f0be52646892f530e2418fcfc"
+  },
+  "adapters": [
+    "dx",
+    "hybrid",
+    "jtdx",
+    "wsjtx"
+  ],
+  "cases": 24,
+  "required_rows": 1458,
+  "artifacts": {
+    "retention.tsv": "c166460fbeef9c61764ce9e3f3fd813e7db1b7d4b2de4b9dadd0fbd8a25439e8",
+    "retention-cases.tsv": "0bacedc2640f4c8f2389991e4135841224851259e6610d37842def9611e97c82"
+  },
+  "selection": "only profile-appropriate existing CSV targets; exact rows cannot be offset by additions"
+}

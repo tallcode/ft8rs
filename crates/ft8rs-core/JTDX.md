@@ -4,6 +4,9 @@ This document records the JTDX-oriented FT8 decoder profile only. WSJT-X
 alignment is documented in `WSJTX.md`; result-union behavior is documented in
 `HYBRID.md`.
 
+User controls are in [usage](../../docs/USAGE.md). Shared calibration conditions
+and the latest dated local result are in [validation](../../docs/VALIDATION.md).
+
 ## Scope
 
 `profile=jtdx` is a separate decoder path under:
@@ -16,27 +19,46 @@ It is not a parameter overlay on the WSJT-X decoder. The protected WSJT-X path
 must remain independent. JTDX code may reuse a utility only when the behavior is
 identical; otherwise the JTDX-specific implementation stays under `lib_jtdx`.
 
-The profile targets normal high-sensitivity FT8 first. SWL, Hound, and other
-optional modes exist as explicit options but are not the current alignment
-baseline.
+The pure profile's calibrated alignment point is normal high-sensitivity FT8
+with SWL off. SWL also has Hybrid/JTDX comparative replay and DX listener coverage;
+that does not make every optional mode a complete upstream-alignment baseline.
+Hound settings are native API options, not separate on-air formats or exposed
+CLI modes.
+
+The shared [FT8 regression framework](tests/decoder/README.md) runs JTDX against
+committed native Fortran/C++ vectors and waveforms, using the same corpus as the
+other FT8 backends. Daily tests reuse the data; source revisions, hashes and the
+explicit regeneration/candidate-review workflow are retained alongside it.
+Initial native-vector comparisons restored two packing/unpacking rules from
+`lib/ft8v2/packjt77.f90`: unsigned contest serials must fall through to Type 3,
+and Type 4 messages ending in a hashed callsign are rejected under the original
+portable-call exception rules. The channel-code test adapter also preserves the
+native OSD API's negative `nharderror` CRC-failure flag.
+The original `test28` corpus additionally protects raw empty-suffix packing
+(`A0`), reserved-token handling, and JTDX's own raw unpack validation. JTDX raw
+`unpack28` does not invoke WSJT-X `callok`; its later receiver filters retain
+separate responsibilities. The original Watterson implementation is used only
+in native fixture generation, with its source-specific five-argument API.
 
 ## Runtime Data
 
 `ALLCALL7.TXT` is part of the JTDX runtime behavior. It feeds `searchcalls` and
 therefore affects false-decode filtering and slot-local subtraction.
 
-For source alignment, the repository copy is pinned to:
+`crates/ft8rs-core/ALLCALL7.TXT` is the newer runtime snapshot shipped with the
+application. `ALLCALL7.TXT.2022` is the separate historical snapshot used by the
+430/431 calibration. They are not interchangeable: the current runtime copy is
+not the original checkout's 2022 CallDB.
 
-```text
-jtdx/contrib/CallDB/ALLCALL7.TXT
-```
-
-Release packages include `ALLCALL7.TXT` next to the binary. Local builds copy
-the root file into the target binary directory. The runtime lookup order is:
+Release packages include the runtime file next to the binary. Local builds copy
+the core crate's runtime file into the target binary directory. Lookup order is:
 
 1. executable directory
 2. current working directory
 3. Cargo manifest directory
+
+The serial test runners place the 2022 file beside private executables without
+replacing the runtime copy. See [database and test setup](../../docs/DEVELOPMENT.md).
 
 ## Source Shape
 
@@ -249,6 +271,8 @@ checks both protocol tables and the caller-side filter-gate provenance.
   positives identify relevant branches.
 - Keep OSD/BP numerical details source-shaped; avoid mathematically equivalent
   rewrites when the source order can be mirrored.
-- Validate Hound and SWL only when they become explicit targets.
+- Extend Hound-specific and complete SWL branch validation when those become
+  explicit alignment targets. Existing SWL comparative regressions are retained;
+  they do not establish complete native parity for every setting.
 - Keep temporary traces and experiment outputs out of commits. Durable findings
   belong in this document or in targeted tests.
