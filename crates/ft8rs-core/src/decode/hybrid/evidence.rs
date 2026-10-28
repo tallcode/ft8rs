@@ -6,9 +6,18 @@ pub struct DecoderId(pub &'static str);
 impl DecoderId {
     pub const WSJTX: Self = Self("wsjtx");
     pub const JTDX: Self = Self("jtdx");
+    pub const JTDX_AGC: Self = Self("jtdx-agc");
 
     pub const fn as_str(self) -> &'static str {
         self.0
+    }
+
+    fn family(self) -> Self {
+        if self == Self::JTDX_AGC {
+            Self::JTDX
+        } else {
+            self
+        }
     }
 }
 
@@ -50,6 +59,7 @@ pub struct SharedDecode {
     pub freq_hz: f64,
     pub dt_sec: f64,
     pub snr_db: i32,
+    /// Decoder families; individual variants remain in `evidence.source`.
     pub sources: Vec<DecoderId>,
     pub confidence: DecodeConfidence,
     pub evidence: Vec<DecodeEvidence>,
@@ -99,8 +109,8 @@ impl SharedEvidenceStore {
                 && (row.freq_hz - candidate.freq_hz).abs() <= 5.0
                 && (row.dt_sec - candidate.dt_sec).abs() <= 0.3
         }) {
-            if !existing.sources.contains(&candidate.source) {
-                existing.sources.push(candidate.source);
+            if !existing.sources.contains(&candidate.source.family()) {
+                existing.sources.push(candidate.source.family());
                 existing.sources.sort();
             }
             existing.evidence.push(evidence);
@@ -119,7 +129,7 @@ impl SharedEvidenceStore {
             freq_hz: candidate.freq_hz,
             dt_sec: candidate.dt_sec,
             snr_db: candidate.snr_db,
-            sources: vec![candidate.source],
+            sources: vec![candidate.source.family()],
             confidence,
             import_eligible: eligible,
             evidence: evidence_vec,
@@ -148,7 +158,7 @@ fn confidence_for(evidence: &[DecodeEvidence]) -> DecodeConfidence {
         return DecodeConfidence::Assisted;
     }
 
-    let mut sources: Vec<DecoderId> = independent.iter().map(|e| e.source).collect();
+    let mut sources: Vec<DecoderId> = independent.iter().map(|e| e.source.family()).collect();
     sources.sort();
     sources.dedup();
 

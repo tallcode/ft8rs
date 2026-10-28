@@ -1,13 +1,10 @@
 //! Independent upstream sessions plus bounded, isolated cooperative recovery.
-use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::decode::cooperative::recovery::{self, CancellationStats};
-use crate::decode::cooperative::{
-    normalize_message as normalized_message, same_signal, OutputLedger, SignalSource,
-};
+use crate::decode::cooperative::{same_signal, OutputLedger, SignalSource};
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::stream::session::{
     StreamDecodeConfig, StreamDecodeProvenance, StreamDecodeSession, StreamDecodedMessage,
@@ -45,6 +42,9 @@ pub struct HybridDecodedMessage {
 #[derive(Clone, Debug, Default)]
 pub struct HybridSlotDiagnostics {
     pub baseline_rows: usize,
+    pub agc_rows: usize,
+    pub baseline_finish: [Option<Duration>; 3],
+    pub recovery_budget_skips: usize,
     pub recovered_rows: usize,
     pub recovery_tasks: usize,
     pub accepted_seeds: usize,
@@ -58,6 +58,8 @@ enum WorkerEvent {
         SignalSource,
         Result<Vec<StreamDecodedWithProvenance>, String>,
     ),
+    AgcRow(StreamDecodedMessage),
+    AgcDone(Result<Vec<StreamDecodedWithProvenance>, String>),
     Recovered(SignalSource, StreamDecodedMessage),
     RecoveryDone(Result<CancellationStats, String>),
 }
@@ -65,6 +67,7 @@ enum WorkerEvent {
 pub struct HybridStreamDecodeSession {
     wsjtx: StreamDecodeSession,
     jtdx: JtdxStreamDecodeSession,
+    jtdx_agc: JtdxStreamDecodeSession,
     config: StreamDecodeConfig,
     early: Vec<StreamDecodedWithProvenance>,
     last_evidence_store: SharedEvidenceStore,
@@ -73,10 +76,15 @@ pub struct HybridStreamDecodeSession {
 }
 
 impl HybridStreamDecodeSession {
-    pub fn new(config: StreamDecodeConfig) -> Self {
+    pub fn new(mut config: StreamDecodeConfig) -> Self {
+        // Hybrid always retains an unmodified no-AGC baseline. The second JTDX
+        // session differs only in AGC; SWL and explicit partitions reach both.
+        config.nagcc = false;
+        let [no_agc, agc] = jtdx_branch_configs(&config);
         Self {
             wsjtx: StreamDecodeSession::new(config.clone_for_profile_wsjt_x()),
-            jtdx: JtdxStreamDecodeSession::new(config.clone_for_profile_jtdx()),
+            jtdx: JtdxStreamDecodeSession::new(no_agc),
+            jtdx_agc: JtdxStreamDecodeSession::new(agc),
             config,
             early: Vec::new(),
             last_evidence_store: SharedEvidenceStore::new(),
@@ -207,6 +215,8 @@ impl HybridStreamDecodeSession {
         let mut j_seen = Vec::new();
         let mut w_rows: Option<Vec<StreamDecodedWithProvenance>> = None;
         let mut j_rows: Option<Vec<StreamDecodedWithProvenance>> = None;
+        let mut agc_rows = Vec::new();
+        let mut agc_error = None;
         let mut pending_j = Vec::new();
         let mut recovery_rows: [Vec<StreamDecodedMessage>; 2] = [Vec::new(), Vec::new()];
         let mut scheduled = [false; 2];
@@ -216,6 +226,7 @@ impl HybridStreamDecodeSession {
         let mut first_error = None;
         let wsjtx = &mut self.wsjtx;
         let jtdx = &mut self.jtdx;
+        let jtdx_agc = &mut self.jtdx_agc;
         thread::scope(|scope| {
             let (tx, rx) = mpsc::channel();
             let w_tx = tx.clone();
@@ -260,7 +271,18 @@ impl HybridStreamDecodeSession {
                 });
                 let _ = j_tx.send(WorkerEvent::Done(SignalSource::Jtdx, result));
             });
-            let (mut active, mut finished) = (2, 0);
+            let agc_tx = tx.clone();
+            scope.spawn(move || {
+                let result = guard_worker(|| {
+                    jtdx_agc.decode_slot_streaming_with_provenance_at(timestamp, samples, |row| {
+                        agc_tx
+                            .send(WorkerEvent::AgcRow(row.clone()))
+                            .map_err(|_| "hybrid event receiver closed".to_string())
+                    })
+                });
+                let _ = agc_tx.send(WorkerEvent::AgcDone(result));
+            });
+            let (mut active, mut finished) = (3, 0);
             while finished < active {
                 let event = rx.recv().expect("coordinator retains an event sender");
                 match event {
@@ -289,6 +311,8 @@ impl HybridStreamDecodeSession {
                     }
                     WorkerEvent::Done(source, result) => {
                         finished += 1;
+                        diagnostics.baseline_finish[usize::from(source == SignalSource::Jtdx)] =
+                            Some(clock.elapsed());
                         let tagged = match result {
                             Ok(rows) => rows,
                             Err(error) => {
@@ -310,6 +334,28 @@ impl HybridStreamDecodeSession {
                             }
                         } else {
                             j_rows = Some(tagged);
+                        }
+                    }
+                    WorkerEvent::AgcRow(row) => {
+                        // This branch contributes output, not peer observations
+                        // or seeds for the existing two-way cancellation round.
+                        if realtime {
+                            publish(
+                                &mut ledger,
+                                SignalSource::Jtdx,
+                                &row,
+                                StreamDecodeProvenance::Unknown,
+                                &mut first_error,
+                                &mut on_decode,
+                            );
+                        }
+                    }
+                    WorkerEvent::AgcDone(result) => {
+                        finished += 1;
+                        diagnostics.baseline_finish[2] = Some(clock.elapsed());
+                        match result {
+                            Ok(rows) => agc_rows = rows,
+                            Err(error) => agc_error = Some(error),
                         }
                     }
                     WorkerEvent::Recovered(direction, row) => {
@@ -360,6 +406,7 @@ impl HybridStreamDecodeSession {
                     }
                     scheduled[index] = true;
                     if realtime && clock.elapsed() >= Duration::from_secs(3) {
+                        diagnostics.recovery_budget_skips += 1;
                         continue;
                     }
                     let peer = if direction == SignalSource::Wsjtx {
@@ -372,17 +419,7 @@ impl HybridStreamDecodeSession {
                     } else {
                         j_rows.as_ref().unwrap()
                     };
-                    let seeds: Vec<_> = source
-                        .iter()
-                        .filter(|r| {
-                            (direction == SignalSource::Wsjtx
-                                || r.provenance == StreamDecodeProvenance::Regular)
-                                && recovery::eligible_shape(&r.decode, config.nfa, config.nfb)
-                                && !peer.iter().any(|p| same_signal(p, &r.decode))
-                        })
-                        .take(recovery::MAX_SEEDS)
-                        .map(|r| r.decode.clone())
-                        .collect();
+                    let seeds = cancellation_seeds(source, peer, direction, &config);
                     if seeds.is_empty() {
                         continue;
                     }
@@ -437,10 +474,25 @@ impl HybridStreamDecodeSession {
                     );
                 }
             }
+            // Preserve the prior baseline/recovery ordering in file mode. The
+            // supplemental branch cannot replace an existing representative.
+            for row in &agc_rows {
+                publish(
+                    &mut ledger,
+                    SignalSource::Jtdx,
+                    &row.decode,
+                    row.provenance,
+                    &mut first_error,
+                    &mut on_decode,
+                );
+            }
         }
         let w_rows = w_rows.unwrap_or_default();
         let j_rows = j_rows.unwrap_or_default();
-        let baseline = merge_decodes(&w_seen, &j_seen);
+        diagnostics.agc_rows = agc_rows.len();
+        let agc_plain: Vec<_> = agc_rows.iter().map(|row| row.decode.clone()).collect();
+        let mut baseline = merge_decodes(&w_seen, &j_seen);
+        baseline = merge_decodes(&baseline, &agc_plain);
         diagnostics.baseline_rows = baseline.len();
         diagnostics.recovered_rows = ledger
             .tagged()
@@ -449,7 +501,14 @@ impl HybridStreamDecodeSession {
             .count();
         diagnostics.elapsed = clock.elapsed();
         self.diagnostics = diagnostics;
+        // Both AGC variants remain one decoder family in passive evidence; a
+        // repeated JTDX result cannot manufacture independent confirmation.
         self.last_evidence_store = build_passive_evidence_store_from_tagged(&w_rows, &j_rows);
+        admit_tagged_rows(
+            &mut self.last_evidence_store,
+            DecoderId::JTDX_AGC,
+            &agc_rows,
+        );
         for (index, group) in recovery_rows.iter().enumerate() {
             for row in group {
                 self.last_evidence_store.admit(shared_decode_candidate(
@@ -462,12 +521,42 @@ impl HybridStreamDecodeSession {
         self.active_call_context
             .update_from_evidence(&self.last_evidence_store);
         self.early.clear();
-        if let Some(error) = first_error {
+        if let Some(error) = first_error.or(agc_error) {
             Err(error)
         } else {
             Ok(ledger.into_sorted())
         }
     }
+}
+
+fn jtdx_branch_configs(config: &StreamDecodeConfig) -> [StreamDecodeConfig; 2] {
+    let mut no_agc = config.clone_for_profile_jtdx();
+    no_agc.nagcc = false;
+    let mut agc = no_agc.clone();
+    agc.nagcc = true;
+    [no_agc, agc]
+}
+
+fn cancellation_seeds(
+    source: &[StreamDecodedWithProvenance],
+    peer: &[StreamDecodedMessage],
+    direction: SignalSource,
+    config: &StreamDecodeConfig,
+) -> Vec<StreamDecodedMessage> {
+    let eligible: Vec<_> = source
+        .iter()
+        .filter(|row| {
+            (direction == SignalSource::Wsjtx || row.provenance == StreamDecodeProvenance::Regular)
+                && recovery::eligible_shape(&row.decode, config.nfa, config.nfb)
+        })
+        .collect();
+    let seeds: Vec<_> = eligible
+        .iter()
+        .filter(|row| !peer.iter().any(|other| same_signal(other, &row.decode)))
+        .take(recovery::MAX_SEEDS)
+        .map(|row| row.decode.clone())
+        .collect();
+    seeds
 }
 
 fn wsjtx_provenance(row: &StreamDecodedMessage) -> StreamDecodeProvenance {
@@ -559,21 +648,23 @@ pub fn build_passive_evidence_store_from_tagged(
     jtdx: &[StreamDecodedWithProvenance],
 ) -> SharedEvidenceStore {
     let mut store = SharedEvidenceStore::new();
-    for row in wsjtx {
-        store.admit(shared_decode_candidate(
-            DecoderId::WSJTX,
-            provenance_from_stream(row.provenance),
-            &row.decode,
-        ));
-    }
-    for row in jtdx {
-        store.admit(shared_decode_candidate(
-            DecoderId::JTDX,
-            provenance_from_stream(row.provenance),
-            &row.decode,
-        ));
-    }
+    admit_tagged_rows(&mut store, DecoderId::WSJTX, wsjtx);
+    admit_tagged_rows(&mut store, DecoderId::JTDX, jtdx);
     store
+}
+
+fn admit_tagged_rows(
+    store: &mut SharedEvidenceStore,
+    decoder: DecoderId,
+    rows: &[StreamDecodedWithProvenance],
+) {
+    for row in rows {
+        store.admit(shared_decode_candidate(
+            decoder,
+            provenance_from_stream(row.provenance),
+            &row.decode,
+        ));
+    }
 }
 
 fn provenance_from_stream(provenance: StreamDecodeProvenance) -> Provenance {
@@ -610,11 +701,8 @@ fn merge_decodes_with_source(
     jtdx: &[StreamDecodedMessage],
 ) -> Vec<HybridDecodedMessage> {
     let mut rows: Vec<HybridDecodedMessage> = Vec::new();
-    let mut by_msg: HashMap<String, Vec<usize>> = HashMap::new();
 
     for decode in wsjtx {
-        let key = normalized_message(&decode.msg);
-        by_msg.entry(key).or_default().push(rows.len());
         rows.push(HybridDecodedMessage {
             decode: decode.clone(),
             source: DecodeSource::Wsjtx,
@@ -622,19 +710,12 @@ fn merge_decodes_with_source(
     }
 
     for decode in jtdx {
-        let key = normalized_message(&decode.msg);
-        if let Some(idx) = by_msg.get(&key).and_then(|indices| {
-            indices
-                .iter()
-                .copied()
-                .find(|&idx| is_same_signal(&rows[idx].decode, decode))
-        }) {
+        if let Some(idx) = rows.iter().position(|row| same_signal(&row.decode, decode)) {
             if rows[idx].source == DecodeSource::Wsjtx {
                 rows[idx].source = DecodeSource::Both;
             }
             continue;
         }
-        by_msg.entry(key).or_default().push(rows.len());
         rows.push(HybridDecodedMessage {
             decode: decode.clone(),
             source: DecodeSource::Jtdx,
@@ -688,6 +769,51 @@ fn is_shared_full_call_candidate(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agc_branches_share_swl_and_preserve_explicit_partitions() {
+        for swl in [false, true] {
+            for partitions in [0, 1, 4] {
+                let [no_agc, agc] = jtdx_branch_configs(&StreamDecodeConfig {
+                    swl,
+                    nagcc: true,
+                    jtdx_threads: partitions,
+                    ..Default::default()
+                });
+                assert!(!no_agc.nagcc);
+                assert!(agc.nagcc);
+                for branch in [no_agc, agc] {
+                    assert_eq!(branch.swl, swl);
+                    assert_eq!(branch.jtdx_threads, partitions);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn two_jtdx_agc_variants_do_not_create_independent_confirmation() {
+        let no_agc = tagged(
+            1205.0,
+            0.6,
+            "K1JT BG5ATV RR73",
+            StreamDecodeProvenance::Regular,
+        );
+        let agc = tagged(
+            1206.0,
+            0.5,
+            "K1JT BG5ATV RR73",
+            StreamDecodeProvenance::Regular,
+        );
+        let mut evidence = build_passive_evidence_store_from_tagged(&[], &[no_agc]);
+        admit_tagged_rows(&mut evidence, DecoderId::JTDX_AGC, &[agc]);
+        assert_eq!(evidence.rows().len(), 1);
+        assert_eq!(evidence.rows()[0].sources, [DecoderId::JTDX]);
+        assert_eq!(evidence.rows()[0].evidence[1].source, DecoderId::JTDX_AGC);
+        assert_eq!(
+            evidence.rows()[0].confidence,
+            DecodeConfidence::ConfirmedRegular
+        );
+    }
 
     #[test]
     fn repeated_jtdx_result_never_becomes_both() {

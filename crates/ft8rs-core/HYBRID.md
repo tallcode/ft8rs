@@ -1,7 +1,8 @@
 # Hybrid Decode
 
-`--profile hybrid` combines independent WSJT-X and JTDX sessions and one bounded
-round of cross cancellation. It is orchestration over the existing decoders.
+`--profile hybrid` combines independent WSJT-X, JTDX/noAGC and JTDX/AGC sessions
+and one bounded round of cross cancellation. It is orchestration over the
+existing decoders.
 The source under `lib_wsjtx/` and `lib_jtdx/` is unchanged.
 
 Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md),
@@ -9,8 +10,8 @@ Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md),
 
 ## Baseline and ownership
 
-Each baseline decoder owns its hash book, AP/odd-even memory, workspaces and
-residuals. Both receive the same immutable input audio. Persistent baseline
+Each of the three baseline sessions owns its hash book, AP/odd-even memory,
+workspaces and residuals. All receive the same immutable input audio. Persistent baseline
 sessions receive no cross-decoder hash imports: the original import API cannot
 revoke an old entry after a later collision is found.
 
@@ -27,7 +28,17 @@ DX keep their own task selection and state policies.
 The ledger separates source agreement from first emission. A repeated JTDX-only
 row remains JTDX-only, while agreement with WSJT-X can add that source without
 emitting a duplicate. Message text, frequency and DT identify matching signals;
-unresolved hashes are not silently equated with resolved identities.
+unresolved hashes are not equated with resolved identities from text or a short
+callsign hash alone. The ledger may deduplicate a hash-display expansion only
+when both original 79-tone sequences are complete and identical, the remaining
+message fields agree and frequency/DT match. Unresolved placeholders with
+different complete native payloads remain distinct even if their display strings
+match. Fully resolved messages retain the existing normalized-text equivalence,
+including equivalent native message formats and hash-brace display variants. Conflicting resolved calls
+also remain distinct despite a hash collision. Native evidence and confidence
+are retained separately; payload identity does not confirm a resolved callsign
+or share a hash table. If original payload is unavailable, no hash expansion is
+inferred. The first emitted native presentation remains unchanged.
 
 Passive evidence and QSO opportunities remain diagnostic. Unknown or derived
 observations cannot create independent confirmation. Passive opportunities are
@@ -52,21 +63,34 @@ ordinary path does not expose its internal AP subtype, so its provenance stays
 Unknown and seed admission relies on the separate waveform gate. Recovery rows
 are terminal outputs and cannot become new cancellation seeds.
 
+Cross cancellation remains between WSJT-X and JTDX/noAGC only. The AGC path
+contributes output without changing peer observations or cancellation seeds.
+Its tagged evidence records the `jtdx-agc` variant, but both JTDX variants count
+as one decoder family; agreement between them cannot create independent quorum.
+
+Seed selection uses messages not yet seen from the peer, including the verified
+payload comparison above. It does not start additional recovery work just to
+reproduce an unresolved display of an already-decoded payload. The native-tone
+and waveform gates, one attempt per direction, three-seed limit and three-second
+start budget are unchanged. Diagnostics report each baseline's completion time
+(WSJT-X, noAGC, AGC) and starts skipped by that budget.
+
 Cross cancellation is enabled by default. CLI `--no-hybrid-sic` and the GUI
-Cross cancellation checkbox disable it while retaining both baseline sessions.
+Cross cancellation checkbox disable it while retaining all three baseline sessions.
 Generic per-call-pair replay, AP callbook imports and SameParityA7 feedback are
 not enabled.
 
 ## Scheduling and output
 
 Monitor mode preserves WSJT-X's existing N41 early decode and N47 subtraction.
-At N50 it runs the WSJT-X final stage and the full JTDX baseline concurrently.
+At N50 it runs the WSJT-X final stage and both full JTDX baselines concurrently.
 An eligible direction can start when its source baseline finishes, using peer
 rows already seen. No new recovery starts after three seconds of N50 processing;
 active original calls finish normally.
 
-File mode waits for both baseline results before choosing seeds, keeps canonical
-baseline ordering and submits recovery rows in fixed direction order. Real-time
+File mode waits for the WSJT-X/noAGC baseline pair before choosing seeds, keeps
+their canonical ordering and submits recovery rows in fixed direction order,
+then merges the AGC output. Real-time
 and file scheduling need not select identical additional opportunities on every
 recording.
 
@@ -80,6 +104,237 @@ separately from total worker completion. The start budget cannot interrupt an
 active original decoder, so throughput and next-slot queueing must also be
 checked under the intended machine load.
 
+## Partition and SWL configuration
+
+For receive-only operation that accepts occasional false-positive candidates,
+the default is `jtdx_threads=1` for both Hybrid JTDX sessions and standalone
+JTDX. Local replay retained previously emitted signals while
+reducing processing time and CPU cost. This is an engineering choice for the
+current implementation and tested recordings, not evidence that one partition
+has universally higher sensitivity.
+
+One partition still retains both WSJT-X and JTDX, cross cancellation, and their
+concurrent workers. It does not turn Hybrid into a single-decoder or
+single-threaded mode. Upstream JTDX uses OpenMP to process frequency partitions
+in parallel; the current Rust session processes its logical partitions serially.
+Increasing the band count does not create additional OS threads here. It changes
+candidate processing and state evolution, and repeats synchronization work, so
+it can change both decoded messages and cost without a partition-parallel speedup.
+
+Explicit `jtdx_threads=0` selects the original CPU-dependent automatic mode;
+positive values select a logical partition count. CLI accepts
+`--jtdx-threads 0` to opt into automatic selection. This is separate from FFT
+thread configuration. The pure JTDX four-partition calibration below remains
+independent and unchanged.
+
+The existing GUI SWL checkbox and CLI `--swl` now control both JTDX sessions:
+
+| SWL switch | JTDX/noAGC | JTDX/AGC |
+|---|---|---|
+| Off | `nagcc=false`, `swl=false` | `nagcc=true`, `swl=false` |
+| On | `nagcc=false`, `swl=true` | `nagcc=true`, `swl=true` |
+
+The WSJT-X path retains its native behavior. Reconfiguration rebuilds both JTDX
+sessions together. Their original mutable state is never shared or migrated
+between the two branches.
+
+## Local partition replay, 2026-10-28
+
+The following historical runs preceded the three-path implementation. They used
+the then-default automatic partition count and an external supplemental branch
+with SWL enabled independently. They explain the design choice, but do not
+substitute for SWL-off/on acceptance of the implementation described above.
+
+### Conditions and comparison rules
+
+- Decoder revision: `c2a8e8c04c3d74df41240e3dc36a45ada384e46f`.
+- Optimized `--release` build, RustFFT, 12 visible logical cores; automatic JTDX
+  selection resolved to nine logical partitions on this machine.
+- Main recording: `tests/ft8/230208_140300.wav`, 12 kHz, 285 seconds, 19 slots
+  through persistent decoder sessions. Cross-check:
+  `tests/ft8/210703_133430.wav`, one slot.
+- Database: the shipped `ALLCALL7.TXT`, SHA-256
+  `17140773605b0d2a7a5a31458c11384d9efc413bf6288b262b7dd1f391ec32ea`.
+  This is not the `ALLCALL7.TXT.2022` database used by the pure JTDX gate.
+- Common settings: 200–3000 Hz, no user QSO context, cross cancellation enabled,
+  real-time cooperative scheduling enabled, internal AGC/SWL disabled. Only
+  Hybrid's JTDX partition configuration changes between baseline cases.
+- Audio availability was simulated at N41/N47/N50, preserving the existing early
+  stages and measuring actual callback processing time. Experiments ran serially;
+  each process used a private executable directory and database copy.
+- Messages were compared by UTC slot, normalized text, frequency within 5 Hz and
+  DT within 0.3 seconds. Every old signal had to remain; extra rows could not
+  compensate for losses. SNR and first-emission provenance can differ between
+  matching rows. Unannotated candidates were not counted as confirmed gains.
+
+Wall time below is offline processing time, excluding the wait to capture all
+285 seconds of audio. CPU time is accumulated process user plus system time,
+including worker threads. Callback and worker-finish offsets are relative to the
+next slot's start; they exclude real soundcard and GUI latency.
+
+### Hybrid without an additional branch
+
+Each configuration ran twice. Wall/CPU values are the two-run means; timing
+ranges show each run's latest callback or slowest slot completion.
+
+| Internal JTDX partitions | Raw merged rows | Old rows retained | Wall time | CPU time | Latest callback | Last worker finish |
+|---|---:|---:|---:|---:|---:|---:|
+| Auto (9 here) | 466 | 466/466 | 68.87 s | 98.63 s | +2.09–2.12 s | +4.10–4.46 s |
+| 4 | 466 | 466/466 | 56.73 s | 82.13 s | +1.58–1.59 s | +3.91–3.92 s |
+| 1 | 467 | 466/466 | 50.42 s | 71.61 s | +1.50–1.51 s | +3.55–3.58 s |
+
+One partition reduced wall time by 26.8% and CPU time by 27.4% versus automatic
+selection, and by 11.1% / 12.8% versus four partitions. All configurations matched
+443/444 non-E annotated rows and retained the same 11 E-marked outputs. The
+previous 12 unannotated outputs were retained as well.
+
+The one-partition configuration's sole extra row was the user-flagged candidate
+below. Its callsign/grid mismatch means it is excluded from gain accounting; the
+raw decoder output was retained without adding a new native filter:
+
+```text
+230208_140400  709.375 Hz  DT -1.305 s  SNR -24.0 dB  CQ Z3BZW FL21
+```
+
+Thus the result is preserved measured coverage at lower cost, with an additional
+known-suspicious candidate, not a demonstrated sensitivity increase. Four
+partitions showed no additional message coverage in this complete Hybrid replay.
+The earlier four-partition advantage in the pure JTDX calibration does not
+establish a universally optimal partition count for Hybrid or an AGC branch.
+
+### Hybrid with one independent AGC/SWL branch
+
+The additional persistent JTDX session used one partition, `nagcc=true` and
+`swl=true`, with the existing high-sensitivity configuration. The automatic
+Hybrid control ran once; the internal-one-partition case ran twice. Wall/CPU
+values for the latter are means.
+
+| Internal Hybrid JTDX partitions | Raw merged rows | Previous enhanced rows retained | Wall time | CPU time | Latest callback | Last worker finish |
+|---|---:|---:|---:|---:|---:|---:|
+| Auto (9 here) | 484 | 484/484 | 70.31 s | 151.47 s | +2.65 s | +4.19 s |
+| 1 | 485 | 484/484 | 65.02 s | 128.08 s | +2.67 s | +3.72–3.73 s |
+
+The internal-one-partition combination preserved the original 466 rows, all 14
+earlier AGC candidates and all four further SWL candidates. Its sole extra row
+was again the flagged `Z3BZW` candidate. The 18 supplemental candidates remain
+unannotated in their respective slots, and non-E annotated matches remain
+443/444. All rows reached the callback within the next slot +3 seconds.
+
+Versus the automatic Hybrid plus the same single branch, wall time fell 7.5%
+and CPU time 15.4%. Message latency was effectively unchanged; the AGC/SWL branch
+also contributes to the combined completion time. This was an actual run with
+one additional branch, not a timing estimate obtained by subtracting the
+redundant plain-AGC branch from the earlier multi-branch experiment.
+
+### Cross-check and scope
+
+On the one-slot 2021 recording, all five configurations above decoded the same
+21/21 annotated messages with no additional rows or losses. Basic Hybrid wall
+times were 4.95 s (auto), 2.68 s (four partitions) and 2.38 s (one partition);
+the enhanced combination took 5.80 s (auto) and 3.24 s (one partition). These
+cross-check timings are single runs, not averages.
+
+The recommendation is to prefer one partition for the internal Hybrid JTDX
+session under the current serial-band implementation, with one independent
+AGC/SWL branch when additional candidate coverage justifies its cost. Accepting
+some false positives makes the flagged extra candidate tolerable for listening;
+it does not turn that candidate into a sensitivity gain or justify dropping old
+messages. Repeated replay checks reproducibility, not generalization to new RF
+conditions. Two recordings do not establish a universal optimum or a guaranteed
+real-time deadline. Keep candidate provenance and immediate output, and compare
+future changes against old signals under the same inputs and configuration.
+
+The experiment changed only temporary harness configuration. Hash checks
+confirmed all 82 original decoder source files and eight protected input files
+were unchanged. No native decoder, production default or acceptance threshold
+was changed.
+
+## Three-path implementation replay, 2026-10-28
+
+The implemented three-path configuration was replayed with SWL off and on in
+both Hybrid and standalone JTDX. These measurements use the same shipped CallDB,
+recordings, Release/RustFFT settings and 12 visible cores as the historical
+experiment. An isolated, unchanged source snapshot of `c2a8e8c` supplied the old
+outputs, including the original returned tone sequences. Each timed case below
+is one serial local run, with no concurrent compilation or other decode tests.
+They are observations on these recordings, not universal sensitivity or timing
+guarantees. The old default selected nine partitions; the new default selects one.
+
+### Verified hash-display identity
+
+The old SWL-on Hybrid emitted these two additional unresolved presentations:
+
+| UTC slot | Unresolved recovery display | Already-present resolved display | Native tones |
+|---|---|---|---|
+| 14:03:30 | `EA5/DH0YAH <...> RR73` | `EA5/DH0YAH <RK4FF> RR73` | All 79 identical within the pair |
+| 14:03:45 | `<...> EA5/DH0YAH 73` | `<RK4FF> EA5/DH0YAH 73` | All 79 identical within the pair |
+
+The original tone sequences decode to type-4 messages with callsign hash 3102
+(12 bits) in both slots. The two slots have different complete payloads, so
+callsign hash 3102 alone cannot identify a message. Their resolved/unresolved
+forms differ because independent native hash books have different learned
+entries; an isolated recovery starts with a fresh book. No hash table is shared
+or backfilled to change that native behavior.
+
+The old 467 SWL-on display rows therefore represent 465 distinct messages under
+the verified payload-aware identity rule. Old/new comparisons check every old
+signal using native payload where needed, and separately require every old fully
+resolved presentation to remain available. They do not equate arbitrary unknown
+calls from similar text or frequency. No extra cancellation attempts are added
+to reproduce the redundant placeholders.
+
+### Message retention and processing cost
+
+| Profile | SWL | Old display rows / distinct messages | New messages | Old distinct messages retained |
+|---|---|---:|---:|---:|
+| Hybrid | Off | 466 / 466 | 481 | 466/466 |
+| Hybrid | On | 467 / 465 | 482 | 465/465 |
+| JTDX | Off | 452 / 452 | 453 | 452/452 |
+| JTDX | On | 451 / 451 | 453 | 451/451 |
+
+All old fully resolved presentations were retained too. Hybrid retained all 14
+previous AGC candidates with SWL off and all 18 previous AGC/SWL candidates with
+SWL on. Its non-E CSV matches stayed at 443/444 in each setting; standalone JTDX's
+matches against the same general non-E reference stayed at 432 in each setting.
+These general-reference counts are separate from the pure JTDX 431-row gate.
+
+The SWL-off additions comprise the same 14 unannotated candidates plus the
+flagged `CQ Z3BZW FL21`; the flag is only an evaluation annotation, not a native
+filter. SWL-on Hybrid has 17 additions versus its own old SWL-on baseline, all
+unannotated, and did not emit the flagged `Z3BZW` row in this run. None of these
+unannotated additions is counted as confirmed sensitivity improvement.
+
+| Profile | SWL | Wall time, old → new | CPU time, old → new | Latest new callback | Last new worker finish |
+|---|---|---:|---:|---:|---:|
+| Hybrid | Off | 69.16 → 52.86 s | 96.03 → 108.81 s | +1.57 s | +3.63 s |
+| Hybrid | On | 107.85 → 76.48 s | 184.33 → 161.84 s | +2.62 s | +4.96 s |
+| JTDX | Off | 51.71 → 32.40 s | 48.55 → 30.89 s | +1.94 s | +1.94 s |
+| JTDX | On | 78.45 → 59.48 s | 78.26 → 58.78 s | +3.90 s | +3.90 s |
+
+The three-path Hybrid has a higher total CPU cost with SWL off despite its
+shorter wall time; it now runs an additional AGC path. Callback offsets still
+exclude actual soundcard and GUI latency. All Hybrid rows in these runs arrived
+within the next slot +3 seconds. Standalone JTDX's existing tagged batch wrapper
+emits after its native call finishes; its SWL-on worst slot exceeded +3 seconds.
+No native call was interrupted or its output discarded to meet a display budget.
+
+On the one-slot 2021 recording, Hybrid retained 21/21 messages and standalone
+JTDX retained 20/20 in both SWL settings. No old messages were lost there.
+
+### SWL settings are not a superset relation
+
+Preservation above compares each setting with the same setting in the old
+implementation. Switching SWL changes both original JTDX search paths, so
+SWL-on need not retain every SWL-off candidate. The final Hybrid differed as
+follows on the long recording; all seven rows are unannotated at their slots:
+
+| Only SWL off | Only SWL on |
+|---|---|
+| 14:04:00 `CQ Z3BZW FL21` (user-flagged) | 14:03:45 `ON7RED CU3HN HM68` |
+| 14:04:45 `CQ TL1XFI FK48` | 14:04:15 `RJ3DC OE9GWV +06` |
+| 14:05:00 `IW1ALW G6XX RR73` | 14:06:00 `CU3HN 5B4YU KM64` |
+| | 14:07:00 `FT8WW OS0S -20` |
+
 ## Validation
 
 Run optimized local tests. Preserve every old signal under the same recording,
@@ -90,3 +345,11 @@ The existing profile gates use the calibrated database through
 `./scripts/acceptance-gates.sh`. JTDX's 430/431 calibration uses four logical
 partitions, as documented in [JTDX.md](JTDX.md). Pure profiles retain their own
 native execution and are not validated by substituting Hybrid output.
+
+Implementation validation completed locally: 208 non-ignored workspace tests,
+all seven existing manual core acceptance gates, and the engine's ignored
+long-recording Hybrid actor gate passed. The original acceptance test source and
+thresholds were unchanged, including the 430/431 JTDX floor. Workspace formatting,
+strict Clippy for all targets and Release builds of the CLI/GUI passed. Hash
+checks again confirmed the 82 native decoder sources and eight protected input
+files were unchanged. No CI run substitutes for these local checks.

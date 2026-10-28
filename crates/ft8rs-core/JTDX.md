@@ -136,7 +136,8 @@ freq < 100 MHz -> napwid = 15
 else           -> napwid = 50
 ```
 
-`--jtdx-threads 0` selects automatic band splitting. The current Rust session
+`jtdx_threads` defaults to one logical partition. Explicit `--jtdx-threads 0`
+selects automatic band splitting. The current Rust session
 processes these logical bands serially; the value does not spawn that number of
 OS threads. Automatic selection depends on visible cores: 12 cores select 9
 bands. Band count changes search and state evolution, so it is part of the decode
@@ -167,7 +168,7 @@ accepted floor   = 430/431 target rows
 ```
 
 The constructor retains its existing high-sensitivity mapping. The four-band
-setting belongs to calibration; production defaults remain automatic. Automatic
+setting belongs to calibration; production defaults to one partition. Automatic
 mode must record the actual core/band count when comparing results, because
 `threads=0` is not a fixed operating point across machines. Do not lower the
 430/431 threshold or alter aligned decoder code to compensate for a different
