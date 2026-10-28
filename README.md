@@ -98,8 +98,8 @@ target/release/ft8rs file recording.wav --start-time 230208_140300
 ```text
 wsjtx  - WSJT-X-aligned decoder, default
 jtdx   - JTDX-oriented high-sensitivity decoder path
-hybrid - WSJT-X and JTDX result union with bounded cross cancellation
-dx     - single-target DX chase profile, requires --his-call
+hybrid - WSJT-X + JTDX/noAGC + JTDX/AGC union with bounded cancellation
+dx     - target-filtered three-way observations + controlled WSJT-X recovery; requires --his-call
 ```
 
 `dx` is not a `hybrid` alias. It is a separate single-target chase mode with its
