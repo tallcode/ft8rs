@@ -149,11 +149,67 @@ artifacts expire after one day; the files published to Releases remain there.
 This guide describes packaging; it does not publish a release when running
 tests or editing documentation.
 
+SemVer prerelease tags (for example `v0.0.25-rc.1`) are marked as GitHub
+prereleases. They do not replace the latest stable release or update the homepage.
+
 The packaging contract and version validation can be checked locally with:
 
 ```sh
 python3 -B -m unittest discover -s scripts -p test_package_release.py -v
 cargo test --profile fast -p ft8rs-build
+```
+
+### Static homepage (GitHub Pages)
+
+The user-facing Chinese/English homepage lives in `site/`. It uses plain HTML/CSS
+with no frontend dependencies or browser-side GitHub API requests. The only
+JavaScript selects `/zh/` or `/en/` at the root entry using `navigator.languages`
+(the browser preferences behind `Accept-Language`). Pages cannot read HTTP
+request headers in a static page. The first supported language wins; other
+languages fall back to English. Each localized page has an explicit language
+switch and works without JavaScript. The root has a full English fallback.
+`scripts/build_site.py` fills in the version, publication time and exact download
+URLs from the GitHub REST release response.
+
+`pages.yml` runs only when manually dispatched on `main`. It automatically reads
+GitHub's latest published stable release, then deploys both languages using that
+one version. It has no version input, push trigger or automatic release trigger.
+The renderer rejects drafts, SemVer prereleases, missing or incomplete assets,
+and download URLs for a different version/repository. Any build or deployment
+failure leaves the previously deployed homepage unchanged.
+`SHA256SUMS.txt` lists archive basenames, so users can verify downloads together
+in one directory. No extra personal access token is needed for deployment.
+
+One-time repository setup:
+
+1. In **Settings → Pages → Build and deployment**, select **GitHub Actions**.
+2. Set the custom domain to `ft8.rs`, configure its DNS and enable **Enforce HTTPS**.
+   A `CNAME` file does not configure a domain for an Actions deployment.
+3. Allow `main` in the `github-pages` environment's deployment policy. Page
+   deployments run from `main`; release tags do not need deployment permission.
+
+To deploy the first page or update it after a new stable release, open
+**Actions → Publish homepage → Run workflow**, choose `main`, and run it. No
+version needs to be entered. The equivalent CLI command is:
+
+```sh
+gh workflow run pages.yml --ref main
+```
+
+The page source is always checked out from `main`. The release response is read
+once, and both languages use its exact versioned asset URLs. Visitors do not
+query GitHub to resolve the latest release; publishing a new software version
+does not change homepage links until this workflow is run again.
+
+Local checks and preview using a real, published release:
+
+```sh
+python3 -B -m unittest discover -s scripts -p 'test_*release.py' -v
+python3 -B -m unittest discover -s scripts -p test_build_site.py -v
+node --test scripts/test_site_language.cjs
+gh api repos/tallcode/ft8rs/releases/tags/v0.0.24 > /tmp/ft8rs-release.json
+python3 -B scripts/build_site.py --release /tmp/ft8rs-release.json --tag v0.0.24
+python3 -m http.server 8000 --directory dist/site
 ```
 
 ## Local checks

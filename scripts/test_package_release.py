@@ -2,7 +2,10 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -63,6 +66,32 @@ class PackageReleaseTests(unittest.TestCase):
         for tag in ["v1.2.x", "v01.2.3", "v1.2.3-dev.01", "v1.2.3-dev..7"]:
             with self.assertRaises(ValueError):
                 build_metadata(self.env(GITHUB_EVENT_NAME="push", GITHUB_REF_TYPE="tag", GITHUB_REF_NAME=tag), "linux")
+
+    def test_actions_output_distinguishes_stable_and_prerelease_tags(self):
+        for tag, expected in [
+            ("v1.2.3", "false"),
+            ("v1.2.3-rc.1", "true"),
+            ("v1.2.3+build-4", "false"),
+        ]:
+            with self.subTest(tag=tag), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = {
+                    **os.environ,
+                    **self.env(
+                        GITHUB_EVENT_NAME="push", GITHUB_REF_TYPE="tag",
+                        GITHUB_REF=f"refs/tags/{tag}", GITHUB_REF_NAME=tag,
+                    ),
+                    "GITHUB_OUTPUT": str(root / "outputs"),
+                    "GITHUB_STEP_SUMMARY": str(root / "summary"),
+                }
+                subprocess.run(
+                    [sys.executable, "-B", str(Path(__file__).with_name("package_release.py")),
+                     "metadata", "--platform", "linux", "--output", str(root / "metadata.json")],
+                    env=env, check=True, capture_output=True,
+                )
+                outputs = dict(line.split("=", 1) for line in (root / "outputs").read_text().splitlines())
+                self.assertEqual(outputs["release_tag"], tag)
+                self.assertEqual(outputs["prerelease"], expected)
 
     def test_archives_contain_only_the_platform_binaries_and_provenance(self):
         with tempfile.TemporaryDirectory() as directory:

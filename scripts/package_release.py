@@ -116,6 +116,9 @@ def main():
                 outputs.write(f"release_tag=v{info['version']}\n")
                 outputs.write(f"artifact_name={info['package_name']}-{info['version']}\n")
                 outputs.write(f"archive_name={info['archive_name']}\n")
+                # Build metadata may contain '-' without being a prerelease.
+                prerelease = "-" in info["version"].split("+", 1)[0]
+                outputs.write(f"prerelease={str(prerelease).lower()}\n")
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
                 summary.write(f"### {info['package_name']}\n\nVersion: `{info['version']}`\n\n")

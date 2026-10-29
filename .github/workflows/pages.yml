@@ -1,0 +1,52 @@
+name: Publish homepage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Match the existing github-pages environment policy.
+      - name: Checkout homepage source
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Read latest stable release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/release.json"
+          echo "release_tag=$(jq -r '.tag_name' "$RUNNER_TEMP/release.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Build static homepage
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: python3 scripts/build_site.py --release "$RUNNER_TEMP/release.json" --tag "$RELEASE_TAG" --output dist/site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload homepage
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/site
+
+      - name: Deploy homepage
+        id: deployment
+        uses: actions/deploy-pages@v4
