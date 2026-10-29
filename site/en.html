@@ -26,6 +26,7 @@
         <h2 id="about">About</h2>
         <p>ft8.rs decodes FT8 signals. Feed audio from your radio or SDR into your computer to see received callsigns, signal levels and messages.</p>
         <p>It is receive-only, with no transmit function. Listen to activity across the band or follow a particular callsign. Four decoding modes are available: WSJT-X, JTDX, Hybrid and DX.</p>
+        <p>If you also use WSJT-X, Compare lets you view both programs' reception results in one message list.</p>
       </section>
 
       <section aria-labelledby="download">
@@ -55,17 +56,43 @@
         </ol>
         <p>You do not need to enter your own callsign for general listening. If needed, enter your callsign and grid locator in <strong>Settings → Station</strong>.</p>
 
-        <h3>Choosing a decoding mode</h3>
+        <h3 id="modes">Choosing a decoding mode</h3>
+        <p>Select a mode in <strong>Settings → Decode → Profile</strong> or use the <strong>Profile</strong> menu.</p>
         <dl>
           <dt>WSJT-X</dt>
-          <dd>The default mode, suitable for getting started.</dd>
+          <dd>The default mode uses WSJT-X FT8 decoding. It is suitable for getting started and general band monitoring.</dd>
           <dt>JTDX</dt>
-          <dd>Uses JTDX decoding. Try it alongside the default mode.</dd>
+          <dd>Uses JTDX FT8 decoding. It may decode different messages from WSJT-X on the same audio, so you can try both. SWL and Deep decode provide additional search options.</dd>
           <dt>Hybrid</dt>
-          <dd>Combines WSJT-X and JTDX results and uses more computing resources.</dd>
+          <dd>Runs WSJT-X and two JTDX decoding paths, then merges their results and removes duplicate messages. The JTDX paths use the original audio and audio with automatic gain adjustment. Choose it to combine different decoding approaches; it uses more computing resources. SIC and experimental decoding, described below, can attempt additional recovery.</dd>
           <dt>DX</dt>
-          <dd>Follows a target callsign. Enter it in the main window's <strong>Callsign</strong> field before listening. You can also double-click a decoded message to select a target.</dd>
+          <dd>Follows a target callsign and displays messages related to it. Enter the target in the main window's <strong>Callsign</strong> field before listening, or double-click a decoded message to select its target and audio frequency. DX manages SWL and deep searches internally, so their general switches do not need adjustment.</dd>
         </dl>
+
+        <h3 id="hybrid">Hybrid decoding options</h3>
+        <p>After selecting Hybrid, adjust these options in <strong>Settings → Decode</strong>. Start with the defaults, then try one option at a time while watching the results and CPU load on the same audio input.</p>
+        <dl>
+          <dt>Cross cancellation (SIC)</dt>
+          <dd>On by default. Uses an already decoded signal to cancel it from a copy of the audio, then searches again for messages hidden by overlapping signals. Additional messages recovered this way carry <code>sic</code> at the end of the row. Turning it off keeps the WSJT-X and both JTDX baseline decoding paths.</dd>
+          <dt>SWL</dt>
+          <dd>Off by default. Enables JTDX's listening-oriented search and affects both JTDX paths in Hybrid. It changes the search process and may take longer; enabling it does not guarantee retaining every message found with it off.</dd>
+          <dt>Deep decode</dt>
+          <dd>Off by default. Enables further JTDX searches around the selected receive audio frequency. Try it when following a particular signal; double-click a message to set the target and frequency. The extra searches may take longer.</dd>
+          <dt>Experimental decoder (exp)</dt>
+          <dd>Off by default and available only in Hybrid. Adds ft8.rs's own supplementary decoder to attempt recovery of stable weak signals and messages affected by single-tone interference or overlapping FT8 signals. Additional results carry <code>exp</code> at the end of the row, while baseline results are displayed first. It uses more computing resources, and supplementary messages may appear several seconds later; background work for the slot may continue for around 10 seconds or longer. It does not cover every fading, drift or interference condition, and may add no messages in a given slot.</dd>
+        </dl>
+        <p>Suffixes such as <code>sic</code> and <code>exp</code> identify how a message was decoded. They are separate from the message text and do not certify that it is correct. Cross-check important callsigns or rare signals against later slots and the received audio.</p>
+
+        <h3 id="compare">Compare with WSJT-X</h3>
+        <p>Compare receives live decoded messages from WSJT-X and merges them with ft8.rs's local results. It shows which messages were received by one program and which were received by both.</p>
+        <ol>
+          <li><strong>Use the same receive audio.</strong> Set ft8.rs and WSJT-X to listen to the same receiver, frequency and audio channel, and start reception in both.</li>
+          <li><strong>Check ft8.rs's listener.</strong> In <strong>Settings → Compare</strong>, enable <strong>Listen to WSJT-X (UDP)</strong>. It is enabled by default on first use, with Host <code>127.0.0.1</code> and Port <code>2237</code>.</li>
+          <li><strong>Set WSJT-X's UDP output.</strong> Send WSJT-X's UDP reports to <code>127.0.0.1</code>, port <code>2237</code>. This assumes both programs run on the same computer. If another program already uses that port, choose a free port and change it in both programs.</li>
+          <li><strong>Wait for new receive slots.</strong> The message list uses source colors, with a legend in Compare settings: only WSJT-X, only ft8.rs, or both decoders. Comparison uses new live reports; it does not import WSJT-X's message history.</li>
+        </ol>
+        <p><strong>Match ± Hz</strong> is the frequency matching tolerance, initially ±7 Hz. Messages are merged as “both” when their slot and message content match and their audio frequencies are within this tolerance. SNR and DT do not have to be identical. Changes to the tolerance affect subsequently received messages.</p>
+        <p>Compare only changes the display; WSJT-X messages do not feed back into ft8.rs decoding, and source colors do not prove a message is correct. <strong>Settings → Output</strong> is a separate function that sends ft8.rs results to other programs, using port <code>2238</code> by default.</p>
 
         <h3>No messages?</h3>
         <p>Check the receive frequency, computer clock and audio input first. In <strong>Settings → Audio</strong>, check that the receiver's audio is selected and the level is not overloaded. If the level never changes, check the device, channel and your system's audio input permissions.</p>
