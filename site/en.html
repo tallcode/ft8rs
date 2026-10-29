@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ft8.rs is a receive-only FT8 decoder. Download the app, connect your receiver's audio, and start listening.">
+    <title>ft8.rs — FT8 reception and decoding</title>
+    <link rel="stylesheet" href="${asset_prefix}style.css">
+    <link rel="alternate" hreflang="zh" href="${language_prefix}zh/">
+    <link rel="alternate" hreflang="en" href="${language_prefix}en/">
+  </head>
+  <body>
+    <header>
+      <h1>ft8.rs</h1>
+      <p>FT8 reception and decoding</p>
+      <nav aria-label="Page navigation">
+        <a href="#download">Download</a>
+        <a href="#usage">Getting started</a>
+        <a href="https://github.com/tallcode/ft8rs/releases">Release notes</a>
+        <a href="${language_prefix}zh/" lang="zh-CN" hreflang="zh">中文</a>
+      </nav>
+    </header>
+
+    <main>
+      <section aria-labelledby="about">
+        <h2 id="about">About</h2>
+        <p>ft8.rs decodes FT8 signals. Feed audio from your radio or SDR into your computer to see received callsigns, signal levels and messages.</p>
+        <p>It is receive-only, with no transmit function. Listen to activity across the band or follow a particular callsign. Four decoding modes are available: WSJT-X, JTDX, Hybrid and DX.</p>
+      </section>
+
+      <section aria-labelledby="download">
+        <h2 id="download">Download</h2>
+        <p>Current version: <strong>$version</strong> (stable)<br>
+          Published <time datetime="$published_at">$published_date</time> (UTC)</p>
+        <ul class="downloads">
+          <li><a href="$windows_url">Download for Windows 64-bit (ZIP)</a><br>
+            <span class="note">Includes the graphical app and command-line tool. Extract the archive and open <code>ft8rs-gui.exe</code>.</span></li>
+          <li><a href="$linux_url">Download for Linux 64-bit (tar.gz)</a><br>
+            <span class="note">Command-line tool only. Extract the archive and run <code>./ft8rs --help</code> in a terminal.</span></li>
+        </ul>
+        <p class="note">Windows and Linux packages require an Intel / AMD processor with x86-64-v3 support. They do not run on ARM. A macOS package is not currently available.</p>
+        <p>The callsign database, <code>ALLCALL7.TXT</code>, is included. Keep it next to the program.</p>
+        <p><a href="$release_url">Release details</a> · <a href="$checksums_url">Download checksums</a> · <a href="https://github.com/tallcode/ft8rs/releases">All versions</a></p>
+      </section>
+
+      <section aria-labelledby="usage">
+        <h2 id="usage">Getting started</h2>
+        <p>These steps are for the Windows graphical app.</p>
+        <ol>
+          <li><strong>Connect your audio.</strong> Tune your radio or SDR to the FT8 frequency you want to receive. Route its audio to your computer using a soundcard, USB audio or a virtual audio cable. Keep your computer's clock accurate.</li>
+          <li><strong>Open the app.</strong> Extract the entire ZIP archive and run <code>ft8rs-gui.exe</code>.</li>
+          <li><strong>Select the input.</strong> In <strong>Settings → Audio</strong>, choose your receiver's input device and channel. Check that an audio level is shown. If the signal is present on only one channel, choose Left or Right as appropriate.</li>
+          <li><strong>Choose a mode.</strong> Start with the default WSJT-X mode. You can try other modes in <strong>Settings → Decode</strong>.</li>
+          <li><strong>Start listening.</strong> Click the play button in the main window. FT8 reception follows 15-second slots; decoded messages appear as they become available after each slot. Click stop to finish.</li>
+        </ol>
+        <p>You do not need to enter your own callsign for general listening. If needed, enter your callsign and grid locator in <strong>Settings → Station</strong>.</p>
+
+        <h3>Choosing a decoding mode</h3>
+        <dl>
+          <dt>WSJT-X</dt>
+          <dd>The default mode, suitable for getting started.</dd>
+          <dt>JTDX</dt>
+          <dd>Uses JTDX decoding. Try it alongside the default mode.</dd>
+          <dt>Hybrid</dt>
+          <dd>Combines WSJT-X and JTDX results and uses more computing resources.</dd>
+          <dt>DX</dt>
+          <dd>Follows a target callsign. Enter it in the main window's <strong>Callsign</strong> field before listening. You can also double-click a decoded message to select a target.</dd>
+        </dl>
+
+        <h3>No messages?</h3>
+        <p>Check the receive frequency, computer clock and audio input first. In <strong>Settings → Audio</strong>, check that the receiver's audio is selected and the level is not overloaded. If the level never changes, check the device, channel and your system's audio input permissions.</p>
+
+        <h3>Linux command line</h3>
+        <p>Open a terminal in the extracted directory. List the input devices, then start listening with the appropriate device number:</p>
+        <pre><code>./ft8rs monitor
+./ft8rs monitor --device 0</code></pre>
+        <p>The command-line tool also decodes WAV recordings. See the <a href="https://github.com/tallcode/ft8rs/blob/main/docs/USAGE.md">full user guide</a> for more audio settings, recording playback and UDP options.</p>
+      </section>
+    </main>
+
+    <footer>
+      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://github.com/tallcode/ft8rs/issues">Report an issue</a> · GPL-3.0-only</p>
+    </footer>
+  </body>
+</html>

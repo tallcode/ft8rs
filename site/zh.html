@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ft8.rs 是一款只接收、不发射的 FT8 解码软件。下载软件，连接接收机音频，开始收听。">
+    <title>ft8.rs — FT8 接收与解码</title>
+    <link rel="stylesheet" href="${asset_prefix}style.css">
+    <link rel="alternate" hreflang="zh" href="${language_prefix}zh/">
+    <link rel="alternate" hreflang="en" href="${language_prefix}en/">
+  </head>
+  <body>
+    <header>
+      <h1>ft8.rs</h1>
+      <p>FT8 接收与解码</p>
+      <nav aria-label="页面导航">
+        <a href="#download">下载</a>
+        <a href="#usage">使用说明</a>
+        <a href="https://github.com/tallcode/ft8rs/releases">更新记录</a>
+        <a href="${language_prefix}en/" lang="en" hreflang="en">English</a>
+      </nav>
+    </header>
+
+    <main>
+      <section aria-labelledby="about">
+        <h2 id="about">这是什么</h2>
+        <p>ft8.rs 是一款 FT8 解码软件。将电台或 SDR 的接收音频送入电脑，就可以查看收到的呼号、信号强度和消息。</p>
+        <p>它只接收，不带发射功能。你可以用它收听频段活动，也可以针对一个呼号持续监听。软件提供 WSJT-X、JTDX、Hybrid 和 DX 四种解码模式。</p>
+      </section>
+
+      <section aria-labelledby="download">
+        <h2 id="download">下载</h2>
+        <p>当前版本：<strong>$version</strong>（正式版）<br>
+          发布于 <time datetime="$published_at">$published_date</time>（UTC）</p>
+        <ul class="downloads">
+          <li><a href="$windows_url">Windows 64 位下载（ZIP）</a><br>
+            <span class="note">含图形界面和命令行工具。解压后打开 <code>ft8rs-gui.exe</code>。</span></li>
+          <li><a href="$linux_url">Linux 64 位下载（tar.gz）</a><br>
+            <span class="note">目前仅提供命令行工具，解压后在终端运行 <code>./ft8rs --help</code>。</span></li>
+        </ul>
+        <p class="note">Windows 和 Linux 安装包适用于支持 x86-64-v3 指令集的 Intel / AMD 处理器，不适用于 ARM。macOS 暂未提供安装包。</p>
+        <p>安装包内已包含呼号数据库 <code>ALLCALL7.TXT</code>，请将它保留在程序旁边。</p>
+        <p><a href="$release_url">本次发布详情</a> · <a href="$checksums_url">下载校验文件</a> · <a href="https://github.com/tallcode/ft8rs/releases">所有版本</a></p>
+      </section>
+
+      <section aria-labelledby="usage">
+        <h2 id="usage">开始使用</h2>
+        <p>以下步骤适用于 Windows 图形界面。</p>
+        <ol>
+          <li><strong>连接音频。</strong>将电台或 SDR 调到要收听的 FT8 频率，通过声卡、USB 音频或虚拟音频线把接收音频送入电脑。保持电脑系统时间准确。</li>
+          <li><strong>打开软件。</strong>完整解压下载的 ZIP 文件，运行 <code>ft8rs-gui.exe</code>。</li>
+          <li><strong>选择输入。</strong>在 <strong>Settings → Audio</strong> 中选择接收机对应的输入设备和声道，确认有音频电平。如果只有一侧声道有信号，就选择对应的 Left 或 Right。</li>
+          <li><strong>选择模式。</strong>初次使用可以保留默认的 WSJT-X。在 <strong>Settings → Decode</strong> 中可以切换其他模式。</li>
+          <li><strong>开始收听。</strong>点击主窗口的播放按钮。软件按 15 秒一轮接收 FT8，完成一轮接收后会陆续显示消息；点击停止按钮结束收听。</li>
+        </ol>
+        <p>一般收听不必填写自己的呼号。需要时可在 <strong>Settings → Station</strong> 填写呼号和网格位置。</p>
+
+        <h3>怎样选择解码模式</h3>
+        <dl>
+          <dt>WSJT-X</dt>
+          <dd>默认模式，适合开始收听。</dd>
+          <dt>JTDX</dt>
+          <dd>使用 JTDX 解码方式，可尝试与默认模式对照。</dd>
+          <dt>Hybrid</dt>
+          <dd>组合 WSJT-X 和 JTDX 的解码结果，会使用更多计算资源。</dd>
+          <dt>DX</dt>
+          <dd>关注一个目标呼号。先在主窗口的 <strong>Callsign</strong> 中填入目标呼号，再开始收听。双击已解码的消息也可以选中目标。</dd>
+        </dl>
+
+        <h3>没有收到消息？</h3>
+        <p>先检查接收频率、电脑时间和音频输入。在 <strong>Settings → Audio</strong> 查看电平，确认选中的是接收机音频，且输入没有过载。如果电平一直没有变化，请检查设备、声道和系统的音频输入权限。</p>
+
+        <h3>Linux 命令行</h3>
+        <p>在解压目录打开终端，先列出输入设备，再用对应的设备编号开始收听：</p>
+        <pre><code>./ft8rs monitor
+./ft8rs monitor --device 0</code></pre>
+        <p>命令行也支持解码 WAV 录音。更多音频设置、录音解码和 UDP 使用方法见 <a href="https://github.com/tallcode/ft8rs/blob/main/docs/USAGE.md">完整使用说明（英文）</a>。</p>
+      </section>
+    </main>
+
+    <footer>
+      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://github.com/tallcode/ft8rs/issues">反馈问题</a> · GPL-3.0-only</p>
+    </footer>
+  </body>
+</html>
