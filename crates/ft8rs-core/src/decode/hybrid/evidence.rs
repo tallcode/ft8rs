@@ -31,6 +31,7 @@ pub enum Provenance {
     A8List,
     JtdxDeep,
     ImportedMemory,
+    Experiment,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -150,7 +151,10 @@ fn confidence_for(evidence: &[DecodeEvidence]) -> DecodeConfidence {
         .filter(|e| {
             !matches!(
                 e.provenance,
-                Provenance::Unknown | Provenance::ImportedMemory | Provenance::CrossCancellation
+                Provenance::Unknown
+                    | Provenance::ImportedMemory
+                    | Provenance::CrossCancellation
+                    | Provenance::Experiment
             )
         })
         .collect();
@@ -213,6 +217,13 @@ mod tests {
         store.admit(candidate(
             DecoderId("sic-jtdx"),
             Provenance::CrossCancellation,
+            "K1JT BG5ATV RR73",
+        ));
+        assert_eq!(store.rows()[0].confidence, DecodeConfidence::Assisted);
+        assert!(!store.rows()[0].import_eligible);
+        store.admit(candidate(
+            DecoderId("hybrid-experiment"),
+            Provenance::Experiment,
             "K1JT BG5ATV RR73",
         ));
         assert_eq!(store.rows()[0].confidence, DecodeConfidence::Assisted);

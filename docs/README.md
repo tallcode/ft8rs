@@ -23,6 +23,7 @@ unless a section says otherwise.
 | [WSJT-X](../crates/ft8rs-core/WSJTX.md) | Source mapping, sample/numerical conventions, stages, AP and alignment risks |
 | [JTDX](../crates/ft8rs-core/JTDX.md) | Independent state, CallDB, partition settings, source differences and partial `chkgrid` scope |
 | [Hybrid](../crates/ft8rs-core/HYBRID.md) | Three baseline sessions, payload-aware deduplication, bounded cancellation and scheduling |
+| [Hybrid specialist](../crates/ft8rs-core/src/decode/experiment/README.md) | Opt-in private receive DSP, native reuse, conditional admission, bounded residual search and evidence limits |
 | [DX](../crates/ft8rs-core/DX.md) | Target context, protected tasks, three-way observations and controlled recovery |
 | [Shared cooperative architecture](../crates/ft8rs-core/COOPERATIVE_DECODER_DESIGN.md) | State ownership, observation/evidence boundaries and output budgets |
 
@@ -36,6 +37,9 @@ configuration and machine. Use the current guides above for active behavior.
   comparison, three-path implementation, SWL settings and hash-display identity.
 - [2026-10-28 DX experiments](reports/2026-10-28-dx.md): prototype versus implemented
   target recovery, known-truth cases, callback latency and worker cost.
+- [2026-10-29 Hybrid specialist experiments](../crates/ft8rs-core/src/decode/experiment/EXPERIMENTS.md):
+  private opt-in receive DSP, per-specialty native comparisons, errors and
+  baseline retention, callback/completion timing and both preserved campaigns.
 - [Earlier acceleration research](../crates/ft8rs-core/ACCEL.md): integer/SIMD and
   workspace optimizations, rejected approaches and archived profiling results.
 

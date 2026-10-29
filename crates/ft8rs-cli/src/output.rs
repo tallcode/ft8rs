@@ -1,4 +1,4 @@
-use ft8rs::stream::StreamDecodedMessage;
+use ft8rs::stream::session::StreamDecodedWithProvenance;
 use ft8rs::SlotTimestamp;
 
 use crate::output_cli::CliOutput;
@@ -20,11 +20,12 @@ impl Outputs {
     pub fn on_decode(
         &mut self,
         timestamp: SlotTimestamp,
-        row: &StreamDecodedMessage,
+        row: &StreamDecodedWithProvenance,
     ) -> Result<(), String> {
-        self.cli.on_decode(timestamp.clone(), row)?;
+        self.cli
+            .on_decode(timestamp.clone(), &row.decode, row.provenance)?;
         if let Some(udp) = &self.udp {
-            udp.on_decode(timestamp, row)?;
+            udp.on_decode(timestamp, &row.decode)?;
         }
         Ok(())
     }

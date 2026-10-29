@@ -2087,6 +2087,7 @@ fn provenance_tag(provenance: StreamDecodeProvenance) -> &'static str {
         StreamDecodeProvenance::Unknown => "",
         StreamDecodeProvenance::CooperativeRecovery => "sic",
         StreamDecodeProvenance::ContextRecovery => "ctx",
+        StreamDecodeProvenance::Experiment => "exp",
         StreamDecodeProvenance::A7Memory => "a7",
         StreamDecodeProvenance::ApMask => "ap",
         StreamDecodeProvenance::A8List => "a8",

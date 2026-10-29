@@ -6,6 +6,7 @@
 
 pub(crate) mod cooperative;
 pub mod dx;
+pub(crate) mod experiment;
 /// ft8rs-specific GF(2) row kernel (not mirrored), shared by both OSD mirrors.
 pub mod gf2;
 pub mod hybrid;

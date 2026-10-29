@@ -177,6 +177,7 @@ The file command writes console results; UDP output options are monitor-only.
 | `--jtdx-threads` | | Both | 0–24 logical partitions; default 1, zero opts into automatic selection |
 | `--nagain` | | Both | JTDX focused deep retry; DX chooses its own focused passes |
 | `--no-hybrid-sic` | | Both | Disable Hybrid cross cancellation, retain three baseline paths |
+| `--hybrid-experiment` | | Both | Opt in to the private weak-signal/interference branch; requires `--profile hybrid` |
 | `--udp` | `-u` | Monitor | Enable outgoing decode reports; default off |
 | `--udp-host` / `--udp-port` | `-o` / `-p` | Monitor | Destination, default `127.0.0.1:2238` |
 

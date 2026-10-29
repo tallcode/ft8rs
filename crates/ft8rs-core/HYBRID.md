@@ -1,12 +1,31 @@
 # Hybrid Decode
 
 `--profile hybrid` combines independent WSJT-X, JTDX/noAGC and JTDX/AGC sessions
-and one bounded round of cross cancellation. It is orchestration over the
-existing decoders. Hybrid does not alter the native algorithms under
+and one bounded round of cross cancellation. These paths are orchestration over the
+existing decoders. Hybrid also offers an opt-in private ft8rs specialist branch.
+Hybrid does not alter the native algorithms under
 `lib_wsjtx/` or `lib_jtdx/`; source-alignment corrections are reviewed separately.
 
 Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md),
 [shared architecture](COOPERATIVE_DECODER_DESIGN.md).
+
+## Optional specialist branch
+
+`--profile hybrid --hybrid-experiment` enables the ft8rs single-slot receive DSP.
+It is disabled by default and has no standalone profile or public decoder API.
+The GUI does not yet expose an enable switch. See [specialist implementation](src/decode/experiment/README.md)
+for the independent front end, soft metrics, conditional waveform admission,
+single residual search and known limitations.
+
+The specialist starts after all existing native/recovery callbacks, using the
+remaining ten-second slot-work budget. Its output is appended through the
+payload-aware ledger, never replacing native representatives. Tagged rows use
+`Experiment` / CLI/GUI marker `exp`; passive specialist evidence cannot create
+independent confirmation or seed native AP/hash memory. `--no-hybrid-sic`
+continues to control the original cross-decoder cancellation, not the private
+specialist's internal residual search. The specialist diagnostic is available in
+`HybridSlotDiagnostics.experiment`. Neither its work budget nor an in-flight
+native call guarantees a hard wall-clock completion limit.
 
 ## Baseline and ownership
 

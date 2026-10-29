@@ -205,11 +205,33 @@ comparisons. Versioned native fixture tests still run without those checkouts.
 
 ## Decoder change review
 
-Hybrid/DX orchestration must use existing native capabilities without changing
+The native Hybrid paths and DX orchestration must use existing native capabilities without changing
 native thresholds, candidate order, AP scheduling or mathematical calculations.
 Keep mutable native sessions, hash books and audio residuals isolated. Source
 alignment corrections belong to their native profile and need independent
 reference evidence, separate from an orchestration feature.
+
+The authorized [Hybrid specialist](../crates/ft8rs-core/src/decode/experiment/README.md) is separate
+ft8rs DSP in a private module. It reuses unchanged protocol/FEC functions and is
+available only through Hybrid (`--profile hybrid --hybrid-experiment`); do not add
+a standalone profile or expose its decoder as a public API. It is opt-in and does
+not currently have a GUI switch. Keep baseline sessions and original audio
+isolated. Supplementary rows carry their own provenance and cannot create
+independent confirmation or update native AP/hash memory. Evaluate each declared
+specialty with known truth; partial standalone coverage is acceptable, but added
+correct rows never erase errors or lost baseline rows in the report.
+
+Both single-slot research campaigns live under `experiments/single-slot/campaigns/`.
+Preserve raw inputs/outputs, failures, interrupted runs, frozen code/binaries,
+configuration and hashes. Use a new immutable run directory for every replay.
+The first campaign archive remains unchanged; the second copies completed
+batches into the repository between timed processes. Large binary/audio material
+is ignored by Git and must also be backed up as filesystem content.
+New synthetic input WAVs are reproducible local resources: keep their generator,
+seeds, configuration, hashes and compact results in source control, while leaving
+the generated audio and frozen binaries ignored. Retain the local copies for
+the research archive. Existing historical recordings and accepted native fixture
+management remain unchanged.
 
 Compare old and new outputs per signal with the same recording, configuration,
 CallDB, build profile and FFT backend. An added row cannot compensate for a lost
