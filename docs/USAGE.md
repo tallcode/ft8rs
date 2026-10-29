@@ -225,3 +225,11 @@ acceptance, use identical audio, context and database with the
 Technical limitations, the known JTDX long-recording miss and the partial
 geographic filter are documented in [validation](VALIDATION.md) and the
 [JTDX notes](../crates/ft8rs-core/JTDX.md).
+
+The GUI exposes **Experimental decoder** at the bottom of Decode settings,
+after Deep decode, for Hybrid.
+It is disabled by default and saved across restarts. Enabling it adds the
+independent stable weak-signal/interference receiver; supplementary lines end in
+`exp`. Native callbacks still arrive first. The branch uses the remaining soft
+budget up to roughly ten seconds from slot processing start; an in-flight task
+may finish later. See the [receiver design and evidence](../crates/ft8rs-core/src/decode/experiment/README.md).

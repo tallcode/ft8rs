@@ -92,3 +92,11 @@
 两轮实验永久入口位于 [实验目录](../../../../../experiments/single-slot/README.md) 的 `campaigns/`：第一轮 `01-single-slot-research` 保留全部现存初始资料的完整压缩包与哈希清单，包括失败版本和中断记录；第二轮 `02-hybrid-specialist` 保留当前冻结代码、二进制、私有 CallDB、输入、输出和诊断。生成音频与构建产物被 Git 忽略，但实际保存在仓库磁盘目录中。仅推送源代码不能替代对这些文件的备份。新合成音频属于可再生资源，不提交 Git；生成器、种子、参数、哈希与小型结果进入版本管理，现存本地音频仍保留。历史录音与已有参考夹具沿用原有管理。
 
 原始 [合成分析](../../../../../experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-specialist-v1.json) 和 [录音分析](../../../../../experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-specialist-files-v1.json) 可逐格核对上面的数字。没有删除、改写此前完成的原始运行目录，也没有用新增结果抵消丢失或错误。
+
+## 后续人工补充标注（2026-10-29）
+
+上文保留第二轮测量当时的标注状态。用户随后核实了真实呼号和网格，接受
+`ON7RED CU3HN HM68`、`EA1HBW CU3HN HM68`，以及第三轮新增的
+`G5AT SP9WZO R-10` 为补充标注。来源记为 `user-review`；原始 CSV、
+两轮冻结数据和测量输出保持原样。详见[第三轮开发报告](DEVELOPMENT.md)及
+[补充标注记录](../../../../../experiments/single-slot/campaigns/03-experiment-development/annotations/recordings-user-review.json)。

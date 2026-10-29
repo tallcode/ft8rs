@@ -1,0 +1,457 @@
+{
+  "snapshot": "development-v2-fixed-harness",
+  "freeze_sha256": "999fb008dda19ac949431005cbe19977c68dda10f0170f258839e1b7544d9ffb",
+  "stage": "development",
+  "methods": "product stream defaults; cooperative_realtime=false; exp only for Hybrid",
+  "jobs": [
+    {
+      "name": "00-awgn--22-00",
+      "arguments": [
+        "awgn",
+        2026102911001,
+        0,
+        -22,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "awgn",
+      "seed": 2026102911001,
+      "trial": 0,
+      "snr": -22
+    },
+    {
+      "name": "00-awgn--22-01",
+      "arguments": [
+        "awgn",
+        2026102921008,
+        1,
+        -22,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "awgn",
+      "seed": 2026102921008,
+      "trial": 1,
+      "snr": -22
+    },
+    {
+      "name": "00-awgn--22-02",
+      "arguments": [
+        "awgn",
+        2026102931015,
+        2,
+        -22,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "awgn",
+      "seed": 2026102931015,
+      "trial": 2,
+      "snr": -22
+    },
+    {
+      "name": "00-awgn--22-03",
+      "arguments": [
+        "awgn",
+        2026102941022,
+        3,
+        -22,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "awgn",
+      "seed": 2026102941022,
+      "trial": 3,
+      "snr": -22
+    },
+    {
+      "name": "01-cw--22-00",
+      "arguments": [
+        "cw",
+        2026103911004,
+        0,
+        -22,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "cw",
+      "seed": 2026103911004,
+      "trial": 0,
+      "snr": -22
+    },
+    {
+      "name": "01-cw--22-01",
+      "arguments": [
+        "cw",
+        2026103921011,
+        1,
+        -22,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "cw",
+      "seed": 2026103921011,
+      "trial": 1,
+      "snr": -22
+    },
+    {
+      "name": "01-cw--22-02",
+      "arguments": [
+        "cw",
+        2026103931018,
+        2,
+        -22,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "cw",
+      "seed": 2026103931018,
+      "trial": 2,
+      "snr": -22
+    },
+    {
+      "name": "01-cw--22-03",
+      "arguments": [
+        "cw",
+        2026103941025,
+        3,
+        -22,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "cw",
+      "seed": 2026103941025,
+      "trial": 3,
+      "snr": -22
+    },
+    {
+      "name": "02-mix--20-00",
+      "arguments": [
+        "mix",
+        2026104911007,
+        0,
+        -20,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "mix",
+      "seed": 2026104911007,
+      "trial": 0,
+      "snr": -20
+    },
+    {
+      "name": "02-mix--20-01",
+      "arguments": [
+        "mix",
+        2026104921014,
+        1,
+        -20,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "mix",
+      "seed": 2026104921014,
+      "trial": 1,
+      "snr": -20
+    },
+    {
+      "name": "02-mix--20-02",
+      "arguments": [
+        "mix",
+        2026104931021,
+        2,
+        -20,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "mix",
+      "seed": 2026104931021,
+      "trial": 2,
+      "snr": -20
+    },
+    {
+      "name": "02-mix--20-03",
+      "arguments": [
+        "mix",
+        2026104941028,
+        3,
+        -20,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "mix",
+      "seed": 2026104941028,
+      "trial": 3,
+      "snr": -20
+    },
+    {
+      "name": "03-mix2--20-00",
+      "arguments": [
+        "mix2",
+        2026105911010,
+        0,
+        -20,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "mix2",
+      "seed": 2026105911010,
+      "trial": 0,
+      "snr": -20
+    },
+    {
+      "name": "03-mix2--20-01",
+      "arguments": [
+        "mix2",
+        2026105921017,
+        1,
+        -20,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "mix2",
+      "seed": 2026105921017,
+      "trial": 1,
+      "snr": -20
+    },
+    {
+      "name": "03-mix2--20-02",
+      "arguments": [
+        "mix2",
+        2026105931024,
+        2,
+        -20,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "mix2",
+      "seed": 2026105931024,
+      "trial": 2,
+      "snr": -20
+    },
+    {
+      "name": "03-mix2--20-03",
+      "arguments": [
+        "mix2",
+        2026105941031,
+        3,
+        -20,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "mix2",
+      "seed": 2026105941031,
+      "trial": 3,
+      "snr": -20
+    },
+    {
+      "name": "04-noise--24-00",
+      "arguments": [
+        "noise",
+        2026106911013,
+        0,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "noise",
+      "seed": 2026106911013,
+      "trial": 0,
+      "snr": -24
+    },
+    {
+      "name": "04-noise--24-01",
+      "arguments": [
+        "noise",
+        2026106921020,
+        1,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "noise",
+      "seed": 2026106921020,
+      "trial": 1,
+      "snr": -24
+    },
+    {
+      "name": "04-noise--24-02",
+      "arguments": [
+        "noise",
+        2026106931027,
+        2,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "noise",
+      "seed": 2026106931027,
+      "trial": 2,
+      "snr": -24
+    },
+    {
+      "name": "04-noise--24-03",
+      "arguments": [
+        "noise",
+        2026106941034,
+        3,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "noise",
+      "seed": 2026106941034,
+      "trial": 3,
+      "snr": -24
+    },
+    {
+      "name": "05-cwonly--24-00",
+      "arguments": [
+        "cwonly",
+        2026107911016,
+        0,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "cwonly",
+      "seed": 2026107911016,
+      "trial": 0,
+      "snr": -24
+    },
+    {
+      "name": "05-cwonly--24-01",
+      "arguments": [
+        "cwonly",
+        2026107921023,
+        1,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "cwonly",
+      "seed": 2026107921023,
+      "trial": 1,
+      "snr": -24
+    },
+    {
+      "name": "05-cwonly--24-02",
+      "arguments": [
+        "cwonly",
+        2026107931030,
+        2,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "cwonly",
+      "seed": 2026107931030,
+      "trial": 2,
+      "snr": -24
+    },
+    {
+      "name": "05-cwonly--24-03",
+      "arguments": [
+        "cwonly",
+        2026107941037,
+        3,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "cwonly",
+      "seed": 2026107941037,
+      "trial": 3,
+      "snr": -24
+    },
+    {
+      "name": "06-blocker--24-00",
+      "arguments": [
+        "blocker",
+        2026108911019,
+        0,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "blocker",
+      "seed": 2026108911019,
+      "trial": 0,
+      "snr": -24
+    },
+    {
+      "name": "06-blocker--24-01",
+      "arguments": [
+        "blocker",
+        2026108921026,
+        1,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "blocker",
+      "seed": 2026108921026,
+      "trial": 1,
+      "snr": -24
+    },
+    {
+      "name": "06-blocker--24-02",
+      "arguments": [
+        "blocker",
+        2026108931033,
+        2,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "blocker",
+      "seed": 2026108931033,
+      "trial": 2,
+      "snr": -24
+    },
+    {
+      "name": "06-blocker--24-03",
+      "arguments": [
+        "blocker",
+        2026108941040,
+        3,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "blocker",
+      "seed": 2026108941040,
+      "trial": 3,
+      "snr": -24
+    },
+    {
+      "name": "07-pilotonly--24-00",
+      "arguments": [
+        "pilotonly",
+        2026109911022,
+        0,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "pilotonly",
+      "seed": 2026109911022,
+      "trial": 0,
+      "snr": -24
+    },
+    {
+      "name": "07-pilotonly--24-01",
+      "arguments": [
+        "pilotonly",
+        2026109921029,
+        1,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "pilotonly",
+      "seed": 2026109921029,
+      "trial": 1,
+      "snr": -24
+    },
+    {
+      "name": "07-pilotonly--24-02",
+      "arguments": [
+        "pilotonly",
+        2026109931036,
+        2,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "pilotonly",
+      "seed": 2026109931036,
+      "trial": 2,
+      "snr": -24
+    },
+    {
+      "name": "07-pilotonly--24-03",
+      "arguments": [
+        "pilotonly",
+        2026109941043,
+        3,
+        -24,
+        "wsjtx,jtdx,hybrid,exp"
+      ],
+      "scenario": "pilotonly",
+      "seed": 2026109941043,
+      "trial": 3,
+      "snr": -24
+    }
+  ],
+  "complete": true
+}

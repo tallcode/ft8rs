@@ -1,0 +1,6 @@
+   Compiling ft8rs-core v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core)
+   Compiling ft8rs-build v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-build)
+   Compiling ft8rs-cli v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-cli)
+   Compiling ft8rs-gui v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-gui)
+    Checking ft8rs-engine v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-engine)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.66s

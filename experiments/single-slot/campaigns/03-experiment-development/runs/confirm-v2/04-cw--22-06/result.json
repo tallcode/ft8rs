@@ -1,0 +1,44 @@
+{
+  "truth": [
+    {
+      "msg": "CQ N1SMM PF65",
+      "freq": 714.65510508947,
+      "dt": 0.107213762875,
+      "target": true
+    }
+  ],
+  "methods": {
+    "wsjtx": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 415.718,
+      "row_count": 0
+    },
+    "jtdx": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 387.956,
+      "row_count": 0
+    },
+    "hybrid": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 465.065,
+      "row_count": 0
+    },
+    "exp": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 2852.915,
+      "row_count": 0
+    }
+  },
+  "audio_sha256": "913b0bc6ec10c65694e7c4ebf03e2690a61fdd2aab2820ec7b091b9806b0f4b5",
+  "lost_baseline": [],
+  "added": [],
+  "first_new_callback_ms": null
+}

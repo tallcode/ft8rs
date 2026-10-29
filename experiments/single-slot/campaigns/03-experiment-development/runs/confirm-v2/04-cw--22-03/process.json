@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/Volumes/ZHITAI/Workspace/ft8rs/experiments/single-slot/campaigns/03-experiment-development/frozen/development-v2-fixed-harness/target/release/ft8rs-experiment-measure",
+    "cw",
+    "2026106981034",
+    "3",
+    "-22",
+    "wsjtx,jtdx,hybrid,exp"
+  ],
+  "returncode": 0,
+  "process_ms": 6652.808875000005,
+  "stdout_sha256": "8d97837e92a0586f8a0a6e5e9b82c12643a8fe85f5cc05c4a6b75b5db34acc58",
+  "stderr_sha256": "07a30f32e1683a6e5dcc3068df5294011c6ccead03569983b6b127a43b8cb404"
+}

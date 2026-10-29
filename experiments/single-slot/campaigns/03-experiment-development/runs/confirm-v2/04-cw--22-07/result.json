@@ -1,0 +1,44 @@
+{
+  "truth": [
+    {
+      "msg": "OH0IAT EA0OER -08",
+      "freq": 902.618736281816,
+      "dt": 0.009388246467,
+      "target": true
+    }
+  ],
+  "methods": {
+    "wsjtx": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 399.064,
+      "row_count": 0
+    },
+    "jtdx": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 279.335,
+      "row_count": 0
+    },
+    "hybrid": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 432.029,
+      "row_count": 0
+    },
+    "exp": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 2866.183,
+      "row_count": 0
+    }
+  },
+  "audio_sha256": "3edde3f08396b386593e51f9a80254ecb94114d2b4efd240258ec51f35a6d23d",
+  "lost_baseline": [],
+  "added": [],
+  "first_new_callback_ms": null
+}

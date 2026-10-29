@@ -1,11 +1,15 @@
 //! Experimental receive foundation retained from the single-slot campaigns.
 //! Protocol, waveform synthesis and FEC call unchanged upstream routines.
 //! This private module has no standalone profile, CallDB or persistent AP state.
+use super::ExperimentInput;
 use crate::stream::session::StreamDecodedMessage;
+#[path = "waveform.rs"]
+mod waveform;
 use rustfft::{num_complex::Complex64 as C, FftPlanner};
 use std::f64::consts::TAU;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use waveform::{cancel_smooth, fit_message, WaveformFit};
 const FS: f64 = 12000.0;
 const GRAY: [usize; 8] = [0, 1, 3, 2, 5, 6, 4, 7];
 const COSTAS: [usize; 7] = [3, 1, 4, 0, 6, 5, 2];
@@ -20,9 +24,17 @@ pub struct ExperimentDiagnostics {
     pub rejected_rows: usize,
     pub accepted_rows: usize,
     pub residual_searches: usize,
+    pub native_seed_candidates: usize,
+    pub native_seed_models: usize,
+    pub native_seed_rejections: usize,
+    pub data_support_rejections: usize,
+    pub conditioning: Duration,
+    pub initial_search: Duration,
+    pub residual_search: Duration,
     pub budget_exhausted: bool,
     pub elapsed: Duration,
     pub accepted_scores: Vec<f64>,
+    pub accepted_data_scores: Vec<f64>,
     pub accepted_methods: Vec<String>,
     pub error: Option<String>,
 }
@@ -655,132 +667,6 @@ fn search(audio: &[f64], low: f64, high: f64, budget: &mut Budget) -> Vec<Row> {
     budget.diagnostics.tentative_rows += rows.len();
     rows
 }
-fn fit_message(audio: &[f64], row: &Row) -> Option<(f64, f64, f64)> {
-    let tones = row.tones?;
-    if [0, 36, 72]
-        .iter()
-        .any(|&base| (0..7).any(|k| tones[base + k] != COSTAS[k] as i32))
-    {
-        return None;
-    }
-    let (re, im) = crate::decode::gen_ft8wave::gen_ft8wave(&tones, 0.0);
-    let band = Band::new(audio, row.f + 22.0);
-    let evaluate = |f: f64, dt: f64| -> f64 {
-        let start = (dt + 0.5) * 200.0;
-        let rotation = C::from_polar(1.0, TAU * (f - band.center) / 200.0);
-        let first = start.ceil().max(0.0) as usize;
-        let last = (start + re.len() as f64 / 60.0)
-            .floor()
-            .min(band.observed_end as f64 - 1.0) as usize;
-        let mut phase = C::from_polar(
-            1.0,
-            TAU * (f - band.center) * (first as f64 - start) / 200.0,
-        );
-        let mut z = C::new(0.0, 0.0);
-        let mut en = 0.0;
-        // Interpolate the known 12-kHz template, never the 200-Hz observation.
-        // Interpolating the observation biases timing toward integer sample positions.
-        for j in first..=last {
-            let source = (j as f64 - start) * 60.0;
-            let i = source.floor() as usize;
-            let x = source - i as f64;
-            if i + 1 >= re.len() {
-                break;
-            }
-            let v = C::new(
-                re[i] * (1.0 - x) + re[i + 1] * x,
-                im[i] * (1.0 - x) + im[i + 1] * x,
-            ) * phase;
-            z += band.samples[j] * v.conj();
-            en += v.norm_sqr();
-            phase *= rotation;
-        }
-        z.norm_sqr() / en.max(1e-15)
-    };
-    let mut best = (0.0, row.f, row.dt);
-    for df in -40..=40 {
-        for dt in -4..=4 {
-            let f = row.f + df as f64 * 0.025;
-            let t = row.dt + dt as f64 * 0.005;
-            let score = evaluate(f, t);
-            if score > best.0 {
-                best = (score, f, t);
-            }
-        }
-    }
-    let anchor = best;
-    for df in -3..=3 {
-        for dt in -2..=2 {
-            let f = anchor.1 + df as f64 * 0.005;
-            let t = anchor.2 + dt as f64 * 0.001;
-            let score = evaluate(f, t);
-            if score > best.0 {
-                best = (score, f, t);
-            }
-        }
-    }
-    let anchor = best;
-    for df in -5..=5 {
-        for dt in -2..=2 {
-            let f = anchor.1 + df as f64 * 0.0005;
-            let t = anchor.2 + dt as f64 * 0.00025;
-            let score = evaluate(f, t);
-            if score > best.0 {
-                best = (score, f, t);
-            }
-        }
-    }
-    let n0 = variance(&band.spectra(best.1, best.2, 0.0)) / 32.0;
-    Some((best.1, best.2, best.0 / n0))
-}
-fn cancel_smooth(audio: &[f64], row: &Row, f: f64, dt: f64) -> Vec<f64> {
-    let tones = row.tones.expect("validated original tones");
-    let (re, im) = crate::decode::gen_ft8wave::gen_ft8wave(&tones, f);
-    let start = ((dt + 0.5) * FS).round() as isize;
-    let hop = 1920usize;
-    let radius = 1920isize;
-    let nodes = re.len().div_ceil(hop) + 1;
-    let mut coeff = Vec::new();
-    for node in 0..nodes {
-        let center = (node * hop) as isize;
-        let mut aa = 0.0;
-        let mut bb = 0.0;
-        let mut ab = 0.0;
-        let mut ya = 0.0;
-        let mut yb = 0.0;
-        for offset in -radius..=radius {
-            let i = center + offset;
-            let j = start + i;
-            if i < 0 || i >= re.len() as isize || j < 0 || j >= audio.len() as isize {
-                continue;
-            }
-            let w = 0.5 + 0.5 * (std::f64::consts::PI * offset as f64 / radius as f64).cos();
-            let a = re[i as usize];
-            let b = im[i as usize];
-            let y = audio[j as usize];
-            aa += w * a * a;
-            bb += w * b * b;
-            ab += w * a * b;
-            ya += w * y * a;
-            yb += w * y * b;
-        }
-        let det = (aa * bb - ab * ab).max(1e-15);
-        coeff.push(((ya * bb - yb * ab) / det, (yb * aa - ya * ab) / det));
-    }
-    let mut out = audio.to_vec();
-    for i in 0..re.len() {
-        let j = start + i as isize;
-        if j < 0 || j >= out.len() as isize {
-            continue;
-        }
-        let node = i / hop;
-        let x = (i % hop) as f64 / hop as f64;
-        let a = coeff[node].0 * (1.0 - x) + coeff[node + 1].0 * x;
-        let b = coeff[node].1 * (1.0 - x) + coeff[node + 1].1 * x;
-        out[j as usize] -= a * re[i] + b * im[i];
-    }
-    out
-}
 fn clean_lines(audio: &[f64]) -> Vec<f64> {
     let mut out = audio.to_vec();
     for _ in 0..3 {
@@ -909,16 +795,19 @@ fn admit(
         if budget.exhausted() {
             return;
         }
-        if outputs.iter().any(|old| row_identity(old, &row)) {
+        if outputs.iter().any(|old| row_identity(old, &row))
+            || models.iter().any(|model| row_identity(&model.row, &row))
+        {
             continue;
         }
-        if let Some((f, dt, score)) = fit_message(ranking_audio, &row) {
-            row.f = f;
-            row.dt = dt;
-            if score > MIN_SCORE {
-                ranked.push((score, row));
+        if let Some(fit) = fit_message(ranking_audio, &row, budget.deadline) {
+            row.f = fit.f;
+            row.dt = fit.dt;
+            if fit.supported() {
+                ranked.push((fit.score, row));
             } else {
                 budget.diagnostics.rejected_rows += 1;
+                budget.diagnostics.data_support_rejections += usize::from(!fit.data_supported());
             }
         }
     }
@@ -928,13 +817,18 @@ fn admit(
             return;
         }
         let residual = conditioned_audio(audio, models, &row);
-        let Some((f, dt, score)) = fit_message(&residual, &row) else {
+        let Some(fit) = fit_message(&residual, &row, budget.deadline) else {
             continue;
         };
-        if score <= MIN_SCORE || !score.is_finite() || !(budget.low..=budget.high).contains(&f) {
+        if !fit.supported() || !(budget.low..=budget.high).contains(&fit.f) {
             budget.diagnostics.rejected_rows += 1;
+            budget.diagnostics.data_support_rejections += usize::from(!fit.data_supported());
             continue;
         }
+        if budget.exhausted() {
+            return;
+        }
+        let WaveformFit { f, dt, score, .. } = fit;
         row.f = f;
         row.dt = dt;
         let cleaned = cancel_smooth(&residual, &row, f, dt);
@@ -950,6 +844,7 @@ fn admit(
         emit(&decode);
         budget.diagnostics.accepted_rows += 1;
         budget.diagnostics.accepted_scores.push(score);
+        budget.diagnostics.accepted_data_scores.push(fit.data_score);
         budget.diagnostics.accepted_methods.push(row.method.clone());
         models.push(ExplainedSignal {
             row: row.clone(),
@@ -959,15 +854,94 @@ fn admit(
         outputs.push(row);
     }
 }
+/// Bounded, independently checked nuisance models. Neither the native rows nor
+/// their provenance, audio or state are changed by this fit. Exp rows cannot
+/// become native seeds, and these models are never published or fed back to AP.
+fn native_models(
+    audio: &[f64],
+    baseline: &[StreamDecodedMessage],
+    budget: &mut Budget,
+) -> Vec<ExplainedSignal> {
+    let mut seeds: Vec<_> = baseline
+        .iter()
+        .filter(|row| {
+            row.freq.is_finite()
+                && row.dt.is_finite()
+                && row.snr.is_finite()
+                && row.dt.abs() <= 2.5
+                && (budget.low - 80.0..=budget.high + 80.0).contains(&row.freq)
+                && valid_tones(&row.itone)
+        })
+        .collect();
+    seeds.sort_by(|a, b| {
+        b.snr
+            .total_cmp(&a.snr)
+            .then_with(|| a.freq.total_cmp(&b.freq))
+    });
+    seeds.truncate(8);
+    budget.diagnostics.native_seed_candidates = seeds.len();
+    let mut models = Vec::new();
+    for seed in seeds {
+        if budget.exhausted() {
+            break;
+        }
+        let mut row = Row {
+            msg: seed.msg.clone(),
+            f: seed.freq,
+            dt: seed.dt,
+            method: "native-model".into(),
+            tones: Some(seed.itone),
+        };
+        if models
+            .iter()
+            .any(|model: &ExplainedSignal| row_identity(&model.row, &row))
+        {
+            continue;
+        }
+        let residual = conditioned_audio(audio, &models, &row);
+        let Some(fit) = fit_message(&residual, &row, budget.deadline) else {
+            continue;
+        };
+        if !fit.supported() {
+            budget.diagnostics.native_seed_rejections += 1;
+            continue;
+        }
+        if budget.exhausted() {
+            break;
+        }
+        row.f = fit.f;
+        row.dt = fit.dt;
+        let cleaned = cancel_smooth(&residual, &row, fit.f, fit.dt);
+        models.push(ExplainedSignal {
+            row,
+            score: fit.score,
+            wave: residual.iter().zip(cleaned).map(|(&x, y)| x - y).collect(),
+        });
+        budget.diagnostics.native_seed_models += 1;
+    }
+    models
+}
+
+fn valid_tones(tones: &[i32; 79]) -> bool {
+    tones.iter().all(|&tone| (0..8).contains(&tone))
+        && [0, 36, 72]
+            .iter()
+            .all(|&base| (0..7).all(|k| tones[base + k] == COSTAS[k] as i32))
+}
+
 /// Called only by Hybrid, after all original workers have emitted their rows.
 /// A finite search can finish an in-flight FEC/fit slightly beyond the deadline.
-pub(crate) fn run(
-    samples: &[f32],
-    low: f64,
-    high: f64,
-    deadline: Instant,
+pub(super) fn run(
+    input: ExperimentInput<'_>,
     emit: &mut dyn FnMut(&StreamDecodedMessage),
 ) -> ExperimentDiagnostics {
+    let ExperimentInput {
+        samples,
+        baseline,
+        low,
+        high,
+        deadline,
+    } = input;
     let start = Instant::now();
     let mut budget = Budget {
         deadline,
@@ -980,7 +954,7 @@ pub(crate) fn run(
         || samples.iter().any(|x| !x.is_finite())
         || !low.is_finite()
         || !high.is_finite()
-        || low >= high
+        || low.max(200.0) >= high.min(3000.0)
         || budget.exhausted()
     {
         return budget.diagnostics;
@@ -989,9 +963,12 @@ pub(crate) fn run(
     if original.iter().all(|x| *x == 0.0) {
         return budget.diagnostics;
     }
+    let conditioning = Instant::now();
     let audio = clean_lines(&original);
-    let candidates = search(&audio, low, high, &mut budget);
-    let mut models = Vec::new();
+    let mut models = native_models(&audio, baseline, &mut budget);
+    budget.diagnostics.conditioning = conditioning.elapsed();
+    let initial_search = Instant::now();
+    let candidates = search(&audio, budget.low, budget.high, &mut budget);
     let mut outputs = Vec::new();
     admit(
         &audio,
@@ -1002,10 +979,12 @@ pub(crate) fn run(
         &mut budget,
         emit,
     );
+    budget.diagnostics.initial_search = initial_search.elapsed();
     if !models.is_empty() && !budget.exhausted() {
+        let residual_search = Instant::now();
         let mut order: Vec<usize> = (0..models.len()).collect();
         order.sort_by(|&a, &b| models[b].score.total_cmp(&models[a].score));
-        order.truncate(3);
+        order.truncate(8);
         let mut residual = audio.clone();
         for i in order {
             for (x, &y) in residual.iter_mut().zip(&models[i].wave) {
@@ -1013,7 +992,7 @@ pub(crate) fn run(
             }
         }
         budget.diagnostics.residual_searches = 1;
-        let candidates = search(&residual, low, high, &mut budget);
+        let candidates = search(&residual, budget.low, budget.high, &mut budget);
         admit(
             &audio,
             &residual,
@@ -1023,6 +1002,7 @@ pub(crate) fn run(
             &mut budget,
             emit,
         );
+        budget.diagnostics.residual_search = residual_search.elapsed();
     }
     budget.diagnostics.elapsed = start.elapsed();
     budget.diagnostics

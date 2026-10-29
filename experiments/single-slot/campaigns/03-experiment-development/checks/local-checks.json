@@ -1,0 +1,71 @@
+[
+  {
+    "name": "fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--check"
+    ],
+    "returncode": 0,
+    "wall_seconds": 0.49936983399999996
+  },
+  {
+    "name": "clippy",
+    "command": [
+      "cargo",
+      "clippy",
+      "--workspace",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "returncode": 0,
+    "wall_seconds": 3.7227289580000003
+  },
+  {
+    "name": "core-fast",
+    "command": [
+      "bash",
+      "scripts/test-decoders.sh",
+      "fast"
+    ],
+    "returncode": 0,
+    "wall_seconds": 520.536762
+  },
+  {
+    "name": "workspace-fast-excluding-core",
+    "command": [
+      "cargo",
+      "test",
+      "--profile",
+      "fast",
+      "--workspace",
+      "--exclude",
+      "ft8rs-core",
+      "--lib",
+      "--bins",
+      "--",
+      "--test-threads=1"
+    ],
+    "returncode": 0,
+    "passed": 63,
+    "ignored": 1,
+    "execution": "direct tool; local loopback permitted"
+  },
+  {
+    "name": "product-build",
+    "command": [
+      "cargo",
+      "build",
+      "--profile",
+      "fast",
+      "-p",
+      "ft8rs-cli",
+      "-p",
+      "ft8rs-gui"
+    ],
+    "returncode": 0
+  }
+]

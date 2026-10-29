@@ -1,0 +1,93 @@
+   Compiling ft8rs-core v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core)
+   Compiling ft8rs-cli v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-cli)
+   Compiling ft8rs-gui v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-gui)
+   Compiling ft8rs-engine v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-engine)
+    Finished `fast` profile [optimized] target(s) in 6.55s
+     Running unittests src/lib.rs (target/fast/deps/ft8rs_build-7428d99e1b2915ff)
+
+running 2 tests
+test tests::accepts_release_and_traceable_development_versions ... ok
+test tests::rejects_malformed_versions_instead_of_embedding_them ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/fast/deps/ft8rs-33473c90217ad21d)
+
+running 3 tests
+test output_cli::tests::experiment_tag_is_a_suffix_and_never_changes_payload ... ok
+test tests::experiment_is_opt_in_and_hybrid_only ... ok
+test tests::partition_default_and_explicit_auto_reach_the_decoder_config ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/fast/deps/ft8rs_engine-67bf415ebb607d8b)
+
+running 29 tests
+test engine::tests::decode_actor_hybrid_long_emits_jtdx_unique ... ignored, slow long-fixture actor gate; run with --release --ignored
+test engine::tests::decode_actor_hybrid_matches_oneshot ... ok
+test engine::tests::decode_actor_reproduces_wsjtx_short_slot_and_reconfigures ... ok
+test reconfig::tests::channel_change_restarts_capture_only ... ok
+test reconfig::tests::device_and_config_change_combine ... ok
+test reconfig::tests::device_change_in_dx_keeps_dx_intel ... ok
+test reconfig::tests::device_change_restarts_capture_only_and_preserves_session ... ok
+test reconfig::tests::experiment_toggle_rebuilds_without_restarting_capture ... ok
+test reconfig::tests::frequency_window_change_rebuilds_session_migrates_hash ... ok
+test reconfig::tests::hiscall_change_in_dx_resets_intel_and_requires_confirm ... ok
+test reconfig::tests::hiscall_change_outside_dx_does_not_confirm ... ok
+test reconfig::tests::mycall_change_in_dx_resets_intel_without_confirm ... ok
+test reconfig::tests::mycall_change_outside_dx_has_no_dx_reset ... ok
+test reconfig::tests::no_change_is_noop ... ok
+test reconfig::tests::profile_change_between_non_dx_leaves_dx_buckets_alone ... ok
+test reconfig::tests::profile_change_into_dx_resets_dx_intel ... ok
+test reconfig::tests::sensitivity_toggles_rebuild_session ... ok
+test reconfig::tests::udp_toggle_is_output_only ... ok
+test report::tests::builds_decode_packet_header_and_payload_shape ... ok
+test soundcard::tests::antiphase_stereo_cancels_under_mono_but_survives_single_channel ... ok
+test soundcard::tests::capture_fatal_errors_keep_their_kind_independent_stop_behavior ... ok
+test soundcard::tests::capture_format_prefers_requested_layout_at_48k_and_uses_device_fallback ... ok
+test soundcard::tests::capture_xruns_do_not_stop_audio_and_reach_diagnostics ... ok
+test soundcard::tests::each_whole_block_grids_to_its_slot_and_both_decode ... ok
+test soundcard::tests::full_slot_emits_all_three_stages_with_near_full_window ... ok
+test soundcard::tests::mono_device_passes_through_regardless_of_selection ... ok
+test soundcard::tests::mono_does_not_halve_single_sided_audio ... ok
+test soundcard::tests::pcm_widths_and_float_capture_have_equal_amplitudes_and_channel_levels ... ok
+test soundcard::tests::runt_first_slot_is_dropped_not_decoded ... ok
+
+test result: ok. 28 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.84s
+
+     Running unittests src/main.rs (target/fast/deps/ft8rs_gui-28fe675242a97b18)
+
+running 30 tests
+test app::tests::annotation_detection ... ok
+test app::tests::clean_message_drops_annotations ... ok
+test app::tests::device_popup_can_be_wider_than_trigger_and_show_complete_name ... ok
+test app::tests::dialog_focus_restores_before_focusing_and_spaces_retries ... ok
+test app::tests::different_messages_do_not_match ... ok
+test app::tests::double_click_extracts_cq_call_and_grid ... ok
+test app::tests::double_click_extracts_sender_from_directed_message ... ok
+test app::tests::double_click_resolves_hash_braces_and_skips_unresolved ... ok
+test app::tests::external_with_annotations_matches_local_body ... ok
+test app::tests::grid4_is_structural_but_extraction_excludes_the_rr73_ack ... ok
+test app::tests::hashed_calls_match_leniently ... ok
+test app::tests::long_device_names_keep_both_field_and_popup_inside_window ... ok
+test app::tests::new_target_does_not_inherit_the_previous_grid ... ok
+test app::tests::own_callsign_is_yellow_but_own_grid_is_unmarked ... ok
+test app::tests::same_source_rows_never_fold_but_cross_source_merges_to_both ... ok
+test app::tests::separators_mark_first_and_subsequent_nonempty_slots ... ok
+test app::tests::slot_identity_survives_source_delay_midnight_and_next_day ... ok
+test app::tests::standard_form_reflows_after_window_width_changes ... ok
+test app::tests::svg_monitor_button_stays_square_and_centered_across_fonts_and_dpi ... ok
+test app::tests::svg_monitor_icons_have_centered_visual_weight_at_multiple_resolutions ... ok
+test app::tests::switching_settings_pages_keeps_the_first_presented_frame_stable ... ok
+test app::tests::target_highlight_only_marks_complete_message_tokens ... ok
+test app::tests::unknown_provenance_does_not_prevent_compare_matching ... ok
+test app::tests::validates_numeric_settings_without_silent_defaults ... ok
+test wsjtx_udp::tests::excludes_non_ft8_low_confidence_off_air_and_invalid_times ... ok
+test wsjtx_udp::tests::ignores_replays_and_other_types ... ok
+test wsjtx_udp::tests::parses_decode_message ... ok
+test wsjtx_udp::tests::parses_wsjtx_mode_symbol_and_rejects_other_symbols ... ok
+test wsjtx_udp::tests::receives_over_real_socket ... ok
+test wsjtx_udp::tests::rejects_truncated_and_bad_magic ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+

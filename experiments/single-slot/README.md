@@ -1,6 +1,6 @@
 # Single slot receiver experiments
 
-Both research campaigns preserve their original measurements, failures, frozen
+The first two research campaigns preserve their original measurements, failures, frozen
 code/binaries, configuration and data. The current development foundation and its
 technical documentation live in [decode/experiment](../../crates/ft8rs-core/src/decode/experiment/README.md).
 The [dated measurement report](../../crates/ft8rs-core/src/decode/experiment/EXPERIMENTS.md)
@@ -10,6 +10,9 @@ describes the frozen version before the module cleanup.
   v8/v9/v10 source variants, tools, self-checks, complete archive and analyses.
 - [Second campaign](campaigns/02-hybrid-specialist/README.md): Hybrid-only frozen
   prototype, known-truth confirmation, recording comparisons and completion audit.
+- [Third campaign](campaigns/03-experiment-development/README.md): full product
+  development, native waveform models, stricter admission, fresh confirmation
+  and exact Hybrid baseline retention. Original campaigns are never rewritten.
 
 Each campaign owns `tools/` and `sources/`. There are no Rust harnesses or Python
 experiment runners mixed into this top-level directory. Historical `scripts/`

@@ -1,0 +1,37 @@
+{
+  "truth": [],
+  "methods": {
+    "wsjtx": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 366.844,
+      "row_count": 0
+    },
+    "jtdx": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 348.951,
+      "row_count": 0
+    },
+    "hybrid": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 409.61,
+      "row_count": 0
+    },
+    "exp": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 2804.288,
+      "row_count": 0
+    }
+  },
+  "audio_sha256": "f7db15989cec6f25c13fcd4321a1a6e3739e90f6fc0405387213730738df7587",
+  "lost_baseline": [],
+  "added": [],
+  "first_new_callback_ms": null
+}

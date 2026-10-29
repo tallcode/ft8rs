@@ -1,0 +1,44 @@
+{
+  "truth": [
+    {
+      "msg": "OH0TXY F5AEH R-03",
+      "freq": 737.859535174053,
+      "dt": 0.670198229078,
+      "target": true
+    }
+  ],
+  "methods": {
+    "wsjtx": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 442.283,
+      "row_count": 0
+    },
+    "jtdx": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 315.99,
+      "row_count": 0
+    },
+    "hybrid": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 480.062,
+      "row_count": 0
+    },
+    "exp": {
+      "rows": [],
+      "correct": 0,
+      "wrong": 0,
+      "elapsed_ms": 2839.633,
+      "row_count": 0
+    }
+  },
+  "audio_sha256": "d78bc69d50cfdd01833b433baaf0363ce345d640df204062bb2fb52f087e90c2",
+  "lost_baseline": [],
+  "added": [],
+  "first_new_callback_ms": null
+}

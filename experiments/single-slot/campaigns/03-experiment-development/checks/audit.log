@@ -1,0 +1,43 @@
+{
+  "frozen_builds": [
+    {
+      "name": "development-v2",
+      "complete": false,
+      "freeze_sha256": "8925c33f7c186625e009d2cbf48fb22aff9ba3548d37e38176d525a7ecf30eb2"
+    },
+    {
+      "name": "development-v2-fixed-harness",
+      "complete": true,
+      "freeze_sha256": "999fb008dda19ac949431005cbe19977c68dda10f0170f258839e1b7544d9ffb"
+    }
+  ],
+  "runs": [
+    {
+      "name": "confirm-v2",
+      "cases": 116,
+      "baseline_rows": 82,
+      "stage": "confirmation"
+    },
+    {
+      "name": "dev-v2",
+      "cases": 32,
+      "baseline_rows": 24,
+      "stage": "development"
+    },
+    {
+      "name": "files-v2",
+      "cases": 20,
+      "baseline_rows": 444,
+      "stage": "recordings"
+    }
+  ],
+  "runtime_source_changes": [],
+  "test_or_document_changes": [
+    "crates/ft8rs-core/src/decode/experiment/README.md",
+    "crates/ft8rs-core/src/decode/experiment/tests.rs"
+  ],
+  "generated_waveforms": 148,
+  "baseline_rows": 550,
+  "baseline_losses": 0,
+  "prior_campaign_and_native_changes": []
+}

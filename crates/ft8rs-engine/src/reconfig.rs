@@ -93,6 +93,7 @@ pub enum ConfigField {
     HideDupes,
     HideHash,
     HybridSic,
+    HybridExperiment,
 }
 
 /// Diff the GUI-exposed decode-config fields.
@@ -117,6 +118,10 @@ pub fn config_diff(old: &StreamDecodeConfig, new: &StreamDecodeConfig) -> BTreeS
     note(old.hide_dupes != new.hide_dupes, ConfigField::HideDupes);
     note(old.hide_hash != new.hide_hash, ConfigField::HideHash);
     note(old.hybrid_sic != new.hybrid_sic, ConfigField::HybridSic);
+    note(
+        old.hybrid_experiment != new.hybrid_experiment,
+        ConfigField::HybridExperiment,
+    );
     changed
 }
 
@@ -298,6 +303,26 @@ mod tests {
             assert!(out.rebuild_session, "expected session rebuild");
             assert!(out.migrate.contains(&StateBucket::HashBook));
             assert!(!out.confirm_required);
+        }
+    }
+
+    #[test]
+    fn experiment_toggle_rebuilds_without_restarting_capture() {
+        let mut old = base();
+        old.config.profile = DecodeProfile::Hybrid;
+        let mut new = old.clone();
+        new.config.hybrid_experiment = true;
+        assert_eq!(
+            config_diff(&old.config, &new.config),
+            [ConfigField::HybridExperiment].into_iter().collect()
+        );
+        for (a, b) in [(&old, &new), (&new, &old)] {
+            let out = plan_reconfig(a, b);
+            assert!(out.rebuild_session);
+            assert!(!out.restart_capture);
+            assert!(!out.rebuild_output);
+            assert!(!out.confirm_required);
+            assert!(out.migrate.contains(&StateBucket::HashBook));
         }
     }
 

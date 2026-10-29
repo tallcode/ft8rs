@@ -1,0 +1,13 @@
+   Compiling autocfg v1.5.1
+   Compiling strength_reduce v0.2.4
+   Compiling ft8rs-core v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/experiments/single-slot/campaigns/03-experiment-development/frozen/development-v2-fixed-harness/core)
+   Compiling hound v3.5.1
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.47
+   Compiling num-complex v0.4.6
+   Compiling transpose v0.2.3
+   Compiling primal-check v0.3.4
+   Compiling num-bigint v0.5.1
+   Compiling rustfft v6.4.1
+   Compiling ft8rs-experiment-measure v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/experiments/single-slot/campaigns/03-experiment-development/frozen/development-v2-fixed-harness/lab)
+    Finished `release` profile [optimized] target(s) in 2m 34s

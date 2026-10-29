@@ -1,0 +1,16 @@
+{
+  "recordings::hybrid": {
+    "cases": 20,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 3901.98,
+    "max_callback_ms": 3739.695
+  },
+  "recordings::exp": {
+    "cases": 20,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 8136.375,
+    "max_callback_ms": 7523.791
+  }
+}

@@ -1,0 +1,226 @@
+{
+  "awgn:-22:wsjtx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 481.335,
+    "max_callback_ms": 0
+  },
+  "awgn:-22:jtdx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 451.854,
+    "max_callback_ms": 0
+  },
+  "awgn:-22:hybrid": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 533.544,
+    "max_callback_ms": 0
+  },
+  "awgn:-22:exp": {
+    "cases": 4,
+    "correct": 2,
+    "wrong": 0,
+    "max_ms": 5270.171,
+    "max_callback_ms": 2901.855
+  },
+  "cw:-22:wsjtx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 386.046,
+    "max_callback_ms": 0
+  },
+  "cw:-22:jtdx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 349.982,
+    "max_callback_ms": 0
+  },
+  "cw:-22:hybrid": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 412.2,
+    "max_callback_ms": 0
+  },
+  "cw:-22:exp": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 5198.921,
+    "max_callback_ms": 2812.993
+  },
+  "mix:-20:wsjtx": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 637.667,
+    "max_callback_ms": 637.658
+  },
+  "mix:-20:jtdx": {
+    "cases": 4,
+    "correct": 1,
+    "wrong": 0,
+    "max_ms": 511.235,
+    "max_callback_ms": 511.207
+  },
+  "mix:-20:hybrid": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 701.889,
+    "max_callback_ms": 700.533
+  },
+  "mix:-20:exp": {
+    "cases": 4,
+    "correct": 4,
+    "wrong": 0,
+    "max_ms": 5446.489,
+    "max_callback_ms": 5332.185
+  },
+  "mix2:-20:wsjtx": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 722.002,
+    "max_callback_ms": 721.996
+  },
+  "mix2:-20:jtdx": {
+    "cases": 4,
+    "correct": 1,
+    "wrong": 0,
+    "max_ms": 424.629,
+    "max_callback_ms": 424.624
+  },
+  "mix2:-20:hybrid": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 769.049,
+    "max_callback_ms": 767.378
+  },
+  "mix2:-20:exp": {
+    "cases": 4,
+    "correct": 4,
+    "wrong": 0,
+    "max_ms": 5470.633,
+    "max_callback_ms": 5211.672
+  },
+  "noise:-24:wsjtx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 1,
+    "max_ms": 520.99,
+    "max_callback_ms": 520.952
+  },
+  "noise:-24:jtdx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 452.606,
+    "max_callback_ms": 0
+  },
+  "noise:-24:hybrid": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 1,
+    "max_ms": 566.205,
+    "max_callback_ms": 251.104
+  },
+  "noise:-24:exp": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 1,
+    "max_ms": 2944.089,
+    "max_callback_ms": 245.12
+  },
+  "cwonly:-24:wsjtx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 448.529,
+    "max_callback_ms": 0
+  },
+  "cwonly:-24:jtdx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 1,
+    "max_ms": 490.191,
+    "max_callback_ms": 349.106
+  },
+  "cwonly:-24:hybrid": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 1,
+    "max_ms": 606.687,
+    "max_callback_ms": 417.236
+  },
+  "cwonly:-24:exp": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 1,
+    "max_ms": 2928.931,
+    "max_callback_ms": 429.127
+  },
+  "blocker:-24:wsjtx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 666.489,
+    "max_callback_ms": 666.47
+  },
+  "blocker:-24:jtdx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 464.233,
+    "max_callback_ms": 464.208
+  },
+  "blocker:-24:hybrid": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 726.413,
+    "max_callback_ms": 303.213
+  },
+  "blocker:-24:exp": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 5464.05,
+    "max_callback_ms": 293.072
+  },
+  "pilotonly:-24:wsjtx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 411.605,
+    "max_callback_ms": 0
+  },
+  "pilotonly:-24:jtdx": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 456.138,
+    "max_callback_ms": 0
+  },
+  "pilotonly:-24:hybrid": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 509.028,
+    "max_callback_ms": 0
+  },
+  "pilotonly:-24:exp": {
+    "cases": 4,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 2871.239,
+    "max_callback_ms": 0
+  }
+}

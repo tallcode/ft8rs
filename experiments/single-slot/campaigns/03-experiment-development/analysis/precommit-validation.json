@@ -1,0 +1,18 @@
+{
+  "base_revision": "e692a160e7d14fa1a27afa147be9b0aa7706c7d7",
+  "remote_main": "e692a160e7d14fa1a27afa147be9b0aa7706c7d7",
+  "prior_preservation_hashes_verified": 997,
+  "generated_audio_ignored": 340,
+  "prior_campaign_unchanged": true,
+  "protected_native_unchanged": true,
+  "current_checks": {
+    "format": "passed",
+    "workspace_all_target_clippy": "passed",
+    "gui_fast_tests_passed": 30
+  },
+  "previous_unchanged_code_checks": {
+    "core_fast_passed": 199,
+    "remaining_workspace_fast_passed": 63
+  },
+  "source_audit": "analysis/precommit-audit.json"
+}

@@ -183,3 +183,11 @@ Use [the update guide](UPDATING.md) for base versus extension regeneration,
 Fortran/Boost/FFTW requirements, recording capture, review and adoption. A complete
 candidate must include both base and extension layers before running the full
 suite; generating base protocol vectors alone is insufficient.
+
+The `hybrid-exp` adapter is the existing Hybrid profile with
+`hybrid_experiment=true`. It participates in the same native retention,
+invalid-input, callback and audio checks. For calibrated degraded recordings it
+must retain every existing Hybrid golden identity; new unlabelled outputs do not
+become goldens. It does not add a fifth product profile.
+Specialty sensitivity and negative controls remain separately recorded in the
+[third campaign](../../../../experiments/single-slot/campaigns/03-experiment-development/README.md).

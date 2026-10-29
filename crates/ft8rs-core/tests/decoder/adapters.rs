@@ -33,7 +33,7 @@ pub struct Adapter {
     pub preserves_native: bool,
 }
 
-pub const ADAPTERS: [Adapter; 4] = [
+pub const ADAPTERS: [Adapter; 5] = [
     Adapter {
         name: "wsjtx",
         supports_a8: true,
@@ -57,6 +57,17 @@ pub const ADAPTERS: [Adapter; 4] = [
         native_baseline: false,
         preserves_native: true,
         build: |c| native(c, DecodeProfile::Hybrid),
+    },
+    Adapter {
+        name: "hybrid-exp",
+        supports_a8: true,
+        target_only: false,
+        native_baseline: false,
+        preserves_native: true,
+        build: |mut c| {
+            c.hybrid_experiment = true;
+            native(c, DecodeProfile::Hybrid)
+        },
     },
     Adapter {
         name: "dx",

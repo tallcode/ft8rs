@@ -1,0 +1,394 @@
+{
+  "awgn:-21:wsjtx": {
+    "cases": 8,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 606.686,
+    "max_callback_ms": 606.655
+  },
+  "awgn:-21:jtdx": {
+    "cases": 8,
+    "correct": 1,
+    "wrong": 0,
+    "max_ms": 414.665,
+    "max_callback_ms": 347.377
+  },
+  "awgn:-21:hybrid": {
+    "cases": 8,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 843.175,
+    "max_callback_ms": 549.985
+  },
+  "awgn:-21:exp": {
+    "cases": 8,
+    "correct": 7,
+    "wrong": 0,
+    "max_ms": 5553.6,
+    "max_callback_ms": 2871.257
+  },
+  "awgn:-22:wsjtx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 670.322,
+    "max_callback_ms": 0
+  },
+  "awgn:-22:jtdx": {
+    "cases": 8,
+    "correct": 2,
+    "wrong": 0,
+    "max_ms": 725.115,
+    "max_callback_ms": 475.981
+  },
+  "awgn:-22:hybrid": {
+    "cases": 8,
+    "correct": 2,
+    "wrong": 0,
+    "max_ms": 616.872,
+    "max_callback_ms": 552.413
+  },
+  "awgn:-22:exp": {
+    "cases": 8,
+    "correct": 5,
+    "wrong": 0,
+    "max_ms": 7334.422,
+    "max_callback_ms": 3713.335
+  },
+  "awgn:-23:wsjtx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 691.448,
+    "max_callback_ms": 0
+  },
+  "awgn:-23:jtdx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 592.927,
+    "max_callback_ms": 0
+  },
+  "awgn:-23:hybrid": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 557.743,
+    "max_callback_ms": 0
+  },
+  "awgn:-23:exp": {
+    "cases": 8,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 5302.51,
+    "max_callback_ms": 2930.932
+  },
+  "cw:-20:wsjtx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 505.963,
+    "max_callback_ms": 0
+  },
+  "cw:-20:jtdx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 564.233,
+    "max_callback_ms": 0
+  },
+  "cw:-20:hybrid": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 561.083,
+    "max_callback_ms": 0
+  },
+  "cw:-20:exp": {
+    "cases": 8,
+    "correct": 8,
+    "wrong": 0,
+    "max_ms": 6652.926,
+    "max_callback_ms": 4023.875
+  },
+  "cw:-22:wsjtx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 442.283,
+    "max_callback_ms": 0
+  },
+  "cw:-22:jtdx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 427.2,
+    "max_callback_ms": 0
+  },
+  "cw:-22:hybrid": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 537.565,
+    "max_callback_ms": 0
+  },
+  "cw:-22:exp": {
+    "cases": 8,
+    "correct": 5,
+    "wrong": 0,
+    "max_ms": 5329.507,
+    "max_callback_ms": 2941.721
+  },
+  "mix:-20:wsjtx": {
+    "cases": 8,
+    "correct": 8,
+    "wrong": 0,
+    "max_ms": 715.242,
+    "max_callback_ms": 715.234
+  },
+  "mix:-20:jtdx": {
+    "cases": 8,
+    "correct": 2,
+    "wrong": 0,
+    "max_ms": 542.201,
+    "max_callback_ms": 542.191
+  },
+  "mix:-20:hybrid": {
+    "cases": 8,
+    "correct": 8,
+    "wrong": 0,
+    "max_ms": 760.301,
+    "max_callback_ms": 760.066
+  },
+  "mix:-20:exp": {
+    "cases": 8,
+    "correct": 8,
+    "wrong": 0,
+    "max_ms": 7734.705,
+    "max_callback_ms": 753.037
+  },
+  "mix2:-20:wsjtx": {
+    "cases": 8,
+    "correct": 7,
+    "wrong": 0,
+    "max_ms": 1011.122,
+    "max_callback_ms": 1011.116
+  },
+  "mix2:-20:jtdx": {
+    "cases": 8,
+    "correct": 2,
+    "wrong": 0,
+    "max_ms": 760.045,
+    "max_callback_ms": 760.031
+  },
+  "mix2:-20:hybrid": {
+    "cases": 8,
+    "correct": 7,
+    "wrong": 0,
+    "max_ms": 1046.58,
+    "max_callback_ms": 1043.964
+  },
+  "mix2:-20:exp": {
+    "cases": 8,
+    "correct": 8,
+    "wrong": 0,
+    "max_ms": 9078.283,
+    "max_callback_ms": 5928.736
+  },
+  "mixfade:-20:wsjtx": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 865.5,
+    "max_callback_ms": 865.492
+  },
+  "mixfade:-20:jtdx": {
+    "cases": 4,
+    "correct": 1,
+    "wrong": 0,
+    "max_ms": 583.936,
+    "max_callback_ms": 583.925
+  },
+  "mixfade:-20:hybrid": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 1105.065,
+    "max_callback_ms": 315.901
+  },
+  "mixfade:-20:exp": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 7769.844,
+    "max_callback_ms": 307.31
+  },
+  "drift:-20:wsjtx": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 528.983,
+    "max_callback_ms": 528.954
+  },
+  "drift:-20:jtdx": {
+    "cases": 4,
+    "correct": 1,
+    "wrong": 0,
+    "max_ms": 518.855,
+    "max_callback_ms": 283.778
+  },
+  "drift:-20:hybrid": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 1078.098,
+    "max_callback_ms": 493.062
+  },
+  "drift:-20:exp": {
+    "cases": 4,
+    "correct": 3,
+    "wrong": 0,
+    "max_ms": 3448.549,
+    "max_callback_ms": 491.189
+  },
+  "noise:-24:wsjtx": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 474.459,
+    "max_callback_ms": 0
+  },
+  "noise:-24:jtdx": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 542.744,
+    "max_callback_ms": 0
+  },
+  "noise:-24:hybrid": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 606.751,
+    "max_callback_ms": 0
+  },
+  "noise:-24:exp": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 2998.779,
+    "max_callback_ms": 0
+  },
+  "cwonly:-24:wsjtx": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 670.256,
+    "max_callback_ms": 0
+  },
+  "cwonly:-24:jtdx": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 465.362,
+    "max_callback_ms": 0
+  },
+  "cwonly:-24:hybrid": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 568.229,
+    "max_callback_ms": 0
+  },
+  "cwonly:-24:exp": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 4113.852,
+    "max_callback_ms": 0
+  },
+  "blocker:-24:wsjtx": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 993.643,
+    "max_callback_ms": 993.627
+  },
+  "blocker:-24:jtdx": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 624.956,
+    "max_callback_ms": 624.892
+  },
+  "blocker:-24:hybrid": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 815.711,
+    "max_callback_ms": 313.776
+  },
+  "blocker:-24:exp": {
+    "cases": 12,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 7775.755,
+    "max_callback_ms": 306.349
+  },
+  "mix2only:-24:wsjtx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 623.773,
+    "max_callback_ms": 623.766
+  },
+  "mix2only:-24:jtdx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 423.932,
+    "max_callback_ms": 423.927
+  },
+  "mix2only:-24:hybrid": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 665.086,
+    "max_callback_ms": 282.528
+  },
+  "mix2only:-24:exp": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 6169.84,
+    "max_callback_ms": 264.037
+  },
+  "pilotonly:-24:wsjtx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 498.503,
+    "max_callback_ms": 0
+  },
+  "pilotonly:-24:jtdx": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 503.041,
+    "max_callback_ms": 0
+  },
+  "pilotonly:-24:hybrid": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 571.583,
+    "max_callback_ms": 0
+  },
+  "pilotonly:-24:exp": {
+    "cases": 8,
+    "correct": 0,
+    "wrong": 0,
+    "max_ms": 3010.455,
+    "max_callback_ms": 0
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "command": [
+    "/Volumes/ZHITAI/Workspace/ft8rs/experiments/single-slot/campaigns/03-experiment-development/product-build/fast/ft8rs",
+    "file",
+    "/Volumes/ZHITAI/Workspace/ft8rs/experiments/single-slot/campaigns/03-experiment-development/runs/confirm-v2/03-cw--20-00/waveforms/input.wav",
+    "--start-time",
+    "261029_120000",
+    "--profile",
+    "hybrid",
+    "--hybrid-experiment"
+  ],
+  "returncode": 0,
+  "truth": "CQ N0QVY KL05",
+  "expected_suffix": " exp",
+  "elapsed_ms": 6301.233625,
+  "cli_sha256": "97ca90fc7f9d8887e633612a221e0d4e68c249842a864774e7218346776bc846",
+  "gui_sha256": "9892c73a35e4e8ecae5ecf34bf62a48a24f6dd263afa004e6c6f2719a4bf19dd",
+  "calldb_sha256": "17140773605b0d2a7a5a31458c11384d9efc413bf6288b262b7dd1f391ec32ea",
+  "uses_existing_confirmation_input": true
+}
