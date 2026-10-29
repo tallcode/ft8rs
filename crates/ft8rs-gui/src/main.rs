@@ -27,6 +27,12 @@ fn main() -> eframe::Result<()> {
         .with_inner_size([820.0, 760.0])
         .with_min_inner_size([480.0, 440.0])
         .with_title("FT8.RS");
+    // The Win32 menu changes the client area on the first frame. Present the
+    // window only after the render surface has followed both resize events.
+    #[cfg(target_os = "windows")]
+    {
+        viewport = viewport.with_visible(false);
+    }
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
     }
