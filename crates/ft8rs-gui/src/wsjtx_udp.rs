@@ -130,9 +130,11 @@ fn parse_decode(buf: &[u8]) -> Option<ExternalDecode> {
         return None;
     }
     let message = p.string()?;
-    // Comparison must use live, normal-confidence FT8 rows. The two trailing
-    // flags are part of the Decode packet, not annotations in the message text.
-    if p.u8()? != 0 || p.u8()? != 0 {
+    // Low confidence is metadata, not grounds for dropping a comparison row.
+    // WSJT-X postDecode sends it separately as well as in the message tail.
+    // Keep excluding WAV playback so it cannot match a live slot by time alone.
+    let _low_confidence = p.u8()?;
+    if p.u8()? != 0 {
         return None;
     }
     Some(ExternalDecode {
@@ -274,6 +276,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_wsjtx_low_confidence_zl2agy() {
+        // MainWindow::postDecode sends the entire message tail, including the
+        // '?' at offset 36 and the AP annotation, plus a separate confidence flag.
+        let message = format!("{:<36}? a1", "CQ ZL2AGY RF70");
+        let mut packet = decode_packet(true, 40_530_000, -23, -1.1, 1118, &message);
+        let mode = packet.windows(3).position(|w| w == b"FT8").unwrap();
+        packet.splice(mode - 4..mode + 3, [0, 0, 0, 1, b'~']);
+        let low_confidence = packet.len() - 2;
+        packet[low_confidence] = 1;
+
+        let decode = parse_decode(&packet).expect("low-confidence rows belong in compare");
+        assert_eq!(decode.ms_since_midnight, 40_530_000);
+        assert_eq!(decode.freq, 1118);
+        assert_eq!(decode.message, message);
+
+        // Other senders may set the flag without appending a text marker.
+        let mut packet = decode_packet(true, 40_530_000, -23, -1.1, 1118, "CQ ZL2AGY RF70");
+        let low_confidence = packet.len() - 2;
+        packet[low_confidence] = 1;
+        assert_eq!(parse_decode(&packet).unwrap().message, "CQ ZL2AGY RF70");
+    }
+
+    #[test]
     fn ignores_replays_and_other_types() {
         let replay = decode_packet(false, 0, 0, 0.0, 1000, "CQ TEST");
         assert!(parse_decode(&replay).is_none());
@@ -294,19 +319,31 @@ mod tests {
     }
 
     #[test]
-    fn excludes_non_ft8_low_confidence_off_air_and_invalid_times() {
+    fn excludes_non_ft8_off_air_and_invalid_times() {
         let mut packet = decode_packet(true, 0, -8, 0.2, 1000, "CQ K1ABC FN42");
         let mode = packet.windows(3).position(|w| w == b"FT8").unwrap();
         packet[mode..mode + 3].copy_from_slice(b"FT4");
         assert!(parse_decode(&packet).is_none());
-        for flag in [1, 2] {
+        for low_confidence in [0, 1] {
             let mut packet = decode_packet(true, 0, -8, 0.2, 1000, "CQ K1ABC FN42");
-            let index = packet.len() - flag;
-            packet[index] = 1;
+            let flags = packet.len() - 2;
+            packet[flags] = low_confidence;
+            packet[flags + 1] = 1; // off_air
             assert!(parse_decode(&packet).is_none());
         }
         assert!(parse_decode(&decode_packet(true, 86_400_000, 0, 0.0, 1000, "CQ")).is_none());
         assert!(parse_decode(&decode_packet(true, 0, 0, f64::NAN, 1000, "CQ")).is_none());
+    }
+
+    #[test]
+    fn requires_both_decode_flags_even_for_low_confidence() {
+        let mut packet = decode_packet(true, 0, -8, 0.2, 1000, "CQ K1ABC FN42");
+        let flags = packet.len() - 2;
+        packet[flags] = 1;
+        packet.truncate(flags + 1);
+        assert!(parse_decode(&packet).is_none());
+        packet.truncate(flags);
+        assert!(parse_decode(&packet).is_none());
     }
 
     #[test]

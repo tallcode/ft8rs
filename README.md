@@ -92,7 +92,8 @@ averaging can attenuate single-sided audio or cancel opposite-phase channels.
 Hybrid and DX combine existing native capabilities in the orchestration layer.
 Their sessions keep independent hash books, AP memory and residuals. Unknown
 native provenance stays unknown; recovered messages do not become independent
-confirmation. GUI markers `?`, `sic` and `ctx` expose these distinctions.
+confirmation. GUI markers `sic`, `ctx` and `exp` identify recovery and
+experimental results; unknown native provenance has no visible tag.
 
 JTDX defaults to **one logical frequency partition**, including its two Hybrid
 paths. CLI `--jtdx-threads 0` explicitly enables CPU-dependent automatic selection.

@@ -220,7 +220,7 @@ impl Ft8rsApp {
             filter: load_bool("filter", false),
             hide_dupes: load_bool("hide_dupes", false),
             hide_hash: load_bool("hide_hash", false),
-            udp_in_on: load_bool("udp_in_on", false),
+            udp_in_on: load_bool("udp_in_on", true),
             udp_in_host: load("udp_in_host", "127.0.0.1"),
             udp_in_port: load("udp_in_port", "2237"),
             udp_in_tol: load("udp_in_tol", "7").trim().parse().unwrap_or(7.0),
@@ -504,7 +504,7 @@ impl Ft8rsApp {
             row.snr.round() as i32,
             row.dt,
             row.freq.round() as i64,
-            row.msg,
+            clean_message(&row.msg),
             provenance_tag(record.provenance),
         );
         self.ingest(
@@ -518,17 +518,7 @@ impl Ft8rsApp {
 
     fn merge_external(&mut self, decode: crate::wsjtx_udp::ExternalDecode) {
         let slot_key = decode.ms_since_midnight / 15_000;
-        // No provenance column for external decodes (WSJT-X doesn't send one).
-        let body = clean_message(&decode.message);
-        let text = format!(
-            "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
-            format_ms_time(decode.ms_since_midnight),
-            decode.snr,
-            decode.dt,
-            decode.freq,
-            body,
-            "",
-        );
+        let text = external_decode_text(&decode);
         self.ingest(
             slot_key,
             decode.freq as f64,
@@ -2118,8 +2108,18 @@ fn format_ms_time(ms: u32) -> String {
     format!("{:02}{:02}{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
-/// Normalize a decode message for merge matching: drop WSJT-X annotations, then
-/// uppercase the remaining tokens (the actual message body).
+/// External rows display only the message body, without decoder annotations.
+fn external_decode_text(decode: &crate::wsjtx_udp::ExternalDecode) -> String {
+    format!(
+        "{:<6} {:>3} {:>5.1} {:>5}  {:<20} ",
+        format_ms_time(decode.ms_since_midnight),
+        decode.snr,
+        decode.dt,
+        decode.freq,
+        clean_message(&decode.message),
+    )
+}
+
 /// Fold `(freq, tokens)` into an existing **cross-source** row of the current
 /// batch (`gen`), upgrading it to `Both`; returns true if folded. Same-source
 /// rows are never folded: each source is already deduplicated upstream (the
@@ -2150,9 +2150,10 @@ fn fold_into_cross_source(
     false
 }
 
+/// Normalize a decode message for merge matching: drop WSJT-X annotations, then
+/// uppercase the remaining tokens (the actual message body).
 fn norm_tokens(msg: &str) -> Vec<String> {
-    msg.split_whitespace()
-        .filter(|t| !is_annotation(t))
+    message_body_tokens(msg)
         .map(|t| {
             if t == "<...>" {
                 t.to_string()
@@ -2241,24 +2242,24 @@ fn grid_after(tokens: &[String], idx: usize) -> Option<String> {
         .map(|g| g.to_string())
 }
 
-/// The message body with WSJT-X trailing annotations removed (for display of
-/// external decodes, so they read like the local ones).
+/// Use the same message body for local/external display and compare matching.
 fn clean_message(msg: &str) -> String {
-    msg.split_whitespace()
-        .filter(|t| !is_annotation(t))
-        .collect::<Vec<_>>()
-        .join(" ")
+    message_body_tokens(msg).collect::<Vec<_>>().join(" ")
 }
 
-/// A WSJT-X decode annotation, not part of the message body: `a` + 1-2 digits
-/// (AP type + optional averaging count, lowercase per the decoder) or the `?`
-/// low-confidence marker. FT8 message text is uppercase, so this never matches a
-/// real token (see wsjtx/lib/decoder.f90 and mainwindow.cpp:6907).
+fn message_body_tokens(msg: &str) -> impl Iterator<Item = &str> {
+    msg.split_whitespace().filter(|t| !is_annotation(t))
+}
+
+/// Decoder annotations are separate from the uppercase FT8 payload. Accept a
+/// confidence marker adjoining an AP tag as well as whitespace-separated tags.
+/// Local provenance normally lives in its own column; also ignore it if a
+/// sender includes it in the message tail.
 fn is_annotation(token: &str) -> bool {
+    let tag = token.trim_matches('?');
     token == "?"
-        || (token.len() >= 2
-            && token.starts_with('a')
-            && token[1..].bytes().all(|b| b.is_ascii_digit()))
+        || matches!(tag, "sic" | "ctx" | "exp" | "ap" | "dp" | "im")
+        || (tag.len() >= 2 && tag.starts_with('a') && tag[1..].bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Whether two normalized messages describe the same transmission. Only an
@@ -2810,8 +2811,72 @@ mod tests {
     }
 
     #[test]
+    fn low_confidence_zl2agy_matches_in_either_arrival_order() {
+        let external = crate::wsjtx_udp::ExternalDecode {
+            ms_since_midnight: 40_530_000,
+            snr: -23,
+            dt: -1.1,
+            freq: 1118,
+            message: format!("{:<36}? a1", "CQ ZL2AGY RF70"),
+        };
+        let local_text = "111530 -21  -1.1  1118  CQ ZL2AGY RF70";
+        let local_tokens = norm_tokens("CQ ZL2AGY RF70");
+        let external_text = external_decode_text(&external);
+        let external_tokens = norm_tokens(&external.message);
+        assert_eq!(external_tokens, local_tokens);
+        assert_eq!(external_text.split_whitespace().last(), Some("RF70"));
+        assert!(!external_text.contains('?'));
+        assert!(!external_text.contains("a1"));
+
+        for first in [DecodeSource::Local, DecodeSource::External] {
+            let (text, tokens, incoming, source) = if first == DecodeSource::Local {
+                (
+                    local_text,
+                    &local_tokens,
+                    &external_tokens,
+                    DecodeSource::External,
+                )
+            } else {
+                (
+                    external_text.as_str(),
+                    &external_tokens,
+                    &local_tokens,
+                    DecodeSource::Local,
+                )
+            };
+            let mut rows = vec![Row {
+                text: text.to_string(),
+                gen: u64::from(external.ms_since_midnight / 15_000),
+                freq: 1118.0,
+                tokens: tokens.clone(),
+                source: first,
+            }];
+            assert!(fold_into_cross_source(
+                &mut rows,
+                u64::from(external.ms_since_midnight / 15_000),
+                1118.0,
+                7.0,
+                incoming,
+                source,
+            ));
+            assert_eq!(rows[0].source, DecodeSource::Both);
+            assert_eq!(rows[0].text, text);
+        }
+
+        // Removing annotations must give the same display as a plain payload.
+        let without_text_marker = crate::wsjtx_udp::ExternalDecode {
+            message: "CQ ZL2AGY RF70".to_string(),
+            ..external
+        };
+        assert_eq!(external_decode_text(&without_text_marker), external_text);
+    }
+
+    #[test]
     fn annotation_detection() {
-        for t in ["a1", "a7", "a9", "a72", "a31", "?"] {
+        for t in [
+            "a1", "a7", "a9", "a72", "a31", "?", "?a1", "a1?", "sic", "ctx", "exp", "ap", "dp",
+            "im",
+        ] {
             assert!(is_annotation(t), "{t} should be an annotation");
         }
         for t in [
@@ -2826,6 +2891,18 @@ mod tests {
         assert_eq!(clean_message("CQ K1ABC FN42 a7"), "CQ K1ABC FN42");
         assert_eq!(clean_message("K1ABC W1AW R-12 ? a31"), "K1ABC W1AW R-12");
         assert_eq!(clean_message("CQ BG5ATV PM00"), "CQ BG5ATV PM00");
+        let body = "CQ ZL2AGY RF70";
+        for annotations in ["? a1", "?a1", "a1?", "a7 a8 ap dp im sic ctx exp"] {
+            let annotated = format!("{body} {annotations}");
+            assert_eq!(clean_message(&annotated), body);
+            assert_eq!(norm_tokens(&annotated), norm_tokens(body));
+            assert!(tokens_compatible(
+                &norm_tokens(&annotated),
+                &norm_tokens("CQ ZL2AGY RF70 ? a2"),
+            ));
+        }
+        // Keep uppercase payload words, including callsigns and free text.
+        assert_eq!(clean_message("A7 TEST EXP AP"), "A7 TEST EXP AP");
     }
 
     #[test]
@@ -2913,6 +2990,52 @@ mod tests {
             &norm_tokens("CQ K1ABC FN42"),
             DecodeSource::External,
         ));
+    }
+
+    #[test]
+    fn compare_frequency_tolerance_uses_the_supplied_value_inclusively() {
+        for first in [DecodeSource::Local, DecodeSource::External] {
+            let incoming = if first == DecodeSource::Local {
+                DecodeSource::External
+            } else {
+                DecodeSource::Local
+            };
+            for (tolerance, offset, expected) in [
+                (0.0, 0.0, true),
+                (0.0, 0.25, false),
+                (0.25, 0.25, true),
+                (0.25, -0.25, true),
+                (0.25, 0.5, false),
+                (2.0, 2.0, true),
+                (2.0, -2.0, true),
+                (2.0, 2.25, false),
+                (5.0, 5.0, true),
+                (5.0, 5.25, false),
+                (10.0, 10.0, true),
+                (10.0, 10.25, false),
+            ] {
+                let mut rows = vec![Row {
+                    text: String::new(),
+                    gen: 2702,
+                    freq: 1118.0,
+                    tokens: norm_tokens("CQ ZL2AGY RF70 a7"),
+                    source: first,
+                }];
+                assert_eq!(
+                    fold_into_cross_source(
+                        &mut rows,
+                        2702,
+                        1118.0 + offset,
+                        tolerance,
+                        &norm_tokens("CQ ZL2AGY RF70 ? a1"),
+                        incoming,
+                    ),
+                    expected,
+                    "source={first:?}, tolerance={tolerance}, offset={offset}",
+                );
+                assert_eq!(rows[0].source == DecodeSource::Both, expected);
+            }
+        }
     }
 
     fn dx(msg: &str) -> (Option<String>, Option<String>) {

@@ -96,9 +96,10 @@ The target call alone is sufficient to listen; a valid, distinct operator/target
 call pair enables additional context recovery. A known grid can enable list
 recovery. Derived rows supply weak hints rather than independent confirmation.
 
-GUI provenance markers include `?` for unknown native provenance, `sic` for
-isolated cancellation recovery and `ctx` for context recovery. The native
-routines do not expose every AP subtype. Unknown is retained as unknown.
+GUI provenance markers include `sic` for isolated cancellation recovery, `ctx`
+for context recovery and `exp` for the opt-in Hybrid experimental receiver.
+The native routines do not expose every AP subtype. Unknown native provenance
+has no visible tag and is retained as unknown internally.
 These markers describe how a row was obtained, not proof that the message is true.
 
 JTDX uses one logical frequency partition by default. `--jtdx-threads N` changes
@@ -191,19 +192,23 @@ target/release/ft8rs monitor --device 0 --udp \
   --udp-host 127.0.0.1 --udp-port 2238
 ```
 
-GUI **Compare** is a separate incoming unicast listener, default
+GUI **Compare** is a separate incoming unicast listener, enabled by default at
 `127.0.0.1:2237`, with a configurable frequency tolerance (default ±7 Hz).
-Configure WSJT-X to send its UDP reports to that address, then enable
-**Listen to WSJT-X (UDP)**. The display merges matching local/external messages
+Configure WSJT-X to send its UDP reports to that address. **Listen to WSJT-X
+(UDP)** remembers your choice, including a previously saved disabled setting.
+The display merges matching local/external messages
 and colors local-only, WSJT-X-only and shared rows; its legend shows the colors.
 This feed does not seed the local decoder's hash/AP state or change its results.
-Only new FT8 Decode packets without low-confidence or off-air flags are accepted;
-replays and other packet types are ignored. A free listening port is required.
+New live FT8 Decode packets are accepted, including low-confidence results;
+replays, off-air WAV playback and other packet types are ignored. A free
+listening port is required.
 The incoming Decode mode accepts the native WSJT-X/JTDX symbol `~` as well as
-`FT8`. Matching uses the same UTC slot, message tokens and frequency tolerance;
-the trailing provenance column does not participate. Unknown local provenance
-has no visible tag and remains unknown internally; it is separate from the
-incoming UDP low-confidence flag.
+`FT8`. Local and external display/matching use the message body with decoder
+annotations such as `?` and `a1` removed. Matching requires the same UTC slot,
+compatible message tokens and a frequency difference no greater than the current
+**Match ± Hz** setting. SNR, DT and the trailing provenance column do not
+participate. Changes to the tolerance apply to subsequently arriving messages;
+existing rows are not matched again.
 
 Display comparison is not an independent truth label. For reproducible decoder
 acceptance, use identical audio, context and database with the
