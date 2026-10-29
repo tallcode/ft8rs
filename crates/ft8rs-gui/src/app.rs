@@ -125,12 +125,10 @@ pub struct Ft8rsApp {
     pending_confirm: Option<EngineState>,
 
     settings_open: bool,
-    settings_first_frame_painted: bool,
     settings_focus: DialogFocus,
     about_focus: DialogFocus,
     copyright_focus: DialogFocus,
     about_open: bool,
-    about_first_frame_painted: bool,
     // The (mandatory) WSJT-X copyright notice, shown in its own popup from About.
     copyright_open: bool,
     tab: SettingsTab,
@@ -149,19 +147,6 @@ pub struct Ft8rsApp {
     // Running WSJT-X UDP listener (compare mode); None when disabled/stopped.
     udp_in: Option<crate::wsjtx_udp::UdpIn>,
     udp_in_dirty: bool,
-    // Windows: HWND awaiting menu attachment on the first frame (deferred so the
-    // native menu's client-area resize is processed inside the running event
-    // loop, avoiding a black strip). Taken once, then None.
-    #[cfg(target_os = "windows")]
-    pending_menu_hwnd: Option<isize>,
-    // Windows: the native menu shrinks the client area but winit doesn't resize
-    // the GL surface to match (black strip). We nudge the inner size by 1px the
-    // frame after attaching, then restore it here — two distinct sizes force a
-    // real surface resize, exactly as a manual window resize does.
-    #[cfg(target_os = "windows")]
-    restore_inner_size: Option<egui::Vec2>,
-    #[cfg(target_os = "windows")]
-    show_after_resize: bool,
 }
 
 impl Ft8rsApp {
@@ -170,9 +155,6 @@ impl Ft8rsApp {
         install_fonts(&cc.egui_ctx);
         let theme = cc.egui_ctx.theme();
         apply_style(&cc.egui_ctx, theme);
-        #[cfg(target_os = "windows")]
-        cc.egui_ctx
-            .send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
         let engine = EngineHandle::spawn();
         let _ = engine.send(EngineCommand::RefreshDevices);
 
@@ -193,15 +175,20 @@ impl Ft8rsApp {
         let device = load("device", "");
         let profile =
             DecodeProfile::parse(&load("profile", "wsjtx")).unwrap_or(DecodeProfile::Wsjtx);
-        // Native menu bar: macOS via the system menu (attached now), Windows via
-        // the window's HWND (deferred to the first frame), Linux falls back to
-        // the in-window menu.
+        // Install the menu while eframe still keeps the root hidden. Preserve
+        // its physical client size: SetMenu consumes client height, whereas
+        // winit knows how to resize the outer window for a menu-bearing window.
         let menu_events = native_menu_events(&cc.egui_ctx);
         let hwnd = window_hwnd(cc);
         #[cfg(target_os = "windows")]
-        let profile_menu: Vec<(DecodeProfile, muda::CheckMenuItem)> = Vec::new();
-        #[cfg(not(target_os = "windows"))]
+        let client_size = cc.winit_window().map(|window| window.inner_size());
         let profile_menu = install_menu(profile, hwnd);
+        #[cfg(target_os = "windows")]
+        if let (Some(window), Some(size)) = (cc.winit_window(), client_size) {
+            if !window.is_maximized() {
+                let _ = window.request_inner_size(size);
+            }
+        }
 
         // Decode the embedded logo into a texture for the About dialog.
         let logo = image::load_from_memory(crate::LOGO_PNG).ok().map(|img| {
@@ -254,12 +241,10 @@ impl Ft8rsApp {
             dx: None,
             pending_confirm: None,
             settings_open: false,
-            settings_first_frame_painted: false,
             settings_focus: DialogFocus::default(),
             about_focus: DialogFocus::default(),
             copyright_focus: DialogFocus::default(),
             about_open: false,
-            about_first_frame_painted: false,
             copyright_open: false,
             tab: SettingsTab::Station,
             menu_events,
@@ -270,12 +255,6 @@ impl Ft8rsApp {
             logo,
             udp_in: None,
             udp_in_dirty: true,
-            #[cfg(target_os = "windows")]
-            pending_menu_hwnd: hwnd,
-            #[cfg(target_os = "windows")]
-            restore_inner_size: None,
-            #[cfg(target_os = "windows")]
-            show_after_resize: hwnd.is_none(),
         }
     }
 
@@ -997,11 +976,7 @@ impl Ft8rsApp {
         }
         let mut commit = false;
         let mut close = false;
-        let first_frame_painted = self.settings_first_frame_painted;
         let viewport_id = egui::ViewportId::from_hash_of("settings");
-        if !first_frame_painted {
-            ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::RequestPaintWhileHidden);
-        }
         // A resizable OS window (own viewport) with a native title bar. The tabs
         // live in a left SidePanel whose edge separator spans the full height.
         ctx.show_viewport_immediate(
@@ -1013,12 +988,10 @@ impl Ft8rsApp {
                 .with_resizable(true)
                 .with_minimize_button(false)
                 .with_maximize_button(false)
-                .with_visible(first_frame_painted)
-                .with_active(first_frame_painted),
+                .with_visible(false)
+                .with_active(false),
             |vctx, _class| {
-                if first_frame_painted {
-                    self.settings_focus.update(vctx, Instant::now());
-                }
+                self.settings_focus.update(vctx, Instant::now());
                 egui::Panel::left("settings_tabs")
                     .resizable(true)
                     .default_size(150.0)
@@ -1069,11 +1042,6 @@ impl Ft8rsApp {
                             }
                         });
                     });
-                if !first_frame_painted {
-                    self.settings_first_frame_painted = true;
-                    vctx.request_repaint();
-                    vctx.request_repaint_of(egui::ViewportId::ROOT);
-                }
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;
                 }
@@ -1081,7 +1049,6 @@ impl Ft8rsApp {
         );
         if close {
             self.settings_open = false;
-            self.settings_first_frame_painted = false;
         }
         if commit || close {
             self.udp_in_dirty = true;
@@ -1466,11 +1433,7 @@ impl Ft8rsApp {
         }
         let mut close = false;
         let logo = self.logo.clone();
-        let first_frame_painted = self.about_first_frame_painted;
         let viewport_id = egui::ViewportId::from_hash_of("about");
-        if !first_frame_painted {
-            ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::RequestPaintWhileHidden);
-        }
         // A real OS window (own viewport) with a native title bar.
         ctx.show_viewport_immediate(
             viewport_id,
@@ -1480,12 +1443,10 @@ impl Ft8rsApp {
                 .with_resizable(false)
                 .with_minimize_button(false)
                 .with_maximize_button(false)
-                .with_visible(first_frame_painted)
-                .with_active(first_frame_painted),
+                .with_visible(false)
+                .with_active(false),
             |vctx, _class| {
-                if first_frame_painted {
-                    self.about_focus.update(vctx, Instant::now());
-                }
+                self.about_focus.update(vctx, Instant::now());
                 egui::CentralPanel::default()
                     // No panel margin: the scroll area reaches the window edge so
                     // its scrollbar sits flush to the right. Content padding is
@@ -1611,11 +1572,6 @@ impl Ft8rsApp {
                                     }); // content Frame
                             }); // ScrollArea
                     });
-                if !first_frame_painted {
-                    self.about_first_frame_painted = true;
-                    vctx.request_repaint();
-                    vctx.request_repaint_of(egui::ViewportId::ROOT);
-                }
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;
                 }
@@ -1623,7 +1579,6 @@ impl Ft8rsApp {
         );
         if close {
             self.about_open = false;
-            self.about_first_frame_painted = false;
         }
     }
 
@@ -1642,7 +1597,8 @@ impl Ft8rsApp {
                 .with_resizable(false)
                 .with_minimize_button(false)
                 .with_maximize_button(false)
-                .with_active(true),
+                .with_visible(false)
+                .with_active(false),
             |vctx, _class| {
                 self.copyright_focus.update(vctx, Instant::now());
                 egui::CentralPanel::default()
@@ -1715,28 +1671,6 @@ impl eframe::App for Ft8rsApp {
             self.styled_theme = theme;
         }
         self.sync_title(&ctx);
-        // Windows: attach the native menu on the first frame (see the field doc),
-        // then force a real surface resize so no black strip remains (see
-        // `restore_inner_size`).
-        #[cfg(target_os = "windows")]
-        if let Some(hwnd) = self.pending_menu_hwnd.take() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
-            self.profile_menu = install_menu(self.profile, Some(hwnd));
-            self.menu_profile_synced = self.profile;
-            let size = ctx.content_rect().size();
-            self.restore_inner_size = Some(size);
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
-                size + egui::vec2(0.0, 1.0),
-            ));
-        } else if let Some(size) = self.restore_inner_size.take() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-            self.show_after_resize = true;
-            ctx.request_repaint();
-        } else if self.show_after_resize {
-            self.show_after_resize = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-        }
         self.sync_udp_in();
         self.pump_menu();
         self.pump_events();
@@ -2331,6 +2265,9 @@ fn native_menu_events(ctx: &egui::Context) -> Receiver<muda::MenuEvent> {
     rx
 }
 
+// Immediate viewport commands are processed by eframe after drawing and
+// swapping buffers. Start dialogs hidden in their builder and reveal them with
+// Visible here, so an unpainted native window never appears during creation.
 /// Space focus retries in wall time so fast startup frames cannot exhaust them
 /// before Windows has shown/activated the dialog. Reopening a minimized dialog
 /// also needs to restore it: winit ignores Focus on invisible/minimized windows.
