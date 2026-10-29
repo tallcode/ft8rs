@@ -14,6 +14,30 @@ const NMAX: usize = 15 * 12_000;
 const NZHSYM_STRIDE: usize = 3456;
 const AP_MSG_LEN: usize = 37;
 
+/// User-supplied calls are lookup hints, not independently decoded evidence.
+pub(crate) fn configured_hash_calls(config: &StreamDecodeConfig) -> Vec<String> {
+    let mut calls = Vec::new();
+    for call in [config.mycall.as_deref(), config.hiscall.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        let call = call.trim().trim_matches(['<', '>']).to_ascii_uppercase();
+        if call.len() >= 3 && call != "..." && !calls.contains(&call) {
+            calls.push(call);
+        }
+    }
+    calls
+}
+
+pub(crate) fn seeded_jtdx_session(
+    config: StreamDecodeConfig,
+) -> crate::decode::lib_jtdx::JtdxStreamDecodeSession {
+    let calls = configured_hash_calls(&config);
+    let mut session = crate::decode::lib_jtdx::JtdxStreamDecodeSession::new(config);
+    session.import_hash_calls(&calls);
+    session
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodeProfile {
     Wsjtx,
@@ -342,9 +366,13 @@ pub struct StreamDecodeSession {
 
 impl StreamDecodeSession {
     pub fn new(params: StreamDecodeConfig) -> Self {
+        let book = HashCallBook::new();
+        for call in configured_hash_calls(&params) {
+            book.save(&call);
+        }
         Self {
             params,
-            book: HashCallBook::new(),
+            book,
             regular_hash_calls: HashSet::new(),
             a7: [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]],
             jseq: 0,
