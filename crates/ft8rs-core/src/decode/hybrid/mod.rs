@@ -84,8 +84,8 @@ impl HybridStreamDecodeSession {
         let [no_agc, agc] = jtdx_branch_configs(&config);
         Self {
             wsjtx: StreamDecodeSession::new(config.clone_for_profile_wsjt_x()),
-            jtdx: JtdxStreamDecodeSession::new(no_agc),
-            jtdx_agc: JtdxStreamDecodeSession::new(agc),
+            jtdx: crate::stream::session::seeded_jtdx_session(no_agc),
+            jtdx_agc: crate::stream::session::seeded_jtdx_session(agc),
             config,
             early: Vec::new(),
             last_evidence_store: SharedEvidenceStore::new(),
@@ -443,7 +443,7 @@ impl HybridStreamDecodeSession {
                                         .map_err(|_| "hybrid event receiver closed".to_string())
                                 };
                                 if direction == SignalSource::Wsjtx {
-                                    JtdxStreamDecodeSession::new(
+                                    crate::stream::session::seeded_jtdx_session(
                                         task_config.clone_for_profile_jtdx(),
                                     )
                                     .decode_slot_streaming_at(timestamp, &input, emit)?;

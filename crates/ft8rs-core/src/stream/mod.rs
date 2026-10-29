@@ -10,3 +10,6 @@ pub use slot::{
     TimestampedDecode,
 };
 pub use time::SlotTimestamp;
+
+#[cfg(test)]
+mod configured_hash_tests;

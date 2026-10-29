@@ -27,7 +27,11 @@ use ft8rs_engine::EngineHandle;
 const MAX_ROWS: usize = 20_000;
 const DIALOG_FOCUS_ATTEMPTS: u8 = 3;
 const DIALOG_FOCUS_INTERVAL: Duration = Duration::from_millis(100);
-const DECODE_FONT_SIZE: f32 = 12.0;
+/// Slightly larger than WSJT-X's default 10 pt (~13.33 logical pixels at
+/// Windows' 96-DPI baseline), for easier reading in the receive log.
+const DECODE_FONT_SIZE: f32 = 14.0;
+/// Breathing room above and below each decode line, in logical pixels.
+const DECODE_ROW_PADDING_Y: f32 = 1.0;
 /// Internal left padding for the decode table (header + rows go edge-to-edge).
 const TABLE_PAD: f32 = 12.0;
 
@@ -52,7 +56,6 @@ enum DecodeSource {
 
 struct Row {
     text: String,
-    parity: u8,
     // Merge keys (compare mode): same real slot + freq within tolerance +
     // compatible message tokens identify the same transmission across the two
     // decoders. `gen` is the absolute UTC slot number, so adjacent slots can
@@ -61,6 +64,12 @@ struct Row {
     freq: f64,
     tokens: Vec<String>,
     source: DecodeSource,
+}
+
+#[derive(Clone, Copy)]
+enum DisplayItem {
+    Decode(usize),
+    Separator(u64),
 }
 
 pub struct Ft8rsApp {
@@ -110,6 +119,7 @@ pub struct Ft8rsApp {
     status: EngineStatus,
     applied: Option<EngineState>,
     rows: Vec<Row>,
+    display_items: Vec<DisplayItem>,
     error: Option<String>,
     dx: Option<DxContextSnapshot>,
     pending_confirm: Option<EngineState>,
@@ -232,6 +242,7 @@ impl Ft8rsApp {
             status: EngineStatus::Idle,
             applied: None,
             rows: Vec::new(),
+            display_items: Vec::new(),
             error: None,
             dx: None,
             pending_confirm: None,
@@ -353,6 +364,7 @@ impl Ft8rsApp {
         };
         self.error = None;
         self.rows.clear();
+        self.display_items.clear();
         self.dx = None;
         self.input_peak = None;
         self.capture_format = None;
@@ -563,10 +575,13 @@ impl Ft8rsApp {
         if fold_into_cross_source(&mut self.rows, gen, freq, self.udp_in_tol, &tokens, source) {
             return;
         }
-        let parity = (slot_key % 2) as u8;
+        if self.rows.last().is_some_and(|row| row.gen != gen) {
+            self.display_items.push(DisplayItem::Separator(gen));
+        }
+        self.display_items
+            .push(DisplayItem::Decode(self.rows.len()));
         self.rows.push(Row {
             text,
-            parity,
             gen,
             freq,
             tokens,
@@ -575,6 +590,7 @@ impl Ft8rsApp {
         if self.rows.len() > MAX_ROWS {
             let drop = self.rows.len() - MAX_ROWS;
             self.rows.drain(..drop);
+            self.display_items = display_items(&self.rows);
         }
     }
 
@@ -733,6 +749,7 @@ impl Ft8rsApp {
     /// Pixel height of one decode line (used to size the header panel and rows).
     fn row_height(ctx: &egui::Context) -> f32 {
         ctx.fonts_mut(|f| f.row_height(&egui::FontId::monospace(DECODE_FONT_SIZE)))
+            + 2.0 * DECODE_ROW_PADDING_Y
     }
 
     /// The column header, drawn in its own fixed top panel: vertically-centered
@@ -769,15 +786,16 @@ impl Ft8rsApp {
     fn decode_rows(&mut self, ui: &mut egui::Ui) {
         const PAD: f32 = TABLE_PAD;
         let font = egui::FontId::monospace(DECODE_FONT_SIZE);
-        let row_h = ui.ctx().fonts_mut(|f| f.row_height(&font));
+        let row_h = Self::row_height(ui.ctx());
         let dark = ui.visuals().dark_mode;
         let text_color = ui.visuals().text_color();
-        // Odd-slot stripe. egui's faint_bg_color is too subtle to read, so we
-        // deepen it a touch; even slots keep the plain panel background.
-        let stripe = if dark {
-            Color32::from_gray(44)
+        let own_call = norm(&self.mycall);
+        let target_call = norm(&self.hiscall);
+        let target_grid = norm(&self.hisgrid);
+        let separator_bg = if dark {
+            Color32::from_gray(65)
         } else {
-            Color32::from_gray(232)
+            Color32::from_gray(210)
         };
         // Compare-mode coloring only applies while listening.
         let comparing = self.udp_in_on;
@@ -787,6 +805,7 @@ impl Ft8rsApp {
         let mut fill: Option<(Vec<String>, f64)> = None;
         let mut clear = false;
         let rows = &self.rows;
+        let display_items = &self.display_items;
         // Zero the row spacing *before* show_rows: it derives both the content
         // height and each row's position from `row_height + item_spacing.y`, so if
         // the outer spacing (8px from our style) didn't match the 0-spacing rows we
@@ -800,27 +819,43 @@ impl Ft8rsApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
-            .show_rows(ui, row_h, rows.len(), |ui, range| {
+            .show_rows(ui, row_h, display_items.len(), |ui, range| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 let width = ui.available_width();
-                for row in &rows[range] {
+                for item in &display_items[range] {
                     let (rect, resp) =
                         ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::click());
-                    // Alternate the slot background: :00/:30 vs :15/:45. The stripe
-                    // spans the full width; the text is padded inside.
-                    if row.parity == 1 {
-                        ui.painter().rect_filled(rect, 0.0, stripe);
-                    }
+                    let row = match item {
+                        DisplayItem::Decode(index) => &rows[*index],
+                        DisplayItem::Separator(gen) => {
+                            ui.painter().rect_filled(rect, 0.0, separator_bg);
+                            ui.painter().text(
+                                egui::pos2(rect.left() + PAD, rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                separator_label(*gen),
+                                font.clone(),
+                                text_color,
+                            );
+                            continue;
+                        }
+                    };
                     let color = if comparing {
                         source_color(row.source, dark, text_color)
                     } else {
                         text_color
                     };
-                    ui.painter().text(
-                        egui::pos2(rect.left() + PAD, rect.center().y),
-                        egui::Align2::LEFT_CENTER,
+                    let job = decode_highlight_job(
                         &row.text,
+                        own_call.as_deref(),
+                        target_call.as_deref(),
+                        target_grid.as_deref(),
                         font.clone(),
+                        color,
+                    );
+                    let galley = ui.painter().layout_job(job);
+                    ui.painter().galley(
+                        egui::pos2(rect.left() + PAD, rect.center().y - galley.size().y / 2.0),
+                        galley,
                         color,
                     );
                     if resp.double_clicked() {
@@ -837,6 +872,7 @@ impl Ft8rsApp {
 
         if clear {
             self.rows.clear();
+            self.display_items.clear();
         }
         if let Some((tokens, freq)) = fill {
             self.apply_double_click_fill(&tokens, freq);
@@ -1911,6 +1947,68 @@ fn norm(value: &str) -> Option<String> {
     }
 }
 
+/// Highlight complete callsign and target-grid tokens in the message column, leaving the time,
+/// signal and provenance columns in their existing compare-mode color.
+fn decode_highlight_job(
+    text: &str,
+    own_call: Option<&str>,
+    target_call: Option<&str>,
+    target_grid: Option<&str>,
+    font_id: egui::FontId,
+    color: Color32,
+) -> egui::text::LayoutJob {
+    const MESSAGE_START: usize = 24; // six UTC + dB/DT/frequency fields and separators
+    let mut job = egui::text::LayoutJob::default();
+    let plain = egui::TextFormat {
+        font_id,
+        color,
+        ..Default::default()
+    };
+    let mut cursor = 0;
+    if let Some(body) = text.get(MESSAGE_START..) {
+        let mut body_cursor = 0;
+        for token in body.split_whitespace() {
+            let start = MESSAGE_START
+                + body_cursor
+                + body[body_cursor..]
+                    .find(token)
+                    .expect("token comes from the remaining message");
+            if start > cursor {
+                job.append(&text[cursor..start], 0.0, plain.clone());
+            }
+            let normalized = token.trim_matches(['<', '>']).to_ascii_uppercase();
+            let background =
+                if own_call == Some(normalized.as_str()) && call_candidate(&normalized).is_some() {
+                    Some((Color32::YELLOW, Color32::BLACK))
+                } else if target_call == Some(normalized.as_str())
+                    && call_candidate(&normalized).is_some()
+                {
+                    Some((Color32::from_rgb(0xe0, 0x22, 0x22), Color32::WHITE))
+                } else if target_grid == Some(normalized.as_str()) && is_grid4(&normalized) {
+                    Some((Color32::from_rgb(0x18, 0x45, 0xa8), Color32::WHITE))
+                } else {
+                    None
+                };
+            let format = if let Some((background, foreground)) = background {
+                egui::TextFormat {
+                    color: foreground,
+                    background,
+                    ..plain.clone()
+                }
+            } else {
+                plain.clone()
+            };
+            job.append(token, 0.0, format);
+            cursor = start + token.len();
+            body_cursor = cursor - MESSAGE_START;
+        }
+    }
+    if cursor < text.len() {
+        job.append(&text[cursor..], 0.0, plain);
+    }
+    job
+}
+
 fn parse_frequency_range(low: &str, high: &str) -> Result<(f64, f64), String> {
     let parse = |value: &str| {
         value
@@ -1954,6 +2052,44 @@ fn absolute_slot(slot_key: u32, now_seconds: u64) -> u64 {
     .into_iter()
     .min_by_key(|candidate| candidate.abs_diff(current))
     .unwrap()
+}
+
+/// Build one divider for each transition between decoded slots. Missing slots
+/// produce no item, so the log never contains an empty slot section.
+fn display_items(rows: &[Row]) -> Vec<DisplayItem> {
+    let mut items = Vec::with_capacity(rows.len());
+    let mut previous = None;
+    for (index, row) in rows.iter().enumerate() {
+        if previous.is_some_and(|gen| gen != row.gen) {
+            items.push(DisplayItem::Separator(row.gen));
+        }
+        items.push(DisplayItem::Decode(index));
+        previous = Some(row.gen);
+    }
+    items
+}
+
+fn separator_label(gen: u64) -> String {
+    let seconds = gen * 15;
+    let days = (seconds / 86_400) as i64;
+    let time = seconds % 86_400;
+    // Civil date from Unix days (Gregorian calendar).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    format!(
+        "------ {year:04}-{month:02}-{day:02} - {:02}:{:02}:{:02} UTC - FT8 ------",
+        time / 3_600,
+        time / 60 % 60,
+        time % 60,
+    )
 }
 
 /// Provenance tag shown as a trailing column after the message
@@ -2495,6 +2631,98 @@ mod tests {
     use super::*;
 
     #[test]
+    fn separators_only_follow_nonempty_slot_transitions() {
+        let row = |gen| Row {
+            text: String::new(),
+            gen,
+            freq: 1000.0,
+            tokens: Vec::new(),
+            source: DecodeSource::Local,
+        };
+        let rows = [row(10), row(10), row(13), row(13), row(15)];
+        let items = display_items(&rows);
+        assert_eq!(items.len(), 7);
+        assert!(matches!(items[0], DisplayItem::Decode(0)));
+        assert!(matches!(items[1], DisplayItem::Decode(1)));
+        assert!(matches!(items[2], DisplayItem::Separator(13)));
+        assert!(matches!(items[5], DisplayItem::Separator(15)));
+        assert!(display_items(&[]).is_empty());
+        // Unix epoch plus one skipped slot: no divider for the missing slot.
+        assert_eq!(
+            separator_label(2),
+            "------ 1970-01-01 - 00:00:30 UTC - FT8 ------"
+        );
+    }
+
+    #[test]
+    fn target_highlight_only_marks_complete_message_tokens() {
+        let text = format!(
+            "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
+            "020045", -25, -0.4, 1256, "5R8IC ZY7H HI06", "a7"
+        );
+        let job = decode_highlight_job(
+            &text,
+            None,
+            Some("ZY7H"),
+            Some("HI06"),
+            egui::FontId::monospace(14.0),
+            Color32::BLACK,
+        );
+        let marked: Vec<_> = job
+            .sections
+            .iter()
+            .filter(|section| section.format.background != Color32::TRANSPARENT)
+            .map(|section| &job.text[section.byte_range.start.0..section.byte_range.end.0])
+            .collect();
+        assert_eq!(marked, ["ZY7H", "HI06"]);
+        assert_eq!(job.text, text);
+
+        let similar = text.replace("ZY7H", "ZY7H/P").replace("HI06", "HI06AA");
+        let job = decode_highlight_job(
+            &similar,
+            None,
+            Some("ZY7H"),
+            Some("HI06"),
+            egui::FontId::monospace(14.0),
+            Color32::BLACK,
+        );
+        assert!(job
+            .sections
+            .iter()
+            .all(|section| section.format.background == Color32::TRANSPARENT));
+    }
+
+    #[test]
+    fn own_callsign_is_yellow_but_own_grid_is_unmarked() {
+        let text = format!(
+            "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
+            "020045", -18, -0.4, 1108, "CQ BG5ATV PM00", ""
+        );
+        let job = decode_highlight_job(
+            &text,
+            Some("BG5ATV"),
+            None,
+            None,
+            egui::FontId::monospace(14.0),
+            Color32::BLACK,
+        );
+        let marked: Vec<_> = job
+            .sections
+            .iter()
+            .filter(|section| section.format.background != Color32::TRANSPARENT)
+            .map(|section| {
+                (
+                    &job.text[section.byte_range.start.0..section.byte_range.end.0],
+                    section.format.background,
+                    section.format.color,
+                )
+            })
+            .collect();
+        assert_eq!(marked, [("BG5ATV", Color32::YELLOW, Color32::BLACK)]);
+        assert_eq!(job.text, text);
+    }
+
+    #[test]
     fn dialog_focus_restores_before_focusing_and_spaces_retries() {
         let ctx = egui::Context::default();
         let mut focus = DialogFocus::default();
@@ -2554,7 +2782,6 @@ mod tests {
                     "{message} {}",
                     provenance_tag(StreamDecodeProvenance::Unknown)
                 ),
-                parity: 0,
                 gen: 3362,
                 freq: 2367.0,
                 tokens: norm_tokens(message),
@@ -2625,7 +2852,6 @@ mod tests {
     fn same_source_rows_never_fold_but_cross_source_merges_to_both() {
         let mk = |source, freq, msg: &str| Row {
             text: String::new(),
-            parity: 0,
             gen: 1,
             freq,
             tokens: norm_tokens(msg),
