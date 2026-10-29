@@ -503,10 +503,13 @@ impl HybridStreamDecodeSession {
         if config.hybrid_experiment && first_error.is_none() {
             let result = guard_worker(|| {
                 Ok(crate::decode::experiment::decode(
-                    samples,
-                    config.nfa,
-                    config.nfb,
-                    clock + Duration::from_secs(10),
+                    crate::decode::experiment::ExperimentInput {
+                        samples,
+                        baseline: &baseline,
+                        low: config.nfa,
+                        high: config.nfb,
+                        deadline: clock + Duration::from_secs(10),
+                    },
                     &mut |row| {
                         experiment_rows.push(row.clone());
                         publish(

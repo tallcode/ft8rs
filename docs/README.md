@@ -23,7 +23,7 @@ unless a section says otherwise.
 | [WSJT-X](../crates/ft8rs-core/WSJTX.md) | Source mapping, sample/numerical conventions, stages, AP and alignment risks |
 | [JTDX](../crates/ft8rs-core/JTDX.md) | Independent state, CallDB, partition settings, source differences and partial `chkgrid` scope |
 | [Hybrid](../crates/ft8rs-core/HYBRID.md) | Three baseline sessions, payload-aware deduplication, bounded cancellation and scheduling |
-| [Hybrid specialist](../crates/ft8rs-core/src/decode/experiment/README.md) | Opt-in private receive DSP, native reuse, conditional admission, bounded residual search and evidence limits |
+| [Hybrid experiment](../crates/ft8rs-core/src/decode/experiment/README.md) | Hybrid-only receive DSP, GUI/CLI opt-in, native waveform models, data admission and bounded residual search |
 | [DX](../crates/ft8rs-core/DX.md) | Target context, protected tasks, three-way observations and controlled recovery |
 | [Shared cooperative architecture](../crates/ft8rs-core/COOPERATIVE_DECODER_DESIGN.md) | State ownership, observation/evidence boundaries and output budgets |
 
@@ -61,3 +61,6 @@ new local run logs can be kept under the ignored `target/decoder-validation/`.
 The reference-framework extension is included in release `v0.0.22` together
 with these documentation changes. Its completed local validation is recorded
 separately in [validation](VALIDATION.md).
+
+- [Hybrid experiment full development](../crates/ft8rs-core/src/decode/experiment/DEVELOPMENT.md):
+  native waveform conditioning, data-only admission, fresh confirmation and product checks.

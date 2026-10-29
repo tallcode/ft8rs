@@ -207,13 +207,20 @@ fn assert_retained(long: bool) {
                 1
             }
         );
+        // Supplemental Hybrid configurations must retain every calibrated
+        // Hybrid identity. Added unlabelled rows never become new goldens here.
+        let required_adapter = if result.adapter == "hybrid-exp" {
+            "hybrid"
+        } else {
+            result.adapter
+        };
         let case = cases
             .iter()
-            .find(|row| row[0] == result.adapter && row[1] == result.variant)
+            .find(|row| row[0] == required_adapter && row[1] == result.variant)
             .unwrap_or_else(|| panic!("uncalibrated case {} {}", result.adapter, result.variant));
         let required: Vec<_> = expected
             .iter()
-            .filter(|row| row[0] == result.adapter && row[1] == result.variant)
+            .filter(|row| row[0] == required_adapter && row[1] == result.variant)
             .collect();
         assert_eq!(required.len(), case[2].parse::<usize>().unwrap());
         let mut used = vec![false; result.observations.len()];
