@@ -125,10 +125,12 @@ pub struct Ft8rsApp {
     pending_confirm: Option<EngineState>,
 
     settings_open: bool,
+    settings_first_frame_painted: bool,
     settings_focus: DialogFocus,
     about_focus: DialogFocus,
     copyright_focus: DialogFocus,
     about_open: bool,
+    about_first_frame_painted: bool,
     // The (mandatory) WSJT-X copyright notice, shown in its own popup from About.
     copyright_open: bool,
     tab: SettingsTab,
@@ -158,6 +160,8 @@ pub struct Ft8rsApp {
     // real surface resize, exactly as a manual window resize does.
     #[cfg(target_os = "windows")]
     restore_inner_size: Option<egui::Vec2>,
+    #[cfg(target_os = "windows")]
+    show_after_resize: bool,
 }
 
 impl Ft8rsApp {
@@ -166,6 +170,9 @@ impl Ft8rsApp {
         install_fonts(&cc.egui_ctx);
         let theme = cc.egui_ctx.theme();
         apply_style(&cc.egui_ctx, theme);
+        #[cfg(target_os = "windows")]
+        cc.egui_ctx
+            .send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
         let engine = EngineHandle::spawn();
         let _ = engine.send(EngineCommand::RefreshDevices);
 
@@ -247,10 +254,12 @@ impl Ft8rsApp {
             dx: None,
             pending_confirm: None,
             settings_open: false,
+            settings_first_frame_painted: false,
             settings_focus: DialogFocus::default(),
             about_focus: DialogFocus::default(),
             copyright_focus: DialogFocus::default(),
             about_open: false,
+            about_first_frame_painted: false,
             copyright_open: false,
             tab: SettingsTab::Station,
             menu_events,
@@ -265,6 +274,8 @@ impl Ft8rsApp {
             pending_menu_hwnd: hwnd,
             #[cfg(target_os = "windows")]
             restore_inner_size: None,
+            #[cfg(target_os = "windows")]
+            show_after_resize: hwnd.is_none(),
         }
     }
 
@@ -575,7 +586,7 @@ impl Ft8rsApp {
         if fold_into_cross_source(&mut self.rows, gen, freq, self.udp_in_tol, &tokens, source) {
             return;
         }
-        if self.rows.last().is_some_and(|row| row.gen != gen) {
+        if self.rows.last().is_none_or(|row| row.gen != gen) {
             self.display_items.push(DisplayItem::Separator(gen));
         }
         self.display_items
@@ -890,12 +901,12 @@ impl Ft8rsApp {
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
         // Uniform control height is the key to a stable row: every widget derives
-        // its height from font(11) + 2·PAD_Y, with the interact-size floor removed
+        // its height from the 14-point font + 2·PAD_Y, with the interact-size floor removed
         // so nothing snaps to a different minimum. No nested layouts on the left —
         // labels, fields, the RX value and its spinner are all direct children of
         // one centered row, so they line up by construction.
         const PAD_Y: f32 = 4.0;
-        ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
+        ui.style_mut().override_font_id = Some(egui::FontId::monospace(DECODE_FONT_SIZE));
         {
             let s = ui.spacing_mut();
             s.item_spacing = egui::vec2(6.0, 0.0);
@@ -909,14 +920,14 @@ impl Ft8rsApp {
             // The first field's measured height is the canonical row height; every
             // other control is forced to match it exactly.
             let old_call = norm(&self.hiscall);
-            let r = callsign_field(ui, &mut self.hiscall, 88.0).labelled_by(call_label.id);
+            let r = callsign_field(ui, &mut self.hiscall, 110.0).labelled_by(call_label.id);
             if r.changed() && norm(&self.hiscall) != old_call {
                 self.hisgrid.clear();
             }
             commit |= r.lost_focus();
             let ctrl_h = r.rect.height();
             let grid_label = ui.label("Grid");
-            commit |= grid_field(ui, &mut self.hisgrid, 40.0)
+            commit |= grid_field(ui, &mut self.hisgrid, 46.0)
                 .labelled_by(grid_label.id)
                 .lost_focus();
             let rx_label = ui.label("RX");
@@ -986,10 +997,15 @@ impl Ft8rsApp {
         }
         let mut commit = false;
         let mut close = false;
+        let first_frame_painted = self.settings_first_frame_painted;
+        let viewport_id = egui::ViewportId::from_hash_of("settings");
+        if !first_frame_painted {
+            ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::RequestPaintWhileHidden);
+        }
         // A resizable OS window (own viewport) with a native title bar. The tabs
         // live in a left SidePanel whose edge separator spans the full height.
         ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of("settings"),
+            viewport_id,
             egui::ViewportBuilder::default()
                 .with_title("Settings")
                 .with_inner_size([560.0, 400.0])
@@ -997,9 +1013,12 @@ impl Ft8rsApp {
                 .with_resizable(true)
                 .with_minimize_button(false)
                 .with_maximize_button(false)
-                .with_active(true),
+                .with_visible(first_frame_painted)
+                .with_active(first_frame_painted),
             |vctx, _class| {
-                self.settings_focus.update(vctx, Instant::now());
+                if first_frame_painted {
+                    self.settings_focus.update(vctx, Instant::now());
+                }
                 egui::Panel::left("settings_tabs")
                     .resizable(true)
                     .default_size(150.0)
@@ -1050,6 +1069,11 @@ impl Ft8rsApp {
                             }
                         });
                     });
+                if !first_frame_painted {
+                    self.settings_first_frame_painted = true;
+                    vctx.request_repaint();
+                    vctx.request_repaint_of(egui::ViewportId::ROOT);
+                }
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;
                 }
@@ -1057,6 +1081,7 @@ impl Ft8rsApp {
         );
         if close {
             self.settings_open = false;
+            self.settings_first_frame_painted = false;
         }
         if commit || close {
             self.udp_in_dirty = true;
@@ -1441,18 +1466,26 @@ impl Ft8rsApp {
         }
         let mut close = false;
         let logo = self.logo.clone();
+        let first_frame_painted = self.about_first_frame_painted;
+        let viewport_id = egui::ViewportId::from_hash_of("about");
+        if !first_frame_painted {
+            ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::RequestPaintWhileHidden);
+        }
         // A real OS window (own viewport) with a native title bar.
         ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of("about"),
+            viewport_id,
             egui::ViewportBuilder::default()
                 .with_title("About ft8.rs")
                 .with_inner_size([440.0, 500.0])
                 .with_resizable(false)
                 .with_minimize_button(false)
                 .with_maximize_button(false)
-                .with_active(true),
+                .with_visible(first_frame_painted)
+                .with_active(first_frame_painted),
             |vctx, _class| {
-                self.about_focus.update(vctx, Instant::now());
+                if first_frame_painted {
+                    self.about_focus.update(vctx, Instant::now());
+                }
                 egui::CentralPanel::default()
                     // No panel margin: the scroll area reaches the window edge so
                     // its scrollbar sits flush to the right. Content padding is
@@ -1578,6 +1611,11 @@ impl Ft8rsApp {
                                     }); // content Frame
                             }); // ScrollArea
                     });
+                if !first_frame_painted {
+                    self.about_first_frame_painted = true;
+                    vctx.request_repaint();
+                    vctx.request_repaint_of(egui::ViewportId::ROOT);
+                }
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;
                 }
@@ -1585,6 +1623,7 @@ impl Ft8rsApp {
         );
         if close {
             self.about_open = false;
+            self.about_first_frame_painted = false;
         }
     }
 
@@ -1681,6 +1720,7 @@ impl eframe::App for Ft8rsApp {
         // `restore_inner_size`).
         #[cfg(target_os = "windows")]
         if let Some(hwnd) = self.pending_menu_hwnd.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
             self.profile_menu = install_menu(self.profile, Some(hwnd));
             self.menu_profile_synced = self.profile;
             let size = ctx.content_rect().size();
@@ -1689,7 +1729,13 @@ impl eframe::App for Ft8rsApp {
                 size + egui::vec2(0.0, 1.0),
             ));
         } else if let Some(size) = self.restore_inner_size.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            self.show_after_resize = true;
+            ctx.request_repaint();
+        } else if self.show_after_resize {
+            self.show_after_resize = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         }
         self.sync_udp_in();
         self.pump_menu();
@@ -1700,7 +1746,7 @@ impl eframe::App for Ft8rsApp {
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::bottom("controls")
-            .exact_size(42.0)
+            .exact_size(46.0)
             .show(ui, |ui| self.bottom_bar(ui));
         if let Some(err) = &self.error {
             egui::Panel::bottom("error_status").show(ui, |ui| {
@@ -2054,13 +2100,13 @@ fn absolute_slot(slot_key: u32, now_seconds: u64) -> u64 {
     .unwrap()
 }
 
-/// Build one divider for each transition between decoded slots. Missing slots
-/// produce no item, so the log never contains an empty slot section.
+/// Build one divider before the first decoded slot and each subsequent slot.
+/// Missing slots produce no item, so the log never contains an empty section.
 fn display_items(rows: &[Row]) -> Vec<DisplayItem> {
-    let mut items = Vec::with_capacity(rows.len());
+    let mut items = Vec::with_capacity(rows.len() * 2);
     let mut previous = None;
     for (index, row) in rows.iter().enumerate() {
-        if previous.is_some_and(|gen| gen != row.gen) {
+        if previous != Some(row.gen) {
             items.push(DisplayItem::Separator(row.gen));
         }
         items.push(DisplayItem::Decode(index));
@@ -2631,7 +2677,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn separators_only_follow_nonempty_slot_transitions() {
+    fn separators_mark_first_and_subsequent_nonempty_slots() {
         let row = |gen| Row {
             text: String::new(),
             gen,
@@ -2641,11 +2687,16 @@ mod tests {
         };
         let rows = [row(10), row(10), row(13), row(13), row(15)];
         let items = display_items(&rows);
-        assert_eq!(items.len(), 7);
-        assert!(matches!(items[0], DisplayItem::Decode(0)));
-        assert!(matches!(items[1], DisplayItem::Decode(1)));
-        assert!(matches!(items[2], DisplayItem::Separator(13)));
-        assert!(matches!(items[5], DisplayItem::Separator(15)));
+        assert_eq!(items.len(), 8);
+        assert!(matches!(items[0], DisplayItem::Separator(10)));
+        assert!(matches!(items[1], DisplayItem::Decode(0)));
+        assert!(matches!(items[2], DisplayItem::Decode(1)));
+        assert!(matches!(items[3], DisplayItem::Separator(13)));
+        assert!(matches!(items[6], DisplayItem::Separator(15)));
+        assert!(matches!(
+            display_items(&rows[1..])[0],
+            DisplayItem::Separator(10)
+        ));
         assert!(display_items(&[]).is_empty());
         // Unix epoch plus one skipped slot: no divider for the missing slot.
         assert_eq!(
