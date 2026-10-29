@@ -1,0 +1,43 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+awgn	2026102901	-18	native	1	0	270.453	CQ BG5ATV PM00
+awgn	2026102901	-18	blind-single	1	0	213.010	CQ BG5ATV PM00@1000.375/0.150/h0-1-amp
+awgn	2026102901	-18	blind-multi	1	0	2060.473	CQ BG5ATV PM00@1000.375/0.150/h0-1-amp
+awgn	2026112908	-18	native	1	0	256.914	K1JT BG5ATV -04
+awgn	2026112908	-18	blind-single	1	0	211.315	K1JT BG5ATV -04@1000.000/0.150/h0-1-amp
+awgn	2026112908	-18	blind-multi	1	0	2071.099	K1JT BG5ATV -04@1000.000/0.150/h0-1-amp
+awgn	2026102901	-19	native	1	0	234.930	CQ BG5ATV PM00
+awgn	2026102901	-19	blind-single	1	0	211.658	CQ BG5ATV PM00@1000.375/0.155/h0-1-amp
+awgn	2026102901	-19	blind-multi	1	0	2104.978	CQ BG5ATV PM00@1000.375/0.155/h0-1-amp
+awgn	2026112908	-19	native	1	0	255.981	K1JT BG5ATV -04
+awgn	2026112908	-19	blind-single	1	0	212.290	K1JT BG5ATV -04@1000.000/0.150/h0-1-amp
+awgn	2026112908	-19	blind-multi	1	0	2089.874	K1JT BG5ATV -04@1000.000/0.150/h0-1-amp
+awgn	2026102901	-20	native	1	0	240.146	CQ BG5ATV PM00
+awgn	2026102901	-20	blind-single	0	0	212.939	
+awgn	2026102901	-20	blind-multi	1	0	2107.874	CQ BG5ATV PM00@1000.000/0.150/h2-4-bessel
+awgn	2026112908	-20	native	1	0	260.815	K1JT BG5ATV -04
+awgn	2026112908	-20	blind-single	0	0	212.301	
+awgn	2026112908	-20	blind-multi	1	0	2102.467	K1JT BG5ATV -04@1000.000/0.140/h3-3-amp
+awgn	2026102901	-21	native	0	0	204.549	
+awgn	2026102901	-21	blind-single	0	0	212.689	
+awgn	2026102901	-21	blind-multi	0	0	2091.141	
+awgn	2026112908	-21	native	1	0	260.897	K1JT BG5ATV -04
+awgn	2026112908	-21	blind-single	0	0	213.239	
+awgn	2026112908	-21	blind-multi	1	0	2079.353	K1JT BG5ATV -04@1000.000/0.140/h2-3-robust
+awgn	2026102901	-22	native	0	0	190.920	
+awgn	2026102901	-22	blind-single	0	0	213.002	
+awgn	2026102901	-22	blind-multi	0	0	2095.772	
+awgn	2026112908	-22	native	0	0	191.450	
+awgn	2026112908	-22	blind-single	0	0	212.125	
+awgn	2026112908	-22	blind-multi	0	0	2101.411	
+awgn	2026102901	-23	native	0	0	190.824	
+awgn	2026102901	-23	blind-single	0	0	213.088	
+awgn	2026102901	-23	blind-multi	0	0	2095.088	
+awgn	2026112908	-23	native	0	0	197.674	
+awgn	2026112908	-23	blind-single	0	0	212.835	
+awgn	2026112908	-23	blind-multi	0	0	2106.842	
+awgn	2026102901	-24	native	0	0	194.276	
+awgn	2026102901	-24	blind-single	0	0	212.799	
+awgn	2026102901	-24	blind-multi	0	0	2095.822	
+awgn	2026112908	-24	native	0	0	191.091	
+awgn	2026112908	-24	blind-single	0	0	212.878	
+awgn	2026112908	-24	blind-multi	0	0	2111.685	

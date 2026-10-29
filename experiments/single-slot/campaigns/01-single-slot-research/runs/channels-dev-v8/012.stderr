@@ -1,0 +1,9 @@
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/wsjtx_mm_2026102801.wav	0	native	CQ K1ABC FN42	1000.000000	0.000000	native
+STAGE	discover	68.365	96
+VERIFY	CQ K1ABC FN42	999.715500	0.000750	432.364
+CALLBACK	receiver	77.907	CQ K1ABC FN42	999.715500	0.000750
+STAGE	search	2313.118	1
+FIT	CQ K1ABC FN42	999.715500	0.000750	434.442
+STAGE	discover	67.896	96
+STAGE	search	2326.723	0
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/wsjtx_mm_2026102801.wav	0	receiver	CQ K1ABC FN42	999.715500	0.000750	h0-1-amp

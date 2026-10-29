@@ -1,0 +1,16 @@
+method	snr	correct	wrong	trials	mean_ms	max_ms
+blind-sic-constant	-18	2	0	2	4367.447	4372.482
+blind-sic-constant	-20	2	0	2	4358.224	4375.054
+blind-sic-constant	-22	0	0	2	4378.305	4388.327
+blind-sic-joint	-18	2	0	2	4380.015	4381.945
+blind-sic-joint	-20	2	0	2	4367.291	4399.488
+blind-sic-joint	-22	0	0	2	4391.318	4403.906
+blind-sic-native	-18	2	0	2	4394.225	4406.408
+blind-sic-native	-20	2	0	2	4395.568	4402.679
+blind-sic-native	-22	0	0	2	4403.632	4408.942
+blind-sic-smooth	-18	2	0	2	4375.351	4377.641
+blind-sic-smooth	-20	2	0	2	4364.474	4376.186
+blind-sic-smooth	-22	0	0	2	4367.076	4367.257
+native	-18	2	0	2	268.373	278.370
+native	-20	1	0	2	271.091	282.691
+native	-22	0	0	2	276.750	282.906

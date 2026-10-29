@@ -1,0 +1,73 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+cw	2026102991	-18	native	0	0	153.441	
+cw	2026102991	-18	blind-hybrid	0	0	461.508	
+cw	2026102991	-18	blind-receiver	1	0	4691.966	CQ VK8RFT NR34@1075.833/0.436/h0-1-amp
+cw	2026112998	-18	native	0	0	164.614	
+cw	2026112998	-18	blind-hybrid	0	0	388.768	
+cw	2026112998	-18	blind-receiver	1	0	4684.781	F5XFY DL2GXV -02@2873.113/0.794/h0-1-amp
+cw	2026123005	-18	native	0	0	152.432	
+cw	2026123005	-18	blind-hybrid	0	0	430.918	
+cw	2026123005	-18	blind-receiver	1	0	4682.791	K7RSO EA7INT R-03@1751.418/-0.109/h0-1-amp
+cw	2026133012	-18	native	0	0	201.210	
+cw	2026133012	-18	blind-hybrid	0	0	490.853	
+cw	2026133012	-18	blind-receiver	1	0	4667.514	F1GPL PA8SAO RR73@994.989/0.340/h0-1-amp
+cw	2026143019	-18	native	0	0	141.265	
+cw	2026143019	-18	blind-hybrid	0	0	414.053	
+cw	2026143019	-18	blind-receiver	1	0	4692.692	PA7NWD G5BRE 73@1638.604/0.976/h0-1-amp
+cw	2026153026	-18	native	0	0	217.633	
+cw	2026153026	-18	blind-hybrid	0	0	497.871	
+cw	2026153026	-18	blind-receiver	1	0	4696.852	EA0YEQ DL8ZIX MG82@545.486/0.507/h0-1-amp
+cw	2026163033	-18	native	0	0	141.941	
+cw	2026163033	-18	blind-hybrid	0	0	432.454	
+cw	2026163033	-18	blind-receiver	1	0	4678.388	CQ N2TZR LP68@733.546/-0.248/h0-1-amp
+cw	2026173040	-18	native	0	0	189.553	
+cw	2026173040	-18	blind-hybrid	0	0	461.331	
+cw	2026173040	-18	blind-receiver	1	0	4697.461	G4QES JA5WGD -08@1983.673/0.224/h0-1-amp
+cw	2026102991	-20	native	0	0	151.376	
+cw	2026102991	-20	blind-hybrid	0	0	440.253	
+cw	2026102991	-20	blind-receiver	1	0	4694.373	CQ VK8RFT NR34@1075.833/0.436/h1-3-amp
+cw	2026112998	-20	native	0	0	163.431	
+cw	2026112998	-20	blind-hybrid	0	0	390.291	
+cw	2026112998	-20	blind-receiver	1	0	4699.080	F5XFY DL2GXV -02@2873.112/0.794/h0-1-amp
+cw	2026123005	-20	native	0	0	204.710	
+cw	2026123005	-20	blind-hybrid	0	0	544.427	
+cw	2026123005	-20	blind-receiver	1	0	4727.617	K7RSO EA7INT R-03@1751.418/-0.109/h2-3-amp
+cw	2026133012	-20	native	0	0	189.038	
+cw	2026133012	-20	blind-hybrid	0	0	492.847	
+cw	2026133012	-20	blind-receiver	1	0	4693.389	F1GPL PA8SAO RR73@994.989/0.340/h0-1-amp
+cw	2026143019	-20	native	0	0	135.752	
+cw	2026143019	-20	blind-hybrid	0	0	416.917	
+cw	2026143019	-20	blind-receiver	1	0	4686.323	PA7NWD G5BRE 73@1638.604/0.976/h0-1-amp
+cw	2026153026	-20	native	0	0	214.995	
+cw	2026153026	-20	blind-hybrid	0	0	506.240	
+cw	2026153026	-20	blind-receiver	1	0	4763.506	EA0YEQ DL8ZIX MG82@545.486/0.507/h2-3-amp
+cw	2026163033	-20	native	0	0	142.018	
+cw	2026163033	-20	blind-hybrid	0	0	435.065	
+cw	2026163033	-20	blind-receiver	1	0	4658.339	CQ N2TZR LP68@733.546/-0.248/h0-1-amp
+cw	2026173040	-20	native	0	0	193.064	
+cw	2026173040	-20	blind-hybrid	0	0	459.261	
+cw	2026173040	-20	blind-receiver	1	0	4674.792	G4QES JA5WGD -08@1983.673/0.224/h0-1-amp
+cw	2026102991	-22	native	0	0	152.258	
+cw	2026102991	-22	blind-hybrid	0	0	428.730	
+cw	2026102991	-22	blind-receiver	1	0	4681.162	CQ VK8RFT NR34@1075.833/0.436/phase-0
+cw	2026112998	-22	native	0	0	162.835	
+cw	2026112998	-22	blind-hybrid	0	0	386.377	
+cw	2026112998	-22	blind-receiver	1	0	4662.991	F5XFY DL2GXV -02@2873.113/0.794/h1-3-amp
+cw	2026123005	-22	native	0	0	143.346	
+cw	2026123005	-22	blind-hybrid	0	0	369.469	
+cw	2026123005	-22	blind-receiver	1	0	4706.002	K7RSO EA7INT R-03@1751.418/-0.109/phase-0
+cw	2026133012	-22	native	0	0	183.613	
+cw	2026133012	-22	blind-hybrid	0	0	456.628	
+cw	2026133012	-22	blind-receiver	1	0	4635.387	F1GPL PA8SAO RR73@994.990/0.340/h3-3-amp
+cw	2026143019	-22	native	0	0	137.736	
+cw	2026143019	-22	blind-hybrid	0	0	406.063	
+cw	2026143019	-22	blind-receiver	1	0	4680.755	PA7NWD G5BRE 73@1638.603/0.976/phase-0
+cw	2026153026	-22	native	0	0	218.603	
+cw	2026153026	-22	blind-hybrid	0	0	509.444	
+cw	2026153026	-22	blind-receiver	1	0	4675.564	EA0YEQ DL8ZIX MG82@545.486/0.507/phase-0
+cw	2026163033	-22	native	0	0	141.772	
+cw	2026163033	-22	blind-hybrid	0	0	459.017	
+cw	2026163033	-22	blind-receiver	1	0	4672.896	CQ N2TZR LP68@733.545/-0.248/phase-0
+cw	2026173040	-22	native	0	0	199.316	
+cw	2026173040	-22	blind-hybrid	0	0	454.562	
+cw	2026173040	-22	blind-receiver	0	0	2398.787	

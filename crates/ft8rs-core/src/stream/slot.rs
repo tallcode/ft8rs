@@ -88,3 +88,45 @@ fn collect_12k_slots(
     .expect("collecting in-memory decode slots cannot fail");
     out
 }
+
+/// Stream provenance to presentation without modifying the decoded payload.
+pub fn decode_12k_slots_streaming_tagged<F, G>(
+    samples_12k: &[f32],
+    start_time: SlotTimestamp,
+    config: StreamDecodeConfig,
+    mut on_decode: F,
+    mut on_slot_complete: G,
+) -> Result<(), String>
+where
+    F: FnMut(SlotTimestamp, &super::session::StreamDecodedWithProvenance) -> Result<(), String>,
+    G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
+{
+    use super::session::{DecodeProfile, StreamDecodeProvenance, StreamDecodedWithProvenance};
+    let profile = config.profile;
+    let mut decoder = ProfileStreamDecodeSession::new(config);
+    let per_slot = SAMPLE_RATE as usize * SLOT_SECONDS;
+    for (slot, samples) in samples_12k.chunks(per_slot).enumerate() {
+        let timestamp = start_time.add_seconds((slot * SLOT_SECONDS) as i64);
+        let count = if matches!(profile, DecodeProfile::Hybrid | DecodeProfile::Dx) {
+            decoder.decode_slot_streaming_with_provenance_at(&timestamp, samples, |row| {
+                on_decode(timestamp.clone(), row)
+            })?
+        } else {
+            // The original plain callback is immediate; do not batch it just to
+            // obtain provenance that this callback does not expose.
+            decoder
+                .decode_slot_streaming_at(&timestamp, samples, |row| {
+                    on_decode(
+                        timestamp.clone(),
+                        &StreamDecodedWithProvenance {
+                            decode: row.clone(),
+                            provenance: StreamDecodeProvenance::Unknown,
+                        },
+                    )
+                })?
+                .len()
+        };
+        on_slot_complete(timestamp, count)?;
+    }
+    Ok(())
+}

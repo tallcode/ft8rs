@@ -1,0 +1,20 @@
+{
+  "methods": "hybrid,conditional,hybrid-conditional",
+  "expected_tasks": 1,
+  "binary_sha256": "16f7357de06ea56af08308b940ce674b17c44ae7150cdd0af2fe8bb6552f1e3d",
+  "tasks": [
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav",
+        "hybrid,conditional,hybrid-conditional",
+        "0"
+      ],
+      "input_sha256": "9feb99c275770a6618538026da7decc6b09eb6cf63121e5168fa86dcdf00c2f5",
+      "slot": 0,
+      "wall_seconds": 11.460681667,
+      "returncode": 0
+    }
+  ]
+}

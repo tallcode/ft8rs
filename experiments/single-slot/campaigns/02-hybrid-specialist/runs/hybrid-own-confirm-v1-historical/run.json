@@ -1,0 +1,267 @@
+{
+  "methods": "native,jtdx,hybrid,hybrid-specialist",
+  "expected_tasks": 20,
+  "binary_sha256": "d110af710bbd4340747b2ce9f51436e0f22f47f1863fea0b79ac2ed2aee21bd1",
+  "tasks": [
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "0"
+      ],
+      "input_sha256": "9feb99c275770a6618538026da7decc6b09eb6cf63121e5168fa86dcdf00c2f5",
+      "slot": 0,
+      "wall_seconds": 9.603387334,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "0"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 0,
+      "wall_seconds": 12.950805,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "1"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 1,
+      "wall_seconds": 10.028197709000004,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "2"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 2,
+      "wall_seconds": 11.108673833000005,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "3"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 3,
+      "wall_seconds": 10.975387833999996,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "4"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 4,
+      "wall_seconds": 11.256587042,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "5"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 5,
+      "wall_seconds": 14.493964750000004,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "6"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 6,
+      "wall_seconds": 14.695707041999995,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "7"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 7,
+      "wall_seconds": 9.632726042000002,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "8"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 8,
+      "wall_seconds": 12.796333542,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "9"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 9,
+      "wall_seconds": 10.385140375000006,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "10"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 10,
+      "wall_seconds": 9.53479424999999,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "11"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 11,
+      "wall_seconds": 12.782439208,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "12"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 12,
+      "wall_seconds": 9.74102449999998,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "13"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 13,
+      "wall_seconds": 9.499817332999982,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "14"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 14,
+      "wall_seconds": 15.041211540999996,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "15"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 15,
+      "wall_seconds": 9.891022624999977,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "16"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 16,
+      "wall_seconds": 10.153743124999977,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "17"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 17,
+      "wall_seconds": 10.162418666999997,
+      "returncode": 0
+    },
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/230208_140300.wav",
+        "native,jtdx,hybrid,hybrid-specialist",
+        "18"
+      ],
+      "input_sha256": "5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e",
+      "slot": 18,
+      "wall_seconds": 13.731216042,
+      "returncode": 0
+    }
+  ]
+}

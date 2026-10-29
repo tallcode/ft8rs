@@ -1,0 +1,83 @@
+experiments/single-slot/results/hybrid-specialist-v1.json
+hybrid-own-confirm-v1-awgn
+blind-hybrid	-21	7	0	16	1023.531
+blind-hybrid	-22	1	0	16	989.859
+blind-hybrid	-23	0	0	16	603.944
+blind-hybrid-specialist	-21	15	0	16	5746.234
+blind-hybrid-specialist	-22	10	0	16	5708.345
+blind-hybrid-specialist	-23	1	0	16	5154.764
+blind-jtdx	-21	2	0	16	583.573
+blind-jtdx	-22	0	0	16	589.404
+blind-jtdx	-23	0	0	16	541.733
+native	-21	5	0	16	327.495
+native	-22	0	0	16	242.271
+native	-23	0	0	16	235.884
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-21", "frames": 16, "retained_target": 7, "gained_target": 8, "lost_target": 0, "lost_rows": 0, "added_rows": 8}, {"baseline": "blind-hybrid", "snr": "-22", "frames": 16, "retained_target": 1, "gained_target": 9, "lost_target": 0, "lost_rows": 0, "added_rows": 9}, {"baseline": "blind-hybrid", "snr": "-23", "frames": 16, "retained_target": 0, "gained_target": 1, "lost_target": 0, "lost_rows": 0, "added_rows": 1}]
+hybrid-own-confirm-v1-cw
+blind-hybrid	-20	0	0	16	580.948
+blind-hybrid	-22	0	0	16	666.621
+blind-hybrid-specialist	-20	16	0	16	5243.396
+blind-hybrid-specialist	-22	9	0	16	5292.607
+blind-jtdx	-20	0	0	16	577.425
+blind-jtdx	-22	0	0	16	564.598
+native	-20	0	0	16	221.691
+native	-22	0	0	16	223.234
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-20", "frames": 16, "retained_target": 0, "gained_target": 16, "lost_target": 0, "lost_rows": 0, "added_rows": 16}, {"baseline": "blind-hybrid", "snr": "-22", "frames": 16, "retained_target": 0, "gained_target": 9, "lost_target": 0, "lost_rows": 0, "added_rows": 9}]
+hybrid-own-confirm-v1-mix
+blind-hybrid	-20	5	0	8	678.562
+blind-hybrid	-22	0	0	8	687.22
+blind-hybrid-specialist	-20	8	0	8	5868.934
+blind-hybrid-specialist	-22	0	0	8	5365.025
+blind-jtdx	-20	1	0	8	457.945
+blind-jtdx	-22	0	0	8	410.546
+native	-20	3	0	8	303.026
+native	-22	0	0	8	289.78
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-20", "frames": 8, "retained_target": 5, "gained_target": 3, "lost_target": 0, "lost_rows": 0, "added_rows": 3}, {"baseline": "blind-hybrid", "snr": "-22", "frames": 8, "retained_target": 0, "gained_target": 0, "lost_target": 0, "lost_rows": 0, "added_rows": 0}]
+hybrid-own-confirm-v1-mix2
+blind-hybrid	-18	8	0	8	715.594
+blind-hybrid	-20	3	0	8	1098.789
+blind-hybrid-specialist	-18	8	0	8	5387.84
+blind-hybrid-specialist	-20	8	0	8	6859.412
+blind-jtdx	-18	8	0	8	411.925
+blind-jtdx	-20	1	0	8	625.362
+native	-18	8	0	8	332.815
+native	-20	2	0	8	380.565
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-18", "frames": 8, "retained_target": 8, "gained_target": 0, "lost_target": 0, "lost_rows": 0, "added_rows": 0}, {"baseline": "blind-hybrid", "snr": "-20", "frames": 8, "retained_target": 3, "gained_target": 5, "lost_target": 0, "lost_rows": 0, "added_rows": 5}]
+hybrid-own-confirm-v1-mixfade
+blind-hybrid	-18	8	0	8	681.141
+blind-hybrid	-20	4	0	8	677.152
+blind-hybrid-specialist	-18	8	0	8	5354.427
+blind-hybrid-specialist	-20	5	0	8	5340.281
+blind-jtdx	-18	8	0	8	381.193
+blind-jtdx	-20	2	0	8	402.732
+native	-18	8	0	8	314.842
+native	-20	3	0	8	294.276
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-18", "frames": 8, "retained_target": 8, "gained_target": 0, "lost_target": 0, "lost_rows": 0, "added_rows": 0}, {"baseline": "blind-hybrid", "snr": "-20", "frames": 8, "retained_target": 4, "gained_target": 1, "lost_target": 0, "lost_rows": 0, "added_rows": 1}]
+hybrid-own-confirm-v1-drift
+blind-hybrid	-18	8	0	8	719.375
+blind-hybrid	-20	6	0	8	901.402
+blind-hybrid-specialist	-18	8	0	8	2997.995
+blind-hybrid-specialist	-20	6	0	8	3294.213
+blind-jtdx	-18	8	0	8	365.178
+blind-jtdx	-20	0	0	8	419.162
+native	-18	8	0	8	301.03
+native	-20	2	0	8	236.644
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-18", "frames": 8, "retained_target": 8, "gained_target": 0, "lost_target": 0, "lost_rows": 0, "added_rows": 0}, {"baseline": "blind-hybrid", "snr": "-20", "frames": 8, "retained_target": 6, "gained_target": 0, "lost_target": 0, "lost_rows": 0, "added_rows": 0}]
+hybrid-own-confirm-v1-noise
+blind-hybrid	-24	0	0	16	511.733
+blind-hybrid-specialist	-24	0	0	16	3693.01
+blind-jtdx	-24	0	0	16	475.135
+native	-24	0	0	16	239.863
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-24", "frames": 16, "retained_target": 0, "gained_target": 0, "lost_target": 0, "lost_rows": 0, "added_rows": 0}]
+hybrid-own-confirm-v1-cwonly
+blind-hybrid	-24	0	0	16	653.424
+blind-hybrid-specialist	-24	0	0	16	2943.168
+blind-jtdx	-24	0	0	16	428.33
+native	-24	0	0	16	254.944
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-24", "frames": 16, "retained_target": 0, "gained_target": 0, "lost_target": 0, "lost_rows": 0, "added_rows": 0}]
+hybrid-own-confirm-v1-blocker
+blind-hybrid	-24	0	0	16	743.396
+blind-hybrid-specialist	-24	0	0	16	5431.454
+blind-jtdx	-24	0	0	16	449.506
+native	-24	0	0	16	334.872
+paired_hybrid [{"baseline": "blind-hybrid", "snr": "-24", "frames": 16, "retained_target": 0, "gained_target": 0, "lost_target": 0, "lost_rows": 0, "added_rows": 0}]

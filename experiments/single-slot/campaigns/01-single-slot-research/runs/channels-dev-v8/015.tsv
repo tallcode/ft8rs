@@ -1,0 +1,3 @@
+file	slot	method	ms	rows
+/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/wsjtx_mq_2026102809.wav	0	native	197.356	CQ K1ABC FN42@1000.000/0.000/native
+/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/wsjtx_mq_2026102809.wav	0	receiver	4616.116	CQ K1ABC FN42@1000.060/0.000/h0-1-amp

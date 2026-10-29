@@ -1,6 +1,8 @@
 use ft8rs::input::audio::downsample_12k;
 use ft8rs::stream::profile::{ProfileSlotState, ProfileStreamDecodeSession};
-use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig};
+use ft8rs::stream::session::{
+    DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedWithProvenance,
+};
 use ft8rs::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
 
 use cpal::traits::StreamTrait;
@@ -294,10 +296,26 @@ pub fn list_soundcards() -> Result<Vec<SoundcardDeviceInfo>, String> {
 pub fn decode_soundcard_streaming_decodes<F, G>(
     options: SoundcardDecodeOptions,
     mut on_decode: F,
-    mut on_slot_complete: G,
+    on_slot_complete: G,
 ) -> Result<(), String>
 where
     F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
+{
+    decode_soundcard_streaming_tagged(
+        options,
+        |time, row| on_decode(time, &row.decode),
+        on_slot_complete,
+    )
+}
+
+pub fn decode_soundcard_streaming_tagged<F, G>(
+    options: SoundcardDecodeOptions,
+    mut on_decode: F,
+    mut on_slot_complete: G,
+) -> Result<(), String>
+where
+    F: FnMut(SlotTimestamp, &StreamDecodedWithProvenance) -> Result<(), String>,
     G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
 {
     let AudioCapture {
@@ -392,7 +410,7 @@ enum DecodeWorkerCommand {
 enum DecodeWorkerEvent {
     Decode {
         timestamp: SlotTimestamp,
-        decode: StreamDecodedMessage,
+        decode: StreamDecodedWithProvenance,
     },
     SlotComplete {
         timestamp: SlotTimestamp,
@@ -429,7 +447,10 @@ fn start_decode_worker(
                             event_tx
                                 .send(DecodeWorkerEvent::Decode {
                                     timestamp: timestamp.clone(),
-                                    decode: decode.clone(),
+                                    decode: StreamDecodedWithProvenance {
+                                        decode: decode.clone(),
+                                        provenance: StreamDecodeProvenance::Unknown,
+                                    },
                                 })
                                 .map_err(|err| err.to_string())
                         },
@@ -461,7 +482,10 @@ fn start_decode_worker(
                                 event_tx
                                     .send(DecodeWorkerEvent::Decode {
                                         timestamp: timestamp.clone(),
-                                        decode: decode.clone(),
+                                        decode: StreamDecodedWithProvenance {
+                                            decode: decode.clone(),
+                                            provenance: StreamDecodeProvenance::Unknown,
+                                        },
                                     })
                                     .map_err(|err| err.to_string())
                             })
@@ -520,7 +544,7 @@ fn run_profile_worker(
                         event_tx
                             .send(DecodeWorkerEvent::Decode {
                                 timestamp: timestamp.clone(),
-                                decode: row.decode.clone(),
+                                decode: row.clone(),
                             })
                             .map_err(|err| err.to_string())
                     },
@@ -557,7 +581,7 @@ fn run_profile_worker(
                                 event_tx
                                     .send(DecodeWorkerEvent::Decode {
                                         timestamp: timestamp.clone(),
-                                        decode: row.decode.clone(),
+                                        decode: row.clone(),
                                     })
                                     .map_err(|err| err.to_string())
                             },
@@ -599,7 +623,7 @@ fn handle_decode_event<F, G>(
     on_slot_complete: &mut G,
 ) -> Result<bool, String>
 where
-    F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    F: FnMut(SlotTimestamp, &StreamDecodedWithProvenance) -> Result<(), String>,
     G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
 {
     match event {
@@ -621,7 +645,7 @@ fn drain_available_decode_events<F, G>(
     on_slot_complete: &mut G,
 ) -> Result<bool, String>
 where
-    F: FnMut(SlotTimestamp, &StreamDecodedMessage) -> Result<(), String>,
+    F: FnMut(SlotTimestamp, &StreamDecodedWithProvenance) -> Result<(), String>,
     G: FnMut(SlotTimestamp, usize) -> Result<(), String>,
 {
     let mut slot_complete = false;

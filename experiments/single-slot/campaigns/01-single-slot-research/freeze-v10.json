@@ -1,0 +1,15 @@
+{
+  "version": "v10",
+  "receiver_source": "experiments/single-slot/receiver_observed.rs",
+  "receiver_sha256": "ec1e2b8c9950d1c4414a98c31ada006439aed1152296d89040aae063d3ae7ea8",
+  "binary_sha256": "50fcea8439d6a6e4898dd59d7ba301e2ffa84411cf19de8d489871be318678ca",
+  "selection": "v9 conditional receiver with exact original FEC tones and payload-aware identity; explicit observed-sample masks; noise and pilot estimates exclude unobserved/partial symbols; fixed score 80; one smooth residual search, max 3 initial seeds; no learned model, no call-shape or DT-window filter.",
+  "untouched_holdout_root": 2026104991,
+  "negative_roots": [
+    2026105041,
+    2026105051,
+    2026105061
+  ],
+  "self_check": "self-check-v10.tsv",
+  "no_more_algorithm_changes_before_confirmation": true
+}

@@ -1,0 +1,129 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+cw	2026108991	-20	native	0	0	211.836	
+cw	2026108991	-20	blind-jtdx	0	0	296.960	
+cw	2026108991	-20	blind-hybrid	0	0	434.735	
+cw	2026108991	-20	blind-hybrid-specialist	1	0	5113.939	CQ DL6MRR CB91@794.351/0.357/HybridSpecialist
+cw	2026118998	-20	native	0	0	134.337	
+cw	2026118998	-20	blind-jtdx	0	0	327.746	
+cw	2026118998	-20	blind-hybrid	0	0	381.422	
+cw	2026118998	-20	blind-hybrid-specialist	1	0	5056.944	W2VYA G9ZXC -02@2586.537/-0.125/HybridSpecialist
+cw	2026129005	-20	native	0	0	159.047	
+cw	2026129005	-20	blind-jtdx	0	0	313.429	
+cw	2026129005	-20	blind-hybrid	0	0	423.098	
+cw	2026129005	-20	blind-hybrid-specialist	1	0	5102.675	G5QAA N7LER R-03@1923.714/0.765/HybridSpecialist
+cw	2026139012	-20	native	0	0	168.247	
+cw	2026139012	-20	blind-jtdx	0	0	347.187	
+cw	2026139012	-20	blind-hybrid	0	0	387.453	
+cw	2026139012	-20	blind-hybrid-specialist	1	0	5078.452	PA7COF LU6RBD RR73@956.836/0.703/HybridSpecialist
+cw	2026149019	-20	native	0	0	176.939	
+cw	2026149019	-20	blind-jtdx	0	0	368.247	
+cw	2026149019	-20	blind-hybrid	0	0	463.633	
+cw	2026149019	-20	blind-hybrid-specialist	1	0	5117.765	PA4XTN DL4GYU 73@736.745/0.529/HybridSpecialist
+cw	2026159026	-20	native	0	0	173.968	
+cw	2026159026	-20	blind-jtdx	0	0	342.245	
+cw	2026159026	-20	blind-hybrid	0	0	408.204	
+cw	2026159026	-20	blind-hybrid-specialist	1	0	5069.597	DL9LAY G8EXT GF49@759.147/0.281/HybridSpecialist
+cw	2026169033	-20	native	0	0	163.759	
+cw	2026169033	-20	blind-jtdx	0	0	298.863	
+cw	2026169033	-20	blind-hybrid	0	0	391.222	
+cw	2026169033	-20	blind-hybrid-specialist	1	0	5083.819	CQ DL3AFI NC93@2091.314/0.332/HybridSpecialist
+cw	2026179040	-20	native	0	0	182.067	
+cw	2026179040	-20	blind-jtdx	0	0	310.266	
+cw	2026179040	-20	blind-hybrid	0	0	469.025	
+cw	2026179040	-20	blind-hybrid-specialist	1	0	5170.728	K8UTA JA5BEV -08@2318.506/0.889/HybridSpecialist
+cw	2026189047	-20	native	0	0	190.343	
+cw	2026189047	-20	blind-jtdx	0	0	577.425	
+cw	2026189047	-20	blind-hybrid	0	0	580.948	
+cw	2026189047	-20	blind-hybrid-specialist	1	0	5243.396	PA2IBP F1ZNV R-09@1219.521/0.161/HybridSpecialist
+cw	2026199054	-20	native	0	0	221.691	
+cw	2026199054	-20	blind-jtdx	0	0	297.483	
+cw	2026199054	-20	blind-hybrid	0	0	434.546	
+cw	2026199054	-20	blind-hybrid-specialist	1	0	5102.733	OH7CMS G0KHT RR73@1215.818/0.505/HybridSpecialist
+cw	2026209061	-20	native	0	0	183.692	
+cw	2026209061	-20	blind-jtdx	0	0	408.049	
+cw	2026209061	-20	blind-hybrid	0	0	448.877	
+cw	2026209061	-20	blind-hybrid-specialist	1	0	5121.084	LU2TYN EA8OMU 73@672.380/0.093/HybridSpecialist
+cw	2026219068	-20	native	0	0	204.191	
+cw	2026219068	-20	blind-jtdx	0	0	425.827	
+cw	2026219068	-20	blind-hybrid	0	0	479.756	
+cw	2026219068	-20	blind-hybrid-specialist	1	0	5151.515	OH1RHV EA2LCY MN45@1445.162/0.911/HybridSpecialist
+cw	2026229075	-20	native	0	0	203.195	
+cw	2026229075	-20	blind-jtdx	0	0	306.210	
+cw	2026229075	-20	blind-hybrid	0	0	434.644	
+cw	2026229075	-20	blind-hybrid-specialist	1	0	5091.671	CQ EA9SQY MQ71@792.338/0.699/HybridSpecialist
+cw	2026239082	-20	native	0	0	177.388	
+cw	2026239082	-20	blind-jtdx	0	0	285.776	
+cw	2026239082	-20	blind-hybrid	0	0	391.748	
+cw	2026239082	-20	blind-hybrid-specialist	1	0	5056.091	LU5DYQ N2TTR -14@1289.764/0.116/HybridSpecialist
+cw	2026249089	-20	native	0	0	207.106	
+cw	2026249089	-20	blind-jtdx	0	0	330.360	
+cw	2026249089	-20	blind-hybrid	0	0	472.141	
+cw	2026249089	-20	blind-hybrid-specialist	1	0	5130.884	EA1EUJ PA9LSK R-15@2865.079/-0.111/HybridSpecialist
+cw	2026259096	-20	native	0	0	187.046	
+cw	2026259096	-20	blind-jtdx	0	0	427.618	
+cw	2026259096	-20	blind-hybrid	0	0	482.227	
+cw	2026259096	-20	blind-hybrid-specialist	1	0	5166.603	K1AGN JA9BXX RR73@1926.549/0.420/HybridSpecialist
+cw	2026108991	-22	native	0	0	209.491	
+cw	2026108991	-22	blind-jtdx	0	0	254.195	
+cw	2026108991	-22	blind-hybrid	0	0	429.670	
+cw	2026108991	-22	blind-hybrid-specialist	0	0	2779.104	
+cw	2026118998	-22	native	0	0	134.281	
+cw	2026118998	-22	blind-jtdx	0	0	324.557	
+cw	2026118998	-22	blind-hybrid	0	0	379.168	
+cw	2026118998	-22	blind-hybrid-specialist	0	0	2714.928	
+cw	2026129005	-22	native	0	0	163.225	
+cw	2026129005	-22	blind-jtdx	0	0	303.848	
+cw	2026129005	-22	blind-hybrid	0	0	431.294	
+cw	2026129005	-22	blind-hybrid-specialist	0	0	2758.880	
+cw	2026139012	-22	native	0	0	168.121	
+cw	2026139012	-22	blind-jtdx	0	0	344.031	
+cw	2026139012	-22	blind-hybrid	0	0	379.420	
+cw	2026139012	-22	blind-hybrid-specialist	0	0	2735.510	
+cw	2026149019	-22	native	0	0	177.130	
+cw	2026149019	-22	blind-jtdx	0	0	366.160	
+cw	2026149019	-22	blind-hybrid	0	0	474.509	
+cw	2026149019	-22	blind-hybrid-specialist	1	0	5164.996	PA4XTN DL4GYU 73@736.745/0.529/HybridSpecialist
+cw	2026159026	-22	native	0	0	169.533	
+cw	2026159026	-22	blind-jtdx	0	0	341.335	
+cw	2026159026	-22	blind-hybrid	0	0	399.930	
+cw	2026159026	-22	blind-hybrid-specialist	0	0	2743.901	
+cw	2026169033	-22	native	0	0	163.673	
+cw	2026169033	-22	blind-jtdx	0	0	281.208	
+cw	2026169033	-22	blind-hybrid	0	0	386.565	
+cw	2026169033	-22	blind-hybrid-specialist	0	0	2739.045	
+cw	2026179040	-22	native	0	0	177.925	
+cw	2026179040	-22	blind-jtdx	0	0	305.399	
+cw	2026179040	-22	blind-hybrid	0	0	469.767	
+cw	2026179040	-22	blind-hybrid-specialist	1	0	5158.514	K8UTA JA5BEV -08@2318.506/0.889/HybridSpecialist
+cw	2026189047	-22	native	0	0	192.549	
+cw	2026189047	-22	blind-jtdx	0	0	564.598	
+cw	2026189047	-22	blind-hybrid	0	0	666.621	
+cw	2026189047	-22	blind-hybrid-specialist	1	0	5292.607	PA2IBP F1ZNV R-09@1219.522/0.160/HybridSpecialist
+cw	2026199054	-22	native	0	0	223.234	
+cw	2026199054	-22	blind-jtdx	0	0	294.888	
+cw	2026199054	-22	blind-hybrid	0	0	431.537	
+cw	2026199054	-22	blind-hybrid-specialist	1	0	5221.335	OH7CMS G0KHT RR73@1215.818/0.505/HybridSpecialist
+cw	2026209061	-22	native	0	0	174.300	
+cw	2026209061	-22	blind-jtdx	0	0	394.207	
+cw	2026209061	-22	blind-hybrid	0	0	437.052	
+cw	2026209061	-22	blind-hybrid-specialist	1	0	5239.973	LU2TYN EA8OMU 73@672.380/0.092/HybridSpecialist
+cw	2026219068	-22	native	0	0	205.181	
+cw	2026219068	-22	blind-jtdx	0	0	425.548	
+cw	2026219068	-22	blind-hybrid	0	0	471.232	
+cw	2026219068	-22	blind-hybrid-specialist	1	0	5144.829	OH1RHV EA2LCY MN45@1445.162/0.911/HybridSpecialist
+cw	2026229075	-22	native	0	0	203.072	
+cw	2026229075	-22	blind-jtdx	0	0	304.876	
+cw	2026229075	-22	blind-hybrid	0	0	434.207	
+cw	2026229075	-22	blind-hybrid-specialist	1	0	5145.278	CQ EA9SQY MQ71@792.337/0.699/HybridSpecialist
+cw	2026239082	-22	native	0	0	179.973	
+cw	2026239082	-22	blind-jtdx	0	0	280.832	
+cw	2026239082	-22	blind-hybrid	0	0	400.804	
+cw	2026239082	-22	blind-hybrid-specialist	1	0	5151.383	LU5DYQ N2TTR -14@1289.764/0.116/HybridSpecialist
+cw	2026249089	-22	native	0	0	211.511	
+cw	2026249089	-22	blind-jtdx	0	0	331.151	
+cw	2026249089	-22	blind-hybrid	0	0	486.761	
+cw	2026249089	-22	blind-hybrid-specialist	1	0	5158.209	EA1EUJ PA9LSK R-15@2865.079/-0.111/HybridSpecialist
+cw	2026259096	-22	native	0	0	187.692	
+cw	2026259096	-22	blind-jtdx	0	0	434.765	
+cw	2026259096	-22	blind-hybrid	0	0	480.738	
+cw	2026259096	-22	blind-hybrid-specialist	0	0	2833.990	

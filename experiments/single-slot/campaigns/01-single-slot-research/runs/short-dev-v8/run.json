@@ -1,0 +1,19 @@
+{
+  "methods": "hybrid,receiver,hybrid-plus",
+  "binary_sha256": "f4a64aa9ae3bf28a7ca7a2f2095a581068a16c4d3e0cf3d560aa9371ed4920f4",
+  "tasks": [
+    {
+      "command": [
+        "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+        "file",
+        "/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav",
+        "hybrid,receiver,hybrid-plus",
+        "0"
+      ],
+      "input_sha256": "9feb99c275770a6618538026da7decc6b09eb6cf63121e5168fa86dcdf00c2f5",
+      "slot": 0,
+      "wall_seconds": 11.503468166000001,
+      "returncode": 0
+    }
+  ]
+}

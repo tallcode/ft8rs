@@ -1,0 +1,11 @@
+   Compiling ft8rs-core v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core)
+    Finished `fast` profile [optimized] target(s) in 4.57s
+     Running unittests src/lib.rs (target/fast/deps/ft8rs-a7872f723631b78e)
+
+running 3 tests
+test decode::hybrid::specialist::tests::expired_budget_silence_and_invalid_input_never_emit ... ok
+test decode::hybrid::specialist::tests::hybrid_cw_specialist_adds_truth_without_replacing_baseline ... ok
+test decode::hybrid::specialist::tests::partial_input_is_not_observed_zero_padding ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 170 filtered out; finished in 5.49s
+

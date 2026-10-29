@@ -1,0 +1,4 @@
+method	snr	correct	wrong	trials	mean_ms	max_ms
+blind-hybrid	-24	0	0	32	435.729	536.923
+blind-receiver	-24	0	1	32	2440.423	4670.315
+native	-24	0	0	32	179.203	246.610

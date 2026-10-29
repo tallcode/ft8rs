@@ -1,0 +1,4 @@
+method	snr	correct	wrong	trials	mean_ms	max_ms
+blind-conditional	-24	0	0	32	2418.671	2472.683
+blind-hybrid	-24	0	0	32	428.894	511.641
+native	-24	0	0	32	178.768	224.193

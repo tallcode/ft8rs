@@ -1,0 +1,163 @@
+//! Mirrors JTDX `lib/ft8mfcq.f90`.
+
+use super::genft8sd::genft8sd;
+
+#[derive(Clone, Debug)]
+pub(crate) struct Ft8mfcqResult {
+    pub(crate) msg37: String,
+    pub(crate) msgbits: [u8; 77],
+    pub(crate) itone: [i32; 79],
+}
+
+#[derive(Clone, Debug)]
+struct Ft8mfcqMessage {
+    msg37: String,
+    msgbits: [u8; 77],
+    itone: [i32; 79],
+    idtone: [i32; 58],
+}
+
+pub(crate) fn ft8mfcq(s8: &[[f32; 79]; 8], msgd: &str) -> Option<Ft8mfcqResult> {
+    if msgd.trim().len() < 6 {
+        return None;
+    }
+    let messages = cq25_messages(msgd)?;
+    let s8d = data_symbols(s8);
+    let ranks = tone_ranks(&s8d);
+    let mut ref0 = 0.0f32;
+    for j in 0..58 {
+        ref0 += s8d[ranks[j][0]][j];
+    }
+
+    let mut ipk = None;
+    let mut u1 = 0.0f32;
+    let mut u2 = 0.0f32;
+    for (k, message) in messages.iter().enumerate() {
+        let (psum, refv) = score_message(&s8d, &ranks, &message.idtone, ref0);
+        let p = psum / refv;
+        if p > u1 {
+            u2 = u1;
+            u1 = p;
+            ipk = Some(k);
+        } else if p > u2 {
+            u2 = p;
+        }
+    }
+
+    if ipk != Some(0) {
+        return None;
+    }
+    let qual = 100.0 * (u1 - u2);
+    let thresh = (qual + 10.0) * (u1 - 0.6);
+    if thresh > 4.0 && qual > 2.6 && u1 > 0.77 {
+        let selected = &messages[0];
+        Some(Ft8mfcqResult {
+            msg37: selected.msg37.clone(),
+            msgbits: selected.msgbits,
+            itone: selected.itone,
+        })
+    } else {
+        None
+    }
+}
+
+fn cq25_messages(msgd: &str) -> Option<Vec<Ft8mfcqMessage>> {
+    const MSGCQ25: [&str; 24] = [
+        "CQ 2E0DLA IO92",
+        "CQ BH3NEB ON81",
+        "CQ CG3CGT FN04",
+        "CQ DX CT1JA IM59",
+        "CQ CU20E",
+        "CQ NA CX1OB GF14",
+        "CQ DF2AJ JN49",
+        "CQ DG4XPZ JN58",
+        "CQ EA8XR IL19",
+        "CQ F1YE IN94",
+        "CQ DX G1KLN IO82",
+        "CQ HL2KVF PM38",
+        "CQ IU1ZSV JN45",
+        "CQ JG1TWO PM96",
+        "CQ K2ST EM96",
+        "CQ N9TUX EL98",
+        "CQ SA NO2FA FM18",
+        "CQ OH6GKE KP13",
+        "CQ PD0ORM JO24",
+        "CQ DX PT7DS HI06",
+        "CQ RA3XEP KO84",
+        "CQ SM2GSH KP05",
+        "CQ UA9OHX NO15",
+        "CQ JA W0YH EN12",
+    ];
+    let mut out = Vec::with_capacity(25);
+    out.push(build_message(msgd)?);
+    for msg in MSGCQ25 {
+        out.push(build_message(msg)?);
+    }
+    Some(out)
+}
+
+fn build_message(msg: &str) -> Option<Ft8mfcqMessage> {
+    let (_msgsent, msgbits, itone) = genft8sd(msg)?;
+    let mut idtone = [0i32; 58];
+    idtone[..29].copy_from_slice(&itone[7..36]);
+    idtone[29..].copy_from_slice(&itone[43..72]);
+    Some(Ft8mfcqMessage {
+        msg37: msg.trim().to_string(),
+        msgbits,
+        itone,
+        idtone,
+    })
+}
+
+fn data_symbols(s8: &[[f32; 79]; 8]) -> [[f32; 58]; 8] {
+    let mut out = [[0.0f32; 58]; 8];
+    for (row, source) in out.iter_mut().zip(s8) {
+        for (i, value) in row.iter_mut().enumerate() {
+            let sym = if i < 29 { i + 7 } else { i + 14 };
+            *value = source[sym];
+        }
+    }
+    out
+}
+
+fn tone_ranks(s8d: &[[f32; 58]; 8]) -> [[usize; 2]; 58] {
+    let mut ranks = [[0usize; 2]; 58];
+    for (j, ranks_value) in ranks.iter_mut().enumerate() {
+        let mut i1 = 0usize;
+        let mut s1 = -1.0e6f32;
+        for (tone, s8d_value) in s8d.iter().enumerate().take(8) {
+            if s8d_value[j] > s1 {
+                s1 = s8d_value[j];
+                i1 = tone;
+            }
+        }
+        let mut i2 = 0usize;
+        let mut s2 = -1.0e6f32;
+        for (tone, s8d_value) in s8d.iter().enumerate().take(8) {
+            if tone != i1 && s8d_value[j] > s2 {
+                s2 = s8d_value[j];
+                i2 = tone;
+            }
+        }
+        *ranks_value = [i1, i2];
+    }
+    ranks
+}
+
+fn score_message(
+    s8d: &[[f32; 58]; 8],
+    ranks: &[[usize; 2]; 58],
+    idtone: &[i32; 58],
+    ref0: f32,
+) -> (f32, f32) {
+    let mut psum = 0.0;
+    let mut refv = ref0;
+    for j in 0..58 {
+        let tone = idtone[j] as usize;
+        psum += s8d[tone][j];
+        if tone == ranks[j][0] {
+            refv = refv - s8d[tone][j] + s8d[ranks[j][1]][j];
+        }
+    }
+    (psum, refv)
+}

@@ -1,0 +1,482 @@
+jtdx: revision=2a0e2bea8c66c9ca94d2ea8034cf83a68cfa40eb protocol=49 audio=13 verified
+wsjtx: revision=967c85a6119110788b0df3782cf796485b2cee14 protocol=49 audio=13 verified
+jtdx: extended calls=49 Watterson=8 verified
+wsjtx: extended calls=49 Watterson=8 verified
+real recordings: 6 fixed degraded fixtures verified
+retention: 24 calibrated cases, 1458 required message rows verified
+   Compiling ft8rs-core v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core)
+    Finished `fast` profile [optimized] target(s) in 8.29s
+CallDB: ALLCALL7.TXT.2022 sha256=e647033c0ed4ef2d7c3c56839cfbd819f224805bcd7e0689ac656a0e8b22b298
+Running decoder_input_compatibility_test (serial)
+
+running 4 tests
+test downsampling_keeps_in_band_audio_and_rejects_alias_sources ... ok
+test jtdx_field_day_payload_uses_the_original_section_numbers ... ok
+test jtdx_rtty_multiplier_range_matches_the_original_protocol ... ok
+test wav_and_live_paths_apply_the_same_48k_antialias_filter ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.97s
+
+Running decoder_test (serial)
+
+running 11 tests
+test audio::a8_recovery_requires_correct_context_and_preserves_native_capabilities ... ok
+test audio::callback_failure_is_returned_to_the_caller ... ok
+test audio::crowded_band_preserves_each_native_message_in_hybrid ... ok
+test audio::extended::degraded_long_recordings_keep_each_required_message ... ignored, serial optimized full long-recording noise-retention matrix
+test audio::extended::degraded_short_recordings_keep_each_required_message ... retention replay: wsjtx 210703_133430_plus_0.5db.wav
+retention replay: jtdx 210703_133430_plus_0.5db.wav
+retention replay: hybrid 210703_133430_plus_0.5db.wav
+retention replay: dx 210703_133430_plus_0.5db.wav
+retention replay: wsjtx 210703_133430_plus_1db.wav
+retention replay: jtdx 210703_133430_plus_1db.wav
+retention replay: hybrid 210703_133430_plus_1db.wav
+retention replay: dx 210703_133430_plus_1db.wav
+retention replay: wsjtx 210703_133430_plus_2db.wav
+retention replay: jtdx 210703_133430_plus_2db.wav
+retention replay: hybrid 210703_133430_plus_2db.wav
+retention replay: dx 210703_133430_plus_2db.wav
+retention replay: wsjtx 210703_133430_plus_3db.wav
+retention replay: jtdx 210703_133430_plus_3db.wav
+retention replay: hybrid 210703_133430_plus_3db.wav
+retention replay: dx 210703_133430_plus_3db.wav
+wsjtx 210703_133430_plus_0.5db.wav (source=210703_133430, nominal +0.5 dB): retained 10/21 reference rows, required=10, unlabelled=0, first_ms=Some(377.407875), finished_ms=1121.5
+jtdx 210703_133430_plus_0.5db.wav (source=210703_133430, nominal +0.5 dB): retained 10/20 reference rows, required=10, unlabelled=0, first_ms=Some(19.574), finished_ms=1181.3
+hybrid 210703_133430_plus_0.5db.wav (source=210703_133430, nominal +0.5 dB): retained 10/21 reference rows, required=10, unlabelled=0, first_ms=Some(419.813), finished_ms=1311.3
+dx 210703_133430_plus_0.5db.wav (source=210703_133430, nominal +0.5 dB): retained 1/1 reference rows, required=1, unlabelled=0, first_ms=Some(44.689666), finished_ms=2361.7
+wsjtx 210703_133430_plus_1db.wav (source=210703_133430, nominal +1.0 dB): retained 6/21 reference rows, required=6, unlabelled=0, first_ms=Some(402.548958), finished_ms=1089.7
+jtdx 210703_133430_plus_1db.wav (source=210703_133430, nominal +1.0 dB): retained 7/20 reference rows, required=7, unlabelled=0, first_ms=Some(18.478875), finished_ms=1120.9
+hybrid 210703_133430_plus_1db.wav (source=210703_133430, nominal +1.0 dB): retained 8/21 reference rows, required=8, unlabelled=0, first_ms=Some(450.448583), finished_ms=2290.7
+dx 210703_133430_plus_1db.wav (source=210703_133430, nominal +1.0 dB): retained 1/1 reference rows, required=1, unlabelled=0, first_ms=Some(51.213125), finished_ms=2442.8
+wsjtx 210703_133430_plus_2db.wav (source=210703_133430, nominal +2.0 dB): retained 3/21 reference rows, required=3, unlabelled=0, first_ms=Some(316.935), finished_ms=910.6
+jtdx 210703_133430_plus_2db.wav (source=210703_133430, nominal +2.0 dB): retained 4/20 reference rows, required=4, unlabelled=0, first_ms=Some(17.940708), finished_ms=1019.9
+hybrid 210703_133430_plus_2db.wav (source=210703_133430, nominal +2.0 dB): retained 4/21 reference rows, required=4, unlabelled=0, first_ms=Some(354.595209), finished_ms=2043.6
+dx 210703_133430_plus_2db.wav (source=210703_133430, nominal +2.0 dB): retained 1/1 reference rows, required=1, unlabelled=0, first_ms=Some(82.991334), finished_ms=2148.7
+wsjtx 210703_133430_plus_3db.wav (source=210703_133430, nominal +3.0 dB): retained 3/21 reference rows, required=3, unlabelled=0, first_ms=Some(306.369375), finished_ms=868.3
+jtdx 210703_133430_plus_3db.wav (source=210703_133430, nominal +3.0 dB): retained 3/20 reference rows, required=3, unlabelled=0, first_ms=Some(17.922417), finished_ms=741.1
+hybrid 210703_133430_plus_3db.wav (source=210703_133430, nominal +3.0 dB): retained 3/21 reference rows, required=3, unlabelled=0, first_ms=Some(343.755084), finished_ms=947.7
+dx 210703_133430_plus_3db.wav (source=210703_133430, nominal +3.0 dB): retained 1/1 reference rows, required=1, unlabelled=0, first_ms=Some(73.108125), finished_ms=1623.0
+ok
+test audio::extended::native_watterson_channels_preserve_known_content ... wsjtx wsjtx/mq-2026102801: correct=true rows=1 first=Some(200.839834ms) last=Some(200.839834ms) finished=487.832625ms
+jtdx wsjtx/mq-2026102801: correct=true rows=1 first=Some(19.288166ms) last=Some(19.288166ms) finished=342.736875ms
+hybrid wsjtx/mq-2026102801: correct=true rows=1 first=Some(223.033208ms) last=Some(223.033208ms) finished=529.388916ms
+dx wsjtx/mq-2026102801: correct=true rows=1 first=Some(22.052041ms) last=Some(22.052041ms) finished=1.24330675s
+wsjtx wsjtx/mq-2026102809: correct=true rows=1 first=Some(201.559792ms) last=Some(201.559792ms) finished=493.220667ms
+jtdx wsjtx/mq-2026102809: correct=true rows=1 first=Some(17.925875ms) last=Some(17.925875ms) finished=356.038375ms
+hybrid wsjtx/mq-2026102809: correct=true rows=1 first=Some(228.7305ms) last=Some(228.7305ms) finished=534.655ms
+dx wsjtx/mq-2026102809: correct=true rows=1 first=Some(22.404875ms) last=Some(22.404875ms) finished=1.185463083s
+wsjtx wsjtx/mm-2026102801: correct=true rows=1 first=Some(210.916209ms) last=Some(210.916209ms) finished=505.174875ms
+jtdx wsjtx/mm-2026102801: correct=true rows=1 first=Some(17.870583ms) last=Some(17.870583ms) finished=332.435041ms
+hybrid wsjtx/mm-2026102801: correct=true rows=1 first=Some(235.535417ms) last=Some(235.535417ms) finished=538.134042ms
+dx wsjtx/mm-2026102801: correct=true rows=1 first=Some(22.334167ms) last=Some(22.334167ms) finished=1.198355042s
+wsjtx wsjtx/mm-2026102809: correct=true rows=1 first=Some(199.470709ms) last=Some(199.470709ms) finished=487.73725ms
+jtdx wsjtx/mm-2026102809: correct=true rows=1 first=Some(17.849625ms) last=Some(17.849625ms) finished=342.514459ms
+hybrid wsjtx/mm-2026102809: correct=true rows=1 first=Some(224.969834ms) last=Some(224.969834ms) finished=525.937709ms
+dx wsjtx/mm-2026102809: correct=true rows=1 first=Some(25.173ms) last=Some(25.173ms) finished=1.172864958s
+wsjtx wsjtx/md-2026102801: correct=true rows=1 first=Some(200.862ms) last=Some(200.862ms) finished=492.980709ms
+jtdx wsjtx/md-2026102801: correct=true rows=1 first=Some(17.979166ms) last=Some(17.979166ms) finished=344.49575ms
+hybrid wsjtx/md-2026102801: correct=true rows=1 first=Some(222.136917ms) last=Some(222.136917ms) finished=528.650792ms
+dx wsjtx/md-2026102801: correct=true rows=1 first=Some(21.995834ms) last=Some(21.995834ms) finished=1.188820917s
+wsjtx wsjtx/md-2026102809: correct=true rows=1 first=Some(199.90225ms) last=Some(199.90225ms) finished=510.74875ms
+jtdx wsjtx/md-2026102809: correct=true rows=1 first=Some(17.98275ms) last=Some(17.98275ms) finished=345.749333ms
+hybrid wsjtx/md-2026102809: correct=true rows=1 first=Some(224.868625ms) last=Some(224.868625ms) finished=546.630875ms
+dx wsjtx/md-2026102809: correct=true rows=1 first=Some(21.37925ms) last=Some(21.37925ms) finished=1.152771791s
+wsjtx wsjtx/disturbed-2026102801: correct=true rows=1 first=Some(439.334542ms) last=Some(439.334542ms) finished=439.335583ms
+jtdx wsjtx/disturbed-2026102801: correct=true rows=1 first=Some(100.434167ms) last=Some(100.434167ms) finished=488.722917ms
+hybrid wsjtx/disturbed-2026102801: correct=true rows=1 first=Some(481.320958ms) last=Some(481.320958ms) finished=543.607916ms
+dx wsjtx/disturbed-2026102801: correct=true rows=1 first=Some(238.664625ms) last=Some(238.664625ms) finished=1.586492959s
+wsjtx wsjtx/disturbed-2026102809: correct=true rows=1 first=Some(449.655833ms) last=Some(449.655833ms) finished=449.656791ms
+jtdx wsjtx/disturbed-2026102809: correct=true rows=1 first=Some(103.4825ms) last=Some(103.4825ms) finished=562.544917ms
+hybrid wsjtx/disturbed-2026102809: correct=true rows=1 first=Some(496.899459ms) last=Some(496.899459ms) finished=565.2685ms
+dx wsjtx/disturbed-2026102809: correct=true rows=1 first=Some(173.067083ms) last=Some(173.067083ms) finished=1.490953708s
+wsjtx jtdx/mq-2026102801: correct=true rows=1 first=Some(197.919125ms) last=Some(197.919125ms) finished=486.656334ms
+jtdx jtdx/mq-2026102801: correct=true rows=1 first=Some(17.771708ms) last=Some(17.771708ms) finished=331.726583ms
+hybrid jtdx/mq-2026102801: correct=true rows=1 first=Some(218.060708ms) last=Some(218.060708ms) finished=520.980083ms
+dx jtdx/mq-2026102801: correct=true rows=1 first=Some(24.575375ms) last=Some(24.575375ms) finished=1.251539167s
+wsjtx jtdx/mq-2026102809: correct=true rows=1 first=Some(200.687625ms) last=Some(200.687625ms) finished=490.595292ms
+jtdx jtdx/mq-2026102809: correct=true rows=1 first=Some(17.962958ms) last=Some(17.962958ms) finished=333.067125ms
+hybrid jtdx/mq-2026102809: correct=true rows=1 first=Some(224.860292ms) last=Some(224.860292ms) finished=528.364334ms
+dx jtdx/mq-2026102809: correct=true rows=1 first=Some(22.488208ms) last=Some(22.488208ms) finished=1.177544541s
+wsjtx jtdx/mm-2026102801: correct=true rows=1 first=Some(210.478541ms) last=Some(210.478541ms) finished=500.409958ms
+jtdx jtdx/mm-2026102801: correct=true rows=1 first=Some(17.938083ms) last=Some(17.938083ms) finished=341.846417ms
+hybrid jtdx/mm-2026102801: correct=true rows=1 first=Some(234.54125ms) last=Some(234.54125ms) finished=540.381875ms
+dx jtdx/mm-2026102801: correct=true rows=1 first=Some(22.228792ms) last=Some(22.228792ms) finished=1.20049775s
+wsjtx jtdx/mm-2026102809: correct=true rows=1 first=Some(208.61ms) last=Some(208.61ms) finished=497.631042ms
+jtdx jtdx/mm-2026102809: correct=true rows=1 first=Some(17.869458ms) last=Some(17.869458ms) finished=334.420917ms
+hybrid jtdx/mm-2026102809: correct=true rows=1 first=Some(230.334875ms) last=Some(230.334875ms) finished=533.899209ms
+dx jtdx/mm-2026102809: correct=true rows=1 first=Some(24.945417ms) last=Some(24.945417ms) finished=1.227371s
+wsjtx jtdx/md-2026102801: correct=true rows=1 first=Some(212.469042ms) last=Some(212.469042ms) finished=500.241375ms
+jtdx jtdx/md-2026102801: correct=true rows=1 first=Some(17.873167ms) last=Some(17.873167ms) finished=332.042458ms
+hybrid jtdx/md-2026102801: correct=true rows=1 first=Some(235.55775ms) last=Some(235.55775ms) finished=535.93325ms
+dx jtdx/md-2026102801: correct=true rows=1 first=Some(23.933417ms) last=Some(23.933417ms) finished=1.205918083s
+wsjtx jtdx/md-2026102809: correct=true rows=1 first=Some(209.404542ms) last=Some(209.404542ms) finished=501.812459ms
+jtdx jtdx/md-2026102809: correct=true rows=1 first=Some(17.974125ms) last=Some(17.974125ms) finished=350.994625ms
+hybrid jtdx/md-2026102809: correct=true rows=1 first=Some(233.998292ms) last=Some(233.998292ms) finished=539.405709ms
+dx jtdx/md-2026102809: correct=true rows=1 first=Some(22.86475ms) last=Some(22.86475ms) finished=1.243535166s
+wsjtx jtdx/disturbed-2026102801: correct=true rows=1 first=Some(228.004167ms) last=Some(228.004167ms) finished=534.08175ms
+jtdx jtdx/disturbed-2026102801: correct=true rows=1 first=Some(18.163541ms) last=Some(18.163541ms) finished=520.016833ms
+hybrid jtdx/disturbed-2026102801: correct=true rows=1 first=Some(248.48175ms) last=Some(248.48175ms) finished=585.233625ms
+dx jtdx/disturbed-2026102801: correct=true rows=1 first=Some(24.40625ms) last=Some(24.40625ms) finished=1.484963709s
+wsjtx jtdx/disturbed-2026102809: correct=true rows=1 first=Some(209.557917ms) last=Some(209.557917ms) finished=546.811458ms
+jtdx jtdx/disturbed-2026102809: correct=true rows=1 first=Some(18.288ms) last=Some(18.288ms) finished=517.934333ms
+hybrid jtdx/disturbed-2026102809: correct=true rows=1 first=Some(231.623583ms) last=Some(231.623583ms) finished=597.570333ms
+dx jtdx/disturbed-2026102809: correct=true rows=1 first=Some(23.881208ms) last=Some(23.881208ms) finished=1.552280833s
+ok
+test audio::historical_recordings_preserve_required_rows_and_export_per_message_snapshots ... ignored, serial optimized real-recording snapshot; optionally set FT8RS_DECODER_REPORT_DIR
+test audio::reused_session_does_not_replay_previous_audio_or_context ... ok
+test audio::silence_and_fixed_noise_with_wrong_context_do_not_create_messages ... ok
+test audio::simultaneous_signals_keep_both_messages ... ok
+test audio::upstream_waveforms_cover_message_types_offsets_noise_and_channel_damage ... wsjtx / wsjtx/cq: rows=1 first=Some(210.624875ms) last=Some(210.624875ms) finished=528.371958ms
+jtdx / wsjtx/cq: rows=1 first=Some(19.835541ms) last=Some(19.835541ms) finished=373.626958ms
+hybrid / wsjtx/cq: rows=1 first=Some(231.244375ms) last=Some(231.244375ms) finished=554.235875ms
+dx / wsjtx/cq: rows=1 first=Some(21.4675ms) last=Some(21.4675ms) finished=1.269535041s
+wsjtx / wsjtx/report: rows=1 first=Some(228.50975ms) last=Some(228.50975ms) finished=578.207458ms
+jtdx / wsjtx/report: rows=1 first=Some(18.259458ms) last=Some(18.259458ms) finished=338.414875ms
+hybrid / wsjtx/report: rows=1 first=Some(253.381709ms) last=Some(253.381709ms) finished=602.714334ms
+dx / wsjtx/report: rows=1 first=Some(22.722042ms) last=Some(22.722042ms) finished=1.051556084s
+wsjtx / wsjtx/roger: rows=1 first=Some(221.349084ms) last=Some(221.349084ms) finished=571.220625ms
+jtdx / wsjtx/roger: rows=1 first=Some(18.159792ms) last=Some(18.159792ms) finished=441.218125ms
+hybrid / wsjtx/roger: rows=1 first=Some(258.854167ms) last=Some(258.854167ms) finished=613.353959ms
+dx / wsjtx/roger: rows=1 first=Some(26.22175ms) last=Some(26.22175ms) finished=1.060115666s
+wsjtx / wsjtx/rr73: rows=1 first=Some(232.476834ms) last=Some(232.476834ms) finished=515.106875ms
+jtdx / wsjtx/rr73: rows=1 first=Some(18.240042ms) last=Some(18.240042ms) finished=312.968875ms
+hybrid / wsjtx/rr73: rows=1 first=Some(255.115292ms) last=Some(255.115292ms) finished=537.211833ms
+dx / wsjtx/rr73: rows=1 first=Some(24.842625ms) last=Some(24.842625ms) finished=1.0142285s
+wsjtx / wsjtx/free_text: rows=1 first=Some(261.924042ms) last=Some(261.924042ms) finished=571.264417ms
+jtdx / wsjtx/free_text: rows=1 first=Some(18.192125ms) last=Some(18.192125ms) finished=421.573209ms
+hybrid / wsjtx/free_text: rows=1 first=Some(287.6535ms) last=Some(287.6535ms) finished=603.182833ms
+dx / wsjtx/free_text: rows=0 first=None last=None finished=946.343709ms
+wsjtx / wsjtx/telemetry: rows=1 first=Some(295.776625ms) last=Some(295.776625ms) finished=720.655542ms
+jtdx / wsjtx/telemetry: rows=1 first=Some(18.005792ms) last=Some(18.005792ms) finished=373.899917ms
+hybrid / wsjtx/telemetry: rows=1 first=Some(322.899ms) last=Some(322.899ms) finished=744.0955ms
+dx / wsjtx/telemetry: rows=0 first=None last=None finished=1.071318208s
+wsjtx / wsjtx/field_day: rows=1 first=Some(252.022417ms) last=Some(252.022417ms) finished=631.414ms
+jtdx / wsjtx/field_day: rows=1 first=Some(18.288208ms) last=Some(18.288208ms) finished=325.334292ms
+hybrid / wsjtx/field_day: rows=1 first=Some(285.065625ms) last=Some(285.065625ms) finished=659.841667ms
+dx / wsjtx/field_day: rows=1 first=Some(22.882875ms) last=Some(22.882875ms) finished=1.149218833s
+wsjtx / wsjtx/nonstandard: rows=1 first=Some(288.929625ms) last=Some(288.929625ms) finished=633.816541ms
+jtdx / wsjtx/nonstandard: rows=1 first=Some(18.336625ms) last=Some(18.336625ms) finished=440.986334ms
+hybrid / wsjtx/nonstandard: rows=1 first=Some(324.257792ms) last=Some(324.257792ms) finished=671.854042ms
+dx / wsjtx/nonstandard: rows=1 first=Some(22.559ms) last=Some(22.559ms) finished=1.357022584s
+wsjtx / wsjtx/late: rows=1 first=Some(273.4275ms) last=Some(273.4275ms) finished=691.62725ms
+jtdx / wsjtx/late: rows=1 first=Some(19.896625ms) last=Some(19.896625ms) finished=497.4145ms
+hybrid / wsjtx/late: rows=1 first=Some(301.834416ms) last=Some(301.834416ms) finished=720.505791ms
+dx / wsjtx/late: rows=1 first=Some(22.289125ms) last=Some(22.289125ms) finished=1.144256458s
+wsjtx / wsjtx/multipath: rows=1 first=Some(247.080958ms) last=Some(247.080958ms) finished=495.874916ms
+jtdx / wsjtx/multipath: rows=1 first=Some(18.150292ms) last=Some(18.150292ms) finished=386.136542ms
+hybrid / wsjtx/multipath: rows=1 first=Some(276.773916ms) last=Some(276.773916ms) finished=536.549ms
+dx / wsjtx/multipath: rows=1 first=Some(22.295292ms) last=Some(22.295292ms) finished=1.1725655s
+wsjtx / wsjtx/fading: rows=1 first=Some(277.003708ms) last=Some(277.003708ms) finished=692.216458ms
+jtdx / wsjtx/fading: rows=1 first=Some(18.096708ms) last=Some(18.096708ms) finished=540.758416ms
+hybrid / wsjtx/fading: rows=1 first=Some(304.885083ms) last=Some(304.885083ms) finished=734.19675ms
+dx / wsjtx/fading: rows=1 first=Some(23.758334ms) last=Some(23.758334ms) finished=875.203709ms
+wsjtx / wsjtx/weak: rows=1 first=Some(284.261208ms) last=Some(284.261208ms) finished=674.082208ms
+jtdx / wsjtx/weak: rows=1 first=Some(18.161083ms) last=Some(18.161083ms) finished=407.2005ms
+hybrid / wsjtx/weak: rows=1 first=Some(319.59175ms) last=Some(319.59175ms) finished=703.590334ms
+dx / wsjtx/weak: rows=1 first=Some(26.241792ms) last=Some(26.241792ms) finished=1.091110875s
+wsjtx / wsjtx/neighbor: rows=1 first=Some(306.991125ms) last=Some(306.991125ms) finished=660.094292ms
+jtdx / wsjtx/neighbor: rows=1 first=Some(18.301375ms) last=Some(18.301375ms) finished=378.0505ms
+hybrid / wsjtx/neighbor: rows=1 first=Some(336.332167ms) last=Some(336.332167ms) finished=687.281083ms
+dx / wsjtx/neighbor: rows=0 first=None last=None finished=1.338776708s
+wsjtx / jtdx/cq: rows=1 first=Some(209.198334ms) last=Some(209.198334ms) finished=525.879167ms
+jtdx / jtdx/cq: rows=1 first=Some(18.059666ms) last=Some(18.059666ms) finished=371.31ms
+hybrid / jtdx/cq: rows=1 first=Some(230.279416ms) last=Some(230.279416ms) finished=549.820333ms
+dx / jtdx/cq: rows=1 first=Some(24.678542ms) last=Some(24.678542ms) finished=1.266887333s
+wsjtx / jtdx/report: rows=1 first=Some(228.37075ms) last=Some(228.37075ms) finished=578.13425ms
+jtdx / jtdx/report: rows=1 first=Some(18.1565ms) last=Some(18.1565ms) finished=337.723416ms
+hybrid / jtdx/report: rows=1 first=Some(254.793917ms) last=Some(254.793917ms) finished=602.776042ms
+dx / jtdx/report: rows=1 first=Some(23.013666ms) last=Some(23.013666ms) finished=1.044367708s
+wsjtx / jtdx/roger: rows=1 first=Some(222.180084ms) last=Some(222.180084ms) finished=573.433875ms
+jtdx / jtdx/roger: rows=1 first=Some(18.268875ms) last=Some(18.268875ms) finished=440.993958ms
+hybrid / jtdx/roger: rows=1 first=Some(249.548917ms) last=Some(249.548917ms) finished=656.097375ms
+dx / jtdx/roger: rows=1 first=Some(21.21925ms) last=Some(21.21925ms) finished=1.058860542s
+wsjtx / jtdx/rr73: rows=1 first=Some(232.991042ms) last=Some(232.991042ms) finished=516.528292ms
+jtdx / jtdx/rr73: rows=1 first=Some(18.2995ms) last=Some(18.2995ms) finished=312.673042ms
+hybrid / jtdx/rr73: rows=1 first=Some(263.831833ms) last=Some(263.831833ms) finished=547.252375ms
+dx / jtdx/rr73: rows=1 first=Some(24.59575ms) last=Some(24.59575ms) finished=1.009304291s
+wsjtx / jtdx/free_text: rows=1 first=Some(260.59975ms) last=Some(260.59975ms) finished=568.772291ms
+jtdx / jtdx/free_text: rows=1 first=Some(18.12875ms) last=Some(18.12875ms) finished=421.582125ms
+hybrid / jtdx/free_text: rows=1 first=Some(292.487792ms) last=Some(292.487792ms) finished=606.806167ms
+dx / jtdx/free_text: rows=0 first=None last=None finished=943.304708ms
+wsjtx / jtdx/telemetry: rows=1 first=Some(295.460334ms) last=Some(295.460334ms) finished=721.263792ms
+jtdx / jtdx/telemetry: rows=1 first=Some(18.1445ms) last=Some(18.1445ms) finished=375.412791ms
+hybrid / jtdx/telemetry: rows=1 first=Some(329.347375ms) last=Some(329.347375ms) finished=749.6525ms
+dx / jtdx/telemetry: rows=0 first=None last=None finished=1.075437209s
+wsjtx / jtdx/field_day: rows=1 first=Some(253.559834ms) last=Some(253.559834ms) finished=631.675709ms
+jtdx / jtdx/field_day: rows=1 first=Some(18.200041ms) last=Some(18.200041ms) finished=324.720416ms
+hybrid / jtdx/field_day: rows=1 first=Some(281.346542ms) last=Some(281.346542ms) finished=654.534542ms
+dx / jtdx/field_day: rows=1 first=Some(21.741209ms) last=Some(21.741209ms) finished=1.153148709s
+wsjtx / jtdx/nonstandard: rows=1 first=Some(289.029667ms) last=Some(289.029667ms) finished=631.505834ms
+jtdx / jtdx/nonstandard: rows=1 first=Some(18.293625ms) last=Some(18.293625ms) finished=440.850417ms
+hybrid / jtdx/nonstandard: rows=1 first=Some(323.202625ms) last=Some(323.202625ms) finished=671.631917ms
+dx / jtdx/nonstandard: rows=1 first=Some(22.83175ms) last=Some(22.83175ms) finished=1.363306375s
+wsjtx / jtdx/late: rows=1 first=Some(275.924125ms) last=Some(275.924125ms) finished=692.169708ms
+jtdx / jtdx/late: rows=1 first=Some(18.299417ms) last=Some(18.299417ms) finished=497.308875ms
+hybrid / jtdx/late: rows=1 first=Some(312.074458ms) last=Some(312.074458ms) finished=733.73025ms
+dx / jtdx/late: rows=1 first=Some(22.157834ms) last=Some(22.157834ms) finished=1.142853625s
+wsjtx / jtdx/multipath: rows=1 first=Some(250.51825ms) last=Some(250.51825ms) finished=498.783959ms
+jtdx / jtdx/multipath: rows=1 first=Some(18.151083ms) last=Some(18.151083ms) finished=384.866583ms
+hybrid / jtdx/multipath: rows=1 first=Some(278.092542ms) last=Some(278.092542ms) finished=533.297708ms
+dx / jtdx/multipath: rows=1 first=Some(24.774708ms) last=Some(24.774708ms) finished=1.171296167s
+wsjtx / jtdx/fading: rows=1 first=Some(276.254125ms) last=Some(276.254125ms) finished=690.424042ms
+jtdx / jtdx/fading: rows=1 first=Some(18.259833ms) last=Some(18.259833ms) finished=542.213292ms
+hybrid / jtdx/fading: rows=1 first=Some(305.301334ms) last=Some(305.301334ms) finished=731.896167ms
+dx / jtdx/fading: rows=1 first=Some(24.12ms) last=Some(24.12ms) finished=889.682917ms
+wsjtx / jtdx/weak: rows=1 first=Some(282.282791ms) last=Some(282.282791ms) finished=670.04975ms
+jtdx / jtdx/weak: rows=1 first=Some(18.223708ms) last=Some(18.223708ms) finished=406.247416ms
+hybrid / jtdx/weak: rows=1 first=Some(313.396125ms) last=Some(313.396125ms) finished=698.103333ms
+dx / jtdx/weak: rows=1 first=Some(25.667167ms) last=Some(25.667167ms) finished=1.08972575s
+wsjtx / jtdx/neighbor: rows=1 first=Some(306.678667ms) last=Some(306.678667ms) finished=661.386334ms
+jtdx / jtdx/neighbor: rows=1 first=Some(18.797708ms) last=Some(18.797708ms) finished=379.998ms
+hybrid / jtdx/neighbor: rows=1 first=Some(338.78625ms) last=Some(338.78625ms) finished=686.963583ms
+dx / jtdx/neighbor: rows=0 first=None last=None finished=1.33819575s
+ok
+
+test result: ok. 9 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 165.94s
+
+Running dx_three_way_test (serial)
+
+running 1 test
+test native_observations_keep_target_and_reconfiguration_drops_old_target_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.73s
+
+Running ft8rs (serial)
+
+running 172 tests
+test decode::cooperative::ledger::tests::identical_native_payload_deduplicates_only_hash_display_expansion ... ok
+test decode::cooperative::ledger::tests::retain_distinct_signals_and_unresolved_identity ... ok
+test decode::cooperative::ledger::tests::same_engine_duplicates_do_not_suppress_first_output ... ok
+test decode::cooperative::message::tests::cq_modifiers_and_fox_roles_are_explicit ... ok
+test decode::cooperative::message::tests::free_text_and_unresolved_hash_do_not_invent_sender ... ok
+test decode::cooperative::message::tests::report_and_rr73_are_never_grid ... ok
+test decode::cooperative::recovery::tests::missing_or_mismatched_tones_cannot_become_seeds ... ok
+test decode::cooperative::recovery::tests::waveform_evidence_rejects_a_different_message_and_silence ... ok
+test decode::dx::augmentation::tests::missing_invalid_or_self_call_pairs_cannot_enable_target_ap ... ok
+test decode::dx::augmentation::tests::only_regular_non_target_waveforms_can_be_seeds ... ok
+test decode::dx::augmentation::tests::realtime_start_budget_does_not_change_file_search_or_legacy_watchdog ... ok
+test decode::dx::augmentation::tests::recipient_does_not_resolve_the_target_sender_focus ... ok
+test decode::dx::context::tests::assisted_rows_cannot_confirm_grid_or_parity ... ok
+test decode::dx::context::tests::cq_dx_target_is_sender ... ok
+test decode::dx::context::tests::fox_multistream_anchor_re_adjusts_to_dynamic_lowest ... ok
+test decode::dx::context::tests::fox_multistream_grid_is_clipped_to_passband_top ... ok
+test decode::dx::context::tests::fox_multistream_pre_places_full_60hz_grid_from_lowest ... ok
+test decode::dx::context::tests::frequency_aging_survives_midnight_rollover ... ok
+test decode::dx::context::tests::frequency_selection_collapses_one_window_and_prefers_confidence ... ok
+test decode::dx::context::tests::frequency_tracks_equal_confidence_and_ages_across_days ... ok
+test decode::dx::context::tests::hard_grid_contradiction_suppresses_only_target_sender_rows ... ok
+test decode::dx::context::tests::harvested_grid_never_suppresses_the_real_target ... ok
+test decode::dx::context::tests::hound_mode_does_not_focus_hunter_rows ... ok
+test decode::dx::context::tests::in_passband_user_seed_is_pinned ... ok
+test decode::dx::context::tests::multistream_grid_is_hound_only ... ok
+test decode::dx::context::tests::non_hound_recipient_row_does_not_seed_focus ... ok
+test decode::dx::context::tests::observed_parity_can_change_and_expire ... ok
+test decode::dx::context::tests::out_of_passband_seed_is_ignored ... ok
+test decode::dx::context::tests::pinned_and_nonconcurrent_frequencies_do_not_prove_fox_grid ... ok
+test decode::dx::context::tests::prefixed_file_midnight_wrap_preserves_recent_frequency ... ok
+test decode::dx::context::tests::reconfiguration_replaces_and_clears_user_values ... ok
+test decode::dx::context::tests::rr73_neither_conflicts_with_nor_overwrites_a_user_grid ... ok
+test decode::dx::context::tests::target_first_call_is_recipient_parity ... ok
+test decode::dx::context::tests::target_second_call_is_sender_parity ... ok
+test decode::dx::filter::tests::target_does_not_match_substrings_or_unresolved_hash ... ok
+test decode::dx::filter::tests::target_matches_plain_and_resolved_braced_call ... ok
+test decode::dx::tests::dx_a8_config_builds_focused_wsjtx_worker_config ... ok
+test decode::dx::tests::dx_focus_config_enables_focused_deep_only_for_focus ... ok
+test decode::dx::tests::dx_focused_configs_clamp_out_of_band_focus ... ok
+test decode::dx::tests::dx_hash_seed_calls_keeps_target_calls_only_once ... ok
+test decode::dx::tests::dx_listen_config_pins_primary_pass ... ok
+test decode::dx::tests::dx_monitor_watchdog_is_opt_in_and_budget_based ... ok
+test decode::dx::waveform_tests::controlled_target_recovery_keeps_seven_verified_gains ... ignored, local optimized known-truth DX recovery gate
+test decode::dx::waveform_tests::partial_context_and_known_grid_do_not_invent_target_messages ... ignored, local optimized incomplete-context and negative-signal DX gate
+test decode::experiment::receiver::tests::expired_budget_silence_and_invalid_input_never_emit ... ok
+test decode::experiment::receiver::tests::hybrid_cw_specialist_adds_truth_without_replacing_baseline ... ok
+test decode::experiment::receiver::tests::partial_input_is_not_observed_zero_padding ... ok
+test decode::ft8_a7::tests::ap_message_compact_cq_call_matches_fortran_padded_cq ... ok
+test decode::ft8_a7::tests::ap_message_imsg5_nonstandard_calls_matches_wsjtx_cq_override ... ok
+test decode::ft8_a7::tests::ap_message_imsg5_standard_call_preserves_grid_override ... ok
+test decode::ft8_decode::ft8_a8d::tests::a8_getmsg_matches_wsjtx_shapes ... ok
+test decode::ft8_decode::ft8_a8d::tests::a8_getmsg_rejects_reports_outside_wsjtx_range ... ok
+test decode::ft8_decode::ft8apset::tests::compound_mycall_keeps_ap_enabled_after_hash_round_trip ... ok
+test decode::ft8_decode::ft8apset::tests::compound_mycall_without_dxcall_enables_only_mycall_ap ... ok
+test decode::ft8_decode::ft8apset::tests::unsupported_type4_template_still_fails_standard_ap_validation ... ok
+test decode::ft8_decode::ft8b::tests::negative_db_baseline_does_not_discard_a_valid_snr ... ok
+test decode::ft8_decode::ft8b::tests::snr_is_invariant_when_audio_gain_and_db_baseline_change_together ... ok
+test decode::ft8_decode::tests::ap_mask_gates_match_wsjtx_contest_and_call_requirements ... ok
+test decode::ft8_decode::tests::ap_mask_matrix_covers_wsjtx_contest_iaptype_shape ... ok
+test decode::ft8_decode::tests::cq_ap_mask_matches_wsjtx_bit_positions ... ok
+test decode::ft8_decode::tests::default_outer_sync_min_matches_wsjtx_depth_gate ... ok
+test decode::ft8_decode::tests::non_contest_quirk_gate_matches_wsjtx ... ok
+test decode::ft8_decode::tests::standard_ap_masks_match_wsjtx_mycall_and_dxcall_positions ... ok
+test decode::ft8_decode::tests::sync8_candidate_order_matches_wsjtx_priority_rules ... ok
+test decode::ft8_decode::tests::tail_ap_masks_match_wsjtx_rrr_73_rr73_bits ... ok
+test decode::gf2::tests::row_xor_matches_scalar_reference ... ok
+test decode::hybrid::context::tests::active_call_context_ignores_assisted_and_unresolved_hash_rows ... ok
+test decode::hybrid::context::tests::active_call_context_keeps_bounded_best_confirmed_regular_hints ... ok
+test decode::hybrid::context::tests::context_uses_shared_sender_roles_and_expires_unobserved_hints ... ok
+test decode::hybrid::context::tests::qso_context_opportunity_report_tracks_bounded_hints_per_slot ... ok
+test decode::hybrid::evidence::tests::duplicate_regular_observation_does_not_downgrade_or_fake_quorum ... ok
+test decode::hybrid::evidence::tests::evidence_store_caps_all_assisted_agreement ... ok
+test decode::hybrid::evidence::tests::evidence_store_keeps_pure_imported_memory_terminal ... ok
+test decode::hybrid::evidence::tests::evidence_store_promotes_independent_regular_agreement ... ok
+test decode::hybrid::evidence::tests::evidence_store_rates_on_independent_evidence_ignoring_imported ... ok
+test decode::hybrid::evidence::tests::unknown_and_derived_results_do_not_create_independent_quorum ... ok
+test decode::hybrid::report::tests::divergence_report_counts_unique_rows_by_decoder_and_shape ... ok
+test decode::hybrid::report::tests::divergence_report_keeps_shared_rows_out_of_unique_buckets ... ok
+test decode::hybrid::shared::tests::hash_opportunity_report_counts_resolvable_same_signal_hash_rows ... ok
+test decode::hybrid::shared::tests::shared_book_reuses_protocol_hash_for_collision_detection ... ok
+test decode::hybrid::shared::tests::shared_hash_book_exports_clean_calls_once ... ok
+test decode::hybrid::shared::tests::shared_hash_book_suppresses_hash10_collisions ... ok
+test decode::hybrid::tests::agc_branches_share_swl_and_preserve_explicit_partitions ... ok
+test decode::hybrid::tests::hash_call_opportunity_report_detects_cross_decoder_resolution ... ok
+test decode::hybrid::tests::merge_decodes_deduplicates_hash_brace_display_variants ... ok
+test decode::hybrid::tests::merge_decodes_keeps_unresolved_hash_marker_distinct ... ok
+test decode::hybrid::tests::passive_evidence_store_does_not_import_a8_list_decodes ... ok
+test decode::hybrid::tests::passive_evidence_store_does_not_import_assisted_agreement ... ok
+test decode::hybrid::tests::passive_evidence_store_merges_agreeing_decoder_rows_without_affecting_output_shape ... ok
+test decode::hybrid::tests::repeated_jtdx_result_never_becomes_both ... ok
+test decode::hybrid::tests::two_jtdx_agc_variants_do_not_create_independent_confirmation ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::directed_cq_dx_round_trips ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::report_tokens_are_not_standard_callsigns_for_split77 ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::split77_directed_cq_uses_wsjtx_chkcall_for_compound_call ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::stdcall_matches_wsjtx_one_based_iarea ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::two_word_type1_rejects_second_call_slash_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type01_dxpedition_round_trips_with_hash10_book ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type03_field_day_round_trips ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type05_telemetry_round_trips ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type1_r_grid_uses_third_word_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type3_rtty_round_trips ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type5_eu_vhf_round_trips_with_hash_book ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::cq_ack_report_is_rejected_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::cq_r_grid_is_rejected_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::cq_unresolved_hash_is_rejected_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::original_test28_calls_and_integer_boundaries ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::rejects_type_3_rtty_cq_token_in_callsign_slot ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::type01_uses_hiscall_hash10_like_wsjtx_receive_unpack ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::type1_uses_mycall_hash22_like_wsjtx_receive_unpack ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::type5_uses_mycall_hash12_like_wsjtx_receive_unpack ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpack28_rejects_invalid_standard_call_like_wsjtx_callok ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_01_dxpedition_rr73_semicolon_message ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_03_field_day_message ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_05_telemetry_message ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_3_rtty_message ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_5_eu_vhf_hashed_calls_message ... ok
+test decode::osd174_91::tests::fetchit91_pattern_matches_wsjtx_left_shift_order ... ok
+test decode::osd174_91::tests::osd_ndeep3_path_accepts_valid_zero_codeword ... ok
+test decode::packjt77::tests::report_tokens_are_not_standard_callsigns_for_split77 ... ok
+test decode::packjt77::tests::split77_directed_cq_uses_wsjtx_chkcall_for_compound_call ... ok
+test decode::packjt77::tests::stdcall_matches_wsjtx_one_based_iarea ... ok
+test decode::packjt77::tests::two_word_type1_rejects_second_call_slash_like_wsjtx ... ok
+test decode::packjt77::tests::type01_dxpedition_round_trips_with_hash10_book ... ok
+test decode::packjt77::tests::type03_field_day_round_trips ... ok
+test decode::packjt77::tests::type05_telemetry_round_trips ... ok
+test decode::packjt77::tests::type1_r_grid_uses_third_word_like_wsjtx ... ok
+test decode::packjt77::tests::type3_rtty_round_trips ... ok
+test decode::packjt77::tests::type5_eu_vhf_round_trips_with_hash_book ... ok
+test decode::packjt77::unpack_tests::cq_ack_report_is_rejected_like_wsjtx ... ok
+test decode::packjt77::unpack_tests::cq_r_grid_is_rejected_like_wsjtx ... ok
+test decode::packjt77::unpack_tests::cq_unresolved_hash_is_rejected_like_wsjtx ... ok
+test decode::packjt77::unpack_tests::original_test28_calls_and_integer_boundaries ... ok
+test decode::packjt77::unpack_tests::rejects_type_3_rtty_cq_token_in_callsign_slot ... ok
+test decode::packjt77::unpack_tests::type01_uses_hiscall_hash10_like_wsjtx_receive_unpack ... ok
+test decode::packjt77::unpack_tests::type1_uses_mycall_hash22_like_wsjtx_receive_unpack ... ok
+test decode::packjt77::unpack_tests::type5_uses_mycall_hash12_like_wsjtx_receive_unpack ... ok
+test decode::packjt77::unpack_tests::unpack28_rejects_invalid_standard_call_like_wsjtx_callok ... ok
+test decode::packjt77::unpack_tests::unpacks_type_01_dxpedition_rr73_semicolon_message ... ok
+test decode::packjt77::unpack_tests::unpacks_type_03_field_day_message ... ok
+test decode::packjt77::unpack_tests::unpacks_type_05_telemetry_message ... ok
+test decode::packjt77::unpack_tests::unpacks_type_3_rtty_message ... ok
+test decode::packjt77::unpack_tests::unpacks_type_5_eu_vhf_hashed_calls_message ... ok
+test decode::subtractft8::tests::subtract_nstart_matches_fortran_implicit_integer_assignment ... ok
+test decode::subtractft8::tests::subtract_sample_index_matches_wsjtx_one_based_loop ... ok
+test decoder_protocol_tests::all_zero_codeword_is_valid_at_the_channel_code_layer ... ok
+test decoder_protocol_tests::bp_and_osd_recover_known_words_with_soft_errors_and_ap_masks ... ok
+test decoder_protocol_tests::crc_rejects_every_single_bit_corruption_in_message_and_crc ... ok
+test decoder_protocol_tests::native_waveform_reconstruction_and_subtraction ... Wsjtx subtract Wsjtx: residual energy=0.000094
+Jtdx subtract Wsjtx: residual energy=0.000094
+Wsjtx subtract Jtdx: residual energy=0.000094
+Jtdx subtract Jtdx: residual energy=0.000094
+ok
+test decoder_protocol_tests::original_callsign_hash_vectors_for_each_backend ... ok
+test decoder_protocol_tests::seeded_awgn_and_block_rayleigh_report_correct_and_undetected_decodes ... Wsjtx rayleigh=false sigma=0.25: good=16/16 undetected=0
+Wsjtx rayleigh=false sigma=0.6: good=16/16 undetected=0
+Wsjtx rayleigh=false sigma=1.2: good=0/16 undetected=0
+Wsjtx rayleigh=true sigma=0.25: good=16/16 undetected=0
+Wsjtx rayleigh=true sigma=0.6: good=13/16 undetected=0
+Wsjtx rayleigh=true sigma=1.2: good=3/16 undetected=0
+Jtdx rayleigh=false sigma=0.25: good=16/16 undetected=0
+Jtdx rayleigh=false sigma=0.6: good=16/16 undetected=0
+Jtdx rayleigh=false sigma=1.2: good=0/16 undetected=0
+Jtdx rayleigh=true sigma=0.25: good=16/16 undetected=0
+Jtdx rayleigh=true sigma=0.6: good=13/16 undetected=0
+Jtdx rayleigh=true sigma=1.2: good=4/16 undetected=0
+ok
+test decoder_protocol_tests::upstream_message_bits_crc_parity_tones_and_receive_unpack ... ok
+test input::audio::tests::downsample_non_4to1_preserves_in_band_signal_and_rejects_alias ... ok
+test input::audio::tests::fil4_passes_in_band_tone ... ok
+test input::audio::tests::fil4_rejects_aliasing_tone_that_linear_lets_through ... ok
+test input::file::tests::infers_start_time_from_timestamped_filename ... ok
+test stream::configured_hash_tests::configured_target_resolves_hashed_message_in_all_profiles_and_after_reconfigure ... ok
+test stream::session::tests::a7_memory_moves_current_to_previous_by_jseq_at_new_slot ... ok
+test stream::session::tests::a7_save_entry_matches_cq_grid_and_skip_rules ... ok
+test stream::session::tests::chkcall_uses_third_character_digit_when_both_second_and_third_are_digits ... ok
+test stream::session::tests::high_sensitivity_preserves_explicit_agc_compensation_selection ... ok
+test stream::session::tests::jseq_matches_nutc_parity ... ok
+test stream::session::tests::jtdx_defaults_to_one_partition_and_preserves_explicit_auto ... ok
+test stream::session::tests::msg37_storage_is_fixed_width_uppercase_and_blank_padded ... ok
+test stream::session::tests::split77_words_does_not_treat_grid_as_cq_call ... ok
+test stream::session::tests::split77_words_keeps_cq_dx_call_rewrite ... ok
+test stream::time::tests::formats_unix_seconds_as_utc_timestamp ... ok
+test stream::time::tests::parses_time_only ... ok
+test stream::time::tests::parses_timestamp ... ok
+test util::fft_rustfft::tests::test_fft_roundtrip_192000 ... ok
+test util::fft_rustfft::tests::test_fft_roundtrip_3200 ... ok
+test util::fft_rustfft::tests::test_fft_roundtrip_3840 ... ok
+test util::fft_rustfft::tests::test_four2a_inverse_matches_normalized_inverse_times_n ... ok
+
+test result: ok. 170 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 8.59s
+
+Running hybrid_three_way_test (serial)
+
+running 1 test
+test three_way_output_retains_each_native_path_with_swl_off_and_on ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.65s
+
+Running jtdx_source_audit_test (serial)
+
+running 2 tests
+test jtdx_contest_tables_match_reference_sections_and_multipliers ... ok
+test jtdx_filter_context_gates_come_from_reference_ft8b_caller ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Running stream_decode_test (serial)
+
+running 12 tests
+test test_dx_profile_a8d_fixture ... ok
+test test_dx_profile_long_ua3qna ... ignored, manual DX profile gate; run with --release --ignored
+test test_dx_profile_synthetic_reproducible ... ignored, manual DX profile gate; run with --release --ignored
+test test_dx_profile_synthetic_ua3qna ... ignored, manual DX profile gate; run with --release --ignored
+test test_hybrid_profile_long_audio_count ... ignored, manual hybrid profile gate; run with --release --ignored
+test test_hybrid_staged_matches_oneshot ... ignored, manual hybrid staged-vs-one-shot equivalence gate; run with --release --ignored
+test test_jtdx_profile_long_audio ... ignored, manual JTDX profile gate; run with --release --ignored
+test test_jtdx_profile_short_audio ... ignored, manual JTDX profile gate; run with --release --ignored
+test test_stream_decode_a8d_audio ... ok
+test test_stream_decode_long_audio ... ok
+test test_stream_decode_reused_fixed_buffer_refreshes_audio_between_stages ... ok
+test test_stream_decode_short_audio ... STREAM SHORT: matched 21/21 | extra 0 | misses [] | 1.416s
+ok
+
+test result: ok. 5 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 33.35s
+
+Running wsjtx_source_audit_test (serial)
+
+running 5 tests
+test wsjtx_ft8_downsample_shape_matches_shared_rust_helper ... ok
+test wsjtx_ft8_params_constants_match_rust_params ... ok
+test wsjtx_mirrored_source_paths_exist ... ok
+test wsjtx_osd174_91_deep_path_shape_matches_rust_osd ... ok
+test wsjtx_sync8d_shape_matches_shared_rust_costas_sync ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -202,6 +202,8 @@ pub struct StreamDecodeConfig {
     pub dx_monitor_watchdog_ms: Option<u64>,
     /// Hybrid-only bounded cancellation. Pure upstream profiles ignore this.
     pub hybrid_sic: bool,
+    /// Opt-in receive DSP available only as a Hybrid supplementary branch.
+    pub hybrid_experiment: bool,
     /// Real-time scheduling may use already-seen peer results. File mode uses
     /// a completed baseline barrier and deterministic seeds instead.
     pub cooperative_realtime: bool,
@@ -248,6 +250,7 @@ impl Default for StreamDecodeConfig {
             hide_hash: false,
             dx_monitor_watchdog_ms: None,
             hybrid_sic: true,
+            hybrid_experiment: false,
             cooperative_realtime: false,
             mycall: None,
             mygrid: None,
@@ -317,6 +320,8 @@ pub enum StreamDecodeProvenance {
     CooperativeRecovery,
     /// Isolated DX context task; this does not claim a native AP subtype.
     ContextRecovery,
+    /// Hybrid-only independent DSP; terminal output, never imported into AP.
+    Experiment,
     Regular,
     ApMask,
     A7Memory,
@@ -436,35 +441,6 @@ impl StreamDecodeSession {
         for call in calls {
             self.book.save(call);
         }
-    }
-
-    /// Diagnostic hook for hybrid SameParityA7 experiments.
-    ///
-    /// This is a session-boundary import used by ignored tests to measure
-    /// whether a7 memory sharing would recover rows. Normal profile/hybrid
-    /// decode paths do not call it.
-    pub fn import_same_parity_a7_seed_rows(
-        &mut self,
-        timestamp: &SlotTimestamp,
-        rows: &[StreamDecodedMessage],
-    ) -> usize {
-        let jseq = jseq_from_nutc(timestamp.nutc());
-        let target = &mut self.a7[jseq][1];
-        let before = target.len();
-        for row in rows {
-            let Some(entry) = ft8_a7_save_entry_from_parts(&row.msg, row.freq, row.dt) else {
-                continue;
-            };
-            let duplicate = target.iter().any(|existing| {
-                existing.msg0 == entry.msg0
-                    && (existing.f0 - entry.f0).abs() <= 3.0
-                    && (existing.dt0 - entry.dt0).abs() <= 0.3
-            });
-            if !duplicate {
-                target.push(entry);
-            }
-        }
-        target.len() - before
     }
 
     pub fn export_regular_hash_calls(&self) -> Vec<String> {
@@ -1264,26 +1240,6 @@ mod tests {
         assert_eq!(session.a7[1][0].len(), 1);
         assert!(session.a7[1][1].is_empty());
         assert_eq!(session.a7[0][0].len(), 1);
-    }
-
-    #[test]
-    fn diagnostic_a7_seed_import_targets_timestamp_parity() {
-        let mut session = StreamDecodeSession::new(StreamDecodeConfig::default());
-        let even_timestamp = SlotTimestamp::parse("230208_140330").unwrap();
-        let rows = vec![super::StreamDecodedMessage {
-            freq: 1500.0,
-            dt: 0.5,
-            snr: -12.0,
-            msg: "K1ABC W9XYZ -10".to_string(),
-            sync: 0.0,
-            itone: [0; 79],
-        }];
-
-        let imported = session.import_same_parity_a7_seed_rows(&even_timestamp, &rows);
-
-        assert_eq!(imported, 1);
-        assert_eq!(session.a7[0][1].len(), 1);
-        assert!(session.a7[1][1].is_empty());
     }
 
     fn test_a7_entry(msg0: &str) -> A7SaveEntry {

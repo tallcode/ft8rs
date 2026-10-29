@@ -1,0 +1,9 @@
+method	snr	correct	wrong	trials	mean_ms	max_ms
+blind-hybrid	-21	2	0	4	667.290	866.218
+blind-hybrid	-22	0	0	4	471.743	509.640
+blind-verified-feedback	-21	3	0	4	2293.194	2311.019
+blind-verified-feedback	-22	1	0	4	2332.575	2346.788
+blind-verified-phase	-21	3	0	4	2270.026	2290.488
+blind-verified-phase	-22	1	0	4	2304.763	2327.452
+native	-21	2	0	4	233.730	260.921
+native	-22	0	0	4	190.559	207.266

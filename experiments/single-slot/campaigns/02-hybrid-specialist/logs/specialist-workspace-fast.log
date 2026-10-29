@@ -1,0 +1,283 @@
+   Compiling ft8rs-core v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core)
+   Compiling ft8rs-gui v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-gui)
+   Compiling ft8rs-cli v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-cli)
+   Compiling ft8rs-engine v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-engine)
+    Finished `fast` profile [optimized] target(s) in 8.74s
+     Running unittests src/lib.rs (target/fast/deps/ft8rs_build-7428d99e1b2915ff)
+
+running 2 tests
+test tests::accepts_release_and_traceable_development_versions ... ok
+test tests::rejects_malformed_versions_instead_of_embedding_them ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/fast/deps/ft8rs-33473c90217ad21d)
+
+running 2 tests
+test tests::partition_default_and_explicit_auto_reach_the_decoder_config ... ok
+test tests::specialist_is_opt_in_and_hybrid_only ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/fast/deps/ft8rs-8b8c1bb7822124ff)
+
+running 173 tests
+test decode::cooperative::ledger::tests::identical_native_payload_deduplicates_only_hash_display_expansion ... ok
+test decode::cooperative::ledger::tests::retain_distinct_signals_and_unresolved_identity ... ok
+test decode::cooperative::ledger::tests::same_engine_duplicates_do_not_suppress_first_output ... ok
+test decode::cooperative::message::tests::cq_modifiers_and_fox_roles_are_explicit ... ok
+test decode::cooperative::message::tests::free_text_and_unresolved_hash_do_not_invent_sender ... ok
+test decode::cooperative::message::tests::report_and_rr73_are_never_grid ... ok
+test decode::cooperative::recovery::tests::missing_or_mismatched_tones_cannot_become_seeds ... ok
+test decode::cooperative::recovery::tests::waveform_evidence_rejects_a_different_message_and_silence ... ok
+test decode::dx::augmentation::tests::missing_invalid_or_self_call_pairs_cannot_enable_target_ap ... ok
+test decode::dx::augmentation::tests::only_regular_non_target_waveforms_can_be_seeds ... ok
+test decode::dx::augmentation::tests::realtime_start_budget_does_not_change_file_search_or_legacy_watchdog ... ok
+test decode::dx::augmentation::tests::recipient_does_not_resolve_the_target_sender_focus ... ok
+test decode::dx::context::tests::assisted_rows_cannot_confirm_grid_or_parity ... ok
+test decode::dx::context::tests::cq_dx_target_is_sender ... ok
+test decode::dx::context::tests::fox_multistream_anchor_re_adjusts_to_dynamic_lowest ... ok
+test decode::dx::context::tests::fox_multistream_grid_is_clipped_to_passband_top ... ok
+test decode::dx::context::tests::fox_multistream_pre_places_full_60hz_grid_from_lowest ... ok
+test decode::dx::context::tests::frequency_aging_survives_midnight_rollover ... ok
+test decode::dx::context::tests::frequency_selection_collapses_one_window_and_prefers_confidence ... ok
+test decode::dx::context::tests::frequency_tracks_equal_confidence_and_ages_across_days ... ok
+test decode::dx::context::tests::hard_grid_contradiction_suppresses_only_target_sender_rows ... ok
+test decode::dx::context::tests::harvested_grid_never_suppresses_the_real_target ... ok
+test decode::dx::context::tests::hound_mode_does_not_focus_hunter_rows ... ok
+test decode::dx::context::tests::in_passband_user_seed_is_pinned ... ok
+test decode::dx::context::tests::multistream_grid_is_hound_only ... ok
+test decode::dx::context::tests::non_hound_recipient_row_does_not_seed_focus ... ok
+test decode::dx::context::tests::observed_parity_can_change_and_expire ... ok
+test decode::dx::context::tests::out_of_passband_seed_is_ignored ... ok
+test decode::dx::context::tests::pinned_and_nonconcurrent_frequencies_do_not_prove_fox_grid ... ok
+test decode::dx::context::tests::prefixed_file_midnight_wrap_preserves_recent_frequency ... ok
+test decode::dx::context::tests::reconfiguration_replaces_and_clears_user_values ... ok
+test decode::dx::context::tests::rr73_neither_conflicts_with_nor_overwrites_a_user_grid ... ok
+test decode::dx::context::tests::target_first_call_is_recipient_parity ... ok
+test decode::dx::context::tests::target_second_call_is_sender_parity ... ok
+test decode::dx::filter::tests::target_does_not_match_substrings_or_unresolved_hash ... ok
+test decode::dx::filter::tests::target_matches_plain_and_resolved_braced_call ... ok
+test decode::dx::tests::dx_a8_config_builds_focused_wsjtx_worker_config ... ok
+test decode::dx::tests::dx_focus_config_enables_focused_deep_only_for_focus ... ok
+test decode::dx::tests::dx_focused_configs_clamp_out_of_band_focus ... ok
+test decode::dx::tests::dx_hash_seed_calls_keeps_target_calls_only_once ... ok
+test decode::dx::tests::dx_listen_config_pins_primary_pass ... ok
+test decode::dx::tests::dx_monitor_watchdog_is_opt_in_and_budget_based ... ok
+test decode::dx::waveform_tests::controlled_target_recovery_keeps_seven_verified_gains ... ignored, local optimized known-truth DX recovery gate
+test decode::dx::waveform_tests::partial_context_and_known_grid_do_not_invent_target_messages ... ignored, local optimized incomplete-context and negative-signal DX gate
+test decode::ft8_a7::tests::ap_message_compact_cq_call_matches_fortran_padded_cq ... ok
+test decode::ft8_a7::tests::ap_message_imsg5_nonstandard_calls_matches_wsjtx_cq_override ... ok
+test decode::ft8_a7::tests::ap_message_imsg5_standard_call_preserves_grid_override ... ok
+test decode::ft8_decode::ft8_a8d::tests::a8_getmsg_matches_wsjtx_shapes ... ok
+test decode::ft8_decode::ft8_a8d::tests::a8_getmsg_rejects_reports_outside_wsjtx_range ... ok
+test decode::ft8_decode::ft8apset::tests::compound_mycall_keeps_ap_enabled_after_hash_round_trip ... ok
+test decode::ft8_decode::ft8apset::tests::compound_mycall_without_dxcall_enables_only_mycall_ap ... ok
+test decode::ft8_decode::ft8apset::tests::unsupported_type4_template_still_fails_standard_ap_validation ... ok
+test decode::ft8_decode::ft8b::tests::negative_db_baseline_does_not_discard_a_valid_snr ... ok
+test decode::ft8_decode::ft8b::tests::snr_is_invariant_when_audio_gain_and_db_baseline_change_together ... ok
+test decode::ft8_decode::tests::ap_mask_gates_match_wsjtx_contest_and_call_requirements ... ok
+test decode::ft8_decode::tests::ap_mask_matrix_covers_wsjtx_contest_iaptype_shape ... ok
+test decode::ft8_decode::tests::cq_ap_mask_matches_wsjtx_bit_positions ... ok
+test decode::ft8_decode::tests::default_outer_sync_min_matches_wsjtx_depth_gate ... ok
+test decode::ft8_decode::tests::non_contest_quirk_gate_matches_wsjtx ... ok
+test decode::ft8_decode::tests::standard_ap_masks_match_wsjtx_mycall_and_dxcall_positions ... ok
+test decode::ft8_decode::tests::sync8_candidate_order_matches_wsjtx_priority_rules ... ok
+test decode::ft8_decode::tests::tail_ap_masks_match_wsjtx_rrr_73_rr73_bits ... ok
+test decode::gf2::tests::row_xor_matches_scalar_reference ... ok
+test decode::hybrid::context::tests::active_call_context_ignores_assisted_and_unresolved_hash_rows ... ok
+test decode::hybrid::context::tests::active_call_context_keeps_bounded_best_confirmed_regular_hints ... ok
+test decode::hybrid::context::tests::context_uses_shared_sender_roles_and_expires_unobserved_hints ... ok
+test decode::hybrid::context::tests::qso_context_opportunity_report_tracks_bounded_hints_per_slot ... ok
+test decode::hybrid::evidence::tests::duplicate_regular_observation_does_not_downgrade_or_fake_quorum ... ok
+test decode::hybrid::evidence::tests::evidence_store_caps_all_assisted_agreement ... ok
+test decode::hybrid::evidence::tests::evidence_store_keeps_pure_imported_memory_terminal ... ok
+test decode::hybrid::evidence::tests::evidence_store_promotes_independent_regular_agreement ... ok
+test decode::hybrid::evidence::tests::evidence_store_rates_on_independent_evidence_ignoring_imported ... ok
+test decode::hybrid::evidence::tests::unknown_and_derived_results_do_not_create_independent_quorum ... ok
+test decode::hybrid::report::tests::divergence_report_counts_unique_rows_by_decoder_and_shape ... ok
+test decode::hybrid::report::tests::divergence_report_keeps_shared_rows_out_of_unique_buckets ... ok
+test decode::hybrid::shared::tests::hash_opportunity_report_counts_resolvable_same_signal_hash_rows ... ok
+test decode::hybrid::shared::tests::shared_book_reuses_protocol_hash_for_collision_detection ... ok
+test decode::hybrid::shared::tests::shared_hash_book_exports_clean_calls_once ... ok
+test decode::hybrid::shared::tests::shared_hash_book_suppresses_hash10_collisions ... ok
+test decode::hybrid::specialist::tests::expired_budget_silence_and_invalid_input_never_emit ... ok
+test decode::hybrid::specialist::tests::hybrid_cw_specialist_adds_truth_without_replacing_baseline ... ok
+test decode::hybrid::specialist::tests::partial_input_is_not_observed_zero_padding ... ok
+test decode::hybrid::tests::agc_branches_share_swl_and_preserve_explicit_partitions ... ok
+test decode::hybrid::tests::hash_call_opportunity_report_detects_cross_decoder_resolution ... ok
+test decode::hybrid::tests::merge_decodes_deduplicates_hash_brace_display_variants ... ok
+test decode::hybrid::tests::merge_decodes_keeps_unresolved_hash_marker_distinct ... ok
+test decode::hybrid::tests::passive_evidence_store_does_not_import_a8_list_decodes ... ok
+test decode::hybrid::tests::passive_evidence_store_does_not_import_assisted_agreement ... ok
+test decode::hybrid::tests::passive_evidence_store_merges_agreeing_decoder_rows_without_affecting_output_shape ... ok
+test decode::hybrid::tests::repeated_jtdx_result_never_becomes_both ... ok
+test decode::hybrid::tests::two_jtdx_agc_variants_do_not_create_independent_confirmation ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::directed_cq_dx_round_trips ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::report_tokens_are_not_standard_callsigns_for_split77 ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::split77_directed_cq_uses_wsjtx_chkcall_for_compound_call ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::stdcall_matches_wsjtx_one_based_iarea ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::two_word_type1_rejects_second_call_slash_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type01_dxpedition_round_trips_with_hash10_book ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type03_field_day_round_trips ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type05_telemetry_round_trips ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type1_r_grid_uses_third_word_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type3_rtty_round_trips ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::protocol_tests::type5_eu_vhf_round_trips_with_hash_book ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::cq_ack_report_is_rejected_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::cq_r_grid_is_rejected_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::cq_unresolved_hash_is_rejected_like_wsjtx ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::original_test28_calls_and_integer_boundaries ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::rejects_type_3_rtty_cq_token_in_callsign_slot ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::type01_uses_hiscall_hash10_like_wsjtx_receive_unpack ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::type1_uses_mycall_hash22_like_wsjtx_receive_unpack ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::type5_uses_mycall_hash12_like_wsjtx_receive_unpack ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpack28_rejects_invalid_standard_call_like_wsjtx_callok ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_01_dxpedition_rr73_semicolon_message ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_03_field_day_message ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_05_telemetry_message ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_3_rtty_message ... ok
+test decode::lib_jtdx::ft8v2::packjt77::tests::unpack_tests::unpacks_type_5_eu_vhf_hashed_calls_message ... ok
+test decode::osd174_91::tests::fetchit91_pattern_matches_wsjtx_left_shift_order ... ok
+test decode::osd174_91::tests::osd_ndeep3_path_accepts_valid_zero_codeword ... ok
+test decode::packjt77::tests::report_tokens_are_not_standard_callsigns_for_split77 ... ok
+test decode::packjt77::tests::split77_directed_cq_uses_wsjtx_chkcall_for_compound_call ... ok
+test decode::packjt77::tests::stdcall_matches_wsjtx_one_based_iarea ... ok
+test decode::packjt77::tests::two_word_type1_rejects_second_call_slash_like_wsjtx ... ok
+test decode::packjt77::tests::type01_dxpedition_round_trips_with_hash10_book ... ok
+test decode::packjt77::tests::type03_field_day_round_trips ... ok
+test decode::packjt77::tests::type05_telemetry_round_trips ... ok
+test decode::packjt77::tests::type1_r_grid_uses_third_word_like_wsjtx ... ok
+test decode::packjt77::tests::type3_rtty_round_trips ... ok
+test decode::packjt77::tests::type5_eu_vhf_round_trips_with_hash_book ... ok
+test decode::packjt77::unpack_tests::cq_ack_report_is_rejected_like_wsjtx ... ok
+test decode::packjt77::unpack_tests::cq_r_grid_is_rejected_like_wsjtx ... ok
+test decode::packjt77::unpack_tests::cq_unresolved_hash_is_rejected_like_wsjtx ... ok
+test decode::packjt77::unpack_tests::original_test28_calls_and_integer_boundaries ... ok
+test decode::packjt77::unpack_tests::rejects_type_3_rtty_cq_token_in_callsign_slot ... ok
+test decode::packjt77::unpack_tests::type01_uses_hiscall_hash10_like_wsjtx_receive_unpack ... ok
+test decode::packjt77::unpack_tests::type1_uses_mycall_hash22_like_wsjtx_receive_unpack ... ok
+test decode::packjt77::unpack_tests::type5_uses_mycall_hash12_like_wsjtx_receive_unpack ... ok
+test decode::packjt77::unpack_tests::unpack28_rejects_invalid_standard_call_like_wsjtx_callok ... ok
+test decode::packjt77::unpack_tests::unpacks_type_01_dxpedition_rr73_semicolon_message ... ok
+test decode::packjt77::unpack_tests::unpacks_type_03_field_day_message ... ok
+test decode::packjt77::unpack_tests::unpacks_type_05_telemetry_message ... ok
+test decode::packjt77::unpack_tests::unpacks_type_3_rtty_message ... ok
+test decode::packjt77::unpack_tests::unpacks_type_5_eu_vhf_hashed_calls_message ... ok
+test decode::subtractft8::tests::subtract_nstart_matches_fortran_implicit_integer_assignment ... ok
+test decode::subtractft8::tests::subtract_sample_index_matches_wsjtx_one_based_loop ... ok
+test decoder_protocol_tests::all_zero_codeword_is_valid_at_the_channel_code_layer ... ok
+test decoder_protocol_tests::bp_and_osd_recover_known_words_with_soft_errors_and_ap_masks ... ok
+test decoder_protocol_tests::crc_rejects_every_single_bit_corruption_in_message_and_crc ... ok
+test decoder_protocol_tests::native_waveform_reconstruction_and_subtraction ... ok
+test decoder_protocol_tests::original_callsign_hash_vectors_for_each_backend ... ok
+test decoder_protocol_tests::seeded_awgn_and_block_rayleigh_report_correct_and_undetected_decodes ... ok
+test decoder_protocol_tests::upstream_message_bits_crc_parity_tones_and_receive_unpack ... ok
+test input::audio::tests::downsample_non_4to1_preserves_in_band_signal_and_rejects_alias ... ok
+test input::audio::tests::fil4_passes_in_band_tone ... ok
+test input::audio::tests::fil4_rejects_aliasing_tone_that_linear_lets_through ... ok
+test input::file::tests::infers_start_time_from_timestamped_filename ... ok
+test stream::configured_hash_tests::configured_target_resolves_hashed_message_in_all_profiles_and_after_reconfigure ... ok
+test stream::session::tests::a7_memory_moves_current_to_previous_by_jseq_at_new_slot ... ok
+test stream::session::tests::a7_save_entry_matches_cq_grid_and_skip_rules ... ok
+test stream::session::tests::chkcall_uses_third_character_digit_when_both_second_and_third_are_digits ... ok
+test stream::session::tests::diagnostic_a7_seed_import_targets_timestamp_parity ... ok
+test stream::session::tests::high_sensitivity_preserves_explicit_agc_compensation_selection ... ok
+test stream::session::tests::jseq_matches_nutc_parity ... ok
+test stream::session::tests::jtdx_defaults_to_one_partition_and_preserves_explicit_auto ... ok
+test stream::session::tests::msg37_storage_is_fixed_width_uppercase_and_blank_padded ... ok
+test stream::session::tests::split77_words_does_not_treat_grid_as_cq_call ... ok
+test stream::session::tests::split77_words_keeps_cq_dx_call_rewrite ... ok
+test stream::time::tests::formats_unix_seconds_as_utc_timestamp ... ok
+test stream::time::tests::parses_time_only ... ok
+test stream::time::tests::parses_timestamp ... ok
+test util::fft_rustfft::tests::test_fft_roundtrip_192000 ... ok
+test util::fft_rustfft::tests::test_fft_roundtrip_3200 ... ok
+test util::fft_rustfft::tests::test_fft_roundtrip_3840 ... ok
+test util::fft_rustfft::tests::test_four2a_inverse_matches_normalized_inverse_times_n ... ok
+
+test result: ok. 171 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 8.61s
+
+     Running unittests src/lib.rs (target/fast/deps/ft8rs_engine-67bf415ebb607d8b)
+
+running 28 tests
+test engine::tests::decode_actor_hybrid_long_emits_jtdx_unique ... ignored, slow long-fixture actor gate; run with --release --ignored
+test engine::tests::decode_actor_hybrid_matches_oneshot ... ok
+test engine::tests::decode_actor_reproduces_wsjtx_short_slot_and_reconfigures ... ok
+test reconfig::tests::channel_change_restarts_capture_only ... ok
+test reconfig::tests::device_and_config_change_combine ... ok
+test reconfig::tests::device_change_in_dx_keeps_dx_intel ... ok
+test reconfig::tests::device_change_restarts_capture_only_and_preserves_session ... ok
+test reconfig::tests::frequency_window_change_rebuilds_session_migrates_hash ... ok
+test reconfig::tests::hiscall_change_in_dx_resets_intel_and_requires_confirm ... ok
+test reconfig::tests::hiscall_change_outside_dx_does_not_confirm ... ok
+test reconfig::tests::mycall_change_in_dx_resets_intel_without_confirm ... ok
+test reconfig::tests::mycall_change_outside_dx_has_no_dx_reset ... ok
+test reconfig::tests::no_change_is_noop ... ok
+test reconfig::tests::profile_change_between_non_dx_leaves_dx_buckets_alone ... ok
+test reconfig::tests::profile_change_into_dx_resets_dx_intel ... ok
+test reconfig::tests::sensitivity_toggles_rebuild_session ... ok
+test reconfig::tests::udp_toggle_is_output_only ... ok
+test report::tests::builds_decode_packet_header_and_payload_shape ... ok
+test soundcard::tests::antiphase_stereo_cancels_under_mono_but_survives_single_channel ... ok
+test soundcard::tests::capture_fatal_errors_keep_their_kind_independent_stop_behavior ... ok
+test soundcard::tests::capture_format_prefers_requested_layout_at_48k_and_uses_device_fallback ... ok
+test soundcard::tests::capture_xruns_do_not_stop_audio_and_reach_diagnostics ... ok
+test soundcard::tests::each_whole_block_grids_to_its_slot_and_both_decode ... ok
+test soundcard::tests::full_slot_emits_all_three_stages_with_near_full_window ... ok
+test soundcard::tests::mono_device_passes_through_regardless_of_selection ... ok
+test soundcard::tests::mono_does_not_halve_single_sided_audio ... ok
+test soundcard::tests::pcm_widths_and_float_capture_have_equal_amplitudes_and_channel_levels ... ok
+test soundcard::tests::runt_first_slot_is_dropped_not_decoded ... ok
+
+test result: ok. 27 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.89s
+
+     Running unittests src/main.rs (target/fast/deps/ft8rs_gui-28fe675242a97b18)
+
+running 30 tests
+test app::tests::annotation_detection ... ok
+test app::tests::clean_message_drops_annotations ... ok
+test app::tests::device_popup_can_be_wider_than_trigger_and_show_complete_name ... ok
+test app::tests::dialog_focus_restores_before_focusing_and_spaces_retries ... ok
+test app::tests::different_messages_do_not_match ... ok
+test app::tests::double_click_extracts_cq_call_and_grid ... ok
+test app::tests::double_click_extracts_sender_from_directed_message ... ok
+test app::tests::double_click_resolves_hash_braces_and_skips_unresolved ... ok
+test app::tests::external_with_annotations_matches_local_body ... ok
+test app::tests::grid4_is_structural_but_extraction_excludes_the_rr73_ack ... ok
+test app::tests::hashed_calls_match_leniently ... ok
+test app::tests::long_device_names_keep_both_field_and_popup_inside_window ... ok
+test app::tests::new_target_does_not_inherit_the_previous_grid ... ok
+test app::tests::own_callsign_is_yellow_but_own_grid_is_unmarked ... ok
+test app::tests::same_source_rows_never_fold_but_cross_source_merges_to_both ... ok
+test app::tests::separators_mark_first_and_subsequent_nonempty_slots ... ok
+test app::tests::slot_identity_survives_source_delay_midnight_and_next_day ... ok
+test app::tests::standard_form_reflows_after_window_width_changes ... ok
+test app::tests::svg_monitor_button_stays_square_and_centered_across_fonts_and_dpi ... ok
+test app::tests::svg_monitor_icons_have_centered_visual_weight_at_multiple_resolutions ... ok
+test app::tests::switching_settings_pages_keeps_the_first_presented_frame_stable ... ok
+test app::tests::target_highlight_only_marks_complete_message_tokens ... ok
+test app::tests::unknown_provenance_does_not_prevent_compare_matching ... ok
+test app::tests::validates_numeric_settings_without_silent_defaults ... ok
+test wsjtx_udp::tests::excludes_non_ft8_low_confidence_off_air_and_invalid_times ... ok
+test wsjtx_udp::tests::ignores_replays_and_other_types ... ok
+test wsjtx_udp::tests::parses_decode_message ... ok
+test wsjtx_udp::tests::parses_wsjtx_mode_symbol_and_rejects_other_symbols ... ok
+test wsjtx_udp::tests::receives_over_real_socket ... FAILED
+test wsjtx_udp::tests::rejects_truncated_and_bad_magic ... ok
+
+failures:
+
+---- wsjtx_udp::tests::receives_over_real_socket stdout ----
+
+thread 'wsjtx_udp::tests::receives_over_real_socket' (29513064) panicked at crates/ft8rs-gui/src/wsjtx_udp.rs:316:14:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    wsjtx_udp::tests::receives_over_real_socket
+
+test result: FAILED. 29 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p ft8rs-gui --bin ft8rs-gui`

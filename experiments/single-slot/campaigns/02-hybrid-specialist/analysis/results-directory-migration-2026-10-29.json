@@ -1,0 +1,131 @@
+{
+  "recorded_at": "2026-10-29T16:57:40.528159+08:00",
+  "purpose": "Remove the shared results directory by assigning useful content to the two campaigns. No raw run, audio, frozen executable or unique result is deleted.",
+  "actions": [
+    {
+      "source": "experiments/single-slot/results/2026-10-29-single-slot-preserved.tar.gz",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/2026-10-29-single-slot-preserved.tar.gz",
+      "sha256": "cbfe4a3e79cd22894e6ee4bb9de9606a6c7bd7643a054c37f7a99c66e7ec06b4",
+      "action": "removed_identical_shared_copy"
+    },
+    {
+      "source": "experiments/single-slot/results/2026-10-29-single-slot-preserved.tar.gz.sha256",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/2026-10-29-single-slot-preserved.tar.gz.sha256",
+      "sha256": "9312c398d26e5f3d6b198c61631efb79cff540cf6c6c5e57348c9e0148c4e12f",
+      "action": "removed_identical_shared_copy"
+    },
+    {
+      "source": "experiments/single-slot/results/checkpoint-2026-10-29.json",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/checkpoint-2026-10-29.json",
+      "sha256": "23cc52593aa9f9e6c03d35b904b937b2c48765bd86e72dbfc33275f8e7d3b09c",
+      "action": "removed_identical_shared_copy"
+    },
+    {
+      "source": "experiments/single-slot/results/checkpoint-2026-10-29.md",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/checkpoint-2026-10-29.md",
+      "sha256": "ca6edf85a3f1d228bf4167184a9e30cf5725f0f3440a94c00e5538a81bc0ffee",
+      "action": "removed_identical_shared_copy"
+    },
+    {
+      "source": "experiments/single-slot/results/preservation-manifest-2026-10-29.json",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/preservation-manifest-2026-10-29.json",
+      "sha256": "e1576b4dcaa3234935f59978e93b8a503248f656bac37ab35c2db025021e0fa6",
+      "action": "removed_identical_shared_copy"
+    },
+    {
+      "source": "experiments/single-slot/results/freeze-v8.json",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/freeze-v8.json",
+      "sha256": "5908f33733671065e49c2576a2444c060a3a38783f623cdfc0308ea34af70656",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/freeze-v9.json",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/freeze-v9.json",
+      "sha256": "c9b30945ce825bc239fbcb8dd4e595599a2472f5d67c1f8f8e038a91ad6944f3",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/freeze-v10.json",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/freeze-v10.json",
+      "sha256": "4e19fa280265c4103841f50f5fd65c77434bb4d80fdbf363cce9e020940eff37",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/self-check-v10.tsv",
+      "destination": "experiments/single-slot/campaigns/01-single-slot-research/self-check-v10.tsv",
+      "sha256": "2536d4de6db13cdc14f26200bb0c0e58629f4a08279eda1f1a46c89e41b1f9c5",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/freeze-hybrid-specialist-v1.json",
+      "destination": "experiments/single-slot/campaigns/02-hybrid-specialist/freeze-hybrid-specialist-v1.json",
+      "sha256": "74c244d1d3385d280534acd55ca6d6f2a98b43da112f97d09af917b1a94b59de",
+      "action": "removed_identical_shared_copy"
+    },
+    {
+      "source": "experiments/single-slot/results/hybrid-checks-preconfirmation.json",
+      "destination": "experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-checks-preconfirmation.json",
+      "sha256": "bfd5b01abd71d58375015f5fa6e18a27273c4fe5ed4d23ade0b30a699dc3b1cd",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/hybrid-confirm-awgn-v1.json",
+      "destination": "experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-confirm-awgn-v1.json",
+      "sha256": "8fae985705db4ee38a5b99b1f1557e9bb104df828b3dd46cd0e4ce16be0aea26",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/hybrid-development-r1.json",
+      "destination": "experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-development-r1.json",
+      "sha256": "54ce77ab8ed7d95d7b18d139cbd41df41041b3f78065d541ada2de386752ff83",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/hybrid-specialist-files-v1.json",
+      "destination": "experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-specialist-files-v1.json",
+      "sha256": "7205c6c90f1c4555dac61bd95c91f072828d61d0f2fb04a7c5d0188fe58998eb",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/hybrid-specialist-v1-audit.json",
+      "destination": "experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-specialist-v1-audit.json",
+      "sha256": "d78a86107179db7a1e38424f33596d1e730a237ff50e4276d80c8bc3a495bb4e",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/hybrid-specialist-v1.json",
+      "destination": "experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-specialist-v1.json",
+      "sha256": "dc70f7b0622a721e8aa1af24114475e3fadede230e415095fb5812bcbac79a19",
+      "action": "moved"
+    },
+    {
+      "source": "experiments/single-slot/results/hybrid-specialist-v1-analysis/analysis.json",
+      "sha256": "d0a3d1c9a2ad97569d33f58bc3348c974871d814b5aa768ffa6324398caee380",
+      "action": "replaced_by_verified_lossless_campaign_partitions"
+    },
+    {
+      "source": "experiments/single-slot/results/hybrid-specialist-v1-analysis/matrix.tsv",
+      "sha256": "6245ecfe7997387ec6f23288ff87e980362b7b149116ae186a5084ac6698f5c4",
+      "action": "replaced_by_verified_lossless_campaign_partitions"
+    },
+    {
+      "source": "experiments/single-slot/campaigns/02-hybrid-specialist/hybrid-development-r1.json",
+      "destination": "experiments/single-slot/campaigns/02-hybrid-specialist/analysis/hybrid-development-r1.json",
+      "sha256": "54ce77ab8ed7d95d7b18d139cbd41df41041b3f78065d541ada2de386752ff83",
+      "action": "removed_identical_extra_copy"
+    }
+  ],
+  "split": {
+    "1": {
+      "synthetic": 52,
+      "files": 6
+    },
+    "2": {
+      "synthetic": 12,
+      "files": 2
+    }
+  },
+  "split_json_roundtrip_verified": true,
+  "split_tsv_roundtrip_verified": true,
+  "removed_directory": "experiments/single-slot/results"
+}

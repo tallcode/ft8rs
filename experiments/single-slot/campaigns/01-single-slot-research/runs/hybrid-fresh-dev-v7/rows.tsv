@@ -1,0 +1,21 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+awgn	2026102901	-20	native	0	0	219.585	
+awgn	2026102901	-20	blind-hybrid	1	0	969.743	CQ W0VGU EH15@1437.000/0.110/hybrid
+awgn	2026102901	-20	blind-hybrid-swl	1	0	1850.475	CQ W0VGU EH15@1437.000/0.110/hybrid
+awgn	2026102901	-20	blind-verified-phase	1	0	2160.130	CQ W0VGU EH15@1437.187/0.110/phase-0
+awgn	2026102901	-20	blind-receiver	1	0	4348.390	CQ W0VGU EH15@1437.187/0.110/phase-0
+awgn	2026112908	-20	native	1	0	256.866	F5OVT N6RNU -02@1809.875/0.500
+awgn	2026112908	-20	blind-hybrid	1	0	917.747	F5OVT N6RNU -02@1809.875/0.505/hybrid
+awgn	2026112908	-20	blind-hybrid-swl	1	0	1744.749	F5OVT N6RNU -02@1809.875/0.505/hybrid
+awgn	2026112908	-20	blind-verified-phase	1	0	2153.866	F5OVT N6RNU -02@1809.806/0.502/h0-1-amp
+awgn	2026112908	-20	blind-receiver	1	0	4339.390	F5OVT N6RNU -02@1809.806/0.502/h0-1-amp
+awgn	2026102901	-22	native	0	0	195.255	
+awgn	2026102901	-22	blind-hybrid	0	0	503.101	
+awgn	2026102901	-22	blind-hybrid-swl	0	0	919.099	
+awgn	2026102901	-22	blind-verified-phase	0	0	2191.436	
+awgn	2026102901	-22	blind-receiver	0	0	2198.624	
+awgn	2026112908	-22	native	0	0	189.131	
+awgn	2026112908	-22	blind-hybrid	0	0	449.662	
+awgn	2026112908	-22	blind-hybrid-swl	0	0	934.268	
+awgn	2026112908	-22	blind-verified-phase	0	0	2188.436	
+awgn	2026112908	-22	blind-receiver	0	0	2173.331	

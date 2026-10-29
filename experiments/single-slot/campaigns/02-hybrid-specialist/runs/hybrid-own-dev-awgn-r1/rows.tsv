@@ -1,0 +1,33 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+awgn	2026106991	-21	native	1	0	239.676	CQ W8KXX IB67@1429.125/0.565
+awgn	2026106991	-21	blind-jtdx	1	0	362.623	CQ W8KXX IB67@1429.125/0.570/hybrid
+awgn	2026106991	-21	blind-hybrid	1	0	497.629	CQ W8KXX IB67@1429.125/0.565/hybrid
+awgn	2026106991	-21	blind-hybrid-specialist	1	0	5098.168	CQ W8KXX IB67@1429.125/0.565/hybrid
+awgn	2026116998	-21	native	1	0	253.889	PA4NXS DL5UBJ -02@1176.000/0.905
+awgn	2026116998	-21	blind-jtdx	0	0	439.881	
+awgn	2026116998	-21	blind-hybrid	1	0	1055.564	PA4NXS DL5UBJ -02@1176.000/0.905/hybrid
+awgn	2026116998	-21	blind-hybrid-specialist	1	0	5695.929	PA4NXS DL5UBJ -02@1176.000/0.905/hybrid
+awgn	2026127005	-21	native	0	0	179.228	
+awgn	2026127005	-21	blind-jtdx	0	0	468.491	
+awgn	2026127005	-21	blind-hybrid	0	0	525.526	
+awgn	2026127005	-21	blind-hybrid-specialist	1	0	5211.646	OH6RHL LU0NUM R-03@1794.040/0.426/hybrid
+awgn	2026137012	-21	native	1	0	239.728	G4UNH N3RNN RR73@2670.875/0.965
+awgn	2026137012	-21	blind-jtdx	0	0	392.225	
+awgn	2026137012	-21	blind-hybrid	1	0	861.314	G4UNH N3RNN RR73@2670.875/0.965/hybrid
+awgn	2026137012	-21	blind-hybrid-specialist	1	0	5502.260	G4UNH N3RNN RR73@2670.875/0.965/hybrid
+awgn	2026106991	-22	native	1	0	193.688	CQ W8KXX IB67@1429.125/0.565
+awgn	2026106991	-22	blind-jtdx	0	0	382.038	
+awgn	2026106991	-22	blind-hybrid	1	0	790.374	CQ W8KXX IB67@1429.125/0.565/hybrid
+awgn	2026106991	-22	blind-hybrid-specialist	1	0	5459.530	CQ W8KXX IB67@1429.125/0.565/hybrid
+awgn	2026116998	-22	native	1	0	255.014	PA4NXS DL5UBJ -02@1176.000/0.905
+awgn	2026116998	-22	blind-jtdx	0	0	440.203	
+awgn	2026116998	-22	blind-hybrid	1	0	960.286	PA4NXS DL5UBJ -02@1176.000/0.905/hybrid
+awgn	2026116998	-22	blind-hybrid-specialist	1	0	5656.723	PA4NXS DL5UBJ -02@1176.000/0.905/hybrid
+awgn	2026127005	-22	native	0	0	178.875	
+awgn	2026127005	-22	blind-jtdx	0	0	433.588	
+awgn	2026127005	-22	blind-hybrid	0	0	480.801	
+awgn	2026127005	-22	blind-hybrid-specialist	1	0	5162.394	OH6RHL LU0NUM R-03@1794.040/0.426/hybrid
+awgn	2026137012	-22	native	0	0	172.787	
+awgn	2026137012	-22	blind-jtdx	0	0	366.401	
+awgn	2026137012	-22	blind-hybrid	0	0	423.104	
+awgn	2026137012	-22	blind-hybrid-specialist	1	0	5105.688	G4UNH N3RNN RR73@2670.918/0.963/hybrid

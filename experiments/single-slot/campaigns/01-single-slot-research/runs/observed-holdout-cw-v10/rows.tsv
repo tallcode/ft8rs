@@ -1,0 +1,73 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+cw	2026104991	-18	native	0	0	190.195	
+cw	2026104991	-18	blind-hybrid	0	0	438.480	
+cw	2026104991	-18	blind-conditional	1	0	4877.196	CQ VK9FLV MC91@2185.872/0.264/conditional-h0-1-amp
+cw	2026114998	-18	native	0	0	176.316	
+cw	2026114998	-18	blind-hybrid	0	0	491.634	
+cw	2026114998	-18	blind-conditional	1	0	4908.520	DL5AYQ LU6DTF -02@413.074/0.835/conditional-h0-1-amp
+cw	2026125005	-18	native	0	0	245.807	
+cw	2026125005	-18	blind-hybrid	0	0	510.461	
+cw	2026125005	-18	blind-conditional	1	0	4870.202	W7VSJ G9GIY R-03@1881.091/-0.213/conditional-h0-1-amp
+cw	2026135012	-18	native	0	0	187.814	
+cw	2026135012	-18	blind-hybrid	0	0	451.751	
+cw	2026135012	-18	blind-conditional	1	0	4934.452	F7WBV K7MSX RR73@2323.085/0.694/conditional-h0-1-amp
+cw	2026145019	-18	native	0	0	182.863	
+cw	2026145019	-18	blind-hybrid	0	0	456.617	
+cw	2026145019	-18	blind-conditional	1	0	4943.954	VK5FLT N6IGX 73@2756.051/0.401/conditional-h0-1-amp
+cw	2026155026	-18	native	0	0	180.579	
+cw	2026155026	-18	blind-hybrid	0	0	477.895	
+cw	2026155026	-18	blind-conditional	1	0	4982.472	VK9MUG JA2QWM FJ24@1827.599/0.699/conditional-h0-1-amp
+cw	2026165033	-18	native	0	0	203.998	
+cw	2026165033	-18	blind-hybrid	0	0	526.134	
+cw	2026165033	-18	blind-conditional	1	0	4913.782	CQ DL1HOI FF42@2194.474/0.965/conditional-h0-1-amp
+cw	2026175040	-18	native	0	0	157.427	
+cw	2026175040	-18	blind-hybrid	0	0	476.568	
+cw	2026175040	-18	blind-conditional	1	0	4802.945	G4ENE PA5ZKI -08@261.012/0.516/conditional-h0-1-amp
+cw	2026104991	-20	native	0	0	195.627	
+cw	2026104991	-20	blind-hybrid	0	0	444.792	
+cw	2026104991	-20	blind-conditional	1	0	4788.900	CQ VK9FLV MC91@2185.872/0.264/conditional-h0-3-amp
+cw	2026114998	-20	native	0	0	179.176	
+cw	2026114998	-20	blind-hybrid	0	0	465.372	
+cw	2026114998	-20	blind-conditional	1	0	4797.419	DL5AYQ LU6DTF -02@413.073/0.835/conditional-h0-1-amp
+cw	2026125005	-20	native	0	0	240.758	
+cw	2026125005	-20	blind-hybrid	0	0	498.537	
+cw	2026125005	-20	blind-conditional	1	0	4784.244	W7VSJ G9GIY R-03@1881.090/-0.214/conditional-h2-1-amp
+cw	2026135012	-20	native	0	0	183.991	
+cw	2026135012	-20	blind-hybrid	0	0	444.120	
+cw	2026135012	-20	blind-conditional	1	0	4788.632	F7WBV K7MSX RR73@2323.085/0.694/conditional-h1-1-amp
+cw	2026145019	-20	native	0	0	185.461	
+cw	2026145019	-20	blind-hybrid	0	0	438.505	
+cw	2026145019	-20	blind-conditional	1	0	4792.208	VK5FLT N6IGX 73@2756.051/0.401/conditional-h0-1-amp
+cw	2026155026	-20	native	0	0	179.425	
+cw	2026155026	-20	blind-hybrid	0	0	465.245	
+cw	2026155026	-20	blind-conditional	1	0	4793.251	VK9MUG JA2QWM FJ24@1827.599/0.699/conditional-h1-3-amp
+cw	2026165033	-20	native	0	0	191.774	
+cw	2026165033	-20	blind-hybrid	0	0	509.718	
+cw	2026165033	-20	blind-conditional	1	0	4802.753	CQ DL1HOI FF42@2194.474/0.965/conditional-h0-1-amp
+cw	2026175040	-20	native	0	0	153.088	
+cw	2026175040	-20	blind-hybrid	0	0	436.179	
+cw	2026175040	-20	blind-conditional	1	0	4757.131	G4ENE PA5ZKI -08@261.012/0.516/conditional-h0-3-amp
+cw	2026104991	-22	native	0	0	192.640	
+cw	2026104991	-22	blind-hybrid	0	0	438.729	
+cw	2026104991	-22	blind-conditional	1	0	4790.688	CQ VK9FLV MC91@2185.872/0.264/conditional-h3-3-amp
+cw	2026114998	-22	native	0	0	178.178	
+cw	2026114998	-22	blind-hybrid	0	0	457.380	
+cw	2026114998	-22	blind-conditional	1	0	4735.308	DL5AYQ LU6DTF -02@413.073/0.835/conditional-phase-0
+cw	2026125005	-22	native	0	0	237.574	
+cw	2026125005	-22	blind-hybrid	0	0	486.847	
+cw	2026125005	-22	blind-conditional	1	0	4797.526	W7VSJ G9GIY R-03@1881.089/-0.214/conditional-phase-0
+cw	2026135012	-22	native	0	0	184.061	
+cw	2026135012	-22	blind-hybrid	0	0	434.596	
+cw	2026135012	-22	blind-conditional	1	0	4785.915	F7WBV K7MSX RR73@2323.084/0.694/conditional-phase-0
+cw	2026145019	-22	native	0	0	184.007	
+cw	2026145019	-22	blind-hybrid	0	0	460.421	
+cw	2026145019	-22	blind-conditional	1	0	4811.622	VK5FLT N6IGX 73@2756.050/0.401/conditional-phase-0
+cw	2026155026	-22	native	0	0	179.683	
+cw	2026155026	-22	blind-hybrid	0	0	451.147	
+cw	2026155026	-22	blind-conditional	1	0	4789.443	VK9MUG JA2QWM FJ24@1827.599/0.699/conditional-phase-0
+cw	2026165033	-22	native	0	0	198.221	
+cw	2026165033	-22	blind-hybrid	0	0	473.467	
+cw	2026165033	-22	blind-conditional	1	0	4813.198	CQ DL1HOI FF42@2194.474/0.965/conditional-h1-4-bessel
+cw	2026175040	-22	native	0	0	143.540	
+cw	2026175040	-22	blind-hybrid	0	0	414.948	
+cw	2026175040	-22	blind-conditional	1	0	4757.782	G4ENE PA5ZKI -08@261.012/0.516/conditional-phase-0

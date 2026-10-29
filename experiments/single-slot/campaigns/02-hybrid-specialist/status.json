@@ -1,0 +1,78 @@
+{
+  "recorded_at": "2026-10-29T16:59:51.284349+08:00",
+  "freeze_sha256": "74c244d1d3385d280534acd55ca6d6f2a98b43da112f97d09af917b1a94b59de",
+  "runs": [
+    {
+      "name": "hybrid-own-confirm-v1-awgn",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-blocker",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-channels",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-cw",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-cwonly",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-drift",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-historical",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-mix",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-mix2",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-mixfade",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-confirm-v1-noise",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-dev-awgn-r1",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-dev-cw-r1",
+      "complete": true,
+      "preserved": true
+    },
+    {
+      "name": "hybrid-own-dev-mix-r1",
+      "complete": true,
+      "preserved": true
+    }
+  ],
+  "originals_deleted": false,
+  "first_campaign_archive": "/Volumes/ZHITAI/Workspace/ft8rs/experiments/single-slot/campaigns/01-single-slot-research/2026-10-29-single-slot-preserved.tar.gz"
+}

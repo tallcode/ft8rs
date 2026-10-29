@@ -1,0 +1,11 @@
+# Reproducible binary/audio artifacts stay in the local research archive.
+*.tar.gz
+**/waveforms/
+**/frozen/**/bin/
+**/frozen/bin/
+**/frozen/**/target/
+**/frozen/target/
+**/repository-snapshot/
+**/inputs/
+**/product-build/
+**/__pycache__/

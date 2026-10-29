@@ -1,0 +1,989 @@
+//! JTDX-owned FT8 77-bit message packing.
+//!
+//! Mirrors JTDX `lib/ft8v2/packjt77.f90`.
+///
+/// Supported message types:
+///  0.0  Free text (≤13 chars from the 42-char FT8 alphabet)
+///  0.1  DXpedition special message
+///  0.3/0.4 ARRL Field Day
+///  0.5  Telemetry
+///  1    Standard (two callsigns + grid/report/RR73/73)
+///  3    ARRL RTTY contest exchange
+///  4    One nonstandard (<hash>) call + one standard call
+///  5    EU VHF contest hashed-call exchange
+use num_bigint::BigInt;
+use std::cell::RefCell;
+
+mod stdcall;
+#[cfg(test)]
+mod tests;
+mod unpack;
+
+pub use stdcall::is_stdcall;
+#[cfg(test)]
+use unpack::unpack28;
+pub use unpack::{unpack77, unpack77_with_context, UnpackContext};
+pub(crate) const FT_ALPH: &[u8; 42] = b" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?";
+pub(crate) const A1: &[u8; 37] = b" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+pub(crate) const A2: &[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+pub(crate) const A3: &[u8; 10] = b"0123456789";
+pub(crate) const A4: &[u8; 27] = b" ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+pub(crate) const C38: &[u8; 38] = b" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/";
+
+pub(crate) const N_TOKENS: usize = 2_063_592;
+pub(crate) const MAX22: usize = 4_194_304; // 2^22
+pub(crate) const MAX28: usize = 268_435_456; // 2^28
+pub(crate) const MAXGRID4: usize = 32_400;
+const MAX_HASH22_ENTRIES: usize = 1000;
+
+const CSEC: [&str; 85] = [
+    "AB", "AK", "AL", "AR", "AZ", "BC", "CO", "CT", "DE", "EB", "EMA", "ENY", "EPA", "EWA", "GA",
+    "GTA", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "LAX", "MAR", "MB", "MDC", "ME", "MI", "MN",
+    "MO", "MS", "MT", "NC", "ND", "NE", "NFL", "NH", "NL", "NLI", "NM", "NNJ", "NNY", "NT", "NTX",
+    "NV", "OH", "OK", "ONE", "ONN", "ONS", "OR", "ORG", "PAC", "PR", "QC", "RI", "SB", "SC", "SCV",
+    "SD", "SDG", "SF", "SFL", "SJV", "SK", "SNJ", "STX", "SV", "TN", "UT", "VA", "VI", "VT", "WCF",
+    "WI", "WMA", "WNY", "WPA", "WTX", "WV", "WWA", "WY", "DX", "PE",
+];
+
+const CMULT: [&str; 65] = [
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS",
+    "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY",
+    "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV",
+    "WI", "WY", "NB", "NS", "QC", "ON", "MB", "SK", "AB", "BC", "NWT", "NF", "LB", "NU", "YT",
+    "PEI", "DC",
+];
+
+/// Pack a message into 77 bits.
+pub fn pack77(msg: &str) -> Vec<u8> {
+    let parts = split77(msg);
+    if parts.is_empty() {
+        panic!("Empty message");
+    }
+
+    if let Some(bits) = try_pack_type01(&parts) {
+        return bits;
+    }
+
+    if let Some(bits) = try_pack_type03_04(&parts) {
+        return bits;
+    }
+
+    if let Some(bits) = try_pack_type05_telemetry(&parts) {
+        return bits;
+    }
+
+    // Try Type 1/2: standard message
+    if let Some(bits) = try_pack_type1(&parts) {
+        return bits;
+    }
+
+    if let Some(bits) = try_pack_type3(&parts) {
+        return bits;
+    }
+
+    // Try Type 4: one hash call
+    if let Some(bits) = try_pack_type4(&parts) {
+        return bits;
+    }
+
+    if let Some(bits) = try_pack_type5(&parts) {
+        return bits;
+    }
+
+    // Default: Type 0.0 free text
+    pack_free_text(msg)
+}
+
+fn split77(msg: &str) -> Vec<String> {
+    let parts: Vec<String> = msg
+        .trim()
+        .to_uppercase()
+        .split_whitespace()
+        .map(String::from)
+        .collect();
+
+    if parts.len() >= 3 && parts[0] == "CQ" && chkcall(&parts[2]).is_some() {
+        let mut merged = vec![format!("CQ_{}", parts[1])];
+        merged.extend_from_slice(&parts[2..]);
+        return merged;
+    }
+    parts
+}
+
+fn chkcall(token: &str) -> Option<String> {
+    let w = token.trim().to_ascii_uppercase();
+    if w.is_empty()
+        || w.len() > 11
+        || w.contains('.')
+        || w.contains('+')
+        || w.contains('-')
+        || w.contains('?')
+    {
+        return None;
+    }
+    if w.len() > 6 && !w.contains('/') {
+        return None;
+    }
+
+    let base = if let Some(i0) = w.find('/') {
+        let left = &w[..i0];
+        let right = &w[i0 + 1..];
+        if left.len().max(right.len()) > 6 || left.is_empty() || right.is_empty() {
+            return None;
+        }
+        if left.len() <= right.len() {
+            right
+        } else {
+            left
+        }
+    } else {
+        w.as_str()
+    };
+
+    let bytes = base.as_bytes();
+    let nbc = bytes.len();
+    if !(3..=6).contains(&nbc) {
+        return None;
+    }
+    if !bytes[0].is_ascii_uppercase() && !bytes[1].is_ascii_uppercase() {
+        return None;
+    }
+    if bytes[0] == b'Q' && !base.starts_with("QU1RK") {
+        return None;
+    }
+
+    let mut digit_pos = None;
+    if bytes[1].is_ascii_digit() {
+        digit_pos = Some(1usize);
+    }
+    if bytes[2].is_ascii_digit() {
+        digit_pos = Some(2usize);
+    }
+    let digit_pos = digit_pos?;
+    if digit_pos + 1 == nbc {
+        return None;
+    }
+    if !bytes[digit_pos + 1..]
+        .iter()
+        .all(|b| b.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let suffix_len = nbc - digit_pos - 1;
+    if !(1..=3).contains(&suffix_len) {
+        return None;
+    }
+
+    Some(base.to_string())
+}
+
+#[derive(Debug, Clone)]
+struct CallsignParse {
+    basecall: String,
+    is_standard: bool,
+    suffix: Option<String>,
+}
+
+fn parse_callsign(raw: &str) -> CallsignParse {
+    let mut call = raw.trim().to_uppercase();
+    let mut suffix: Option<String> = None;
+
+    if call.ends_with("/R") {
+        suffix = Some("/R".into());
+        call = call[..call.len() - 2].into();
+    }
+    if call.ends_with("/P") {
+        suffix = Some("/P".into());
+        call = call[..call.len() - 2].into();
+    }
+
+    let is_letter = |c: char| c.is_ascii_uppercase();
+    let is_digit = |c: char| c.is_ascii_digit();
+
+    let chars: Vec<char> = call.chars().collect();
+    let mut iarea: i32 = -1;
+    for i in (1..chars.len()).rev() {
+        if is_digit(chars[i]) {
+            iarea = i as i32;
+            break;
+        }
+    }
+
+    if iarea < 1 {
+        return CallsignParse {
+            basecall: call,
+            is_standard: false,
+            suffix,
+        };
+    }
+
+    let mut npdig = 0;
+    let mut nplet = 0;
+    for chars_value in chars.iter().take(iarea as usize) {
+        if is_digit(*chars_value) {
+            npdig += 1;
+        }
+        if is_letter(*chars_value) {
+            nplet += 1;
+        }
+    }
+    let mut nslet = 0;
+    for chars_value in chars.iter().skip(iarea as usize + 1) {
+        if is_letter(*chars_value) {
+            nslet += 1;
+        }
+    }
+
+    let first_two_have_letter = chars.iter().take(2).any(|c| c.is_ascii_uppercase());
+    let q_prefix_ok = chars.first() != Some(&'Q') || call.starts_with("QU1RK");
+    let standard = (1..=2).contains(&iarea)
+        && first_two_have_letter
+        && q_prefix_ok
+        && nplet >= 1
+        && npdig < iarea
+        && (1..=3).contains(&nslet);
+
+    CallsignParse {
+        basecall: call,
+        is_standard: standard,
+        suffix,
+    }
+}
+
+pub fn pack28(token: &str) -> usize {
+    let t = token.trim().to_uppercase();
+
+    if t == "DE" {
+        return 0;
+    }
+    if t == "QRZ" {
+        return 1;
+    }
+    if t == "CQ" {
+        return 2;
+    }
+
+    // CQ_nnn or CQ_aaaa
+    if let Some(rest) = t.strip_prefix("CQ_") {
+        if rest.len() == 3 && rest.chars().all(|c| c.is_ascii_digit()) {
+            let nqsy: usize = rest.parse().unwrap_or(0);
+            return 3 + nqsy;
+        }
+        if rest.len() <= 4 && rest.chars().all(|c| c.is_ascii_uppercase()) {
+            let padded = format!("{:>4}", rest);
+            let mut m: usize = 0;
+            for c in padded.chars() {
+                let j = if c.is_ascii_uppercase() {
+                    (c as usize) - 64
+                } else {
+                    0
+                };
+                m = 27 * m + j;
+            }
+            return 3 + 1000 + m;
+        }
+    }
+
+    // <...> hash calls
+    if t.starts_with('<') && t.ends_with('>') {
+        let inner = &t[1..t.len() - 1];
+        let n22 = ihashcall22(inner);
+        return (N_TOKENS + n22) & (MAX28 - 1);
+    }
+
+    // Standard callsign
+    let parsed = parse_callsign(&t);
+    // Native pack28 permits an empty suffix (e.g. A0). Receive validation
+    // is separate; WSJT-X and JTDX intentionally have different rules there.
+    let empty_suffix =
+        t.len() == 2 && t.as_bytes()[0].is_ascii_uppercase() && t.as_bytes()[1].is_ascii_digit();
+    if parsed.is_standard || empty_suffix {
+        let basecall = if empty_suffix { &t } else { &parsed.basecall };
+        let chars: Vec<char> = basecall.chars().collect();
+        let mut iarea_d: i32 = -1;
+        for i in (1..chars.len()).rev() {
+            if chars[i].is_ascii_digit() {
+                iarea_d = i as i32;
+                break;
+            }
+        }
+
+        let cs = if iarea_d == 1 {
+            format!(" {}", &basecall[..basecall.len().min(5)])
+        } else if iarea_d == 2 {
+            basecall[..basecall.len().min(6)].to_string()
+        } else {
+            basecall.clone()
+        };
+
+        let cs_chars: Vec<char> = cs.chars().collect();
+        let mut cs_padded = [' '; 6];
+        let len = cs_chars.len().min(6);
+        cs_padded[..len].copy_from_slice(&cs_chars[..len]);
+
+        let i1 = find_char(A1, cs_padded[0]);
+        let i2 = find_char(A2, cs_padded[1]);
+        let i3 = find_char(A3, cs_padded[2]);
+        let i4 = find_char(A4, cs_padded[3]);
+        let i5 = find_char(A4, cs_padded[4]);
+        let i6 = find_char(A4, cs_padded[5]);
+
+        let n28 = 36 * 10 * 27 * 27 * 27 * i1
+            + 10 * 27 * 27 * 27 * i2
+            + 27 * 27 * 27 * i3
+            + 27 * 27 * i4
+            + 27 * i5
+            + i6;
+        return (n28 + N_TOKENS + MAX22) & (MAX28 - 1);
+    }
+
+    // Non-standard → 22-bit hash
+    let n22 = ihashcall22(&parsed.basecall);
+    (N_TOKENS + n22) & (MAX28 - 1)
+}
+
+fn find_char(alphabet: &[u8], c: char) -> usize {
+    let b = c as u8;
+    alphabet.iter().position(|&x| x == b).unwrap_or(0)
+}
+
+fn ihashcall(c0: &str, width: usize) -> usize {
+    let s = format!("{:<11}", c0).to_uppercase();
+    let mut n8: u64 = 0;
+    for c in s.chars().take(11) {
+        let j = C38.iter().position(|&x| x == c as u8).unwrap_or(0) as u64;
+        n8 = 38 * n8 + j;
+    }
+    const MAGIC: u64 = 47055833459;
+    let prod = MAGIC.wrapping_mul(n8);
+    ((prod >> (64 - width as u32)) & ((1u64 << width as u32) - 1)) as usize
+}
+
+fn ihashcall22(c0: &str) -> usize {
+    ihashcall(c0, 22)
+}
+
+#[derive(Debug)]
+pub struct HashCallBook {
+    calls10: RefCell<Vec<Option<String>>>,
+    calls12: RefCell<Vec<Option<String>>>,
+    hash22_entries: RefCell<Vec<(usize, String)>>,
+}
+
+impl Default for HashCallBook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HashCallBook {
+    pub fn new() -> Self {
+        HashCallBook {
+            calls10: RefCell::new(vec![None; 1024]),
+            calls12: RefCell::new(vec![None; 4096]),
+            hash22_entries: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub fn save(&self, callsign: &str) {
+        let trimmed = callsign.trim();
+        if trimmed.is_empty() || trimmed == "<...>" {
+            return;
+        }
+
+        let clean = if trimmed.starts_with('<') && trimmed.ends_with('>') {
+            &trimmed[1..trimmed.len() - 1]
+        } else if let Some(inner) = trimmed.strip_prefix('<') {
+            inner.split_once('>').map_or(inner, |(call, _)| call)
+        } else {
+            trimmed
+        };
+
+        if clean.len() < 3 {
+            return;
+        }
+
+        let cw = clean.to_uppercase();
+
+        let n10 = ihashcall(&cw, 10);
+        if n10 <= 1023 {
+            self.calls10.borrow_mut()[n10] = Some(cw.clone());
+        }
+
+        let n12 = ihashcall(&cw, 12);
+        if n12 <= 4095 {
+            self.calls12.borrow_mut()[n12] = Some(cw.clone());
+        }
+
+        let n22 = ihashcall(&cw, 22);
+        let mut entries = self.hash22_entries.borrow_mut();
+        if let Some(pos) = entries.iter().position(|(h, _)| *h == n22) {
+            entries[pos].1 = cw;
+        } else {
+            if entries.len() >= MAX_HASH22_ENTRIES {
+                entries.pop();
+            }
+            entries.insert(0, (n22, cw));
+        }
+    }
+
+    pub fn lookup10(&self, n10: usize) -> Option<String> {
+        if n10 <= 1023 {
+            self.calls10.borrow()[n10].clone()
+        } else {
+            None
+        }
+    }
+
+    pub fn lookup12(&self, n12: usize) -> Option<String> {
+        if n12 <= 4095 {
+            self.calls12.borrow()[n12].clone()
+        } else {
+            None
+        }
+    }
+
+    pub fn lookup22(&self, n22: usize) -> Option<String> {
+        self.hash22_entries
+            .borrow()
+            .iter()
+            .find(|(h, _)| *h == n22)
+            .map(|(_, c)| c.clone())
+    }
+
+    pub fn size(&self) -> usize {
+        self.hash22_entries.borrow().len()
+    }
+
+    pub fn clear(&self) {
+        self.calls10.borrow_mut().iter_mut().for_each(|c| *c = None);
+        self.calls12.borrow_mut().iter_mut().for_each(|c| *c = None);
+        self.hash22_entries.borrow_mut().clear();
+    }
+
+    pub fn get_calls(&self) -> Vec<String> {
+        let mut calls: Vec<String> = Vec::new();
+        for entry in self.hash22_entries.borrow().iter() {
+            if !calls.contains(&entry.1) {
+                calls.push(entry.1.clone());
+            }
+        }
+        calls
+    }
+
+    pub fn clone_book(&self) -> HashCallBook {
+        HashCallBook {
+            calls10: RefCell::new(self.calls10.borrow().clone()),
+            calls12: RefCell::new(self.calls12.borrow().clone()),
+            hash22_entries: RefCell::new(self.hash22_entries.borrow().clone()),
+        }
+    }
+}
+
+fn is_grid4(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 4
+        && bytes[0] >= b'A'
+        && bytes[0] <= b'R'
+        && bytes[1] >= b'A'
+        && bytes[1] <= b'R'
+        && bytes[2] >= b'0'
+        && bytes[2] <= b'9'
+        && bytes[3] >= b'0'
+        && bytes[3] <= b'9'
+}
+
+fn pack_grid4(s: &str) -> usize {
+    if s == "RRR" {
+        return MAXGRID4 + 2;
+    }
+    if s == "73" {
+        return MAXGRID4 + 4;
+    }
+
+    // Numeric report
+    if let Some(rest) = s.strip_prefix('R') {
+        if let Ok(irpt) = rest.parse::<i32>() {
+            let irpt = if (-50..=-31).contains(&irpt) {
+                irpt + 101
+            } else {
+                irpt
+            };
+            return MAXGRID4 + (irpt + 35) as usize;
+        }
+    }
+
+    if let Ok(irpt) = s.parse::<i32>() {
+        let irpt = if (-50..=-31).contains(&irpt) {
+            irpt + 101
+        } else {
+            irpt
+        };
+        return MAXGRID4 + (irpt + 35) as usize;
+    }
+
+    // 4-char grid locator
+    let bytes = s.as_bytes();
+    let j1 = (bytes[0] - b'A') as usize * 18 * 10 * 10;
+    let j2 = (bytes[1] - b'A') as usize * 10 * 10;
+    let j3 = (bytes[2] - b'0') as usize * 10;
+    let j4 = (bytes[3] - b'0') as usize;
+    j1 + j2 + j3 + j4
+}
+
+fn append_bits(bits: &mut Vec<u8>, val: usize, width: usize) {
+    for i in (0..width).rev() {
+        bits.push(((val >> i) & 1) as u8);
+    }
+}
+
+fn clean_hash_call(token: &str) -> Option<String> {
+    let t = token.trim();
+    if t.starts_with('<') && t.ends_with('>') && t.len() > 2 {
+        Some(t[1..t.len() - 1].to_string())
+    } else {
+        None
+    }
+}
+
+fn parse_report_i32(token: &str) -> Option<i32> {
+    token.parse::<i32>().ok()
+}
+
+fn grid6_24(grid: &str) -> Option<usize> {
+    let bytes = grid.as_bytes();
+    if bytes.len() != 6
+        || !(b'A'..=b'R').contains(&bytes[0])
+        || !(b'A'..=b'R').contains(&bytes[1])
+        || !bytes[2].is_ascii_digit()
+        || !bytes[3].is_ascii_digit()
+        || !(b'A'..=b'X').contains(&bytes[4])
+        || !(b'A'..=b'X').contains(&bytes[5])
+    {
+        return None;
+    }
+    Some(
+        (bytes[0] - b'A') as usize * 18 * 10 * 10 * 24 * 24
+            + (bytes[1] - b'A') as usize * 10 * 10 * 24 * 24
+            + (bytes[2] - b'0') as usize * 10 * 24 * 24
+            + (bytes[3] - b'0') as usize * 24 * 24
+            + (bytes[4] - b'A') as usize * 24
+            + (bytes[5] - b'A') as usize,
+    )
+}
+
+fn try_pack_type01(parts: &[String]) -> Option<Vec<u8>> {
+    if parts.len() != 5 || parts[1] != "RR73;" {
+        return None;
+    }
+    let hash_call = clean_hash_call(&parts[3])?;
+    let report = parse_report_i32(&parts[4])?;
+    let p1 = parse_callsign(&parts[0]);
+    let p2 = parse_callsign(&parts[2]);
+    if !p1.is_standard || !p2.is_standard {
+        return None;
+    }
+
+    let n5 = ((report + 30) / 2).clamp(0, 31) as usize;
+    let mut bits = Vec::with_capacity(77);
+    append_bits(&mut bits, pack28(&parts[0]), 28);
+    append_bits(&mut bits, pack28(&parts[2]), 28);
+    append_bits(&mut bits, ihashcall(&hash_call, 10), 10);
+    append_bits(&mut bits, n5, 5);
+    append_bits(&mut bits, 1, 3);
+    append_bits(&mut bits, 0, 3);
+    Some(bits)
+}
+
+fn try_pack_type03_04(parts: &[String]) -> Option<Vec<u8>> {
+    if parts.len() < 4 || parts.len() > 5 {
+        return None;
+    }
+    let p1 = parse_callsign(&parts[0]);
+    let p2 = parse_callsign(&parts[1]);
+    if !p1.is_standard || !p2.is_standard {
+        return None;
+    }
+    if parts.len() == 5 && parts[2] != "R" {
+        return None;
+    }
+    let section = parts.last()?;
+    let isec = CSEC.iter().position(|sec| sec == section)? + 1;
+    let tx_class = &parts[parts.len() - 2];
+    if tx_class.len() < 2 {
+        return None;
+    }
+    let (ntx_text, class_text) = tx_class.split_at(tx_class.len() - 1);
+    let ntx = ntx_text.parse::<usize>().ok()?;
+    if !(1..=32).contains(&ntx) {
+        return None;
+    }
+    let class = class_text.as_bytes()[0];
+    if !(b'A'..=b'H').contains(&class) {
+        return None;
+    }
+    let mut n3 = 3;
+    let mut intx = ntx - 1;
+    if intx >= 16 {
+        n3 = 4;
+        intx = ntx - 17;
+    }
+    let ir = usize::from(parts.len() == 5 && parts[2] == "R");
+    let mut bits = Vec::with_capacity(77);
+    append_bits(&mut bits, pack28(&parts[0]), 28);
+    append_bits(&mut bits, pack28(&parts[1]), 28);
+    append_bits(&mut bits, ir, 1);
+    append_bits(&mut bits, intx, 4);
+    append_bits(&mut bits, (class - b'A') as usize, 3);
+    append_bits(&mut bits, isec, 7);
+    append_bits(&mut bits, n3, 3);
+    append_bits(&mut bits, 0, 3);
+    Some(bits)
+}
+
+fn try_pack_type05_telemetry(parts: &[String]) -> Option<Vec<u8>> {
+    if parts.len() != 1 {
+        return None;
+    }
+    let token = parts[0].trim();
+    if token.is_empty() || token.len() > 18 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let padded = format!("{token:>018}");
+    let n1 = usize::from_str_radix(&padded[0..6], 16).ok()?;
+    if n1 >= (1 << 23) {
+        return None;
+    }
+    let n2 = usize::from_str_radix(&padded[6..12], 16).ok()?;
+    let n3tel = usize::from_str_radix(&padded[12..18], 16).ok()?;
+    let mut bits = Vec::with_capacity(77);
+    append_bits(&mut bits, n1, 23);
+    append_bits(&mut bits, n2, 24);
+    append_bits(&mut bits, n3tel, 24);
+    append_bits(&mut bits, 5, 3);
+    append_bits(&mut bits, 0, 3);
+    Some(bits)
+}
+
+fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
+    if parts.len() < 2 || parts.len() > 4 {
+        return None;
+    }
+
+    // pack77_1 accepts a fourth word only for "CALL CALL R GRID".
+    if parts.len() == 4 && parts[2] != "R" {
+        return None;
+    }
+
+    let w1 = &parts[0];
+    let w2 = &parts[1];
+
+    if w1.starts_with('<') && w2.contains('/') {
+        return None;
+    }
+    if w2.starts_with('<') && w1.contains('/') {
+        return None;
+    }
+
+    let (call1, ok1, ipa) = parse_callsign1(w1);
+    let (call2, ok2, ipb) = parse_callsign2(w2);
+
+    if !ok1 || !ok2 {
+        return None;
+    }
+    if parts.len() == 2 && w2.contains('/') {
+        return None;
+    }
+
+    let i1psfx = ipa == 1 && (w1.ends_with("/P") || w1.contains("/P "));
+    let i2psfx = ipb == 1 && (w2.ends_with("/P") || w2.contains("/P "));
+    let i3 = if i1psfx || i2psfx { 2 } else { 1 };
+
+    let w_last = parts.last().unwrap();
+    let last_upper = w_last.to_uppercase();
+
+    let (igrid4, ir) = if parts.len() == 2 {
+        (MAXGRID4 + 1, 0)
+    } else if is_grid4(&last_upper) {
+        let ir = if parts.len() == 4 && parts[2] == "R" {
+            1
+        } else {
+            0
+        };
+        (pack_grid4(&last_upper), ir)
+    } else if last_upper == "RRR" {
+        (MAXGRID4 + 2, 0)
+    } else if last_upper == "RR73" {
+        (MAXGRID4 + 3, 0)
+    } else if last_upper == "73" {
+        (MAXGRID4 + 4, 0)
+    } else if last_upper.starts_with("R+") || last_upper.starts_with("R-") {
+        let rest = &last_upper[1..];
+        if let Ok(irpt) = rest.parse::<i32>() {
+            let irpt = if (-50..=-31).contains(&irpt) {
+                irpt + 101
+            } else {
+                irpt
+            };
+            (MAXGRID4 + (irpt + 35) as usize, 1)
+        } else {
+            return None;
+        }
+    } else if last_upper.starts_with('+') || last_upper.starts_with('-') {
+        let irpt = last_upper.parse::<i32>().ok()?;
+        let irpt = if (-50..=-31).contains(&irpt) {
+            irpt + 101
+        } else {
+            irpt
+        };
+        (MAXGRID4 + (irpt + 35) as usize, 0)
+    } else {
+        return None;
+    };
+
+    let n28a = pack28(&call1);
+    let n28b = pack28(&call2);
+
+    let mut bits = Vec::with_capacity(77);
+    append_bits(&mut bits, n28a, 28);
+    append_bits(&mut bits, ipa, 1);
+    append_bits(&mut bits, n28b, 28);
+    append_bits(&mut bits, ipb, 1);
+    append_bits(&mut bits, ir, 1);
+    append_bits(&mut bits, igrid4, 15);
+    append_bits(&mut bits, i3, 3);
+    Some(bits)
+}
+
+fn parse_callsign1(w: &str) -> (String, bool, usize) {
+    if w == "CQ" || w == "DE" || w == "QRZ" || w.starts_with("CQ_") {
+        return (w.into(), true, 0);
+    }
+    if w.starts_with('<') && w.ends_with('>') {
+        return (w.into(), true, 0);
+    }
+    let p = parse_callsign(w);
+    let ipa = if p.suffix.as_deref() == Some("/R") || p.suffix.as_deref() == Some("/P") {
+        1
+    } else {
+        0
+    };
+    (p.basecall, p.is_standard, ipa)
+}
+
+fn parse_callsign2(w: &str) -> (String, bool, usize) {
+    if w.starts_with('<') && w.ends_with('>') {
+        return (w.into(), true, 0);
+    }
+    let p = parse_callsign(w);
+    let ipb = if p.suffix.as_deref() == Some("/R") || p.suffix.as_deref() == Some("/P") {
+        1
+    } else {
+        0
+    };
+    (p.basecall, p.is_standard, ipb)
+}
+
+fn try_pack_type4(parts: &[String]) -> Option<Vec<u8>> {
+    if parts.len() < 2 || parts.len() > 3 {
+        return None;
+    }
+
+    let w1 = &parts[0];
+    let w2 = &parts[1];
+    let w3 = parts.get(2);
+
+    let parsed_w1 = parse_callsign(w1);
+    let parsed_w2 = parse_callsign(w2);
+
+    if parsed_w1.is_standard
+        && parsed_w2.is_standard
+        && !w1.starts_with('<')
+        && !w2.starts_with('<')
+    {
+        return None;
+    }
+
+    let (n12, c11, iflip, icq) = if w1 == "CQ" {
+        if w2.len() <= 4 {
+            return None;
+        }
+        (ihashcall12(w2), w2.clone(), 0, 1)
+    } else if w1.starts_with('<') && w1.ends_with('>') {
+        let inner = &w1[1..w1.len() - 1];
+        (ihashcall12(inner), w2.clone(), 0, 0)
+    } else if w2.starts_with('<') && w2.ends_with('>') {
+        let inner = &w2[1..w2.len() - 1];
+        (ihashcall12(inner), w1.clone(), 1, 0)
+    } else {
+        return None;
+    };
+
+    let n58 = encode_c11(&c11);
+    let nrpt = decode_rpt(w3.map(|s| s.as_str()));
+
+    let mut bits = Vec::with_capacity(77);
+    append_bits(&mut bits, n12, 12);
+    // n58 as 58-bit BigInt
+    for b in (0..58).rev() {
+        bits.push(((n58 >> b) & 1) as u8);
+    }
+    append_bits(&mut bits, iflip, 1);
+    append_bits(&mut bits, nrpt, 2);
+    append_bits(&mut bits, icq, 1);
+    append_bits(&mut bits, 4, 3);
+    Some(bits)
+}
+
+fn ihashcall12(c0: &str) -> usize {
+    ihashcall(c0, 12)
+}
+
+fn encode_c11(c11: &str) -> u64 {
+    let padded = format!("{:>11}", c11);
+    let mut n: u64 = 0;
+    for c in padded.chars().take(11) {
+        let j = C38.iter().position(|&x| x == c as u8).unwrap_or(0) as u64;
+        n = n * 38 + j;
+    }
+    n
+}
+
+fn decode_rpt(w: Option<&str>) -> usize {
+    match w {
+        Some("RRR") => 1,
+        Some("RR73") => 2,
+        Some("73") => 3,
+        _ => 0,
+    }
+}
+
+fn try_pack_type3(parts: &[String]) -> Option<Vec<u8>> {
+    if parts.len() < 4 || parts.len() > 6 {
+        return None;
+    }
+    if parts[0].starts_with('<') && parts[1].starts_with('<') {
+        return None;
+    }
+    let itu = usize::from(parts[0] == "TU;");
+    if parts.len() < itu + 4 {
+        return None;
+    }
+    let call1 = &parts[itu];
+    let call2 = &parts[itu + 1];
+    if !parse_callsign(call1).is_standard || !parse_callsign(call2).is_standard {
+        return None;
+    }
+
+    let report = &parts[parts.len() - 2];
+    if report.contains('-') || report.contains('+') {
+        return None;
+    }
+    let report_num = report.parse::<i32>().ok()?;
+    if !(529..=599).contains(&report_num) || report_num % 10 != 9 {
+        return None;
+    }
+    let mut irpt = (report_num - 509) / 10 - 2;
+    irpt = irpt.clamp(0, 7);
+
+    let last = parts.last()?;
+    let serial = last.parse::<usize>().ok();
+    let mult = CMULT.iter().position(|m| m == last).map(|idx| idx + 1);
+    let nexch = if let Some(mult) = mult {
+        8000 + mult
+    } else {
+        let serial = serial?;
+        if !(1..=7999).contains(&serial) {
+            return None;
+        }
+        serial
+    };
+
+    let ir = usize::from(parts.get(itu + 2).map(|s| s.as_str()) == Some("R"));
+    let mut bits = Vec::with_capacity(77);
+    append_bits(&mut bits, itu, 1);
+    append_bits(&mut bits, pack28(call1), 28);
+    append_bits(&mut bits, pack28(call2), 28);
+    append_bits(&mut bits, ir, 1);
+    append_bits(&mut bits, irpt as usize, 3);
+    append_bits(&mut bits, nexch, 13);
+    append_bits(&mut bits, 3, 3);
+    Some(bits)
+}
+
+fn try_pack_type5(parts: &[String]) -> Option<Vec<u8>> {
+    if parts.len() < 4 || parts.len() > 5 {
+        return None;
+    }
+    let call1 = clean_hash_call(&parts[0])?;
+    let call2 = clean_hash_call(&parts[1])?;
+    let exchange = parts[parts.len() - 2].parse::<usize>().ok()?;
+    if !(520001..=594095).contains(&exchange) {
+        return None;
+    }
+    let grid6 = parts.last()?;
+    let igrid6 = grid6_24(grid6)?;
+    let ir = usize::from(parts.len() == 5 && parts[2] == "R");
+    let irpt = exchange / 10000 - 52;
+    if irpt > 7 {
+        return None;
+    }
+    let iserial = (exchange % 10000).min(2047);
+
+    let mut bits = Vec::with_capacity(77);
+    append_bits(&mut bits, ihashcall(&call1, 12), 12);
+    append_bits(&mut bits, ihashcall(&call2, 22), 22);
+    append_bits(&mut bits, ir, 1);
+    append_bits(&mut bits, irpt, 3);
+    append_bits(&mut bits, iserial, 11);
+    append_bits(&mut bits, igrid6, 25);
+    append_bits(&mut bits, 5, 3);
+    Some(bits)
+}
+
+pub(crate) fn pack_free_text(msg: &str) -> Vec<u8> {
+    let raw = msg.to_uppercase();
+    let chars: Vec<char> = raw.chars().take(13).collect();
+    let bits71 = pack_text77(&chars);
+
+    let mut bits = bits71;
+    bits.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+    bits
+}
+
+fn pack_text77(chars: &[char]) -> Vec<u8> {
+    let mut w = vec![' '; 13];
+    let start = 13 - chars.len();
+    for (i, &c) in chars.iter().enumerate() {
+        w[start + i] = c;
+    }
+
+    let mut qa = BigInt::from(0u64);
+    for &c in &w {
+        let j = FT_ALPH.iter().position(|&x| x == c as u8).unwrap_or(0);
+        qa = &qa * 42 + j;
+    }
+
+    // Extract 71 bits
+    let (_sign, bytes) = qa.to_bytes_be(); // big-endian
+    let mut qa_bytes = [0u8; 9];
+    let start = 9usize.saturating_sub(bytes.len());
+    for (i, &b) in bytes.iter().take(9).enumerate() {
+        qa_bytes[start + i] = b;
+    }
+
+    let mut bits = Vec::with_capacity(71);
+    // limb 0 gives 7 bits (bits 0-6 of byte 0, i.e., top 7 bits)
+    let byte0 = qa_bytes[0];
+    for b in (0..7).rev() {
+        bits.push((byte0 >> b) & 1);
+    }
+    // limbs 1..8 give 8 bits each
+    for qa_bytes_value in qa_bytes.iter().skip(1) {
+        let byte = *qa_bytes_value;
+        for b in (0..8).rev() {
+            bits.push((byte >> b) & 1);
+        }
+    }
+    bits
+}

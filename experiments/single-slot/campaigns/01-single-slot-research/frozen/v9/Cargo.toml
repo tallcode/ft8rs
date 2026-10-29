@@ -1,0 +1,17 @@
+[package]
+name = "ft8rs-receiver-lab"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+[lib]
+name = "ft8rs"
+[features]
+default = []
+fftw = []
+[dependencies]
+rustfft = "6.4.1"
+hound = "3.5.1"
+num-bigint = "0.5.1"
+[profile.release]
+codegen-units = 16
+lto = false

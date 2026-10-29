@@ -7,12 +7,12 @@ mod output;
 mod output_cli;
 
 use ft8rs::input::{
-    decode_wav_file_streaming_decodes, infer_start_time_from_path, FileDecodeOptions,
+    decode_wav_file_streaming_tagged, infer_start_time_from_path, FileDecodeOptions,
 };
 use ft8rs::stream::{DecodeProfile, StreamDecodeConfig};
 use ft8rs::SlotTimestamp;
 use ft8rs_engine::{
-    decode_soundcard_streaming_decodes, list_soundcards, InputChannel, SoundcardDecodeOptions,
+    decode_soundcard_streaming_tagged, list_soundcards, InputChannel, SoundcardDecodeOptions,
     SoundcardFormatInfo,
 };
 
@@ -110,6 +110,9 @@ struct DecodeArgs {
     /// Disable Hybrid's bounded cross-decoder cancellation round.
     #[arg(long, help_heading = "Decode")]
     no_hybrid_sic: bool,
+    /// Enable the experimental weak-signal/interference branch (Hybrid only).
+    #[arg(long, help_heading = "Decode")]
+    hybrid_experiment: bool,
 }
 
 #[derive(Args)]
@@ -183,7 +186,7 @@ fn run_file(args: FileArgs) -> Result<(), String> {
     let config = stream_decode_config(&args.decode)?;
 
     let outputs = RefCell::new(Outputs::new(None)?);
-    decode_wav_file_streaming_decodes(
+    decode_wav_file_streaming_tagged(
         &args.input,
         FileDecodeOptions { start_time, config },
         |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
@@ -229,6 +232,10 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     }
     config.nagain = args.nagain;
     config.hybrid_sic = !args.no_hybrid_sic;
+    if args.hybrid_experiment && config.profile != DecodeProfile::Hybrid {
+        return Err("--hybrid-experiment requires --profile hybrid".to_string());
+    }
+    config.hybrid_experiment = args.hybrid_experiment;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
         return Err("--profile dx requires --his-call CALL".to_string());
     }
@@ -273,7 +280,7 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
     if config.profile == DecodeProfile::Dx {
         config.dx_monitor_watchdog_ms = Some(DX_MONITOR_WATCHDOG_MS);
     }
-    decode_soundcard_streaming_decodes(
+    decode_soundcard_streaming_tagged(
         SoundcardDecodeOptions {
             device: args.device,
             channel,
@@ -319,6 +326,36 @@ fn format_soundcard_format(format: &SoundcardFormatInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn experiment_is_opt_in_and_hybrid_only() {
+        for profile in ["wsjtx", "jtdx", "hybrid", "dx"] {
+            let mut argv = vec!["ft8rs", "file", "recording.wav", "--profile", profile];
+            if profile == "dx" {
+                argv.extend(["--his-call", "K1ABC"]);
+            }
+            let cli = Cli::try_parse_from(&argv).unwrap();
+            let Command::File(args) = cli.command else {
+                unreachable!()
+            };
+            assert!(
+                !stream_decode_config(&args.decode)
+                    .unwrap()
+                    .hybrid_experiment
+            );
+            argv.push("--hybrid-experiment");
+            let cli = Cli::try_parse_from(argv).unwrap();
+            let Command::File(args) = cli.command else {
+                unreachable!()
+            };
+            let config = stream_decode_config(&args.decode);
+            if profile == "hybrid" {
+                assert!(config.unwrap().hybrid_experiment);
+            } else {
+                assert!(config.is_err());
+            }
+        }
+    }
 
     #[test]
     fn partition_default_and_explicit_auto_reach_the_decoder_config() {

@@ -1,0 +1,524 @@
+{
+  "scope": "Finite known-truth synthetic paired comparison; fresh sessions; no external training data. Raw input/row evidence stays in each immutable run directory.",
+  "runs": [
+    {
+      "name": "hybrid-own-dev-awgn-r1",
+      "metadata": {
+        "command": [
+          "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+          "4",
+          "2026106991",
+          "sic-fresh-awgn",
+          "-21,-22",
+          "jtdx,hybrid,hybrid-specialist"
+        ],
+        "wall_seconds": 55.117656167,
+        "cpu_seconds": 67.920416,
+        "visible_cpus": 12,
+        "binary_sha256": "10a90b644c8236d2e1ef7a4ebe169960ad63335c1aa57c4616b6a37f3a6f6f80",
+        "returncode": 0
+      },
+      "distinct_cases": 8,
+      "summary": [
+        {
+          "method": "blind-hybrid",
+          "snr": "-21",
+          "frames": 4,
+          "correct": 3,
+          "wrong": 0,
+          "mean_ms": 735.00825,
+          "p95_ms": 861.314,
+          "max_ms": 1055.564,
+          "target_callback_max_ms": 512.765
+        },
+        {
+          "method": "blind-hybrid",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 2,
+          "wrong": 0,
+          "mean_ms": 663.64125,
+          "p95_ms": 790.374,
+          "max_ms": 960.286,
+          "target_callback_max_ms": 594.695
+        },
+        {
+          "method": "blind-hybrid-specialist",
+          "snr": "-21",
+          "frames": 4,
+          "correct": 4,
+          "wrong": 0,
+          "mean_ms": 5377.00075,
+          "p95_ms": 5502.26,
+          "max_ms": 5695.929,
+          "target_callback_max_ms": 2877.977
+        },
+        {
+          "method": "blind-hybrid-specialist",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 4,
+          "wrong": 0,
+          "mean_ms": 5346.08375,
+          "p95_ms": 5459.53,
+          "max_ms": 5656.723,
+          "target_callback_max_ms": 2825.656
+        },
+        {
+          "method": "blind-jtdx",
+          "snr": "-21",
+          "frames": 4,
+          "correct": 1,
+          "wrong": 0,
+          "mean_ms": 415.805,
+          "p95_ms": 439.881,
+          "max_ms": 468.491,
+          "target_callback_max_ms": 253.304
+        },
+        {
+          "method": "blind-jtdx",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 0,
+          "wrong": 0,
+          "mean_ms": 405.5575,
+          "p95_ms": 433.588,
+          "max_ms": 440.203,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "native",
+          "snr": "-21",
+          "frames": 4,
+          "correct": 3,
+          "wrong": 0,
+          "mean_ms": 228.13025,
+          "p95_ms": 239.728,
+          "max_ms": 253.889,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "native",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 2,
+          "wrong": 0,
+          "mean_ms": 200.091,
+          "p95_ms": 193.688,
+          "max_ms": 255.014,
+          "target_callback_max_ms": null
+        }
+      ],
+      "paired": [
+        {
+          "baseline": "native",
+          "snr": "-21",
+          "frames": 4,
+          "retained_target": 3,
+          "gained_target": 1,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 1
+        },
+        {
+          "baseline": "native",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 2,
+          "gained_target": 2,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 2
+        },
+        {
+          "baseline": "blind-jtdx",
+          "snr": "-21",
+          "frames": 4,
+          "retained_target": 1,
+          "gained_target": 3,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 3
+        },
+        {
+          "baseline": "blind-jtdx",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 0,
+          "gained_target": 4,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 4
+        },
+        {
+          "baseline": "blind-hybrid",
+          "snr": "-21",
+          "frames": 4,
+          "retained_target": 3,
+          "gained_target": 1,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 1
+        },
+        {
+          "baseline": "blind-hybrid",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 2,
+          "gained_target": 2,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 2
+        }
+      ],
+      "errors": [],
+      "losses": []
+    },
+    {
+      "name": "hybrid-own-dev-cw-r1",
+      "metadata": {
+        "command": [
+          "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+          "4",
+          "2026106991",
+          "sic-fresh-cw",
+          "-20,-22",
+          "jtdx,hybrid,hybrid-specialist"
+        ],
+        "wall_seconds": 43.997146917,
+        "cpu_seconds": 56.800409,
+        "visible_cpus": 12,
+        "binary_sha256": "10a90b644c8236d2e1ef7a4ebe169960ad63335c1aa57c4616b6a37f3a6f6f80",
+        "returncode": 0
+      },
+      "distinct_cases": 8,
+      "summary": [
+        {
+          "method": "blind-hybrid",
+          "snr": "-20",
+          "frames": 4,
+          "correct": 0,
+          "wrong": 0,
+          "mean_ms": 429.6275,
+          "p95_ms": 467.359,
+          "max_ms": 478.498,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "blind-hybrid",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 0,
+          "wrong": 0,
+          "mean_ms": 437.57175,
+          "p95_ms": 473.218,
+          "max_ms": 475.178,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "blind-hybrid-specialist",
+          "snr": "-20",
+          "frames": 4,
+          "correct": 4,
+          "wrong": 0,
+          "mean_ms": 5097.2567500000005,
+          "p95_ms": 5139.958,
+          "max_ms": 5146.417,
+          "target_callback_max_ms": 2807.736
+        },
+        {
+          "method": "blind-hybrid-specialist",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 2,
+          "wrong": 0,
+          "mean_ms": 3959.4065,
+          "p95_ms": 5048.853,
+          "max_ms": 5179.778,
+          "target_callback_max_ms": 2849.263
+        },
+        {
+          "method": "blind-jtdx",
+          "snr": "-20",
+          "frames": 4,
+          "correct": 0,
+          "wrong": 0,
+          "mean_ms": 369.02525,
+          "p95_ms": 378.261,
+          "max_ms": 420.142,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "blind-jtdx",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 0,
+          "wrong": 0,
+          "mean_ms": 374.15175,
+          "p95_ms": 381.195,
+          "max_ms": 432.124,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "native",
+          "snr": "-20",
+          "frames": 4,
+          "correct": 0,
+          "wrong": 0,
+          "mean_ms": 163.3065,
+          "p95_ms": 176.205,
+          "max_ms": 179.85,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "native",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 0,
+          "wrong": 0,
+          "mean_ms": 162.6455,
+          "p95_ms": 176.828,
+          "max_ms": 181.186,
+          "target_callback_max_ms": null
+        }
+      ],
+      "paired": [
+        {
+          "baseline": "native",
+          "snr": "-20",
+          "frames": 4,
+          "retained_target": 0,
+          "gained_target": 4,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 4
+        },
+        {
+          "baseline": "native",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 0,
+          "gained_target": 2,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 2
+        },
+        {
+          "baseline": "blind-jtdx",
+          "snr": "-20",
+          "frames": 4,
+          "retained_target": 0,
+          "gained_target": 4,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 4
+        },
+        {
+          "baseline": "blind-jtdx",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 0,
+          "gained_target": 2,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 2
+        },
+        {
+          "baseline": "blind-hybrid",
+          "snr": "-20",
+          "frames": 4,
+          "retained_target": 0,
+          "gained_target": 4,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 4
+        },
+        {
+          "baseline": "blind-hybrid",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 0,
+          "gained_target": 2,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 2
+        }
+      ],
+      "errors": [],
+      "losses": []
+    },
+    {
+      "name": "hybrid-own-dev-mix-r1",
+      "metadata": {
+        "command": [
+          "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+          "4",
+          "2026106991",
+          "sic-fresh-mix",
+          "-20,-22",
+          "jtdx,hybrid,hybrid-specialist"
+        ],
+        "wall_seconds": 53.291054415999994,
+        "cpu_seconds": 68.06359499999999,
+        "visible_cpus": 12,
+        "binary_sha256": "10a90b644c8236d2e1ef7a4ebe169960ad63335c1aa57c4616b6a37f3a6f6f80",
+        "returncode": 0
+      },
+      "distinct_cases": 8,
+      "summary": [
+        {
+          "method": "blind-hybrid",
+          "snr": "-20",
+          "frames": 4,
+          "correct": 4,
+          "wrong": 0,
+          "mean_ms": 619.5705,
+          "p95_ms": 612.349,
+          "max_ms": 748.487,
+          "target_callback_max_ms": 748.122
+        },
+        {
+          "method": "blind-hybrid",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 1,
+          "wrong": 0,
+          "mean_ms": 618.745,
+          "p95_ms": 640.493,
+          "max_ms": 731.913,
+          "target_callback_max_ms": 515.23
+        },
+        {
+          "method": "blind-hybrid-specialist",
+          "snr": "-20",
+          "frames": 4,
+          "correct": 4,
+          "wrong": 0,
+          "mean_ms": 5382.73575,
+          "p95_ms": 5439.809,
+          "max_ms": 5501.683,
+          "target_callback_max_ms": 711.072
+        },
+        {
+          "method": "blind-hybrid-specialist",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 2,
+          "wrong": 0,
+          "mean_ms": 5372.69975,
+          "p95_ms": 5413.998,
+          "max_ms": 5475.575,
+          "target_callback_max_ms": 5413.856
+        },
+        {
+          "method": "blind-jtdx",
+          "snr": "-20",
+          "frames": 4,
+          "correct": 2,
+          "wrong": 0,
+          "mean_ms": 409.66225000000003,
+          "p95_ms": 427.418,
+          "max_ms": 462.249,
+          "target_callback_max_ms": 49.76
+        },
+        {
+          "method": "blind-jtdx",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 0,
+          "wrong": 0,
+          "mean_ms": 421.47675000000004,
+          "p95_ms": 428.265,
+          "max_ms": 481.665,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "native",
+          "snr": "-20",
+          "frames": 4,
+          "correct": 3,
+          "wrong": 0,
+          "mean_ms": 245.83775,
+          "p95_ms": 249.66,
+          "max_ms": 272.344,
+          "target_callback_max_ms": null
+        },
+        {
+          "method": "native",
+          "snr": "-22",
+          "frames": 4,
+          "correct": 1,
+          "wrong": 0,
+          "mean_ms": 245.2065,
+          "p95_ms": 248.038,
+          "max_ms": 268.095,
+          "target_callback_max_ms": null
+        }
+      ],
+      "paired": [
+        {
+          "baseline": "native",
+          "snr": "-20",
+          "frames": 4,
+          "retained_target": 3,
+          "gained_target": 1,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 1
+        },
+        {
+          "baseline": "native",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 1,
+          "gained_target": 1,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 1
+        },
+        {
+          "baseline": "blind-jtdx",
+          "snr": "-20",
+          "frames": 4,
+          "retained_target": 2,
+          "gained_target": 2,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 2
+        },
+        {
+          "baseline": "blind-jtdx",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 0,
+          "gained_target": 2,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 2
+        },
+        {
+          "baseline": "blind-hybrid",
+          "snr": "-20",
+          "frames": 4,
+          "retained_target": 4,
+          "gained_target": 0,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 0
+        },
+        {
+          "baseline": "blind-hybrid",
+          "snr": "-22",
+          "frames": 4,
+          "retained_target": 1,
+          "gained_target": 1,
+          "lost_target": 0,
+          "lost_rows": 0,
+          "added_rows": 1
+        }
+      ],
+      "errors": [],
+      "losses": []
+    }
+  ]
+}

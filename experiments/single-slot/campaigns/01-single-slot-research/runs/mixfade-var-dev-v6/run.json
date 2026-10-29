@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+    "2",
+    "2026102901",
+    "sic-var-mixfade",
+    "-18,-20",
+    "sic-native,sic-constant,sic-smooth,sic-joint"
+  ],
+  "wall_seconds": 71.15469375,
+  "cpu_seconds": 71.099337,
+  "visible_cpus": 12,
+  "binary_sha256": "54f4cd62b85db6a660ac3897c93dcbf33a47b35e3839bdc1c22c46e614b73a9a",
+  "returncode": 0
+}

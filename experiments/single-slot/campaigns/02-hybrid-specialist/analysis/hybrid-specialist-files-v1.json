@@ -1,0 +1,171 @@
+{
+  "hybrid-own-confirm-v1-channels": {
+    "tasks": 16,
+    "statistics": {
+      "native": {
+        "raw": 14,
+        "annotated": 14,
+        "flagged": 0,
+        "unannotated": 0
+      },
+      "jtdx": {
+        "raw": 16,
+        "annotated": 16,
+        "flagged": 0,
+        "unannotated": 0
+      },
+      "hybrid": {
+        "raw": 16,
+        "annotated": 16,
+        "flagged": 0,
+        "unannotated": 0
+      },
+      "hybrid-specialist": {
+        "raw": 16,
+        "annotated": 16,
+        "flagged": 0,
+        "unannotated": 0
+      },
+      "paired": {
+        "baseline_rows": 16,
+        "retained": 16,
+        "lost": 0,
+        "added": 0,
+        "annotated_additions": 0
+      }
+    },
+    "maximum_method_ms": {
+      "native": 240.523,
+      "jtdx": 494.514,
+      "hybrid": 595.683,
+      "hybrid-specialist": 5295.266
+    },
+    "specialist_added_callback_max_ms": null,
+    "exact_stored_baseline_losses": [],
+    "additions": []
+  },
+  "hybrid-own-confirm-v1-historical": {
+    "tasks": 20,
+    "statistics": {
+      "native": {
+        "raw": 390,
+        "annotated": 379,
+        "flagged": 1,
+        "unannotated": 10
+      },
+      "jtdx": {
+        "raw": 424,
+        "annotated": 409,
+        "flagged": 0,
+        "unannotated": 13
+      },
+      "hybrid": {
+        "raw": 444,
+        "annotated": 419,
+        "flagged": 1,
+        "unannotated": 24
+      },
+      "hybrid-specialist": {
+        "raw": 449,
+        "annotated": 420,
+        "flagged": 1,
+        "unannotated": 28
+      },
+      "paired": {
+        "baseline_rows": 444,
+        "retained": 444,
+        "lost": 0,
+        "added": 5,
+        "annotated_additions": 1
+      }
+    },
+    "maximum_method_ms": {
+      "native": 743.656,
+      "jtdx": 2011.462,
+      "hybrid": 4093.143,
+      "hybrid-specialist": 8310.252
+    },
+    "specialist_added_callback_max_ms": 6079.046,
+    "exact_stored_baseline_losses": [],
+    "additions": [
+      {
+        "input": "230208_140300.wav",
+        "slot": 3,
+        "method": "hybrid-specialist",
+        "baseline_rows": 22,
+        "retained": 22,
+        "lost": 0,
+        "added": 1,
+        "annotated_additions": 0,
+        "additions": [
+          {
+            "msg": "ON7RED CU3HN HM68",
+            "freq": 1705.046,
+            "dt": 0.5005,
+            "source": "HybridSpecialist"
+          }
+        ]
+      },
+      {
+        "input": "230208_140300.wav",
+        "slot": 6,
+        "method": "hybrid-specialist",
+        "baseline_rows": 23,
+        "retained": 23,
+        "lost": 0,
+        "added": 2,
+        "annotated_additions": 0,
+        "additions": [
+          {
+            "msg": "N1F US7UK -09",
+            "freq": 2127.325,
+            "dt": 0.68275,
+            "source": "HybridSpecialist"
+          },
+          {
+            "msg": "ET5BVW/R 2Z1SBW/R JQ96",
+            "freq": 368.239,
+            "dt": 0.4915,
+            "source": "HybridSpecialist"
+          }
+        ]
+      },
+      {
+        "input": "230208_140300.wav",
+        "slot": 13,
+        "method": "hybrid-specialist",
+        "baseline_rows": 25,
+        "retained": 25,
+        "lost": 0,
+        "added": 1,
+        "annotated_additions": 0,
+        "additions": [
+          {
+            "msg": "EA1HBW CU3HN HM68",
+            "freq": 1704.8795,
+            "dt": 0.498,
+            "source": "HybridSpecialist"
+          }
+        ]
+      },
+      {
+        "input": "230208_140300.wav",
+        "slot": 16,
+        "method": "hybrid-specialist",
+        "baseline_rows": 20,
+        "retained": 20,
+        "lost": 0,
+        "added": 1,
+        "annotated_additions": 1,
+        "additions": [
+          {
+            "msg": "F1MLZ UA3QNA -04",
+            "freq": 1151.967,
+            "dt": 1.653,
+            "source": "HybridSpecialist"
+          }
+        ]
+      }
+    ]
+  }
+}

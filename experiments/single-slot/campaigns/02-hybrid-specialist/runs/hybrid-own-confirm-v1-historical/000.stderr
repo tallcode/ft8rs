@@ -1,0 +1,146 @@
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	W1FC F5BZB -08	2571.375000	0.255000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	CQ F5RXL IN94	1196.875000	-0.775000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	WM3PEN EA6VQ -09	2157.250000	-0.065000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	K1JT HA0DU KN07	589.625000	0.290000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	A92EE F5PSR -14	723.375000	0.125000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	K1BZM EA3GP -09	2695.375000	-0.130000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	N1JFU EA6EE R-07	640.625000	0.265000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	N1PJT HB9CQK -10	465.625000	0.250000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	N1API HA6FQ -23	2238.500000	0.265000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	W1DIG SV9CVY -14	2733.875000	0.405000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	K1JT EA3AGB -15	1648.500000	0.100000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	N1API F2VX 73	1512.500000	0.655000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	W0RSJ EA3BMU RR73	399.500000	0.255000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	XE2X HA2NP RR73	2854.750000	0.185000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	K1BZM DK8NE -10	244.250000	0.505000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	K1JT HA5WA 73	2039.125000	0.120000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	KD2UGC F6GCP R-23	472.375000	0.440000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	K1BZM EA3CJ JN01	2522.375000	0.215000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	CQ EA2BFM IN83	2279.750000	0.105000	native
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	native	WA2FZW DL5AXX RR73	2545.875000	-0.125000	native
+CALLBACK	jtdx	1522.525	CQ F5RXL IN94	1196.375000	-0.770000
+CALLBACK	jtdx	1522.616	WM3PEN EA6VQ -09	2157.250000	-0.065000
+CALLBACK	jtdx	1522.643	W1FC F5BZB -08	2571.375000	0.260000
+CALLBACK	jtdx	1522.666	A92EE F5PSR -14	723.375000	0.130000
+CALLBACK	jtdx	1522.689	N1JFU EA6EE R-07	640.625000	0.270000
+CALLBACK	jtdx	1522.713	K1BZM EA3GP -09	2695.375000	-0.125000
+CALLBACK	jtdx	1522.737	K1JT HA0DU KN07	589.625000	0.290000
+CALLBACK	jtdx	1522.761	W1DIG SV9CVY -14	2733.875000	0.405000
+CALLBACK	jtdx	1522.784	N1API HA6FQ -23	2238.500000	0.270000
+CALLBACK	jtdx	1522.809	CQ EA2BFM IN83	2279.125000	0.105000
+CALLBACK	jtdx	1522.833	N1API F2VX 73	1512.500000	0.655000
+CALLBACK	jtdx	1522.856	N1PJT HB9CQK -10	465.125000	0.255000
+CALLBACK	jtdx	1522.879	K1JT EA3AGB -15	1648.375000	0.095000
+CALLBACK	jtdx	1522.903	XE2X HA2NP RR73	2853.625000	0.210000
+CALLBACK	jtdx	1522.926	W0RSJ EA3BMU RR73	399.000000	0.260000
+CALLBACK	jtdx	1522.949	KD2UGC F6GCP R-23	472.375000	0.440000
+CALLBACK	jtdx	1522.972	K1BZM DK8NE -10	244.250000	0.505000
+CALLBACK	jtdx	1522.997	K1JT HA5WA 73	2039.000000	0.120000
+CALLBACK	jtdx	1523.021	K1BZM EA3CJ JN01	2521.875000	0.215000
+CALLBACK	jtdx	1523.044	WA2FZW DL5AXX RR73	2545.875000	-0.130000
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	CQ F5RXL IN94	1196.375000	-0.770000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	WM3PEN EA6VQ -09	2157.250000	-0.065000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	W1FC F5BZB -08	2571.375000	0.260000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	A92EE F5PSR -14	723.375000	0.130000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	N1JFU EA6EE R-07	640.625000	0.270000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	K1BZM EA3GP -09	2695.375000	-0.125000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	K1JT HA0DU KN07	589.625000	0.290000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	W1DIG SV9CVY -14	2733.875000	0.405000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	N1API HA6FQ -23	2238.500000	0.270000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	CQ EA2BFM IN83	2279.125000	0.105000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	N1API F2VX 73	1512.500000	0.655000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	N1PJT HB9CQK -10	465.125000	0.255000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	K1JT EA3AGB -15	1648.375000	0.095000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	XE2X HA2NP RR73	2853.625000	0.210000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	W0RSJ EA3BMU RR73	399.000000	0.260000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	KD2UGC F6GCP R-23	472.375000	0.440000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	K1BZM DK8NE -10	244.250000	0.505000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	K1JT HA5WA 73	2039.000000	0.120000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	K1BZM EA3CJ JN01	2521.875000	0.215000	Regular
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	jtdx	WA2FZW DL5AXX RR73	2545.875000	-0.130000	Regular
+CALLBACK	hybrid	524.692	W1FC F5BZB -08	2571.375000	0.255000
+CALLBACK	hybrid	524.746	WM3PEN EA6VQ -09	2157.250000	-0.065000
+CALLBACK	hybrid	524.781	CQ F5RXL IN94	1196.875000	-0.775000
+CALLBACK	hybrid	524.811	N1API HA6FQ -23	2238.000000	0.265000
+CALLBACK	hybrid	524.838	N1JFU EA6EE R-07	640.625000	0.265000
+CALLBACK	hybrid	524.866	A92EE F5PSR -14	722.875000	0.125000
+CALLBACK	hybrid	524.894	K1BZM EA3GP -09	2695.375000	-0.130000
+CALLBACK	hybrid	524.923	W0RSJ EA3BMU RR73	399.500000	0.255000
+CALLBACK	hybrid	524.952	K1JT HA0DU KN07	589.625000	0.290000
+CALLBACK	hybrid	524.981	W1DIG SV9CVY -14	2732.875000	0.400000
+CALLBACK	hybrid	525.008	K1JT EA3AGB -15	1647.875000	0.095000
+CALLBACK	hybrid	525.036	XE2X HA2NP RR73	2852.125000	0.205000
+CALLBACK	hybrid	525.063	K1BZM DK8NE -10	245.375000	0.500000
+CALLBACK	hybrid	525.092	K1BZM EA3CJ JN01	2521.875000	0.215000
+CALLBACK	hybrid	525.123	WA2FZW DL5AXX RR73	2545.875000	-0.125000
+CALLBACK	hybrid	1555.934	N1PJT HB9CQK -10	465.625000	0.250000
+CALLBACK	hybrid	1556.007	CQ EA2BFM IN83	2279.750000	0.105000
+CALLBACK	hybrid	1556.032	N1API F2VX 73	1512.500000	0.655000
+CALLBACK	hybrid	1556.051	CQ DX DL8YHR JO41	2606.250000	0.195000
+CALLBACK	hybrid	1556.070	K1JT HA5WA 73	2039.125000	0.120000
+CALLBACK	hybrid	1556.089	KD2UGC F6GCP R-23	472.375000	0.440000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 21, agc_rows: 20, baseline_finish: [Some(1.555986542s), Some(1.622595542s), Some(1.510017083s)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 1, accepted_seeds: 0, rejected_seeds: 1, elapsed: 1.625126833s, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	W1FC F5BZB -08	2571.375000	0.255000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	WM3PEN EA6VQ -09	2157.250000	-0.065000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	CQ F5RXL IN94	1196.875000	-0.775000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	N1API HA6FQ -23	2238.000000	0.265000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	N1JFU EA6EE R-07	640.625000	0.265000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	A92EE F5PSR -14	722.875000	0.125000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	K1BZM EA3GP -09	2695.375000	-0.130000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	W0RSJ EA3BMU RR73	399.500000	0.255000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	K1JT HA0DU KN07	589.625000	0.290000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	W1DIG SV9CVY -14	2732.875000	0.400000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	K1JT EA3AGB -15	1647.875000	0.095000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	XE2X HA2NP RR73	2852.125000	0.205000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	K1BZM DK8NE -10	245.375000	0.500000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	K1BZM EA3CJ JN01	2521.875000	0.215000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	WA2FZW DL5AXX RR73	2545.875000	-0.125000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	N1PJT HB9CQK -10	465.625000	0.250000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	CQ EA2BFM IN83	2279.750000	0.105000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	N1API F2VX 73	1512.500000	0.655000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	CQ DX DL8YHR JO41	2606.250000	0.195000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	K1JT HA5WA 73	2039.125000	0.120000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid	KD2UGC F6GCP R-23	472.375000	0.440000	Unknown
+CALLBACK	hybrid-specialist	527.269	W1FC F5BZB -08	2571.375000	0.255000
+CALLBACK	hybrid-specialist	527.349	WM3PEN EA6VQ -09	2157.250000	-0.065000
+CALLBACK	hybrid-specialist	527.380	CQ F5RXL IN94	1196.875000	-0.775000
+CALLBACK	hybrid-specialist	527.409	N1API HA6FQ -23	2238.000000	0.265000
+CALLBACK	hybrid-specialist	527.436	N1JFU EA6EE R-07	640.625000	0.265000
+CALLBACK	hybrid-specialist	527.463	A92EE F5PSR -14	722.875000	0.125000
+CALLBACK	hybrid-specialist	527.490	K1BZM EA3GP -09	2695.375000	-0.130000
+CALLBACK	hybrid-specialist	527.519	W0RSJ EA3BMU RR73	399.500000	0.255000
+CALLBACK	hybrid-specialist	527.546	K1JT HA0DU KN07	589.625000	0.290000
+CALLBACK	hybrid-specialist	527.573	W1DIG SV9CVY -14	2732.875000	0.400000
+CALLBACK	hybrid-specialist	527.600	K1JT EA3AGB -15	1647.875000	0.095000
+CALLBACK	hybrid-specialist	527.637	XE2X HA2NP RR73	2852.125000	0.205000
+CALLBACK	hybrid-specialist	527.664	K1BZM DK8NE -10	245.375000	0.500000
+CALLBACK	hybrid-specialist	527.691	K1BZM EA3CJ JN01	2521.875000	0.215000
+CALLBACK	hybrid-specialist	527.717	WA2FZW DL5AXX RR73	2545.875000	-0.125000
+CALLBACK	hybrid-specialist	1538.340	N1PJT HB9CQK -10	465.625000	0.250000
+CALLBACK	hybrid-specialist	1538.407	CQ EA2BFM IN83	2279.750000	0.105000
+CALLBACK	hybrid-specialist	1538.428	N1API F2VX 73	1512.500000	0.655000
+CALLBACK	hybrid-specialist	1538.447	CQ DX DL8YHR JO41	2606.250000	0.195000
+CALLBACK	hybrid-specialist	1538.465	K1JT HA5WA 73	2039.125000	0.120000
+CALLBACK	hybrid-specialist	1538.483	KD2UGC F6GCP R-23	472.375000	0.440000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 21, agc_rows: 20, baseline_finish: [Some(1.5384055s), Some(1.6146725s), Some(1.52164575s)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 1, accepted_seeds: 0, rejected_seeds: 1, elapsed: 5.749335167s, specialist: SpecialistDiagnostics { fec_calls: 2929, tentative_rows: 30, rejected_rows: 6, accepted_rows: 14, residual_searches: 1, budget_exhausted: false, elapsed: 4.132365625s, accepted_scores: [14090.311209688422, 9397.27455474531, 1017.9004905990424, 793.7833536701886, 554.3609280237547, 527.2159851130446, 401.78271207811815, 299.60369492819683, 345.46439219449405, 198.5968473742322, 198.24032992978033, 476.52899841951694, 369.0628424183928, 217.4674369149084], accepted_methods: ["h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h0-1-amp", "h3-3-robust"], error: None } }
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	W1FC F5BZB -08	2571.375000	0.255000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	WM3PEN EA6VQ -09	2157.250000	-0.065000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	CQ F5RXL IN94	1196.875000	-0.775000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	N1API HA6FQ -23	2238.000000	0.265000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	N1JFU EA6EE R-07	640.625000	0.265000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	A92EE F5PSR -14	722.875000	0.125000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	K1BZM EA3GP -09	2695.375000	-0.130000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	W0RSJ EA3BMU RR73	399.500000	0.255000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	K1JT HA0DU KN07	589.625000	0.290000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	W1DIG SV9CVY -14	2732.875000	0.400000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	K1JT EA3AGB -15	1647.875000	0.095000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	XE2X HA2NP RR73	2852.125000	0.205000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	K1BZM DK8NE -10	245.375000	0.500000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	K1BZM EA3CJ JN01	2521.875000	0.215000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	WA2FZW DL5AXX RR73	2545.875000	-0.125000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	N1PJT HB9CQK -10	465.625000	0.250000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	CQ EA2BFM IN83	2279.750000	0.105000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	N1API F2VX 73	1512.500000	0.655000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	CQ DX DL8YHR JO41	2606.250000	0.195000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	K1JT HA5WA 73	2039.125000	0.120000	Unknown
+FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/ft8/210703_133430.wav	0	hybrid-specialist	KD2UGC F6GCP R-23	472.375000	0.440000	Unknown

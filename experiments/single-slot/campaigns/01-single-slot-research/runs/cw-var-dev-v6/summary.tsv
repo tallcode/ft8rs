@@ -1,0 +1,7 @@
+method	snr	correct	wrong	trials	mean_ms	max_ms
+blind-verified-phase	-18	2	0	4	2240.759	2252.026
+blind-verified-phase	-20	0	0	4	2253.265	2268.771
+blind-verified-phase	-22	0	0	4	2259.760	2277.877
+native	-18	0	0	4	181.711	209.228
+native	-20	0	0	4	180.703	209.558
+native	-22	0	0	4	181.922	209.852

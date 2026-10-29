@@ -1,0 +1,1 @@
+Intentional stop at job boundary: preserve v9 AWGN confirmation; fix the independently discovered unobserved-window noise bias before running the final full matrix. The research goal remains active.

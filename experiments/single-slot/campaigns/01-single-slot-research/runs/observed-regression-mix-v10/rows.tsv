@@ -1,0 +1,9 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+mix	2026102991	-20	native	0	0	271.345	CQ K1ABC FN42@1100.500/0.340
+mix	2026102991	-20	blind-conditional	1	0	4890.878	CQ K1ABC FN42@1100.464/0.343/conditional-h0-1-amp;CQ VK8RFT NR34@1075.834/0.436/conditional-sic-h1-3-amp
+mix	2026112998	-20	native	1	0	219.520	CQ K1ABC FN42@2897.875/0.700;F5XFY DL2GXV -02@2873.375/0.790
+mix	2026112998	-20	blind-conditional	1	0	4720.541	CQ K1ABC FN42@2897.744/0.702/conditional-h0-1-amp;F5XFY DL2GXV -02@2873.112/0.794/conditional-sic-h0-1-amp
+mix	2026123005	-20	native	0	0	235.995	CQ K1ABC FN42@1776.000/-0.205
+mix	2026123005	-20	blind-conditional	1	0	4742.288	CQ K1ABC FN42@1776.051/-0.202/conditional-h0-1-amp;K7RSO EA7INT R-03@1751.419/-0.109/conditional-sic-h3-3-amp
+mix	2026133012	-20	native	1	0	255.625	CQ K1ABC FN42@1019.750/0.245;F1GPL PA8SAO RR73@994.750/0.340
+mix	2026133012	-20	blind-conditional	1	0	4749.507	CQ K1ABC FN42@1019.619/0.247/conditional-h0-1-amp;F1GPL PA8SAO RR73@994.989/0.340/conditional-sic-h0-1-amp

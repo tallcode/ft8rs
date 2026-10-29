@@ -1,0 +1,13 @@
+{
+  "command": [
+    "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+    "16",
+    "2026102901",
+    "drift"
+  ],
+  "wall_seconds": 27.048831416,
+  "cpu_seconds": 27.019379999999998,
+  "visible_cpus": 12,
+  "binary_sha256": "c043371487117664808b06072bed983019f004616f9a0243f81e379abcfa4f4c",
+  "returncode": 0
+}

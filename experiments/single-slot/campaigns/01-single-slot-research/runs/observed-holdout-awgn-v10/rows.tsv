@@ -1,0 +1,385 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+awgn	2026104991	-21	native	1	0	327.728	CQ VK9FLV MC91@2185.875/0.265
+awgn	2026104991	-21	blind-hybrid	1	0	889.637	CQ VK9FLV MC91@2185.875/0.260/hybrid
+awgn	2026104991	-21	blind-hybrid-swl	1	0	2078.821	CQ VK9FLV MC91@2185.875/0.260/hybrid
+awgn	2026104991	-21	blind-conditional	1	0	4729.117	CQ VK9FLV MC91@2185.872/0.264/conditional-h2-3-amp
+awgn	2026114998	-21	native	1	0	213.519	DL5AYQ LU6DTF -02@412.500/0.835
+awgn	2026114998	-21	blind-hybrid	1	0	973.703	DL5AYQ LU6DTF -02@413.125/0.825/hybrid
+awgn	2026114998	-21	blind-hybrid-swl	1	0	2121.940	DL5AYQ LU6DTF -02@413.125/0.825/hybrid
+awgn	2026114998	-21	blind-conditional	1	0	4693.042	DL5AYQ LU6DTF -02@413.074/0.835/conditional-h0-1-amp
+awgn	2026125005	-21	native	1	0	337.236	W7VSJ G9GIY R-03@1880.750/-0.210
+awgn	2026125005	-21	blind-hybrid	1	0	969.199	W7VSJ G9GIY R-03@1880.750/-0.210/hybrid
+awgn	2026125005	-21	blind-hybrid-swl	1	0	1873.952	W7VSJ G9GIY R-03@1880.750/-0.210/hybrid
+awgn	2026125005	-21	blind-conditional	1	0	4778.310	W7VSJ G9GIY R-03@1881.090/-0.214/conditional-phase-0
+awgn	2026135012	-21	native	1	0	253.520	F7WBV K7MSX RR73@2322.875/0.685
+awgn	2026135012	-21	blind-hybrid	1	0	951.675	F7WBV K7MSX RR73@2322.875/0.690/hybrid
+awgn	2026135012	-21	blind-hybrid-swl	1	0	1938.365	F7WBV K7MSX RR73@2322.875/0.690/hybrid
+awgn	2026135012	-21	blind-conditional	1	0	4762.181	F7WBV K7MSX RR73@2323.085/0.694/conditional-h2-4-bessel
+awgn	2026145019	-21	native	0	0	186.046	
+awgn	2026145019	-21	blind-hybrid	0	0	444.722	
+awgn	2026145019	-21	blind-hybrid-swl	0	0	1025.797	
+awgn	2026145019	-21	blind-conditional	1	0	4770.299	VK5FLT N6IGX 73@2756.050/0.401/conditional-h0-4-bessel
+awgn	2026155026	-21	native	0	0	175.652	
+awgn	2026155026	-21	blind-hybrid	0	0	473.843	
+awgn	2026155026	-21	blind-hybrid-swl	0	0	783.608	
+awgn	2026155026	-21	blind-conditional	1	0	4785.999	VK9MUG JA2QWM FJ24@1827.599/0.699/conditional-h2-4-bessel
+awgn	2026165033	-21	native	1	0	261.446	CQ DL1HOI FF42@2194.750/0.965
+awgn	2026165033	-21	blind-hybrid	1	0	616.628	CQ DL1HOI FF42@2194.875/0.965/hybrid
+awgn	2026165033	-21	blind-hybrid-swl	1	0	965.971	CQ DL1HOI FF42@2194.875/0.965/hybrid
+awgn	2026165033	-21	blind-conditional	1	0	4855.038	CQ DL1HOI FF42@2194.474/0.965/conditional-h0-3-amp
+awgn	2026175040	-21	native	0	0	166.380	
+awgn	2026175040	-21	blind-hybrid	0	0	501.834	
+awgn	2026175040	-21	blind-hybrid-swl	0	0	1086.242	
+awgn	2026175040	-21	blind-conditional	1	0	4820.140	G4ENE PA5ZKI -08@261.012/0.516/conditional-h0-4-bessel
+awgn	2026185047	-21	native	0	0	184.481	
+awgn	2026185047	-21	blind-hybrid	0	0	478.828	
+awgn	2026185047	-21	blind-hybrid-swl	0	0	879.880	
+awgn	2026185047	-21	blind-conditional	0	0	2381.943	
+awgn	2026195054	-21	native	0	0	162.662	
+awgn	2026195054	-21	blind-hybrid	0	0	472.254	
+awgn	2026195054	-21	blind-hybrid-swl	0	0	945.337	
+awgn	2026195054	-21	blind-conditional	0	0	2400.499	
+awgn	2026205061	-21	native	1	0	269.011	W3UND JA0BEK 73@705.250/-0.165
+awgn	2026205061	-21	blind-hybrid	1	0	849.645	W3UND JA0BEK 73@705.250/-0.160/hybrid
+awgn	2026205061	-21	blind-hybrid-swl	1	0	1678.077	W3UND JA0BEK 73@705.250/-0.160/hybrid
+awgn	2026205061	-21	blind-conditional	1	0	4796.738	W3UND JA0BEK 73@705.040/-0.164/conditional-h0-1-amp
+awgn	2026215068	-21	native	0	0	163.026	
+awgn	2026215068	-21	blind-hybrid	1	0	727.263	OH7CNE EA4MUJ AA44@2383.875/0.560/hybrid
+awgn	2026215068	-21	blind-hybrid-swl	1	0	1543.781	OH7CNE EA4MUJ AA44@2383.875/0.560/hybrid
+awgn	2026215068	-21	blind-conditional	1	0	4782.422	OH7CNE EA4MUJ AA44@2383.541/0.564/conditional-phase-0
+awgn	2026225075	-21	native	0	0	228.261	
+awgn	2026225075	-21	blind-hybrid	1	0	1007.817	CQ F8PSG EG44@2090.625/0.055/hybrid
+awgn	2026225075	-21	blind-hybrid-swl	1	0	2148.863	CQ F8PSG EG44@2090.625/0.055/hybrid
+awgn	2026225075	-21	blind-conditional	1	0	4770.169	CQ F8PSG EG44@2090.779/0.061/conditional-phase-0
+awgn	2026235082	-21	native	1	0	241.783	W3XAL OH1MPO -14@541.125/0.770
+awgn	2026235082	-21	blind-hybrid	1	0	879.644	W3XAL OH1MPO -14@541.625/0.775/hybrid
+awgn	2026235082	-21	blind-hybrid-swl	1	0	2424.916	W3XAL OH1MPO -14@541.625/0.775/hybrid
+awgn	2026235082	-21	blind-conditional	1	0	4782.869	W3XAL OH1MPO -14@541.183/0.777/conditional-h0-4-bessel
+awgn	2026245089	-21	native	1	0	229.727	N5VNF K6OKU R-15@1882.750/0.430
+awgn	2026245089	-21	blind-hybrid	1	0	701.084	N5VNF K6OKU R-15@1882.750/0.430/hybrid
+awgn	2026245089	-21	blind-hybrid-swl	1	0	1869.323	N5VNF K6OKU R-15@1882.750/0.430/hybrid
+awgn	2026245089	-21	blind-conditional	1	0	4783.287	N5VNF K6OKU R-15@1882.382/0.434/conditional-h0-4-bessel
+awgn	2026255096	-21	native	1	0	205.857	F3XYB K7FIC RR73@815.625/0.965
+awgn	2026255096	-21	blind-hybrid	1	0	915.671	F3XYB K7FIC RR73@816.125/0.965/hybrid
+awgn	2026255096	-21	blind-hybrid-swl	1	0	1826.536	F3XYB K7FIC RR73@816.125/0.965/hybrid
+awgn	2026255096	-21	blind-conditional	1	0	4795.454	F3XYB K7FIC RR73@816.240/0.969/conditional-h0-3-amp
+awgn	2026265103	-21	native	1	0	344.642	DL8KJK N0HLG 73@389.625/0.810
+awgn	2026265103	-21	blind-hybrid	1	0	1011.430	DL8KJK N0HLG 73@389.625/0.810/hybrid
+awgn	2026265103	-21	blind-hybrid-swl	1	0	1923.861	DL8KJK N0HLG 73@389.625/0.810/hybrid
+awgn	2026265103	-21	blind-conditional	1	0	4774.090	DL8KJK N0HLG 73@389.687/0.817/conditional-h1-3-amp
+awgn	2026275110	-21	native	1	0	220.698	EA3REM VK6RNL LA24@2783.375/0.250
+awgn	2026275110	-21	blind-hybrid	1	0	855.863	EA3REM VK6RNL LA24@2782.750/0.250/hybrid
+awgn	2026275110	-21	blind-hybrid-swl	1	0	2197.259	EA3REM VK6RNL LA24@2782.750/0.250/hybrid
+awgn	2026275110	-21	blind-conditional	1	0	4793.169	EA3REM VK6RNL LA24@2783.106/0.255/conditional-h0-3-amp
+awgn	2026285117	-21	native	1	0	237.668	CQ JA0AUB JG77@1382.250/0.255
+awgn	2026285117	-21	blind-hybrid	1	0	531.043	CQ JA0AUB JG77@1382.250/0.255/hybrid
+awgn	2026285117	-21	blind-hybrid-swl	1	0	938.410	CQ JA0AUB JG77@1382.250/0.255/hybrid
+awgn	2026285117	-21	blind-conditional	1	0	4774.715	CQ JA0AUB JG77@1381.942/0.264/conditional-h0-1-amp
+awgn	2026295124	-21	native	0	0	199.660	
+awgn	2026295124	-21	blind-hybrid	0	0	490.089	
+awgn	2026295124	-21	blind-hybrid-swl	0	0	1127.929	
+awgn	2026295124	-21	blind-conditional	1	0	4802.480	VK1IHL OH6QLB -20@1549.241/0.758/conditional-phase-0
+awgn	2026305131	-21	native	0	0	239.212	
+awgn	2026305131	-21	blind-hybrid	0	0	468.884	
+awgn	2026305131	-21	blind-hybrid-swl	0	0	917.463	
+awgn	2026305131	-21	blind-conditional	1	0	4782.812	G2DUQ F9RFX R-21@2082.880/0.767/conditional-phase-0
+awgn	2026315138	-21	native	1	0	265.635	N3TPN OH0OMG RR73@2402.125/0.470
+awgn	2026315138	-21	blind-hybrid	1	0	1016.119	N3TPN OH0OMG RR73@2402.125/0.470/hybrid
+awgn	2026315138	-21	blind-hybrid-swl	1	0	1509.446	N3TPN OH0OMG RR73@2402.125/0.470/hybrid
+awgn	2026315138	-21	blind-conditional	1	0	4835.407	N3TPN OH0OMG RR73@2402.414/0.473/conditional-h1-3-amp
+awgn	2026325145	-21	native	1	0	216.813	G0KMI K7KYN 73@2788.000/0.735
+awgn	2026325145	-21	blind-hybrid	1	0	829.273	G0KMI K7KYN 73@2788.000/0.735/hybrid
+awgn	2026325145	-21	blind-hybrid-swl	1	0	1965.269	G0KMI K7KYN 73@2788.000/0.735/hybrid
+awgn	2026325145	-21	blind-conditional	1	0	4803.101	G0KMI K7KYN 73@2788.008/0.741/conditional-h3-3-amp
+awgn	2026335152	-21	native	1	0	354.913	F9WUV DL0MKD LG57@256.750/-0.180
+awgn	2026335152	-21	blind-hybrid	1	0	1118.511	F9WUV DL0MKD LG57@256.750/-0.180/hybrid
+awgn	2026335152	-21	blind-hybrid-swl	1	0	2198.649	F9WUV DL0MKD LG57@256.750/-0.180/hybrid
+awgn	2026335152	-21	blind-conditional	1	0	4717.901	F9WUV DL0MKD LG57@256.771/-0.181/conditional-h0-1-amp
+awgn	2026345159	-21	native	0	0	226.983	
+awgn	2026345159	-21	blind-hybrid	1	0	982.952	CQ W1ZLK EE57@2355.750/0.615/hybrid
+awgn	2026345159	-21	blind-hybrid-swl	1	0	2429.980	CQ W1ZLK EE57@2355.750/0.615/hybrid
+awgn	2026345159	-21	blind-conditional	1	0	4775.898	CQ W1ZLK EE57@2355.568/0.610/conditional-h0-4-bessel
+awgn	2026355166	-21	native	0	0	169.669	
+awgn	2026355166	-21	blind-hybrid	1	0	924.097	W5GWB W7NBS -26@900.500/-0.225/hybrid
+awgn	2026355166	-21	blind-hybrid-swl	1	0	1650.985	W5GWB W7NBS -26@900.500/-0.225/hybrid
+awgn	2026355166	-21	blind-conditional	1	0	4807.191	W5GWB W7NBS -26@900.949/-0.220/conditional-h1-3-robust
+awgn	2026365173	-21	native	0	0	235.322	
+awgn	2026365173	-21	blind-hybrid	0	0	526.827	
+awgn	2026365173	-21	blind-hybrid-swl	0	0	980.102	
+awgn	2026365173	-21	blind-conditional	1	0	4809.964	LU8AMZ PA8FMQ R-27@583.207/0.848/conditional-h2-4-bessel
+awgn	2026375180	-21	native	0	0	137.270	
+awgn	2026375180	-21	blind-hybrid	0	0	400.200	
+awgn	2026375180	-21	blind-hybrid-swl	0	0	1157.859	
+awgn	2026375180	-21	blind-conditional	0	0	2396.950	
+awgn	2026385187	-21	native	1	0	220.656	G2ZTV JA9FFV 73@1747.875/0.985
+awgn	2026385187	-21	blind-hybrid	1	0	856.932	G2ZTV JA9FFV 73@1747.875/0.985/hybrid
+awgn	2026385187	-21	blind-hybrid-swl	1	0	1659.704	G2ZTV JA9FFV 73@1747.875/0.985/hybrid
+awgn	2026385187	-21	blind-conditional	1	0	4801.038	G2ZTV JA9FFV 73@1747.403/0.994/conditional-h0-1-amp
+awgn	2026395194	-21	native	0	0	222.718	
+awgn	2026395194	-21	blind-hybrid	0	0	510.667	
+awgn	2026395194	-21	blind-hybrid-swl	0	0	964.967	
+awgn	2026395194	-21	blind-conditional	1	0	4797.597	F9LQJ PA1UXU NF32@2164.721/0.666/conditional-phase-1
+awgn	2026405201	-21	native	0	0	160.269	
+awgn	2026405201	-21	blind-hybrid	0	0	418.467	
+awgn	2026405201	-21	blind-hybrid-swl	0	0	1205.996	
+awgn	2026405201	-21	blind-conditional	1	0	4810.242	CQ F0FXT JH14@1488.762/0.926/conditional-h1-4-bessel
+awgn	2026415208	-21	native	1	0	270.233	N0DEK JA6DPT -03@2027.625/0.770
+awgn	2026415208	-21	blind-hybrid	1	0	820.185	N0DEK JA6DPT -03@2027.625/0.770/hybrid
+awgn	2026415208	-21	blind-hybrid-swl	1	0	2211.089	N0DEK JA6DPT -03@2027.625/0.770/hybrid
+awgn	2026415208	-21	blind-conditional	1	0	4800.609	N0DEK JA6DPT -03@2027.472/0.773/conditional-phase-0
+awgn	2026104991	-22	native	1	0	286.123	CQ VK9FLV MC91@2185.875/0.265
+awgn	2026104991	-22	blind-hybrid	1	0	902.210	CQ VK9FLV MC91@2185.875/0.260/hybrid
+awgn	2026104991	-22	blind-hybrid-swl	1	0	2105.184	CQ VK9FLV MC91@2185.875/0.260/hybrid
+awgn	2026104991	-22	blind-conditional	1	0	4810.162	CQ VK9FLV MC91@2185.872/0.264/conditional-h3-3-amp
+awgn	2026114998	-22	native	0	0	181.270	
+awgn	2026114998	-22	blind-hybrid	0	0	471.514	
+awgn	2026114998	-22	blind-hybrid-swl	0	0	1096.618	
+awgn	2026114998	-22	blind-conditional	1	0	4737.927	DL5AYQ LU6DTF -02@413.073/0.835/conditional-phase-0
+awgn	2026125005	-22	native	0	0	249.896	
+awgn	2026125005	-22	blind-hybrid	0	0	530.947	
+awgn	2026125005	-22	blind-hybrid-swl	0	0	985.217	
+awgn	2026125005	-22	blind-conditional	1	0	4780.756	W7VSJ G9GIY R-03@1881.090/-0.214/conditional-phase-0
+awgn	2026135012	-22	native	0	0	195.806	
+awgn	2026135012	-22	blind-hybrid	1	0	964.701	F7WBV K7MSX RR73@2322.875/0.690/hybrid
+awgn	2026135012	-22	blind-hybrid-swl	1	0	1889.576	F7WBV K7MSX RR73@2322.875/0.690/hybrid
+awgn	2026135012	-22	blind-conditional	1	0	4781.606	F7WBV K7MSX RR73@2323.084/0.694/conditional-phase-0
+awgn	2026145019	-22	native	0	0	187.568	
+awgn	2026145019	-22	blind-hybrid	0	0	440.372	
+awgn	2026145019	-22	blind-hybrid-swl	0	0	931.770	
+awgn	2026145019	-22	blind-conditional	0	0	2380.047	
+awgn	2026155026	-22	native	0	0	176.671	
+awgn	2026155026	-22	blind-hybrid	0	0	474.899	
+awgn	2026155026	-22	blind-hybrid-swl	0	0	751.376	
+awgn	2026155026	-22	blind-conditional	1	0	4801.609	VK9MUG JA2QWM FJ24@1827.599/0.699/conditional-phase-0
+awgn	2026165033	-22	native	0	0	203.022	
+awgn	2026165033	-22	blind-hybrid	1	0	567.523	CQ DL1HOI FF42@2194.750/0.965/hybrid
+awgn	2026165033	-22	blind-hybrid-swl	1	0	961.140	CQ DL1HOI FF42@2194.750/0.965/hybrid
+awgn	2026165033	-22	blind-conditional	1	0	4834.058	CQ DL1HOI FF42@2194.475/0.965/conditional-h1-4-bessel
+awgn	2026175040	-22	native	0	0	156.772	
+awgn	2026175040	-22	blind-hybrid	0	0	452.192	
+awgn	2026175040	-22	blind-hybrid-swl	0	0	1020.870	
+awgn	2026175040	-22	blind-conditional	1	0	4830.076	G4ENE PA5ZKI -08@261.012/0.516/conditional-phase-0
+awgn	2026185047	-22	native	0	0	185.893	
+awgn	2026185047	-22	blind-hybrid	0	0	475.575	
+awgn	2026185047	-22	blind-hybrid-swl	0	0	863.807	
+awgn	2026185047	-22	blind-conditional	0	0	2423.531	
+awgn	2026195054	-22	native	0	0	166.771	
+awgn	2026195054	-22	blind-hybrid	0	0	463.698	
+awgn	2026195054	-22	blind-hybrid-swl	0	0	972.792	
+awgn	2026195054	-22	blind-conditional	0	0	2399.264	
+awgn	2026205061	-22	native	0	0	192.536	
+awgn	2026205061	-22	blind-hybrid	0	0	447.344	
+awgn	2026205061	-22	blind-hybrid-swl	0	0	848.699	
+awgn	2026205061	-22	blind-conditional	1	0	4847.263	W3UND JA0BEK 73@705.040/-0.163/conditional-phase-0
+awgn	2026215068	-22	native	0	0	167.734	
+awgn	2026215068	-22	blind-hybrid	0	0	345.430	
+awgn	2026215068	-22	blind-hybrid-swl	0	0	810.222	
+awgn	2026215068	-22	blind-conditional	1	0	4833.563	OH7CNE EA4MUJ AA44@2383.541/0.564/conditional-phase-0
+awgn	2026225075	-22	native	0	0	225.303	
+awgn	2026225075	-22	blind-hybrid	0	0	614.437	
+awgn	2026225075	-22	blind-hybrid-swl	0	0	1158.969	
+awgn	2026225075	-22	blind-conditional	0	0	2397.822	
+awgn	2026235082	-22	native	0	0	182.894	
+awgn	2026235082	-22	blind-hybrid	0	0	477.764	
+awgn	2026235082	-22	blind-hybrid-swl	0	0	1367.026	
+awgn	2026235082	-22	blind-conditional	1	0	4790.263	W3XAL OH1MPO -14@541.183/0.777/conditional-h0-4-bessel
+awgn	2026245089	-22	native	0	0	179.605	
+awgn	2026245089	-22	blind-hybrid	0	0	400.120	
+awgn	2026245089	-22	blind-hybrid-swl	0	0	1004.216	
+awgn	2026245089	-22	blind-conditional	1	0	4819.081	N5VNF K6OKU R-15@1882.382/0.434/conditional-phase-0
+awgn	2026255096	-22	native	0	0	152.979	
+awgn	2026255096	-22	blind-hybrid	0	0	445.715	
+awgn	2026255096	-22	blind-hybrid-swl	0	0	935.372	
+awgn	2026255096	-22	blind-conditional	1	0	4785.427	F3XYB K7FIC RR73@816.240/0.969/conditional-h0-3-robust
+awgn	2026265103	-22	native	0	0	246.280	
+awgn	2026265103	-22	blind-hybrid	0	0	511.892	
+awgn	2026265103	-22	blind-hybrid-swl	0	0	1075.611	
+awgn	2026265103	-22	blind-conditional	1	0	4786.623	DL8KJK N0HLG 73@389.687/0.817/conditional-h1-4-bessel
+awgn	2026275110	-22	native	0	0	162.829	
+awgn	2026275110	-22	blind-hybrid	0	0	418.926	
+awgn	2026275110	-22	blind-hybrid-swl	0	0	1093.626	
+awgn	2026275110	-22	blind-conditional	1	0	4793.133	EA3REM VK6RNL LA24@2783.107/0.255/conditional-phase-2
+awgn	2026285117	-22	native	0	1	233.160	LY0XZA LL9CGR JL20@1382.250/0.255
+awgn	2026285117	-22	blind-hybrid	1	1	888.604	CQ JA0AUB JG77@1382.250/0.255/hybrid;LY0XZA LL9CGR JL20@1382.250/0.255/hybrid
+awgn	2026285117	-22	blind-hybrid-swl	1	1	1866.070	CQ JA0AUB JG77@1382.250/0.255/hybrid;LY0XZA LL9CGR JL20@1382.250/0.255/hybrid
+awgn	2026285117	-22	blind-conditional	0	1	4832.644	LY0XZA LL9CGR JL20@1381.945/0.263/conditional-h0-3-amp
+awgn	2026295124	-22	native	0	0	200.707	
+awgn	2026295124	-22	blind-hybrid	0	0	486.519	
+awgn	2026295124	-22	blind-hybrid-swl	0	0	1076.562	
+awgn	2026295124	-22	blind-conditional	0	0	2432.435	
+awgn	2026305131	-22	native	0	0	240.447	
+awgn	2026305131	-22	blind-hybrid	0	0	471.117	
+awgn	2026305131	-22	blind-hybrid-swl	0	0	917.653	
+awgn	2026305131	-22	blind-conditional	0	0	2405.969	
+awgn	2026315138	-22	native	0	0	201.538	
+awgn	2026315138	-22	blind-hybrid	0	0	511.057	
+awgn	2026315138	-22	blind-hybrid-swl	0	0	805.315	
+awgn	2026315138	-22	blind-conditional	1	0	4876.246	N3TPN OH0OMG RR73@2402.414/0.474/conditional-phase-0
+awgn	2026325145	-22	native	0	0	161.882	
+awgn	2026325145	-22	blind-hybrid	0	0	448.791	
+awgn	2026325145	-22	blind-hybrid-swl	0	0	997.252	
+awgn	2026325145	-22	blind-conditional	1	0	4774.210	G0KMI K7KYN 73@2788.008/0.741/conditional-phase-0
+awgn	2026335152	-22	native	0	0	244.845	
+awgn	2026335152	-22	blind-hybrid	0	0	537.129	
+awgn	2026335152	-22	blind-hybrid-swl	0	0	1063.487	
+awgn	2026335152	-22	blind-conditional	0	0	2413.657	
+awgn	2026345159	-22	native	0	0	230.378	
+awgn	2026345159	-22	blind-hybrid	0	0	527.295	
+awgn	2026345159	-22	blind-hybrid-swl	0	0	1296.313	
+awgn	2026345159	-22	blind-conditional	1	0	4836.753	CQ W1ZLK EE57@2355.568/0.610/conditional-phase-1
+awgn	2026355166	-22	native	0	0	162.503	
+awgn	2026355166	-22	blind-hybrid	0	0	433.120	
+awgn	2026355166	-22	blind-hybrid-swl	0	0	881.528	
+awgn	2026355166	-22	blind-conditional	1	0	4796.180	W5GWB W7NBS -26@900.950/-0.220/conditional-phase-0
+awgn	2026365173	-22	native	0	0	232.826	
+awgn	2026365173	-22	blind-hybrid	0	0	510.563	
+awgn	2026365173	-22	blind-hybrid-swl	0	0	938.308	
+awgn	2026365173	-22	blind-conditional	0	0	2415.777	
+awgn	2026375180	-22	native	0	0	134.913	
+awgn	2026375180	-22	blind-hybrid	0	0	398.718	
+awgn	2026375180	-22	blind-hybrid-swl	0	0	1107.101	
+awgn	2026375180	-22	blind-conditional	0	0	2410.840	
+awgn	2026385187	-22	native	0	0	168.278	
+awgn	2026385187	-22	blind-hybrid	0	0	430.898	
+awgn	2026385187	-22	blind-hybrid-swl	0	0	886.985	
+awgn	2026385187	-22	blind-conditional	1	0	4845.540	G2ZTV JA9FFV 73@1747.403/0.994/conditional-phase-0
+awgn	2026395194	-22	native	0	0	213.092	
+awgn	2026395194	-22	blind-hybrid	0	0	503.485	
+awgn	2026395194	-22	blind-hybrid-swl	0	0	916.134	
+awgn	2026395194	-22	blind-conditional	0	0	2407.475	
+awgn	2026405201	-22	native	0	0	147.220	
+awgn	2026405201	-22	blind-hybrid	0	0	411.940	
+awgn	2026405201	-22	blind-hybrid-swl	0	0	1145.533	
+awgn	2026405201	-22	blind-conditional	1	0	4789.218	CQ F0FXT JH14@1488.762/0.926/conditional-phase-0
+awgn	2026415208	-22	native	0	0	196.702	
+awgn	2026415208	-22	blind-hybrid	0	0	422.659	
+awgn	2026415208	-22	blind-hybrid-swl	0	0	1117.881	
+awgn	2026415208	-22	blind-conditional	0	0	2389.193	
+awgn	2026104991	-23	native	1	0	285.641	CQ VK9FLV MC91@2185.875/0.265
+awgn	2026104991	-23	blind-hybrid	1	0	907.860	CQ VK9FLV MC91@2185.875/0.260/hybrid
+awgn	2026104991	-23	blind-hybrid-swl	1	0	2108.612	CQ VK9FLV MC91@2185.875/0.260/hybrid
+awgn	2026104991	-23	blind-conditional	1	0	4783.240	CQ VK9FLV MC91@2185.872/0.264/conditional-phase-0
+awgn	2026114998	-23	native	0	0	177.878	
+awgn	2026114998	-23	blind-hybrid	0	0	472.178	
+awgn	2026114998	-23	blind-hybrid-swl	0	0	1085.597	
+awgn	2026114998	-23	blind-conditional	1	0	4787.505	DL5AYQ LU6DTF -02@413.073/0.835/conditional-phase-0
+awgn	2026125005	-23	native	0	0	250.036	
+awgn	2026125005	-23	blind-hybrid	0	0	516.058	
+awgn	2026125005	-23	blind-hybrid-swl	0	0	948.067	
+awgn	2026125005	-23	blind-conditional	0	0	2428.955	
+awgn	2026135012	-23	native	0	0	185.317	
+awgn	2026135012	-23	blind-hybrid	0	0	453.957	
+awgn	2026135012	-23	blind-hybrid-swl	0	0	933.832	
+awgn	2026135012	-23	blind-conditional	1	0	4819.185	F7WBV K7MSX RR73@2323.084/0.693/conditional-phase-0
+awgn	2026145019	-23	native	0	0	190.093	
+awgn	2026145019	-23	blind-hybrid	0	0	448.794	
+awgn	2026145019	-23	blind-hybrid-swl	0	0	940.145	
+awgn	2026145019	-23	blind-conditional	0	0	2401.140	
+awgn	2026155026	-23	native	0	0	177.967	
+awgn	2026155026	-23	blind-hybrid	0	0	459.961	
+awgn	2026155026	-23	blind-hybrid-swl	0	0	713.723	
+awgn	2026155026	-23	blind-conditional	0	0	2412.092	
+awgn	2026165033	-23	native	0	0	198.688	
+awgn	2026165033	-23	blind-hybrid	0	0	528.379	
+awgn	2026165033	-23	blind-hybrid-swl	0	0	1122.999	
+awgn	2026165033	-23	blind-conditional	0	0	2425.082	
+awgn	2026175040	-23	native	0	0	150.162	
+awgn	2026175040	-23	blind-hybrid	0	0	399.572	
+awgn	2026175040	-23	blind-hybrid-swl	0	0	1101.145	
+awgn	2026175040	-23	blind-conditional	0	0	2416.583	
+awgn	2026185047	-23	native	0	0	188.878	
+awgn	2026185047	-23	blind-hybrid	0	0	481.953	
+awgn	2026185047	-23	blind-hybrid-swl	0	0	872.025	
+awgn	2026185047	-23	blind-conditional	0	0	2425.974	
+awgn	2026195054	-23	native	0	0	166.730	
+awgn	2026195054	-23	blind-hybrid	0	0	462.412	
+awgn	2026195054	-23	blind-hybrid-swl	0	0	913.452	
+awgn	2026195054	-23	blind-conditional	0	0	2420.162	
+awgn	2026205061	-23	native	0	0	185.675	
+awgn	2026205061	-23	blind-hybrid	0	0	425.422	
+awgn	2026205061	-23	blind-hybrid-swl	0	0	830.687	
+awgn	2026205061	-23	blind-conditional	0	0	2399.006	
+awgn	2026215068	-23	native	0	0	164.388	
+awgn	2026215068	-23	blind-hybrid	0	0	339.231	
+awgn	2026215068	-23	blind-hybrid-swl	0	0	786.900	
+awgn	2026215068	-23	blind-conditional	0	0	2375.412	
+awgn	2026225075	-23	native	0	0	222.884	
+awgn	2026225075	-23	blind-hybrid	0	0	589.752	
+awgn	2026225075	-23	blind-hybrid-swl	0	0	1167.776	
+awgn	2026225075	-23	blind-conditional	0	0	2380.365	
+awgn	2026235082	-23	native	0	0	182.803	
+awgn	2026235082	-23	blind-hybrid	0	0	472.415	
+awgn	2026235082	-23	blind-hybrid-swl	0	0	1309.617	
+awgn	2026235082	-23	blind-conditional	0	0	2430.669	
+awgn	2026245089	-23	native	0	0	190.163	
+awgn	2026245089	-23	blind-hybrid	0	0	398.052	
+awgn	2026245089	-23	blind-hybrid-swl	0	0	928.273	
+awgn	2026245089	-23	blind-conditional	1	0	4831.720	N5VNF K6OKU R-15@1882.382/0.434/conditional-phase-0
+awgn	2026255096	-23	native	0	0	151.450	
+awgn	2026255096	-23	blind-hybrid	0	0	448.099	
+awgn	2026255096	-23	blind-hybrid-swl	0	0	910.199	
+awgn	2026255096	-23	blind-conditional	0	0	2399.131	
+awgn	2026265103	-23	native	0	0	249.364	
+awgn	2026265103	-23	blind-hybrid	0	0	509.835	
+awgn	2026265103	-23	blind-hybrid-swl	0	0	991.394	
+awgn	2026265103	-23	blind-conditional	0	0	2402.397	
+awgn	2026275110	-23	native	0	0	163.177	
+awgn	2026275110	-23	blind-hybrid	0	0	420.827	
+awgn	2026275110	-23	blind-hybrid-swl	0	0	1076.712	
+awgn	2026275110	-23	blind-conditional	0	0	2424.770	
+awgn	2026285117	-23	native	0	1	238.535	LY0XZA LL9CGR JL20@1382.250/0.255
+awgn	2026285117	-23	blind-hybrid	1	1	935.599	CQ JA0AUB JG77@1381.750/0.265/hybrid;LY0XZA LL9CGR JL20@1382.250/0.255/hybrid
+awgn	2026285117	-23	blind-hybrid-swl	1	1	1970.443	CQ JA0AUB JG77@1381.750/0.265/hybrid;LY0XZA LL9CGR JL20@1382.250/0.255/hybrid
+awgn	2026285117	-23	blind-conditional	0	0	2405.744	
+awgn	2026295124	-23	native	0	0	199.166	
+awgn	2026295124	-23	blind-hybrid	0	0	483.274	
+awgn	2026295124	-23	blind-hybrid-swl	0	0	1062.255	
+awgn	2026295124	-23	blind-conditional	0	0	2452.604	
+awgn	2026305131	-23	native	0	0	233.381	
+awgn	2026305131	-23	blind-hybrid	0	0	467.604	
+awgn	2026305131	-23	blind-hybrid-swl	0	0	917.939	
+awgn	2026305131	-23	blind-conditional	0	0	2405.943	
+awgn	2026315138	-23	native	0	0	177.582	
+awgn	2026315138	-23	blind-hybrid	0	0	506.121	
+awgn	2026315138	-23	blind-hybrid-swl	0	0	792.222	
+awgn	2026315138	-23	blind-conditional	0	0	2411.738	
+awgn	2026325145	-23	native	0	0	154.738	
+awgn	2026325145	-23	blind-hybrid	0	0	412.988	
+awgn	2026325145	-23	blind-hybrid-swl	0	0	977.193	
+awgn	2026325145	-23	blind-conditional	0	0	2415.717	
+awgn	2026335152	-23	native	0	0	245.767	
+awgn	2026335152	-23	blind-hybrid	0	0	534.496	
+awgn	2026335152	-23	blind-hybrid-swl	0	0	1065.807	
+awgn	2026335152	-23	blind-conditional	0	0	2414.671	
+awgn	2026345159	-23	native	0	0	238.659	
+awgn	2026345159	-23	blind-hybrid	0	0	563.141	
+awgn	2026345159	-23	blind-hybrid-swl	0	0	1289.796	
+awgn	2026345159	-23	blind-conditional	0	0	2478.526	
+awgn	2026355166	-23	native	0	0	162.784	
+awgn	2026355166	-23	blind-hybrid	0	0	416.496	
+awgn	2026355166	-23	blind-hybrid-swl	0	0	851.196	
+awgn	2026355166	-23	blind-conditional	1	0	4802.322	W5GWB W7NBS -26@900.950/-0.220/conditional-phase-0
+awgn	2026365173	-23	native	0	0	232.740	
+awgn	2026365173	-23	blind-hybrid	0	0	513.277	
+awgn	2026365173	-23	blind-hybrid-swl	0	0	876.006	
+awgn	2026365173	-23	blind-conditional	0	0	2390.420	
+awgn	2026375180	-23	native	0	0	138.732	
+awgn	2026375180	-23	blind-hybrid	0	0	410.620	
+awgn	2026375180	-23	blind-hybrid-swl	0	0	1085.180	
+awgn	2026375180	-23	blind-conditional	0	0	2405.528	
+awgn	2026385187	-23	native	0	0	162.034	
+awgn	2026385187	-23	blind-hybrid	0	0	431.497	
+awgn	2026385187	-23	blind-hybrid-swl	0	0	880.558	
+awgn	2026385187	-23	blind-conditional	0	0	2406.615	
+awgn	2026395194	-23	native	0	0	210.535	
+awgn	2026395194	-23	blind-hybrid	0	0	482.295	
+awgn	2026395194	-23	blind-hybrid-swl	0	0	888.200	
+awgn	2026395194	-23	blind-conditional	0	0	2391.597	
+awgn	2026405201	-23	native	0	0	143.561	
+awgn	2026405201	-23	blind-hybrid	0	0	400.804	
+awgn	2026405201	-23	blind-hybrid-swl	0	0	1096.290	
+awgn	2026405201	-23	blind-conditional	0	0	2399.127	
+awgn	2026415208	-23	native	0	0	193.539	
+awgn	2026415208	-23	blind-hybrid	0	0	422.657	
+awgn	2026415208	-23	blind-hybrid-swl	0	0	1119.429	
+awgn	2026415208	-23	blind-conditional	0	0	2398.230	

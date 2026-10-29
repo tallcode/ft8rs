@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+    "8",
+    "2026102991",
+    "sic-fresh-mix",
+    "-20",
+    "receiver,conditional"
+  ],
+  "wall_seconds": 77.792996542,
+  "cpu_seconds": 75.584975,
+  "visible_cpus": 12,
+  "binary_sha256": "16f7357de06ea56af08308b940ce674b17c44ae7150cdd0af2fe8bb6552f1e3d",
+  "returncode": 0
+}

@@ -1,0 +1,3 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+blocker	2026163103	-24	native	0	0	251.144	CQ K1ABC FN42@1879.750/0.285
+blocker	2026163103	-24	blind-conditional	0	0	5023.067	CQ K1ABC FN42@1879.933/0.288/conditional-h0-1-amp

@@ -1,0 +1,15 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+blocker	2026103061	-24	native	0	0	325.253	CQ K1ABC FN42@889.625/-0.200
+blocker	2026103061	-24	blind-conditional	0	0	4620.187	CQ K1ABC FN42@889.716/-0.198/conditional-h0-1-amp
+blocker	2026113068	-24	native	0	0	276.192	CQ K1ABC FN42@389.000/-0.040
+blocker	2026113068	-24	blind-conditional	0	0	4648.453	CQ K1ABC FN42@388.945/-0.037/conditional-h0-1-amp
+blocker	2026123075	-24	native	0	0	276.066	CQ K1ABC FN42@2162.000/0.315
+blocker	2026123075	-24	blind-conditional	0	0	4690.333	CQ K1ABC FN42@2161.688/0.320/conditional-h0-1-amp
+blocker	2026133082	-24	native	0	0	298.975	CQ K1ABC FN42@568.750/-0.235
+blocker	2026133082	-24	blind-conditional	0	0	4666.472	CQ K1ABC FN42@568.834/-0.232/conditional-h0-1-amp
+blocker	2026143089	-24	native	0	0	259.747	CQ K1ABC FN42@2491.625/0.810
+blocker	2026143089	-24	blind-conditional	0	0	4656.433	CQ K1ABC FN42@2491.664/0.813/conditional-h0-1-amp
+blocker	2026153096	-24	native	0	0	312.649	CQ K1ABC FN42@380.250/0.050
+blocker	2026153096	-24	blind-conditional	0	0	4640.609	CQ K1ABC FN42@380.375/0.054/conditional-h0-1-amp
+blocker	2026163103	-24	native	0	0	249.447	CQ K1ABC FN42@1879.750/0.285
+blocker	2026163103	-24	blind-conditional	0	0	4595.984	CQ K1ABC FN42@1879.933/0.288/conditional-h0-1-amp

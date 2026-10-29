@@ -1,0 +1,477 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+awgn	2026102901	-18	native	1	0	255.560	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-1-amp	1	0	0.034	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-1-power	1	0	0.024	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-1-lse	1	0	0.033	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-1-bessel	1	0	0.039	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-2-amp	1	0	0.050	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-2-power	1	0	0.044	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-2-lse	1	0	0.071	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-2-bessel	1	0	0.088	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-3-amp	1	0	0.139	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-3-power	1	0	0.129	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-3-lse	1	0	0.267	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-3-bessel	1	0	0.353	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-4-amp	1	0	0.739	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-4-power	1	0	0.649	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-4-lse	1	0	1.679	CQ BG5ATV PM00
+awgn	2026102901	-18	oracle-4-bessel	1	0	2.157	CQ BG5ATV PM00
+awgn	2026112908	-18	native	1	0	251.044	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-1-amp	1	0	0.036	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-1-power	1	0	0.026	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-1-lse	1	0	0.043	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-1-bessel	1	0	0.055	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-2-amp	1	0	0.054	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-2-power	1	0	0.048	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-2-lse	1	0	0.068	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-2-bessel	1	0	0.090	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-3-amp	1	0	0.141	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-3-power	1	0	0.130	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-3-lse	1	0	0.250	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-3-bessel	1	0	0.348	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-4-amp	1	0	0.734	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-4-power	1	0	0.644	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-4-lse	1	0	1.730	K1JT BG5ATV -04
+awgn	2026112908	-18	oracle-4-bessel	1	0	2.294	K1JT BG5ATV -04
+awgn	2026122915	-18	native	1	0	236.229	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-1-amp	1	0	0.018	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-1-power	1	0	0.014	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-1-lse	1	0	0.025	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-1-bessel	1	0	0.032	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-2-amp	1	0	0.042	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-2-power	1	0	0.039	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-2-lse	1	0	0.062	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-2-bessel	1	0	0.083	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-3-amp	1	0	0.135	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-3-power	1	0	0.126	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-3-lse	1	0	0.258	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-3-bessel	1	0	0.382	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-4-amp	1	0	0.807	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-4-power	1	0	0.773	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-4-lse	1	0	1.575	K1JT BG5ATV R-07
+awgn	2026122915	-18	oracle-4-bessel	1	0	2.134	K1JT BG5ATV R-07
+awgn	2026132922	-18	native	1	0	278.579	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-1-amp	1	0	0.019	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-1-power	1	0	0.020	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-1-lse	1	0	0.026	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-1-bessel	1	0	0.031	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-2-amp	1	0	0.048	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-2-power	1	0	0.043	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-2-lse	1	0	0.070	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-2-bessel	1	0	0.088	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-3-amp	1	0	0.146	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-3-power	1	0	0.170	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-3-lse	1	0	0.257	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-3-bessel	1	0	0.401	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-4-amp	1	0	0.716	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-4-power	1	0	0.674	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-4-lse	1	0	1.613	K1JT BG5ATV RR73
+awgn	2026132922	-18	oracle-4-bessel	1	0	2.094	K1JT BG5ATV RR73
+awgn	2026102901	-19	native	1	0	230.525	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-1-amp	1	0	0.402	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-1-power	1	0	0.395	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-1-lse	1	0	0.079	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-1-bessel	1	0	0.530	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-2-amp	1	0	0.057	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-2-power	1	0	0.051	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-2-lse	1	0	0.075	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-2-bessel	1	0	0.106	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-3-amp	1	0	0.144	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-3-power	1	0	0.132	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-3-lse	1	0	0.284	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-3-bessel	1	0	0.365	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-4-amp	1	0	0.720	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-4-power	1	0	0.665	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-4-lse	1	0	1.722	CQ BG5ATV PM00
+awgn	2026102901	-19	oracle-4-bessel	1	0	2.209	CQ BG5ATV PM00
+awgn	2026112908	-19	native	1	0	249.855	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-1-amp	1	0	0.423	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-1-power	1	0	0.387	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-1-lse	1	0	0.451	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-1-bessel	1	0	0.513	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-2-amp	1	0	0.058	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-2-power	1	0	0.052	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-2-lse	1	0	0.073	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-2-bessel	1	0	0.108	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-3-amp	1	0	0.144	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-3-power	1	0	0.133	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-3-lse	1	0	0.270	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-3-bessel	1	0	0.380	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-4-amp	1	0	0.710	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-4-power	1	0	0.666	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-4-lse	1	0	1.720	K1JT BG5ATV -04
+awgn	2026112908	-19	oracle-4-bessel	1	0	2.143	K1JT BG5ATV -04
+awgn	2026122915	-19	native	1	0	245.831	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-1-amp	1	0	0.025	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-1-power	1	0	0.019	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-1-lse	1	0	0.030	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-1-bessel	1	0	0.036	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-2-amp	1	0	0.043	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-2-power	1	0	0.040	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-2-lse	1	0	0.069	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-2-bessel	1	0	0.093	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-3-amp	1	0	0.134	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-3-power	1	0	0.142	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-3-lse	1	0	0.301	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-3-bessel	1	0	0.348	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-4-amp	1	0	0.680	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-4-power	1	0	0.653	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-4-lse	1	0	1.604	K1JT BG5ATV R-07
+awgn	2026122915	-19	oracle-4-bessel	1	0	2.169	K1JT BG5ATV R-07
+awgn	2026132922	-19	native	1	0	277.926	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-1-amp	1	0	0.025	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-1-power	1	0	0.024	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-1-lse	1	0	0.032	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-1-bessel	1	0	0.038	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-2-amp	1	0	0.047	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-2-power	1	0	0.043	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-2-lse	1	0	0.071	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-2-bessel	1	0	0.088	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-3-amp	1	0	0.145	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-3-power	1	0	0.132	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-3-lse	1	0	0.285	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-3-bessel	1	0	0.367	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-4-amp	1	0	0.716	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-4-power	1	0	0.664	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-4-lse	1	0	1.723	K1JT BG5ATV RR73
+awgn	2026132922	-19	oracle-4-bessel	1	0	2.251	K1JT BG5ATV RR73
+awgn	2026102901	-20	native	1	0	232.911	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-1-amp	0	0	0.638	
+awgn	2026102901	-20	oracle-1-power	0	0	0.614	
+awgn	2026102901	-20	oracle-1-lse	0	0	0.657	
+awgn	2026102901	-20	oracle-1-bessel	0	0	0.721	
+awgn	2026102901	-20	oracle-2-amp	1	0	0.107	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-2-power	1	0	0.408	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-2-lse	1	0	0.135	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-2-bessel	1	0	0.597	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-3-amp	1	0	0.156	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-3-power	1	0	0.152	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-3-lse	1	0	0.393	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-3-bessel	1	0	0.411	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-4-amp	1	0	0.717	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-4-power	1	0	0.673	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-4-lse	1	0	1.588	CQ BG5ATV PM00
+awgn	2026102901	-20	oracle-4-bessel	1	0	2.127	CQ BG5ATV PM00
+awgn	2026112908	-20	native	1	0	255.532	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-1-amp	0	0	0.668	
+awgn	2026112908	-20	oracle-1-power	0	0	0.665	
+awgn	2026112908	-20	oracle-1-lse	0	0	0.667	
+awgn	2026112908	-20	oracle-1-bessel	0	0	0.684	
+awgn	2026112908	-20	oracle-2-amp	1	0	0.064	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-2-power	1	0	0.056	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-2-lse	1	0	0.083	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-2-bessel	1	0	0.114	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-3-amp	1	0	0.152	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-3-power	1	0	0.140	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-3-lse	1	0	0.275	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-3-bessel	1	0	0.390	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-4-amp	1	0	0.718	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-4-power	1	0	0.669	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-4-lse	1	0	1.733	K1JT BG5ATV -04
+awgn	2026112908	-20	oracle-4-bessel	1	0	2.377	K1JT BG5ATV -04
+awgn	2026122915	-20	native	1	0	239.984	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-1-amp	1	0	0.028	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-1-power	1	0	0.026	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-1-lse	1	0	0.031	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-1-bessel	1	0	0.041	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-2-amp	1	0	0.047	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-2-power	1	0	0.044	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-2-lse	1	0	0.074	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-2-bessel	1	0	0.094	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-3-amp	1	0	0.139	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-3-power	1	0	0.130	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-3-lse	1	0	0.266	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-3-bessel	1	0	0.380	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-4-amp	1	0	0.709	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-4-power	1	0	0.664	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-4-lse	1	0	1.720	K1JT BG5ATV R-07
+awgn	2026122915	-20	oracle-4-bessel	1	0	2.348	K1JT BG5ATV R-07
+awgn	2026132922	-20	native	1	0	274.580	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-1-amp	1	0	0.028	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-1-power	1	0	0.030	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-1-lse	1	0	0.056	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-1-bessel	1	0	0.053	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-2-amp	1	0	0.053	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-2-power	1	0	0.049	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-2-lse	1	0	0.077	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-2-bessel	1	0	0.097	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-3-amp	1	0	0.150	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-3-power	1	0	0.146	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-3-lse	1	0	0.285	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-3-bessel	1	0	0.382	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-4-amp	1	0	0.713	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-4-power	1	0	0.667	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-4-lse	1	0	1.712	K1JT BG5ATV RR73
+awgn	2026132922	-20	oracle-4-bessel	1	0	2.291	K1JT BG5ATV RR73
+awgn	2026102901	-21	native	0	0	199.965	
+awgn	2026102901	-21	oracle-1-amp	0	0	0.615	
+awgn	2026102901	-21	oracle-1-power	0	0	0.601	
+awgn	2026102901	-21	oracle-1-lse	0	0	0.605	
+awgn	2026102901	-21	oracle-1-bessel	0	0	0.612	
+awgn	2026102901	-21	oracle-2-amp	0	0	0.709	
+awgn	2026102901	-21	oracle-2-power	0	0	0.640	
+awgn	2026102901	-21	oracle-2-lse	0	0	0.719	
+awgn	2026102901	-21	oracle-2-bessel	0	0	0.760	
+awgn	2026102901	-21	oracle-3-amp	0	0	0.745	
+awgn	2026102901	-21	oracle-3-power	0	0	0.722	
+awgn	2026102901	-21	oracle-3-lse	1	0	0.640	CQ BG5ATV PM00
+awgn	2026102901	-21	oracle-3-bessel	1	0	0.786	CQ BG5ATV PM00
+awgn	2026102901	-21	oracle-4-amp	1	0	1.083	CQ BG5ATV PM00
+awgn	2026102901	-21	oracle-4-power	1	0	1.035	CQ BG5ATV PM00
+awgn	2026102901	-21	oracle-4-lse	1	0	1.748	CQ BG5ATV PM00
+awgn	2026102901	-21	oracle-4-bessel	1	0	2.313	CQ BG5ATV PM00
+awgn	2026112908	-21	native	1	0	258.279	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-1-amp	0	0	0.676	
+awgn	2026112908	-21	oracle-1-power	0	0	0.656	
+awgn	2026112908	-21	oracle-1-lse	0	0	0.611	
+awgn	2026112908	-21	oracle-1-bessel	0	0	0.611	
+awgn	2026112908	-21	oracle-2-amp	1	0	0.430	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-2-power	1	0	0.411	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-2-lse	1	0	0.377	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-2-bessel	1	0	0.454	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-3-amp	1	0	0.504	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-3-power	1	0	0.504	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-3-lse	1	0	0.615	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-3-bessel	1	0	0.738	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-4-amp	1	0	0.688	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-4-power	1	0	0.636	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-4-lse	1	0	1.556	K1JT BG5ATV -04
+awgn	2026112908	-21	oracle-4-bessel	1	0	2.218	K1JT BG5ATV -04
+awgn	2026122915	-21	native	1	0	234.825	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-1-amp	1	0	0.078	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-1-power	1	0	0.387	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-1-lse	1	0	0.399	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-1-bessel	1	0	0.347	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-2-amp	1	0	0.056	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-2-power	1	0	0.051	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-2-lse	1	0	0.075	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-2-bessel	1	0	0.100	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-3-amp	1	0	0.138	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-3-power	1	0	0.128	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-3-lse	1	0	0.263	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-3-bessel	1	0	0.385	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-4-amp	1	0	0.676	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-4-power	1	0	0.627	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-4-lse	1	0	1.698	K1JT BG5ATV R-07
+awgn	2026122915	-21	oracle-4-bessel	1	0	2.200	K1JT BG5ATV R-07
+awgn	2026132922	-21	native	1	0	269.016	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-1-amp	1	0	0.400	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-1-power	1	0	0.385	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-1-lse	0	0	0.719	
+awgn	2026132922	-21	oracle-1-bessel	1	0	0.408	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-2-amp	1	0	0.056	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-2-power	1	0	0.055	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-2-lse	1	0	0.078	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-2-bessel	1	0	0.100	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-3-amp	1	0	0.163	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-3-power	1	0	0.152	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-3-lse	1	0	0.799	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-3-bessel	1	0	0.426	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-4-amp	1	0	0.718	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-4-power	1	0	0.672	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-4-lse	1	0	1.735	K1JT BG5ATV RR73
+awgn	2026132922	-21	oracle-4-bessel	1	0	2.284	K1JT BG5ATV RR73
+awgn	2026102901	-22	native	0	0	186.778	
+awgn	2026102901	-22	oracle-1-amp	0	0	0.600	
+awgn	2026102901	-22	oracle-1-power	0	0	0.591	
+awgn	2026102901	-22	oracle-1-lse	0	0	0.594	
+awgn	2026102901	-22	oracle-1-bessel	0	0	0.603	
+awgn	2026102901	-22	oracle-2-amp	0	0	0.635	
+awgn	2026102901	-22	oracle-2-power	0	0	0.628	
+awgn	2026102901	-22	oracle-2-lse	0	0	0.652	
+awgn	2026102901	-22	oracle-2-bessel	0	0	0.676	
+awgn	2026102901	-22	oracle-3-amp	0	0	0.722	
+awgn	2026102901	-22	oracle-3-power	0	0	0.711	
+awgn	2026102901	-22	oracle-3-lse	0	0	0.866	
+awgn	2026102901	-22	oracle-3-bessel	0	0	0.980	
+awgn	2026102901	-22	oracle-4-amp	0	0	1.250	
+awgn	2026102901	-22	oracle-4-power	0	0	1.194	
+awgn	2026102901	-22	oracle-4-lse	0	0	2.111	
+awgn	2026102901	-22	oracle-4-bessel	0	0	2.765	
+awgn	2026112908	-22	native	0	0	186.648	
+awgn	2026112908	-22	oracle-1-amp	0	0	0.662	
+awgn	2026112908	-22	oracle-1-power	0	0	0.693	
+awgn	2026112908	-22	oracle-1-lse	0	0	0.576	
+awgn	2026112908	-22	oracle-1-bessel	0	0	0.585	
+awgn	2026112908	-22	oracle-2-amp	0	0	0.640	
+awgn	2026112908	-22	oracle-2-power	0	0	0.643	
+awgn	2026112908	-22	oracle-2-lse	0	0	0.658	
+awgn	2026112908	-22	oracle-2-bessel	0	0	0.647	
+awgn	2026112908	-22	oracle-3-amp	0	0	0.719	
+awgn	2026112908	-22	oracle-3-power	0	0	0.712	
+awgn	2026112908	-22	oracle-3-lse	0	0	0.828	
+awgn	2026112908	-22	oracle-3-bessel	0	0	0.955	
+awgn	2026112908	-22	oracle-4-amp	1	0	1.038	K1JT BG5ATV -04
+awgn	2026112908	-22	oracle-4-power	0	0	1.306	
+awgn	2026112908	-22	oracle-4-lse	1	0	1.842	K1JT BG5ATV -04
+awgn	2026112908	-22	oracle-4-bessel	1	0	2.550	K1JT BG5ATV -04
+awgn	2026122915	-22	native	0	0	175.307	
+awgn	2026122915	-22	oracle-1-amp	0	0	0.618	
+awgn	2026122915	-22	oracle-1-power	0	0	0.619	
+awgn	2026122915	-22	oracle-1-lse	0	0	0.617	
+awgn	2026122915	-22	oracle-1-bessel	0	0	0.597	
+awgn	2026122915	-22	oracle-2-amp	1	0	0.439	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-2-power	1	0	0.392	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-2-lse	1	0	0.413	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-2-bessel	1	0	0.401	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-3-amp	1	0	0.145	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-3-power	1	0	0.135	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-3-lse	1	0	0.278	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-3-bessel	1	0	0.714	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-4-amp	1	0	0.679	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-4-power	1	0	0.760	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-4-lse	1	0	1.595	K1JT BG5ATV R-07
+awgn	2026122915	-22	oracle-4-bessel	1	0	2.276	K1JT BG5ATV R-07
+awgn	2026132922	-22	native	1	0	265.565	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-1-amp	0	0	0.609	
+awgn	2026132922	-22	oracle-1-power	0	0	0.602	
+awgn	2026132922	-22	oracle-1-lse	0	0	0.611	
+awgn	2026132922	-22	oracle-1-bessel	0	0	0.611	
+awgn	2026132922	-22	oracle-2-amp	1	0	0.092	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-2-power	1	0	0.420	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-2-lse	1	0	0.440	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-2-bessel	1	0	0.459	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-3-amp	1	0	0.530	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-3-power	0	0	0.822	
+awgn	2026132922	-22	oracle-3-lse	0	0	1.009	
+awgn	2026132922	-22	oracle-3-bessel	1	0	0.688	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-4-amp	1	0	1.076	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-4-power	1	0	1.053	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-4-lse	1	0	2.095	K1JT BG5ATV RR73
+awgn	2026132922	-22	oracle-4-bessel	1	0	2.669	K1JT BG5ATV RR73
+awgn	2026102901	-23	native	0	0	186.018	
+awgn	2026102901	-23	oracle-1-amp	0	0	0.601	
+awgn	2026102901	-23	oracle-1-power	0	0	0.594	
+awgn	2026102901	-23	oracle-1-lse	0	0	0.598	
+awgn	2026102901	-23	oracle-1-bessel	0	0	0.604	
+awgn	2026102901	-23	oracle-2-amp	0	0	0.623	
+awgn	2026102901	-23	oracle-2-power	0	0	0.617	
+awgn	2026102901	-23	oracle-2-lse	0	0	0.638	
+awgn	2026102901	-23	oracle-2-bessel	0	0	0.664	
+awgn	2026102901	-23	oracle-3-amp	0	0	0.739	
+awgn	2026102901	-23	oracle-3-power	0	0	0.857	
+awgn	2026102901	-23	oracle-3-lse	0	0	0.839	
+awgn	2026102901	-23	oracle-3-bessel	0	0	0.952	
+awgn	2026102901	-23	oracle-4-amp	0	0	1.298	
+awgn	2026102901	-23	oracle-4-power	0	0	1.233	
+awgn	2026102901	-23	oracle-4-lse	0	0	2.292	
+awgn	2026102901	-23	oracle-4-bessel	0	0	2.903	
+awgn	2026112908	-23	native	0	0	192.795	
+awgn	2026112908	-23	oracle-1-amp	0	0	0.605	
+awgn	2026112908	-23	oracle-1-power	0	0	0.604	
+awgn	2026112908	-23	oracle-1-lse	0	0	0.598	
+awgn	2026112908	-23	oracle-1-bessel	0	0	0.612	
+awgn	2026112908	-23	oracle-2-amp	0	0	0.613	
+awgn	2026112908	-23	oracle-2-power	0	0	0.606	
+awgn	2026112908	-23	oracle-2-lse	0	0	0.613	
+awgn	2026112908	-23	oracle-2-bessel	0	0	0.655	
+awgn	2026112908	-23	oracle-3-amp	0	0	0.731	
+awgn	2026112908	-23	oracle-3-power	0	0	0.715	
+awgn	2026112908	-23	oracle-3-lse	0	0	0.830	
+awgn	2026112908	-23	oracle-3-bessel	0	0	0.955	
+awgn	2026112908	-23	oracle-4-amp	0	0	1.354	
+awgn	2026112908	-23	oracle-4-power	0	0	1.205	
+awgn	2026112908	-23	oracle-4-lse	0	0	2.115	
+awgn	2026112908	-23	oracle-4-bessel	0	0	2.814	
+awgn	2026122915	-23	native	0	0	176.361	
+awgn	2026122915	-23	oracle-1-amp	0	0	0.639	
+awgn	2026122915	-23	oracle-1-power	0	0	0.617	
+awgn	2026122915	-23	oracle-1-lse	0	0	0.633	
+awgn	2026122915	-23	oracle-1-bessel	0	0	0.674	
+awgn	2026122915	-23	oracle-2-amp	0	0	0.677	
+awgn	2026122915	-23	oracle-2-power	0	0	0.683	
+awgn	2026122915	-23	oracle-2-lse	0	0	0.648	
+awgn	2026122915	-23	oracle-2-bessel	0	0	0.667	
+awgn	2026122915	-23	oracle-3-amp	1	0	0.744	K1JT BG5ATV R-07
+awgn	2026122915	-23	oracle-3-power	1	0	0.715	K1JT BG5ATV R-07
+awgn	2026122915	-23	oracle-3-lse	0	0	0.853	
+awgn	2026122915	-23	oracle-3-bessel	0	0	0.969	
+awgn	2026122915	-23	oracle-4-amp	1	0	1.069	K1JT BG5ATV R-07
+awgn	2026122915	-23	oracle-4-power	1	0	1.021	K1JT BG5ATV R-07
+awgn	2026122915	-23	oracle-4-lse	0	0	2.329	
+awgn	2026122915	-23	oracle-4-bessel	1	0	2.728	K1JT BG5ATV R-07
+awgn	2026132922	-23	native	0	0	199.488	
+awgn	2026132922	-23	oracle-1-amp	0	0	0.605	
+awgn	2026132922	-23	oracle-1-power	0	0	0.597	
+awgn	2026132922	-23	oracle-1-lse	0	0	0.599	
+awgn	2026132922	-23	oracle-1-bessel	0	0	0.604	
+awgn	2026132922	-23	oracle-2-amp	0	0	0.692	
+awgn	2026132922	-23	oracle-2-power	0	0	0.646	
+awgn	2026132922	-23	oracle-2-lse	0	0	0.627	
+awgn	2026132922	-23	oracle-2-bessel	0	0	0.647	
+awgn	2026132922	-23	oracle-3-amp	0	0	0.705	
+awgn	2026132922	-23	oracle-3-power	0	0	0.711	
+awgn	2026132922	-23	oracle-3-lse	0	0	0.847	
+awgn	2026132922	-23	oracle-3-bessel	0	0	0.973	
+awgn	2026132922	-23	oracle-4-amp	0	0	1.318	
+awgn	2026132922	-23	oracle-4-power	0	0	1.267	
+awgn	2026132922	-23	oracle-4-lse	0	0	2.252	
+awgn	2026132922	-23	oracle-4-bessel	0	0	2.858	
+awgn	2026102901	-24	native	0	0	189.713	
+awgn	2026102901	-24	oracle-1-amp	0	0	0.648	
+awgn	2026102901	-24	oracle-1-power	0	0	0.571	
+awgn	2026102901	-24	oracle-1-lse	0	0	0.577	
+awgn	2026102901	-24	oracle-1-bessel	0	0	0.600	
+awgn	2026102901	-24	oracle-2-amp	0	0	0.623	
+awgn	2026102901	-24	oracle-2-power	0	0	0.617	
+awgn	2026102901	-24	oracle-2-lse	0	0	0.646	
+awgn	2026102901	-24	oracle-2-bessel	0	0	0.645	
+awgn	2026102901	-24	oracle-3-amp	0	0	0.726	
+awgn	2026102901	-24	oracle-3-power	0	0	0.708	
+awgn	2026102901	-24	oracle-3-lse	0	0	0.834	
+awgn	2026102901	-24	oracle-3-bessel	0	0	0.954	
+awgn	2026102901	-24	oracle-4-amp	0	0	1.280	
+awgn	2026102901	-24	oracle-4-power	0	0	1.228	
+awgn	2026102901	-24	oracle-4-lse	0	0	2.289	
+awgn	2026102901	-24	oracle-4-bessel	0	0	2.943	
+awgn	2026112908	-24	native	0	0	186.665	
+awgn	2026112908	-24	oracle-1-amp	0	0	0.598	
+awgn	2026112908	-24	oracle-1-power	0	0	0.591	
+awgn	2026112908	-24	oracle-1-lse	0	0	0.592	
+awgn	2026112908	-24	oracle-1-bessel	0	0	0.594	
+awgn	2026112908	-24	oracle-2-amp	0	0	0.635	
+awgn	2026112908	-24	oracle-2-power	0	0	0.622	
+awgn	2026112908	-24	oracle-2-lse	0	0	0.635	
+awgn	2026112908	-24	oracle-2-bessel	0	0	0.656	
+awgn	2026112908	-24	oracle-3-amp	0	0	0.740	
+awgn	2026112908	-24	oracle-3-power	0	0	0.718	
+awgn	2026112908	-24	oracle-3-lse	0	0	0.840	
+awgn	2026112908	-24	oracle-3-bessel	0	0	0.965	
+awgn	2026112908	-24	oracle-4-amp	0	0	1.310	
+awgn	2026112908	-24	oracle-4-power	0	0	1.308	
+awgn	2026112908	-24	oracle-4-lse	0	0	2.231	
+awgn	2026112908	-24	oracle-4-bessel	0	0	2.949	
+awgn	2026122915	-24	native	0	0	174.864	
+awgn	2026122915	-24	oracle-1-amp	0	0	0.608	
+awgn	2026122915	-24	oracle-1-power	0	0	0.613	
+awgn	2026122915	-24	oracle-1-lse	0	0	0.608	
+awgn	2026122915	-24	oracle-1-bessel	0	0	0.594	
+awgn	2026122915	-24	oracle-2-amp	0	0	0.703	
+awgn	2026122915	-24	oracle-2-power	0	0	0.704	
+awgn	2026122915	-24	oracle-2-lse	0	0	0.645	
+awgn	2026122915	-24	oracle-2-bessel	0	0	0.662	
+awgn	2026122915	-24	oracle-3-amp	0	0	0.730	
+awgn	2026122915	-24	oracle-3-power	0	0	0.720	
+awgn	2026122915	-24	oracle-3-lse	0	0	0.841	
+awgn	2026122915	-24	oracle-3-bessel	0	0	0.952	
+awgn	2026122915	-24	oracle-4-amp	0	0	1.309	
+awgn	2026122915	-24	oracle-4-power	0	0	1.246	
+awgn	2026122915	-24	oracle-4-lse	0	0	2.262	
+awgn	2026122915	-24	oracle-4-bessel	0	0	2.957	
+awgn	2026132922	-24	native	0	0	198.711	
+awgn	2026132922	-24	oracle-1-amp	0	0	0.607	
+awgn	2026132922	-24	oracle-1-power	0	0	0.593	
+awgn	2026132922	-24	oracle-1-lse	0	0	0.599	
+awgn	2026132922	-24	oracle-1-bessel	0	0	0.605	
+awgn	2026132922	-24	oracle-2-amp	0	0	0.639	
+awgn	2026132922	-24	oracle-2-power	0	0	0.625	
+awgn	2026132922	-24	oracle-2-lse	0	0	0.644	
+awgn	2026132922	-24	oracle-2-bessel	0	0	0.670	
+awgn	2026132922	-24	oracle-3-amp	0	0	0.719	
+awgn	2026132922	-24	oracle-3-power	0	0	0.724	
+awgn	2026132922	-24	oracle-3-lse	0	0	0.816	
+awgn	2026132922	-24	oracle-3-bessel	0	0	0.937	
+awgn	2026132922	-24	oracle-4-amp	0	0	1.304	
+awgn	2026132922	-24	oracle-4-power	0	0	1.271	
+awgn	2026132922	-24	oracle-4-lse	0	0	2.210	
+awgn	2026132922	-24	oracle-4-bessel	0	0	2.815	

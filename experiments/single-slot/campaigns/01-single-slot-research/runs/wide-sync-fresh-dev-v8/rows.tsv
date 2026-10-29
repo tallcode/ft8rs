@@ -1,0 +1,33 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+awgn	2026102901	-21	native	0	0	234.866	
+awgn	2026102901	-21	blind-hybrid	0	0	509.114	
+awgn	2026102901	-21	blind-verified-phase	0	0	2252.651	
+awgn	2026102901	-21	blind-verified-feedback	0	0	2280.398	
+awgn	2026112908	-21	native	1	0	258.334	F5OVT N6RNU -02@1809.875/0.500
+awgn	2026112908	-21	blind-hybrid	1	0	866.218	F5OVT N6RNU -02@1809.875/0.500/hybrid
+awgn	2026112908	-21	blind-verified-phase	1	0	2249.569	F5OVT N6RNU -02@1809.806/0.502/h0-3-amp
+awgn	2026112908	-21	blind-verified-feedback	1	0	2284.025	F5OVT N6RNU -02@1809.806/0.502/h0-3-amp
+awgn	2026122915	-21	native	0	0	180.799	
+awgn	2026122915	-21	blind-hybrid	0	0	450.620	
+awgn	2026122915	-21	blind-verified-phase	1	0	2287.395	G7FTZ JA2PUS R-03@2422.303/0.613/h3-4-bessel
+awgn	2026122915	-21	blind-verified-feedback	1	0	2311.019	G7FTZ JA2PUS R-03@2422.303/0.613/h3-4-bessel
+awgn	2026132922	-21	native	1	0	260.921	N2SFO F8LFL RR73@1874.000/0.045
+awgn	2026132922	-21	blind-hybrid	1	0	843.207	N2SFO F8LFL RR73@1874.000/0.045/hybrid
+awgn	2026132922	-21	blind-verified-phase	1	0	2290.488	N2SFO F8LFL RR73@1874.394/0.048/h0-3-amp
+awgn	2026132922	-21	blind-verified-feedback	1	0	2297.332	N2SFO F8LFL RR73@1874.394/0.048/h0-3-amp
+awgn	2026102901	-22	native	0	0	192.478	
+awgn	2026102901	-22	blind-hybrid	0	0	509.640	
+awgn	2026102901	-22	blind-verified-phase	0	0	2286.448	
+awgn	2026102901	-22	blind-verified-feedback	0	0	2322.702	
+awgn	2026112908	-22	native	0	0	187.575	
+awgn	2026112908	-22	blind-hybrid	0	0	453.899	
+awgn	2026112908	-22	blind-verified-phase	0	0	2305.311	
+awgn	2026112908	-22	blind-verified-feedback	0	0	2322.699	
+awgn	2026122915	-22	native	0	0	174.916	
+awgn	2026122915	-22	blind-hybrid	0	0	453.845	
+awgn	2026122915	-22	blind-verified-phase	0	0	2299.842	
+awgn	2026122915	-22	blind-verified-feedback	0	0	2338.112	
+awgn	2026132922	-22	native	0	0	207.266	
+awgn	2026132922	-22	blind-hybrid	0	0	469.587	
+awgn	2026132922	-22	blind-verified-phase	1	0	2327.452	N2SFO F8LFL RR73@1874.394/0.048/phase-0
+awgn	2026132922	-22	blind-verified-feedback	1	0	2346.788	N2SFO F8LFL RR73@1874.394/0.048/phase-0

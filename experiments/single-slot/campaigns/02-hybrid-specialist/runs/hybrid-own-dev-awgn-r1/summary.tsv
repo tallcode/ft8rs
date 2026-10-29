@@ -1,0 +1,9 @@
+method	snr	correct	wrong	trials	mean_ms	max_ms
+blind-hybrid	-21	3	0	4	735.008	1055.564
+blind-hybrid	-22	2	0	4	663.641	960.286
+blind-hybrid-specialist	-21	4	0	4	5377.001	5695.929
+blind-hybrid-specialist	-22	4	0	4	5346.084	5656.723
+blind-jtdx	-21	1	0	4	415.805	468.491
+blind-jtdx	-22	0	0	4	405.558	440.203
+native	-21	3	0	4	228.130	253.889
+native	-22	2	0	4	200.091	255.014

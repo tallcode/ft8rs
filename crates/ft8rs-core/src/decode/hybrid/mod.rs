@@ -17,6 +17,7 @@ mod context;
 mod evidence;
 mod report;
 mod shared;
+pub use crate::decode::experiment::ExperimentDiagnostics;
 pub use context::{ActiveCallContext, QsoContextHint, QsoContextOpportunityReport};
 pub use evidence::{
     DecodeConfidence, DecodeEvidence, DecoderId, Provenance, SharedDecode, SharedDecodeCandidate,
@@ -51,6 +52,7 @@ pub struct HybridSlotDiagnostics {
     pub accepted_seeds: usize,
     pub rejected_seeds: usize,
     pub elapsed: Duration,
+    pub experiment: ExperimentDiagnostics,
 }
 
 enum WorkerEvent {
@@ -495,6 +497,34 @@ impl HybridStreamDecodeSession {
         let mut baseline = merge_decodes(&w_seen, &j_seen);
         baseline = merge_decodes(&baseline, &agc_plain);
         diagnostics.baseline_rows = baseline.len();
+        // Original workers and their callbacks finish first. Supplementary DSP
+        // cannot replace their representatives or change persistent native state.
+        let mut experiment_rows = Vec::new();
+        if config.hybrid_experiment && first_error.is_none() {
+            let result = guard_worker(|| {
+                Ok(crate::decode::experiment::decode(
+                    samples,
+                    config.nfa,
+                    config.nfb,
+                    clock + Duration::from_secs(10),
+                    &mut |row| {
+                        experiment_rows.push(row.clone());
+                        publish(
+                            &mut ledger,
+                            SignalSource::Recovery,
+                            row,
+                            StreamDecodeProvenance::Experiment,
+                            &mut first_error,
+                            &mut on_decode,
+                        );
+                    },
+                ))
+            });
+            match result {
+                Ok(report) => diagnostics.experiment = report,
+                Err(error) => diagnostics.experiment.error = Some(error),
+            }
+        }
         diagnostics.recovered_rows = ledger
             .tagged()
             .iter()
@@ -518,6 +548,13 @@ impl HybridStreamDecodeSession {
                     row,
                 ));
             }
+        }
+        for row in &experiment_rows {
+            self.last_evidence_store.admit(shared_decode_candidate(
+                DecoderId("hybrid-experiment"),
+                Provenance::Experiment,
+                row,
+            ));
         }
         self.active_call_context
             .update_from_evidence(&self.last_evidence_store);
@@ -665,6 +702,7 @@ fn provenance_from_stream(provenance: StreamDecodeProvenance) -> Provenance {
         StreamDecodeProvenance::Unknown => Provenance::Unknown,
         StreamDecodeProvenance::CooperativeRecovery => Provenance::CrossCancellation,
         StreamDecodeProvenance::ContextRecovery => Provenance::ImportedMemory,
+        StreamDecodeProvenance::Experiment => Provenance::Experiment,
         StreamDecodeProvenance::Regular => Provenance::Regular,
         StreamDecodeProvenance::ApMask => Provenance::ApMask,
         StreamDecodeProvenance::A7Memory => Provenance::A7Memory,

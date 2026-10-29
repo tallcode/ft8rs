@@ -1,0 +1,214 @@
+TRUTH	2026108991	-18	CQ DL6MRR CB91	794.351676	0.357053	0.000000
+CALLBACK	jtdx	302.235	CQ K1ABC FN42	819.750000	0.270000
+CALLBACK	jtdx	302.290	CQ DL6MRR CB91	794.250000	0.360000
+ROW	2026108991	-18	jtdx	CQ K1ABC FN42	819.750000	0.270000	Regular
+ROW	2026108991	-18	jtdx	CQ DL6MRR CB91	794.250000	0.360000	Regular
+CALLBACK	hybrid	231.167	CQ K1ABC FN42	819.250000	0.265000
+CALLBACK	hybrid	231.245	CQ DL6MRR CB91	794.250000	0.360000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(636.028125ms), Some(322.270459ms), Some(343.65875ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 636.255917ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026108991	-18	hybrid	CQ K1ABC FN42	819.250000	0.265000	Unknown
+ROW	2026108991	-18	hybrid	CQ DL6MRR CB91	794.250000	0.360000	Unknown
+CALLBACK	hybrid-specialist	222.599	CQ K1ABC FN42	819.250000	0.265000
+CALLBACK	hybrid-specialist	222.686	CQ DL6MRR CB91	794.250000	0.360000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(626.51675ms), Some(342.512ms), Some(332.425375ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.249081083s, specialist: SpecialistDiagnostics { fec_calls: 3538, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.622336125s, accepted_scores: [341.6584478334145, 355.1345729794065], accepted_methods: ["h0-1-amp", "h0-1-amp"], error: None } }
+ROW	2026108991	-18	hybrid-specialist	CQ K1ABC FN42	819.250000	0.265000	Unknown
+ROW	2026108991	-18	hybrid-specialist	CQ DL6MRR CB91	794.250000	0.360000	Unknown
+TRUTH	2026118998	-18	W2VYA G9ZXC -02	2586.535137	-0.125115	0.000000
+CALLBACK	jtdx	360.949	CQ K1ABC FN42	2612.000000	-0.220000
+CALLBACK	jtdx	360.993	W2VYA G9ZXC -02	2587.000000	-0.125000
+ROW	2026118998	-18	jtdx	CQ K1ABC FN42	2612.000000	-0.220000	Regular
+ROW	2026118998	-18	jtdx	W2VYA G9ZXC -02	2587.000000	-0.125000	Regular
+CALLBACK	hybrid	212.451	CQ K1ABC FN42	2612.000000	-0.220000
+CALLBACK	hybrid	212.584	W2VYA G9ZXC -02	2587.500000	-0.125000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(547.679042ms), Some(403.694167ms), Some(396.146375ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 547.898209ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026118998	-18	hybrid	CQ K1ABC FN42	2612.000000	-0.220000	Unknown
+ROW	2026118998	-18	hybrid	W2VYA G9ZXC -02	2587.500000	-0.125000	Unknown
+CALLBACK	hybrid-specialist	258.904	CQ K1ABC FN42	2612.000000	-0.220000
+CALLBACK	hybrid-specialist	259.018	W2VYA G9ZXC -02	2587.500000	-0.125000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(590.766041ms), Some(454.971666ms), Some(453.363625ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.257747958s, specialist: SpecialistDiagnostics { fec_calls: 3561, tentative_rows: 1, rejected_rows: 0, accepted_rows: 1, residual_searches: 1, budget_exhausted: false, elapsed: 4.666750334s, accepted_scores: [284.5353991197658], accepted_methods: ["h0-1-amp"], error: None } }
+ROW	2026118998	-18	hybrid-specialist	CQ K1ABC FN42	2612.000000	-0.220000	Unknown
+ROW	2026118998	-18	hybrid-specialist	W2VYA G9ZXC -02	2587.500000	-0.125000	Unknown
+TRUTH	2026129005	-18	G5QAA N7LER R-03	1923.713017	0.765319	0.000000
+CALLBACK	jtdx	304.827	CQ K1ABC FN42	1949.500000	0.675000
+CALLBACK	jtdx	304.886	G5QAA N7LER R-03	1924.000000	0.765000
+ROW	2026129005	-18	jtdx	CQ K1ABC FN42	1949.500000	0.675000	Regular
+ROW	2026129005	-18	jtdx	G5QAA N7LER R-03	1924.000000	0.765000	Regular
+CALLBACK	hybrid	308.478	CQ K1ABC FN42	1949.000000	0.670000
+CALLBACK	hybrid	308.537	G5QAA N7LER R-03	1924.500000	0.760000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(611.060958ms), Some(332.250833ms), Some(333.147833ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 611.312ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026129005	-18	hybrid	CQ K1ABC FN42	1949.000000	0.670000	Unknown
+ROW	2026129005	-18	hybrid	G5QAA N7LER R-03	1924.500000	0.760000	Unknown
+CALLBACK	hybrid-specialist	307.030	CQ K1ABC FN42	1949.000000	0.670000
+CALLBACK	hybrid-specialist	307.105	G5QAA N7LER R-03	1924.500000	0.760000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(607.616833ms), Some(338.001417ms), Some(327.929292ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.266687875s, specialist: SpecialistDiagnostics { fec_calls: 3539, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.658846584s, accepted_scores: [211.68309566799917, 271.1207242082831], accepted_methods: ["h0-1-amp", "h0-3-amp"], error: None } }
+ROW	2026129005	-18	hybrid-specialist	CQ K1ABC FN42	1949.000000	0.670000	Unknown
+ROW	2026129005	-18	hybrid-specialist	G5QAA N7LER R-03	1924.500000	0.760000	Unknown
+TRUTH	2026139012	-18	PA7COF LU6RBD RR73	956.833270	0.702646	0.000000
+CALLBACK	jtdx	317.460	CQ K1ABC FN42	982.250000	0.610000
+CALLBACK	jtdx	317.495	PA7COF LU6RBD RR73	957.250000	0.705000
+ROW	2026139012	-18	jtdx	CQ K1ABC FN42	982.250000	0.610000	Regular
+ROW	2026139012	-18	jtdx	PA7COF LU6RBD RR73	957.250000	0.705000	Regular
+CALLBACK	hybrid	224.054	CQ K1ABC FN42	981.750000	0.610000
+CALLBACK	hybrid	224.114	PA7COF LU6RBD RR73	956.750000	0.695000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(537.346875ms), Some(350.200125ms), Some(356.709875ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 537.57425ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026139012	-18	hybrid	CQ K1ABC FN42	981.750000	0.610000	Unknown
+ROW	2026139012	-18	hybrid	PA7COF LU6RBD RR73	956.750000	0.695000	Unknown
+CALLBACK	hybrid-specialist	220.873	CQ K1ABC FN42	981.750000	0.610000
+CALLBACK	hybrid-specialist	220.941	PA7COF LU6RBD RR73	956.750000	0.695000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(539.25925ms), Some(359.6905ms), Some(361.119042ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.198683625s, specialist: SpecialistDiagnostics { fec_calls: 3538, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.659199833s, accepted_scores: [258.08405855472057, 397.99874123075375], accepted_methods: ["h0-1-amp", "h0-1-amp"], error: None } }
+ROW	2026139012	-18	hybrid-specialist	CQ K1ABC FN42	981.750000	0.610000	Unknown
+ROW	2026139012	-18	hybrid-specialist	PA7COF LU6RBD RR73	956.750000	0.695000	Unknown
+TRUTH	2026149019	-18	PA4XTN DL4GYU 73	736.744995	0.529083	0.000000
+CALLBACK	jtdx	381.047	CQ K1ABC FN42	762.000000	0.440000
+CALLBACK	jtdx	381.105	PA4XTN DL4GYU 73	736.500000	0.535000
+ROW	2026149019	-18	jtdx	CQ K1ABC FN42	762.000000	0.440000	Regular
+ROW	2026149019	-18	jtdx	PA4XTN DL4GYU 73	736.500000	0.535000	Regular
+CALLBACK	hybrid	239.324	CQ K1ABC FN42	762.000000	0.435000
+CALLBACK	hybrid	239.393	PA4XTN DL4GYU 73	737.000000	0.520000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(603.393875ms), Some(428.082958ms), Some(426.67725ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 603.614666ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026149019	-18	hybrid	CQ K1ABC FN42	762.000000	0.435000	Unknown
+ROW	2026149019	-18	hybrid	PA4XTN DL4GYU 73	737.000000	0.520000	Unknown
+CALLBACK	hybrid-specialist	243.884	CQ K1ABC FN42	762.000000	0.435000
+CALLBACK	hybrid-specialist	243.943	PA4XTN DL4GYU 73	737.000000	0.520000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(597.486917ms), Some(433.585209ms), Some(432.240959ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.273717917s, specialist: SpecialistDiagnostics { fec_calls: 3554, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.67601475s, accepted_scores: [243.02394019915616, 287.2046794290228], accepted_methods: ["h0-1-amp", "phase-0"], error: None } }
+ROW	2026149019	-18	hybrid-specialist	CQ K1ABC FN42	762.000000	0.435000	Unknown
+ROW	2026149019	-18	hybrid-specialist	PA4XTN DL4GYU 73	737.000000	0.520000	Unknown
+TRUTH	2026159026	-18	DL9LAY G8EXT GF49	759.147167	0.280721	0.000000
+CALLBACK	jtdx	373.786	CQ K1ABC FN42	784.875000	0.185000
+CALLBACK	jtdx	373.835	DL9LAY G8EXT GF49	759.875000	0.285000
+ROW	2026159026	-18	jtdx	CQ K1ABC FN42	784.875000	0.185000	Regular
+ROW	2026159026	-18	jtdx	DL9LAY G8EXT GF49	759.875000	0.285000	Regular
+CALLBACK	hybrid	212.303	CQ K1ABC FN42	784.375000	0.185000
+CALLBACK	hybrid	212.370	DL9LAY G8EXT GF49	758.875000	0.280000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(595.190125ms), Some(417.611916ms), Some(411.112333ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 595.418166ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026159026	-18	hybrid	CQ K1ABC FN42	784.375000	0.185000	Unknown
+ROW	2026159026	-18	hybrid	DL9LAY G8EXT GF49	758.875000	0.280000	Unknown
+CALLBACK	hybrid-specialist	217.164	CQ K1ABC FN42	784.375000	0.185000
+CALLBACK	hybrid-specialist	217.221	DL9LAY G8EXT GF49	758.875000	0.280000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(601.699875ms), Some(416.96575ms), Some(414.9585ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.259797875s, specialist: SpecialistDiagnostics { fec_calls: 3552, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.657871375s, accepted_scores: [286.95455689295443, 309.15133299824146], accepted_methods: ["h0-1-amp", "h3-4-bessel"], error: None } }
+ROW	2026159026	-18	hybrid-specialist	CQ K1ABC FN42	784.375000	0.185000	Unknown
+ROW	2026159026	-18	hybrid-specialist	DL9LAY G8EXT GF49	758.875000	0.280000	Unknown
+TRUTH	2026169033	-18	CQ DL3AFI NC93	2091.312835	0.332322	0.000000
+CALLBACK	jtdx	261.997	CQ K1ABC FN42	2116.625000	0.245000
+CALLBACK	jtdx	262.051	CQ DL3AFI NC93	2091.125000	0.335000
+ROW	2026169033	-18	jtdx	CQ K1ABC FN42	2116.625000	0.245000	Regular
+ROW	2026169033	-18	jtdx	CQ DL3AFI NC93	2091.125000	0.335000	Regular
+CALLBACK	hybrid	236.190	CQ K1ABC FN42	2116.125000	0.240000
+CALLBACK	hybrid	236.275	CQ DL3AFI NC93	2091.625000	0.330000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(580.316208ms), Some(298.813833ms), Some(297.506291ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 580.541ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026169033	-18	hybrid	CQ K1ABC FN42	2116.125000	0.240000	Unknown
+ROW	2026169033	-18	hybrid	CQ DL3AFI NC93	2091.625000	0.330000	Unknown
+CALLBACK	hybrid-specialist	245.645	CQ K1ABC FN42	2116.125000	0.240000
+CALLBACK	hybrid-specialist	245.711	CQ DL3AFI NC93	2091.625000	0.330000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(588.554167ms), Some(289.838542ms), Some(299.468584ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.253970417s, specialist: SpecialistDiagnostics { fec_calls: 3539, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.665191917s, accepted_scores: [218.04446298512, 337.4716570765819], accepted_methods: ["h0-1-amp", "h0-3-amp"], error: None } }
+ROW	2026169033	-18	hybrid-specialist	CQ K1ABC FN42	2116.125000	0.240000	Unknown
+ROW	2026169033	-18	hybrid-specialist	CQ DL3AFI NC93	2091.625000	0.330000	Unknown
+TRUTH	2026179040	-18	K8UTA JA5BEV -08	2318.509216	0.890014	0.000000
+CALLBACK	jtdx	362.635	CQ K1ABC FN42	2344.250000	0.800000
+CALLBACK	jtdx	362.687	K8UTA JA5BEV -08	2318.250000	0.890000
+ROW	2026179040	-18	jtdx	CQ K1ABC FN42	2344.250000	0.800000	Regular
+ROW	2026179040	-18	jtdx	K8UTA JA5BEV -08	2318.250000	0.890000	Regular
+CALLBACK	hybrid	274.158	CQ K1ABC FN42	2343.750000	0.795000
+CALLBACK	hybrid	274.223	K8UTA JA5BEV -08	2318.750000	0.890000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(680.575625ms), Some(404.869958ms), Some(402.102333ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 680.8045ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026179040	-18	hybrid	CQ K1ABC FN42	2343.750000	0.795000	Unknown
+ROW	2026179040	-18	hybrid	K8UTA JA5BEV -08	2318.750000	0.890000	Unknown
+CALLBACK	hybrid-specialist	271.072	CQ K1ABC FN42	2343.750000	0.795000
+CALLBACK	hybrid-specialist	271.132	K8UTA JA5BEV -08	2318.750000	0.890000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(677.016958ms), Some(412.58525ms), Some(398.078917ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.353994792s, specialist: SpecialistDiagnostics { fec_calls: 3540, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.676752583s, accepted_scores: [276.7425181374526, 331.43212128556746], accepted_methods: ["h0-1-amp", "h0-4-bessel"], error: None } }
+ROW	2026179040	-18	hybrid-specialist	CQ K1ABC FN42	2343.750000	0.795000	Unknown
+ROW	2026179040	-18	hybrid-specialist	K8UTA JA5BEV -08	2318.750000	0.890000	Unknown
+TRUTH	2026108991	-20	CQ DL6MRR CB91	794.351676	0.357053	0.000000
+CALLBACK	jtdx	353.398	CQ K1ABC FN42	819.750000	0.275000
+ROW	2026108991	-20	jtdx	CQ K1ABC FN42	819.750000	0.275000	Regular
+CALLBACK	hybrid	216.631	CQ K1ABC FN42	819.250000	0.265000
+CALLBACK	hybrid	216.705	CQ DL6MRR CB91	794.750000	0.355000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 1, baseline_finish: [Some(622.114583ms), Some(401.902666ms), Some(395.92825ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 1, accepted_seeds: 0, rejected_seeds: 1, elapsed: 623.539708ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026108991	-20	hybrid	CQ K1ABC FN42	819.250000	0.265000	Unknown
+ROW	2026108991	-20	hybrid	CQ DL6MRR CB91	794.750000	0.355000	Unknown
+CALLBACK	hybrid-specialist	214.824	CQ K1ABC FN42	819.250000	0.265000
+CALLBACK	hybrid-specialist	214.903	CQ DL6MRR CB91	794.750000	0.355000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 1, baseline_finish: [Some(623.064375ms), Some(397.434166ms), Some(396.968166ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 1, accepted_seeds: 0, rejected_seeds: 1, elapsed: 5.307642708s, specialist: SpecialistDiagnostics { fec_calls: 3561, tentative_rows: 1, rejected_rows: 0, accepted_rows: 1, residual_searches: 1, budget_exhausted: false, elapsed: 4.683291084s, accepted_scores: [354.31378781249987], accepted_methods: ["h0-1-amp"], error: None } }
+ROW	2026108991	-20	hybrid-specialist	CQ K1ABC FN42	819.250000	0.265000	Unknown
+ROW	2026108991	-20	hybrid-specialist	CQ DL6MRR CB91	794.750000	0.355000	Unknown
+TRUTH	2026118998	-20	W2VYA G9ZXC -02	2586.535137	-0.125115	0.000000
+CALLBACK	jtdx	370.419	CQ K1ABC FN42	2612.000000	-0.220000
+CALLBACK	jtdx	370.474	W2VYA G9ZXC -02	2587.000000	-0.125000
+ROW	2026118998	-20	jtdx	CQ K1ABC FN42	2612.000000	-0.220000	Regular
+ROW	2026118998	-20	jtdx	W2VYA G9ZXC -02	2587.000000	-0.125000	Regular
+CALLBACK	hybrid	218.473	CQ K1ABC FN42	2612.000000	-0.220000
+CALLBACK	hybrid	218.563	W2VYA G9ZXC -02	2587.500000	-0.125000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(550.242666ms), Some(416.228875ms), Some(412.973458ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 550.468375ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026118998	-20	hybrid	CQ K1ABC FN42	2612.000000	-0.220000	Unknown
+ROW	2026118998	-20	hybrid	W2VYA G9ZXC -02	2587.500000	-0.125000	Unknown
+CALLBACK	hybrid-specialist	217.159	CQ K1ABC FN42	2612.000000	-0.220000
+CALLBACK	hybrid-specialist	217.225	W2VYA G9ZXC -02	2587.500000	-0.125000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(548.1645ms), Some(411.136875ms), Some(421.787041ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.189043583s, specialist: SpecialistDiagnostics { fec_calls: 3561, tentative_rows: 1, rejected_rows: 0, accepted_rows: 1, residual_searches: 1, budget_exhausted: false, elapsed: 4.640651833s, accepted_scores: [289.3460635259753], accepted_methods: ["h0-1-amp"], error: None } }
+ROW	2026118998	-20	hybrid-specialist	CQ K1ABC FN42	2612.000000	-0.220000	Unknown
+ROW	2026118998	-20	hybrid-specialist	W2VYA G9ZXC -02	2587.500000	-0.125000	Unknown
+TRUTH	2026129005	-20	G5QAA N7LER R-03	1923.713017	0.765319	0.000000
+CALLBACK	jtdx	340.675	CQ K1ABC FN42	1949.500000	0.675000
+ROW	2026129005	-20	jtdx	CQ K1ABC FN42	1949.500000	0.675000	Regular
+CALLBACK	hybrid	299.067	CQ K1ABC FN42	1949.000000	0.670000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(645.918875ms), Some(379.408166ms), Some(378.547708ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 646.041041ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026129005	-20	hybrid	CQ K1ABC FN42	1949.000000	0.670000	Unknown
+CALLBACK	hybrid-specialist	295.549	CQ K1ABC FN42	1949.000000	0.670000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(639.442875ms), Some(381.054334ms), Some(384.061167ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.317361542s, specialist: SpecialistDiagnostics { fec_calls: 3561, tentative_rows: 1, rejected_rows: 0, accepted_rows: 1, residual_searches: 1, budget_exhausted: false, elapsed: 4.677791917s, accepted_scores: [225.40739419464126], accepted_methods: ["h0-1-amp"], error: None } }
+ROW	2026129005	-20	hybrid-specialist	CQ K1ABC FN42	1949.000000	0.670000	Unknown
+TRUTH	2026139012	-20	PA7COF LU6RBD RR73	956.833270	0.702646	0.000000
+CALLBACK	jtdx	390.913	CQ K1ABC FN42	982.250000	0.610000
+ROW	2026139012	-20	jtdx	CQ K1ABC FN42	982.250000	0.610000	Regular
+CALLBACK	hybrid	208.704	CQ K1ABC FN42	981.750000	0.610000
+CALLBACK	hybrid	513.148	PA7COF LU6RBD RR73	957.250000	0.695000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 1, baseline_finish: [Some(513.095917ms), Some(438.865167ms), Some(436.490625ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 1, accepted_seeds: 0, rejected_seeds: 1, elapsed: 514.347042ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026139012	-20	hybrid	CQ K1ABC FN42	981.750000	0.610000	Unknown
+ROW	2026139012	-20	hybrid	PA7COF LU6RBD RR73	957.250000	0.695000	Unknown
+CALLBACK	hybrid-specialist	212.140	CQ K1ABC FN42	981.750000	0.610000
+CALLBACK	hybrid-specialist	519.741	PA7COF LU6RBD RR73	957.250000	0.695000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 1, baseline_finish: [Some(519.701042ms), Some(437.209625ms), Some(437.2365ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 1, accepted_seeds: 0, rejected_seeds: 1, elapsed: 5.32838875s, specialist: SpecialistDiagnostics { fec_calls: 3540, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.807412166s, accepted_scores: [278.6915751790366, 251.1300911825391], accepted_methods: ["h0-1-amp", "h0-4-bessel"], error: None } }
+ROW	2026139012	-20	hybrid-specialist	CQ K1ABC FN42	981.750000	0.610000	Unknown
+ROW	2026139012	-20	hybrid-specialist	PA7COF LU6RBD RR73	957.250000	0.695000	Unknown
+TRUTH	2026149019	-20	PA4XTN DL4GYU 73	736.744995	0.529083	0.000000
+CALLBACK	jtdx	401.802	CQ K1ABC FN42	762.000000	0.440000
+ROW	2026149019	-20	jtdx	CQ K1ABC FN42	762.000000	0.440000	Regular
+CALLBACK	hybrid	252.787	CQ K1ABC FN42	762.000000	0.435000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(621.30875ms), Some(460.313291ms), Some(457.944458ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 621.425916ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026149019	-20	hybrid	CQ K1ABC FN42	762.000000	0.435000	Unknown
+CALLBACK	hybrid-specialist	250.736	CQ K1ABC FN42	762.000000	0.435000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(613.336834ms), Some(457.507709ms), Some(458.101792ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.319779917s, specialist: SpecialistDiagnostics { fec_calls: 3561, tentative_rows: 1, rejected_rows: 0, accepted_rows: 1, residual_searches: 1, budget_exhausted: false, elapsed: 4.706323416s, accepted_scores: [239.96219527118632], accepted_methods: ["h0-1-amp"], error: None } }
+ROW	2026149019	-20	hybrid-specialist	CQ K1ABC FN42	762.000000	0.435000	Unknown
+TRUTH	2026159026	-20	DL9LAY G8EXT GF49	759.147167	0.280721	0.000000
+CALLBACK	jtdx	402.643	CQ K1ABC FN42	784.875000	0.185000
+ROW	2026159026	-20	jtdx	CQ K1ABC FN42	784.875000	0.185000	Regular
+CALLBACK	hybrid	223.314	CQ K1ABC FN42	784.375000	0.185000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(613.200834ms), Some(446.999084ms), Some(448.448792ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 613.322167ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026159026	-20	hybrid	CQ K1ABC FN42	784.375000	0.185000	Unknown
+CALLBACK	hybrid-specialist	213.652	CQ K1ABC FN42	784.375000	0.185000
+CALLBACK	hybrid-specialist	5297.847	DL9LAY G8EXT GF49	759.148000	0.280250
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(602.886375ms), Some(439.599667ms), Some(446.375625ms)], recovery_budget_skips: 0, recovered_rows: 1, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.297805625s, specialist: SpecialistDiagnostics { fec_calls: 3554, tentative_rows: 2, rejected_rows: 0, accepted_rows: 2, residual_searches: 1, budget_exhausted: false, elapsed: 4.694797333s, accepted_scores: [287.69955206235306, 194.22898741895065], accepted_methods: ["h0-1-amp", "phase-0"], error: None } }
+ROW	2026159026	-20	hybrid-specialist	CQ K1ABC FN42	784.375000	0.185000	Unknown
+ROW	2026159026	-20	hybrid-specialist	DL9LAY G8EXT GF49	759.148000	0.280250	HybridSpecialist
+TRUTH	2026169033	-20	CQ DL3AFI NC93	2091.312835	0.332322	0.000000
+CALLBACK	jtdx	263.492	CQ K1ABC FN42	2116.625000	0.245000
+CALLBACK	jtdx	263.536	CQ DL3AFI NC93	2091.125000	0.335000
+ROW	2026169033	-20	jtdx	CQ K1ABC FN42	2116.625000	0.245000	Regular
+ROW	2026169033	-20	jtdx	CQ DL3AFI NC93	2091.125000	0.335000	Regular
+CALLBACK	hybrid	238.008	CQ K1ABC FN42	2116.125000	0.240000
+CALLBACK	hybrid	574.667	CQ DL3AFI NC93	2091.125000	0.330000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(574.617958ms), Some(296.148125ms), Some(296.577416ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 574.841208ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026169033	-20	hybrid	CQ K1ABC FN42	2116.125000	0.240000	Unknown
+ROW	2026169033	-20	hybrid	CQ DL3AFI NC93	2091.125000	0.330000	Unknown
+CALLBACK	hybrid-specialist	235.390	CQ K1ABC FN42	2116.125000	0.240000
+CALLBACK	hybrid-specialist	573.880	CQ DL3AFI NC93	2091.125000	0.330000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 2, agc_rows: 2, baseline_finish: [Some(573.823208ms), Some(293.664417ms), Some(303.591708ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.261236917s, specialist: SpecialistDiagnostics { fec_calls: 3561, tentative_rows: 1, rejected_rows: 0, accepted_rows: 1, residual_searches: 1, budget_exhausted: false, elapsed: 4.687186875s, accepted_scores: [220.12833517145933], accepted_methods: ["h0-1-amp"], error: None } }
+ROW	2026169033	-20	hybrid-specialist	CQ K1ABC FN42	2116.125000	0.240000	Unknown
+ROW	2026169033	-20	hybrid-specialist	CQ DL3AFI NC93	2091.125000	0.330000	Unknown
+TRUTH	2026179040	-20	K8UTA JA5BEV -08	2318.509216	0.890014	0.000000
+CALLBACK	jtdx	372.338	CQ K1ABC FN42	2344.250000	0.800000
+ROW	2026179040	-20	jtdx	CQ K1ABC FN42	2344.250000	0.800000	Regular
+CALLBACK	hybrid	265.041	CQ K1ABC FN42	2343.750000	0.795000
+HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(676.712375ms), Some(416.569791ms), Some(413.887833ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 676.8345ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
+ROW	2026179040	-20	hybrid	CQ K1ABC FN42	2343.750000	0.795000	Unknown
+CALLBACK	hybrid-specialist	264.747	CQ K1ABC FN42	2343.750000	0.795000
+HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(676.192333ms), Some(421.552041ms), Some(418.465708ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.33997225s, specialist: SpecialistDiagnostics { fec_calls: 3561, tentative_rows: 1, rejected_rows: 0, accepted_rows: 1, residual_searches: 1, budget_exhausted: false, elapsed: 4.663658583s, accepted_scores: [321.49101606726], accepted_methods: ["h0-1-amp"], error: None } }
+ROW	2026179040	-20	hybrid-specialist	CQ K1ABC FN42	2343.750000	0.795000	Unknown

@@ -1,0 +1,22 @@
+    Checking ft8rs-core v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core)
+   Compiling ft8rs-gui v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-gui)
+   Compiling ft8rs-cli v0.0.0 (/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-cli)
+error: the loop variable `n` is used to index `z`
+   --> crates/ft8rs-core/src/decode/hybrid/specialist.rs:462:22
+    |
+462 |             for n in 0..32 {
+    |                      ^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_range_loop
+    = note: `-D clippy::needless-range-loop` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_range_loop)]`
+help: consider using an iterator and enumerate()
+    |
+462 -             for n in 0..32 {
+462 +             for (n, <item>) in z.iter_mut().enumerate().take(32) {
+    |
+
+error: could not compile `ft8rs-core` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `ft8rs-core` (lib) due to 1 previous error
+error: could not compile `ft8rs-core` (lib test) due to 1 previous error

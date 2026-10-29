@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/tmp/ft8rs-single-slot-lab/core/target/release/ft8rs-receiver-lab",
+    "4",
+    "2026106991",
+    "sic-fresh-awgn",
+    "-21,-22",
+    "jtdx,hybrid,hybrid-specialist"
+  ],
+  "wall_seconds": 55.117656167,
+  "cpu_seconds": 67.920416,
+  "visible_cpus": 12,
+  "binary_sha256": "10a90b644c8236d2e1ef7a4ebe169960ad63335c1aa57c4616b6a37f3a6f6f80",
+  "returncode": 0
+}

@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Preserve completed experimental batches between timed jobs; never decode/delete."""
+import datetime
+import hashlib
+import json
+import pathlib
+import shutil
+
+HERE=pathlib.Path(__file__).resolve().parent
+REPO=next(p for p in HERE.parents if (p / "crates/ft8rs-core").is_dir())
+BASE=REPO/"experiments/single-slot"
+ROOT=pathlib.Path('/tmp/ft8rs-single-slot-lab')
+CAMPAIGNS=BASE/'campaigns'
+FIRST=CAMPAIGNS/'01-single-slot-research'
+SECOND=CAMPAIGNS/'02-hybrid-specialist'
+
+
+def copy_new(source,destination):
+    if destination.exists(): return
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copy2(source,destination)
+
+
+def main():
+    FIRST.mkdir(parents=True,exist_ok=True)
+    archive=FIRST/'2026-10-29-single-slot-preserved.tar.gz'
+    assert archive.exists(), 'The first campaign archive must remain preserved.'
+    SECOND.mkdir(parents=True,exist_ok=True)
+    frozen=ROOT/'frozen-hybrid-specialist-v1'
+    if frozen.exists() and not (SECOND/'frozen').exists(): shutil.copytree(frozen,SECOND/'frozen')
+    for path in sorted(HERE.glob('*.py')):
+        digest=hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        copy_new(path,SECOND/'tool-history'/(path.stem+'-'+digest+path.suffix))
+    # Canonical freeze and analyses already live inside this campaign.
+    states=[]
+    for folder in sorted((ROOT/'runs').glob('hybrid-own-*')):
+        metadata_path=folder/'run.json'
+        if not metadata_path.exists():
+            states.append({'name':folder.name,'complete':False});continue
+        metadata=json.loads(metadata_path.read_text())
+        if 'tasks' in metadata:
+            complete=len(metadata['tasks'])==metadata['expected_tasks'] and all(t['returncode']==0 for t in metadata['tasks'])
+        else: complete=metadata.get('returncode')==0
+        target=SECOND/'runs'/folder.name
+        if complete and not target.exists():
+            target.parent.mkdir(exist_ok=True)
+            shutil.copytree(folder,target)
+        states.append({'name':folder.name,'complete':complete,'preserved':target.exists()})
+    for folder in sorted(ROOT.glob('checks-*')):
+        target=SECOND/'checks'/folder.name
+        if (folder/'COMPLETE').exists() and not target.exists():
+            target.parent.mkdir(exist_ok=True)
+            shutil.copytree(folder,target)
+    # Logs are progress snapshots; immutable raw completed runs stay untouched.
+    for path in sorted(ROOT.glob('*specialist*.log'))+sorted(ROOT.glob('hybrid-own-*.log')):
+        target=SECOND/'logs'/path.name
+        target.parent.mkdir(exist_ok=True)
+        shutil.copy2(path,target)
+    for name in ['specialist-workspace-fast.log','specialist-udp-retry.log']:
+        path=ROOT/name
+        if path.exists(): shutil.copy2(path,SECOND/'logs'/name)
+    state={'recorded_at':datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).isoformat(),'freeze_sha256':hashlib.sha256((SECOND/'freeze-hybrid-specialist-v1.json').read_bytes()).hexdigest() if (SECOND/'freeze-hybrid-specialist-v1.json').exists() else None,'runs':states,'originals_deleted':False,'first_campaign_archive':str(FIRST/archive.name)}
+    (SECOND/'status.json').write_text(json.dumps(state,indent=2)+'\n')
+    print('Preserved completed second-campaign batches:',sum(r.get('preserved',False) for r in states),flush=True)
+
+
+if __name__=='__main__':main()

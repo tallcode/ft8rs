@@ -1,0 +1,17 @@
+scenario	seed	snr	method	correct	wrong	ms	message
+awgn	2026102991	-22	native	0	0	161.415	
+awgn	2026102991	-22	blind-conditional	1	0	4636.722	CQ VK8RFT NR34@1075.833/0.436/conditional-phase-0
+awgn	2026112998	-22	native	0	0	148.226	
+awgn	2026112998	-22	blind-conditional	1	0	4662.592	F5XFY DL2GXV -02@2873.113/0.794/conditional-phase-0
+awgn	2026123005	-22	native	0	0	162.871	
+awgn	2026123005	-22	blind-conditional	1	0	4655.191	K7RSO EA7INT R-03@1751.418/-0.109/conditional-phase-0
+awgn	2026133012	-22	native	0	0	190.576	
+awgn	2026133012	-22	blind-conditional	1	0	4629.296	F1GPL PA8SAO RR73@994.990/0.340/conditional-h3-3-amp
+awgn	2026143019	-22	native	0	0	143.380	
+awgn	2026143019	-22	blind-conditional	1	0	4676.265	PA7NWD G5BRE 73@1638.603/0.976/conditional-phase-0
+awgn	2026153026	-22	native	0	0	227.161	
+awgn	2026153026	-22	blind-conditional	1	0	4637.650	EA0YEQ DL8ZIX MG82@545.487/0.507/conditional-phase-0
+awgn	2026163033	-22	native	1	0	199.416	CQ N2TZR LP68@733.375/-0.255
+awgn	2026163033	-22	blind-conditional	1	0	4643.214	CQ N2TZR LP68@733.545/-0.248/conditional-phase-0
+awgn	2026173040	-22	native	0	0	177.857	
+awgn	2026173040	-22	blind-conditional	1	0	4662.102	G4QES JA5WGD -08@1983.673/0.224/conditional-phase-1
