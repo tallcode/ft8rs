@@ -5,7 +5,9 @@ use ft8rs::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
 
 use cpal::traits::StreamTrait;
 use cpal::traits::{DeviceTrait, HostTrait};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,6 +25,7 @@ pub(crate) struct AudioChunk {
     pub samples: Vec<f32>,
     pub capture_ms: i64,
     pub channel_peaks: Vec<f32>,
+    pub xruns: u64,
     pub error: Option<String>,
 }
 
@@ -645,14 +648,9 @@ pub(crate) fn start_input_stream(
     let (tx, rx) = mpsc::channel();
     let stream_config = supported_config.into();
     let error_tx = tx.clone();
-    let err_fn = move |err| {
-        let _ = error_tx.send(AudioChunk {
-            samples: Vec::new(),
-            capture_ms: capture_now_ms(),
-            channel_peaks: Vec::new(),
-            error: Some(format!("soundcard input stream error: {err}")),
-        });
-    };
+    let xruns = Arc::new(AtomicU64::new(0));
+    let error_xruns = Arc::clone(&xruns);
+    let err_fn = move |err| report_capture_error(err, &error_tx, &error_xruns);
     // Use CPAL's conversions for each PCM width, including 24-bit samples in
     // 32-bit containers. Never interpret float samples as 16-bit PCM or divide
     // already-normalized floats by 32768.
@@ -660,7 +658,7 @@ pub(crate) fn start_input_stream(
         ($ty:ty) => {
             device.build_input_stream(
                 stream_config,
-                move |data: &[$ty], _| send_samples(data, channels, channel, &tx),
+                move |data: &[$ty], _| send_samples(data, channels, channel, &tx, &xruns),
                 err_fn,
                 None,
             )
@@ -861,8 +859,31 @@ fn capture_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn send_samples<T>(data: &[T], channels: usize, channel: InputChannel, tx: &Sender<AudioChunk>)
-where
+/// CPAL 0.18.2 reports WASAPI capture discontinuities via the error callback,
+/// then continues delivering samples. These are diagnostics, not a dead stream.
+/// Keep the callback lightweight and carry the count with the next audio block;
+/// all other errors retain the existing fatal GUI/CLI behavior.
+fn report_capture_error(err: cpal::Error, tx: &Sender<AudioChunk>, xruns: &AtomicU64) {
+    if err.kind() == cpal::ErrorKind::Xrun {
+        xruns.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    let _ = tx.send(AudioChunk {
+        samples: Vec::new(),
+        capture_ms: capture_now_ms(),
+        channel_peaks: Vec::new(),
+        xruns: xruns.load(Ordering::Relaxed),
+        error: Some(format!("soundcard input stream error: {err}")),
+    });
+}
+
+fn send_samples<T>(
+    data: &[T],
+    channels: usize,
+    channel: InputChannel,
+    tx: &Sender<AudioChunk>,
+    xruns: &AtomicU64,
+) where
     T: cpal::Sample,
     f32: cpal::FromSample<T>,
 {
@@ -880,6 +901,7 @@ where
         samples,
         capture_ms,
         channel_peaks,
+        xruns: xruns.load(Ordering::Relaxed),
         error: None,
     });
 }
@@ -938,6 +960,59 @@ mod tests {
     use ft8rs::SlotTimestamp;
 
     const SR: u32 = 12_000; // downsample_12k is a passthrough here, keeping buffers small
+
+    #[test]
+    fn capture_xruns_do_not_stop_audio_and_reach_diagnostics() {
+        use super::{report_capture_error, send_samples, AtomicU64};
+        let (tx, rx) = std::sync::mpsc::channel();
+        let xruns = AtomicU64::new(0);
+        // A driver may flag more than one startup packet. Neither notification
+        // may enter the fatal-error queue consumed by both GUI and CLI.
+        for _ in 0..2 {
+            report_capture_error(cpal::ErrorKind::Xrun.into(), &tx, &xruns);
+        }
+        assert!(matches!(
+            rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        for _ in 0..2 {
+            send_samples(&[0.25f32, -0.5], 1, InputChannel::Mono, &tx, &xruns);
+            let chunk = rx.recv().unwrap();
+            assert_eq!(chunk.samples, [0.25, -0.5]);
+            assert_eq!(chunk.channel_peaks, [0.5]);
+            assert_eq!(chunk.xruns, 2);
+            assert!(chunk.error.is_none());
+        }
+    }
+
+    #[test]
+    fn capture_fatal_errors_keep_their_kind_independent_stop_behavior() {
+        use super::{report_capture_error, AtomicU64};
+        let (tx, rx) = std::sync::mpsc::channel();
+        let xruns = AtomicU64::new(0);
+        for kind in [
+            cpal::ErrorKind::DeviceNotAvailable,
+            cpal::ErrorKind::PermissionDenied,
+            cpal::ErrorKind::StreamInvalidated,
+            cpal::ErrorKind::BackendError,
+        ] {
+            // Even text identical to an xrun must remain fatal if its error kind
+            // is not Xrun. Never classify backend errors by matching strings.
+            report_capture_error(
+                cpal::Error::with_message(kind, "A buffer underrun or overrun occurred."),
+                &tx,
+                &xruns,
+            );
+            let chunk = rx.recv().unwrap();
+            assert!(chunk.samples.is_empty());
+            assert_eq!(chunk.xruns, 0);
+            assert_eq!(
+                chunk.error.as_deref(),
+                Some("soundcard input stream error: A buffer underrun or overrun occurred.")
+            );
+        }
+    }
 
     /// Feed `chunks` blocks of `chunk_len` samples each, at real-time capture
     /// timestamps starting from `start_ms`, collecting every emitted stage and the
@@ -1101,7 +1176,7 @@ mod tests {
             f32: cpal::FromSample<T>,
         {
             let (tx, rx) = std::sync::mpsc::channel();
-            super::send_samples(data, 2, InputChannel::Mono, &tx);
+            super::send_samples(data, 2, InputChannel::Mono, &tx, &super::AtomicU64::new(0));
             rx.recv().unwrap()
         }
         let expected = [0.25, -0.5];

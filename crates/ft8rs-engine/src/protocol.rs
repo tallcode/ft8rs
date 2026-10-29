@@ -123,6 +123,8 @@ pub enum EngineEvent {
     CaptureLevels {
         channel_peaks: Vec<f32>,
         peak: f32,
+        /// Cumulative non-fatal capture discontinuity reports since this stream opened.
+        xruns: u64,
     },
     /// A failed capture switch kept the previous device; reconcile the picker
     /// only if the operator has not requested a newer selection meanwhile.

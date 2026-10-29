@@ -100,6 +100,7 @@ pub struct Ft8rsApp {
     input_peak: Option<f32>,         // recent capture peak; None until audio arrives
     capture_format: Option<(String, SoundcardFormatInfo)>,
     channel_peaks: Vec<f32>,
+    capture_xruns: u64,
     // Last slot's capture diagnostics (samples, blocks, avg_block, jitter_ms) and
     // decode count — an at-a-glance readout for locating capture/alignment issues.
     capture_diag: Option<(usize, u32, u32, i64, u32)>,
@@ -225,6 +226,7 @@ impl Ft8rsApp {
             input_peak: None,
             capture_format: None,
             channel_peaks: Vec::new(),
+            capture_xruns: 0,
             capture_diag: None,
             last_slot_decodes: None,
             status: EngineStatus::Idle,
@@ -335,6 +337,7 @@ impl Ft8rsApp {
             self.capture_format = None;
             self.channel_peaks.clear();
             self.capture_diag = None;
+            self.capture_xruns = 0;
             return;
         }
         if self.dx_needs_hiscall() {
@@ -356,6 +359,7 @@ impl Ft8rsApp {
         self.capture_diag = None;
         self.channel_peaks.clear();
         self.last_slot_decodes = None;
+        self.capture_xruns = 0;
         if self
             .engine
             .send(EngineCommand::StartMonitor(state.clone()))
@@ -416,6 +420,7 @@ impl Ft8rsApp {
                         self.capture_format = None;
                         self.channel_peaks.clear();
                         self.capture_diag = None;
+                        self.capture_xruns = 0;
                     }
                     self.status = status;
                 }
@@ -430,13 +435,16 @@ impl Ft8rsApp {
                     self.channel_peaks.clear();
                     self.capture_diag = None;
                     self.last_slot_decodes = None;
+                    self.capture_xruns = 0;
                 }
                 EngineEvent::CaptureLevels {
                     channel_peaks,
                     peak,
+                    xruns,
                 } => {
                     self.channel_peaks = channel_peaks;
                     self.input_peak = Some(peak);
+                    self.capture_xruns = xruns;
                 }
                 EngineEvent::CaptureSelectionRejected {
                     requested_device,
@@ -1129,6 +1137,15 @@ impl Ft8rsApp {
                             );
                         }
                     });
+                }
+                if self.capture_xruns > 0 {
+                    ui.label(
+                        RichText::new(format!(
+                            "Audio discontinuity reports: {} (monitoring continues)",
+                            self.capture_xruns
+                        ))
+                        .weak(),
+                    );
                 }
                 // Per-slot capture diagnostics: window length (should be ~14–15 s),
                 // driver block size/count, arrival jitter (large ⇒ unreliable capture

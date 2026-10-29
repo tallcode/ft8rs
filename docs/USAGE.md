@@ -218,6 +218,7 @@ acceptance, use identical audio, context and database with the
 | Different JTDX/Hybrid results across runs or machines | CallDB hash, SWL/AGC, logical partitions, context, FFT backend and build profile |
 | Device change fails | Reported capture error; the previous working input remains active |
 | WSJT-X comparison is empty | Incoming host/port, port conflicts and new FT8 UDP reports; outgoing port 2238 is a separate setting |
+| Audio discontinuity reports increase | CPAL reports capture buffer timing gaps; monitoring continues and Audio shows a cumulative count. This is separate from device-busy, access-denied or device-loss errors, which still stop capture. Windows WASAPI capture uses shared mode. |
 | Messages arrive after the display target | Measure first/last callback separately from worker completion and queueing; SWL/deep searches can cost more |
 
 Technical limitations, the known JTDX long-recording miss and the partial
