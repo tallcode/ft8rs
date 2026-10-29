@@ -202,6 +202,7 @@ fn run_monitor(
                     let _ = event_tx.try_send(EngineEvent::CaptureLevels {
                         channel_peaks: channel_peaks.clone(),
                         peak: input_peak,
+                        xruns: chunk.xruns,
                     });
                     channel_peaks.fill(0.0);
                     input_peak = 0.0;
