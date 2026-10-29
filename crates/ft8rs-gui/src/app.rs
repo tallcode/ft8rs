@@ -1659,6 +1659,13 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("audio_channel", self.input_channel.as_str().to_string());
     }
 
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        // eframe defaults to translucent near-black. Use the opaque panel
+        // background so uncovered surface pixels match the UI during resizing.
+        let [r, g, b, _] = visuals.panel_fill.to_array();
+        egui::Color32::from_rgb(r, g, b).to_normalized_gamma_f32()
+    }
+
     // eframe 0.35: the root entry point is `ui` (a `&mut Ui` with no margin),
     // not `update(ctx)`. Panels now `.show(ui, …)` into that ui; the Context is
     // reached via `ui.ctx()`.
