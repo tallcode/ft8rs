@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="ft8.rs 是一款只接收、不发射的 FT8 解码软件。下载软件，连接接收机音频，开始收听。">
-    <title>ft8.rs — FT8 接收与解码</title>
+    <meta name="description" content="ft8.rs 基于 WSJT-X 和 JTDX，以 Rust 重新实现 FT8 解码，并加入了自研的实验性解码功能。">
+    <title>ft8.rs — FT8 解码器的 Rust 实现</title>
     <link rel="stylesheet" href="${asset_prefix}style.css">
     <link rel="alternate" hreflang="zh" href="${language_prefix}zh/">
     <link rel="alternate" hreflang="en" href="${language_prefix}en/">
@@ -12,7 +12,7 @@
   <body>
     <header>
       <h1>ft8.rs</h1>
-      <p>FT8 接收与解码</p>
+      <p>FT8 解码器的 Rust 实现</p>
       <nav aria-label="页面导航">
         <a href="#download">下载</a>
         <a href="#usage">使用说明</a>
@@ -24,10 +24,10 @@
     <main>
       <section aria-labelledby="about">
         <h2 id="about">这是什么</h2>
-        <p>FT8 是业余无线电中用于弱信号通信的一种数字模式。它以 15 秒为一个收发时隙，通过简短、结构化的消息交换呼号、网格位置、信号报告和通联确认，适合在信号较弱时进行基本信息交流。它不是语音模式，也不是用来长篇聊天的。更多背景可阅读 <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">WSJT-X 官方用户指南</a>。</p>
-        <p>ft8.rs 是一款 FT8 解码软件。将电台或 SDR 的接收音频送入电脑，就可以查看收到的呼号、信号强度和消息。</p>
+        <p>ft8.rs 是一款基于 WSJT-X 和 JTDX 的 FT8 解码软件，以 Rust 重新实现，并加入了自研的实验性解码功能。</p>
         <p>它只接收，不带发射功能。你可以用它收听频段活动，也可以针对一个呼号持续监听。软件提供 WSJT-X、JTDX、Hybrid 和 DX 四种解码模式。</p>
         <p>如果你同时使用 WSJT-X，还可以通过 Compare 在同一张消息列表中对照两个软件的接收结果。</p>
+        <p>FT8 是业余无线电中用于弱信号通信的一种数字模式。它以 15 秒为一个收发时隙，通过简短、结构化的消息交换呼号、网格位置、信号报告和通联确认，适合在信号较弱时进行基本信息交流。它不是语音模式，也不是用来长篇聊天的。更多背景可阅读 <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">WSJT-X 官方用户指南</a>。</p>
       </section>
 
       <section aria-labelledby="download">
@@ -40,10 +40,10 @@
           <li><a href="$linux_url">Linux 64 位下载（tar.gz）</a><br>
             <span class="note">目前仅提供命令行工具，解压后在终端运行 <code>./ft8rs --help</code>。</span></li>
         </ul>
-        <p class="note">Windows 和 Linux 安装包适用于支持 x86-64-v3 指令集的 Intel / AMD 处理器，不适用于 ARM。macOS 暂未提供安装包。</p>
-        <p class="note">目前提供的程序未做代码签名。Windows 可能显示“未知发布者”或 SmartScreen 提示；请确认下载来自本项目的 GitHub Releases，并可使用下方的校验文件核对下载完整性。</p>
-        <p>安装包内已包含呼号数据库 <code>ALLCALL7.TXT</code>，请将它保留在程序旁边。它供 JTDX 相关解码路径过滤部分误解码。</p>
-        <p>数据库可从 <a href="https://sourceforge.net/projects/jtdx/files/">JTDX 官方下载目录</a>单独更新，目前核对的版本为 <strong>20251217</strong>（<code>ALLCALL7_20251217_rc160.zip</code>）。退出软件后，将压缩包中的 <code>ALLCALL7.TXT</code> 替换到程序旁边，再重新启动即可。以后更新时，请在该目录中选择日期较新的 ALLCALL7 数据库压缩包。</p>
+        <p class="download-note">Windows 和 Linux 安装包适用于支持 x86-64-v3 指令集的 Intel / AMD 处理器，不适用于 ARM。macOS 暂未提供安装包。</p>
+        <p class="download-note">目前提供的程序未做代码签名。Windows 可能显示“未知发布者”或 SmartScreen 提示；请确认下载来自本项目的 GitHub Releases，并可使用下方的校验文件核对下载完整性。</p>
+        <p>安装包内已包含呼号数据库 <code>ALLCALL7.TXT</code>，请将它保留在程序旁边。JTDX 及相关模式会参考这份呼号库，帮助过滤部分错误解码。</p>
+        <p>数据库可从 <a href="https://sourceforge.net/projects/jtdx/files/">JTDX 官方下载目录</a>单独更新，目前核对的版本为 <strong>20251217</strong>（<code>ALLCALL7_20251217_rc160.zip</code>）。</p>
         <p><a href="$release_url">本次发布详情</a> · <a href="$checksums_url">下载校验文件</a> · <a href="https://github.com/tallcode/ft8rs/releases">所有版本</a></p>
       </section>
 
@@ -59,10 +59,7 @@
         </ol>
         <h3 id="station">什么时候填写自己的呼号</h3>
         <p>普通频段收听可以留空，没有自己的呼号也能使用。在 <strong>Settings → Station</strong> 中，<strong>My Callsign</strong> 填写自己的呼号，<strong>My Grid</strong> 填写自己的网格位置；它们与主窗口中目标电台的 <strong>Callsign / Grid</strong> 是分开的。</p>
-        <ul>
-          <li><strong>关注涉及自己呼号的消息时：</strong>填写正确的 My Callsign，可以为解码器提供已知呼号线索，辅助部分弱信号和压缩呼号的识别；消息列表也会突出显示自己的呼号。这不是所有信号都会更容易解码的增益开关。</li>
-          <li><strong>使用 DX 关注一个目标时：</strong>主窗口的目标 Callsign 是必填项，自己的呼号仍可留空。如果同时提供有效且不同的本站呼号和目标呼号，软件可启用额外的呼号对上下文恢复，尝试补充与这对呼号有关的消息。</li>
-        </ul>
+        <p>填写正确的 My Callsign，可以为解码器提供已知呼号线索，辅助部分弱信号和压缩呼号的识别；消息列表也会突出显示自己的呼号。这不是所有信号都会更容易解码的增益开关。</p>
         <p>这些字段只提供接收和解码上下文。填写呼号不会启用发射功能，ft8.rs 始终只接收。</p>
 
         <h3 id="modes">怎样选择解码模式</h3>
@@ -75,7 +72,7 @@
           <dt>Hybrid</dt>
           <dd>同时运行 WSJT-X 和两路 JTDX 解码，再合并结果、去除重复消息。两路 JTDX 分别使用原始音频和自动增益调整后的音频。适合希望综合不同解码方式的用户，会使用更多计算资源；还可以开启下方的 SIC 和实验解码功能尝试补充结果。</dd>
           <dt>DX</dt>
-          <dd>针对一个目标呼号持续监听，显示与目标有关的消息。先在主窗口的 <strong>Callsign</strong> 中填入目标呼号，再开始收听；双击已解码的消息也可以选中目标并设置接收音频频率。DX 会自行管理 SWL 和深度搜索，不需要再调整它们的通用开关。</dd>
+          <dd>针对一个目标呼号持续监听，显示与目标有关的消息。先在主窗口的 <strong>Callsign</strong> 中填入目标呼号，再开始收听；双击已解码的消息也可以选中目标并设置接收音频频率。自己的呼号可留空；如果同时提供有效且不同的本站呼号和目标呼号，还可启用额外的呼号对上下文恢复。DX 会自行管理 SWL 和深度搜索，不需要再调整它们的通用开关。</dd>
         </dl>
 
         <h3 id="hybrid">Hybrid 的解码选项</h3>
@@ -103,6 +100,15 @@
         <p><strong>Match ± Hz</strong> 是频率匹配容差，默认为 ±7 Hz。同一时隙、消息内容匹配且音频频率差在容差内时，会合并为“两者都有”；SNR 或 DT 数值不必完全相同。调整容差只影响之后收到的消息。</p>
         <p>Compare 只用于显示对照，不会把 WSJT-X 的消息送回 ft8.rs 帮助解码，颜色也不代表消息一定正确。<strong>Settings → Output</strong> 则是把 ft8.rs 的结果发送给其他软件，默认端口为 <code>2238</code>，与这里的接收设置是两个功能。</p>
 
+        <h3 id="sensitivity">灵敏度对比</h3>
+        <p>我们生成了 144 组包含已知目标消息的 FT8 音频，专门测试稳定弱信号和几种干扰条件。在这组测试中，开启实验解码的 Hybrid 解出了 102 组目标；原有 Hybrid 为 50 组。</p>
+        <figure class="sensitivity-chart">
+          <img src="${asset_prefix}sensitivity.svg" width="680" height="296" alt="144 组测试中，WSJT-X 解出 39 组、JTDX 解出 30 组、Hybrid 解出 50 组、Hybrid 加实验解码解出 102 组。">
+          <figcaption>图中是解出的已知目标数，满分为 144。WSJT-X 和 JTDX 指 ft8.rs 内重新实现的解码路径，并非另行运行的原版程序。</figcaption>
+        </figure>
+        <p>测试音频由 FT8 消息波形（参照 WSJT-X 的 <code>gen_ft8wave.f90</code> 实现生成）与人工生成的噪声、持续单音或重叠信号混合而成；每条路径都处理同一份 15 秒音频，并按预先知道的消息、频率和时间核对结果。另外 48 组没有目标消息的控制音频用于检查误解码，未计入图表。</p>
+        <p>这是一组有意挑选的实验条件。日常接收中，弱信号往往会同时受到变化的衰落、漂移和干扰影响，很少有这样稳定、可控的信号。因此，图中的提升不能推算为实际使用时的解码率，也不保证每一轮都能多收到消息。</p>
+
         <h3>没有收到消息？</h3>
         <p>先检查接收频率、电脑时间和音频输入。在 <strong>Settings → Audio</strong> 查看电平，确认选中的是接收机音频，且输入没有过载。如果电平一直没有变化，请检查设备、声道和系统的音频输入权限。</p>
 
@@ -115,7 +121,7 @@
     </main>
 
     <footer>
-      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://wsjtx.github.io/wsjtx/index.html">WSJT-X 官网</a> · <a href="https://github.com/WSJTX/wsjtx">WSJT-X 源码</a> · <a href="https://github.com/tallcode/ft8rs/issues">反馈问题</a> · GPL-3.0-only</p>
+      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://wsjtx.github.io/wsjtx/index.html">WSJT-X 官网</a> · <a href="https://wsjt.sourceforge.io/FT4_FT8_QEX.pdf">技术资料</a> · GPL-3.0-only</p>
     </footer>
   </body>
 </html>

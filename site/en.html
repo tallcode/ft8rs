@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="ft8.rs is a receive-only FT8 decoder. Download the app, connect your receiver's audio, and start listening.">
-    <title>ft8.rs — FT8 reception and decoding</title>
+    <meta name="description" content="ft8.rs reimplements FT8 decoding from WSJT-X and JTDX in Rust, with additional experimental decoding features.">
+    <title>ft8.rs — A Rust implementation of an FT8 decoder</title>
     <link rel="stylesheet" href="${asset_prefix}style.css">
     <link rel="alternate" hreflang="zh" href="${language_prefix}zh/">
     <link rel="alternate" hreflang="en" href="${language_prefix}en/">
@@ -12,7 +12,7 @@
   <body>
     <header>
       <h1>ft8.rs</h1>
-      <p>FT8 reception and decoding</p>
+      <p>A Rust implementation of an FT8 decoder</p>
       <nav aria-label="Page navigation">
         <a href="#download">Download</a>
         <a href="#usage">Getting started</a>
@@ -24,10 +24,10 @@
     <main>
       <section aria-labelledby="about">
         <h2 id="about">About</h2>
-        <p>FT8 is an amateur-radio digital mode for weak-signal communication. It uses 15-second transmit/receive slots and short, structured messages to exchange callsigns, grid locators, signal reports and contact acknowledgements. It is intended for basic exchanges rather than voice or long conversations. See the <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">official WSJT-X User Guide</a> for background.</p>
-        <p>ft8.rs decodes FT8 signals. Feed audio from your radio or SDR into your computer to see received callsigns, signal levels and messages.</p>
+        <p>ft8.rs is an FT8 decoder based on WSJT-X and JTDX, reimplemented in Rust with additional experimental decoding features developed for this project.</p>
         <p>It is receive-only, with no transmit function. Listen to activity across the band or follow a particular callsign. Four decoding modes are available: WSJT-X, JTDX, Hybrid and DX.</p>
         <p>If you also use WSJT-X, Compare lets you view both programs' reception results in one message list.</p>
+        <p>FT8 is an amateur-radio digital mode for weak-signal communication. It uses 15-second transmit/receive slots and short, structured messages to exchange callsigns, grid locators, signal reports and contact acknowledgements. It is intended for basic exchanges rather than voice or long conversations. See the <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">official WSJT-X User Guide</a> for background.</p>
       </section>
 
       <section aria-labelledby="download">
@@ -40,10 +40,10 @@
           <li><a href="$linux_url">Download for Linux 64-bit (tar.gz)</a><br>
             <span class="note">Command-line tool only. Extract the archive and run <code>./ft8rs --help</code> in a terminal.</span></li>
         </ul>
-        <p class="note">Windows and Linux packages require an Intel / AMD processor with x86-64-v3 support. They do not run on ARM. A macOS package is not currently available.</p>
-        <p class="note">The distributed programs are not code-signed. Windows may show an “Unknown publisher” or SmartScreen prompt. Check that your download comes from this project's GitHub Releases; the checksum file below can also be used to verify download integrity.</p>
-        <p>The callsign database, <code>ALLCALL7.TXT</code>, is included. Keep it next to the program. JTDX-based decoding paths use it to filter some false decodes.</p>
-        <p>You can update the database separately from the <a href="https://sourceforge.net/projects/jtdx/files/">official JTDX download directory</a>. The currently verified version is <strong>20251217</strong> (<code>ALLCALL7_20251217_rc160.zip</code>). Exit ft8.rs, replace <code>ALLCALL7.TXT</code> next to the program with the file from the archive, then restart. For future updates, choose the newest dated ALLCALL7 database archive in that directory.</p>
+        <p class="download-note">Windows and Linux packages require an Intel / AMD processor with x86-64-v3 support. They do not run on ARM. A macOS package is not currently available.</p>
+        <p class="download-note">The distributed programs are not code-signed. Windows may show an “Unknown publisher” or SmartScreen prompt. Check that your download comes from this project's GitHub Releases; the checksum file below can also be used to verify download integrity.</p>
+        <p>The callsign database, <code>ALLCALL7.TXT</code>, is included. Keep it next to the program. JTDX and related modes use this database to help reject false decodes.</p>
+        <p>You can update the database separately from the <a href="https://sourceforge.net/projects/jtdx/files/">official JTDX download directory</a>. The currently verified version is <strong>20251217</strong> (<code>ALLCALL7_20251217_rc160.zip</code>).</p>
         <p><a href="$release_url">Release details</a> · <a href="$checksums_url">Download checksums</a> · <a href="https://github.com/tallcode/ft8rs/releases">All versions</a></p>
       </section>
 
@@ -59,10 +59,7 @@
         </ol>
         <h3 id="station">When to enter your own callsign</h3>
         <p>Leave it blank for general band listening; you can use ft8.rs without having a callsign. In <strong>Settings → Station</strong>, <strong>My Callsign</strong> is your own callsign and <strong>My Grid</strong> is your grid locator. They are separate from the target station's <strong>Callsign / Grid</strong> in the main window.</p>
-        <ul>
-          <li><strong>When following messages involving your callsign:</strong> entering the correct My Callsign supplies known-call context that can help decode some weak signals and resolve compressed callsigns. Your callsign is also highlighted in the message list. It is not a general sensitivity boost for all signals.</li>
-          <li><strong>When following a target in DX:</strong> the target Callsign in the main window is required, but your own callsign remains optional. A valid, distinct own/target callsign pair enables additional context recovery to attempt supplementary messages involving that pair.</li>
-        </ul>
+        <p>Entering the correct My Callsign supplies known-call context that can help decode some weak signals and resolve compressed callsigns. Your callsign is also highlighted in the message list. It is not a general sensitivity boost for all signals.</p>
         <p>These fields supply reception and decoding context only. Entering a callsign does not enable transmission; ft8.rs remains receive-only.</p>
 
         <h3 id="modes">Choosing a decoding mode</h3>
@@ -75,7 +72,7 @@
           <dt>Hybrid</dt>
           <dd>Runs WSJT-X and two JTDX decoding paths, then merges their results and removes duplicate messages. The JTDX paths use the original audio and audio with automatic gain adjustment. Choose it to combine different decoding approaches; it uses more computing resources. SIC and experimental decoding, described below, can attempt additional recovery.</dd>
           <dt>DX</dt>
-          <dd>Follows a target callsign and displays messages related to it. Enter the target in the main window's <strong>Callsign</strong> field before listening, or double-click a decoded message to select its target and audio frequency. DX manages SWL and deep searches internally, so their general switches do not need adjustment.</dd>
+          <dd>Follows a target callsign and displays messages related to it. Enter the target in the main window's <strong>Callsign</strong> field before listening, or double-click a decoded message to select its target and audio frequency. Your own callsign is optional; supplying a valid, distinct own/target callsign pair enables additional context recovery. DX manages SWL and deep searches internally, so their general switches do not need adjustment.</dd>
         </dl>
 
         <h3 id="hybrid">Hybrid decoding options</h3>
@@ -103,6 +100,15 @@
         <p><strong>Match ± Hz</strong> is the frequency matching tolerance, initially ±7 Hz. Messages are merged as “both” when their slot and message content match and their audio frequencies are within this tolerance. SNR and DT do not have to be identical. Changes to the tolerance affect subsequently received messages.</p>
         <p>Compare only changes the display; WSJT-X messages do not feed back into ft8.rs decoding, and source colors do not prove a message is correct. <strong>Settings → Output</strong> is a separate function that sends ft8.rs results to other programs, using port <code>2238</code> by default.</p>
 
+        <h3 id="sensitivity">Sensitivity comparison</h3>
+        <p>We generated 144 FT8 recordings with known target messages to test stable weak signals and selected interference conditions. In this set, Hybrid with experimental decoding recovered 102 targets; standard Hybrid recovered 50.</p>
+        <figure class="sensitivity-chart">
+          <img src="${asset_prefix}sensitivity.svg" width="680" height="296" alt="Of 144 test cases, WSJT-X recovered 39 targets, JTDX 30, Hybrid 50, and Hybrid with experimental decoding 102.">
+          <figcaption>The chart shows known targets recovered out of 144. WSJT-X and JTDX refer to their reimplemented paths inside ft8.rs, not separately run original applications.</figcaption>
+        </figure>
+        <p>Each recording combines a generated FT8 waveform (produced by an implementation based on WSJT-X's <code>gen_ft8wave.f90</code>) with synthetic noise, a continuous tone, or overlapping signals. Every path processes the same 15-second audio, and results are checked against the known message, frequency and timing. Another 48 recordings without target messages were used to check for false decodes; they are excluded from the chart.</p>
+        <p>These conditions were deliberately chosen for the experiment. In everyday reception, weak signals often face changing fading, drift and interference; they are rarely this stable or controlled. The increase shown here cannot be used to predict real-world decode rates, and it does not mean every receive slot will yield more messages.</p>
+
         <h3>No messages?</h3>
         <p>Check the receive frequency, computer clock and audio input first. In <strong>Settings → Audio</strong>, check that the receiver's audio is selected and the level is not overloaded. If the level never changes, check the device, channel and your system's audio input permissions.</p>
 
@@ -115,7 +121,7 @@
     </main>
 
     <footer>
-      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://wsjtx.github.io/wsjtx/index.html">WSJT-X website</a> · <a href="https://github.com/WSJTX/wsjtx">WSJT-X source</a> · <a href="https://github.com/tallcode/ft8rs/issues">Report an issue</a> · GPL-3.0-only</p>
+      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://wsjtx.github.io/wsjtx/index.html">WSJT-X website</a> · <a href="https://wsjt.sourceforge.io/FT4_FT8_QEX.pdf">Technical reference</a> · GPL-3.0-only</p>
     </footer>
   </body>
 </html>
