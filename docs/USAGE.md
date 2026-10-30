@@ -198,6 +198,10 @@ Configure WSJT-X to send its UDP reports to that address. **Listen to WSJT-X
 (UDP)** remembers your choice, including a previously saved disabled setting.
 The display merges matching local/external messages
 and colors local-only, WSJT-X-only and shared rows; its legend shows the colors.
+Merged rows keep resolved callsigns from either source instead of replacing
+them with `<...>`, while retaining local signal measurements and provenance.
+UDP annotations are ignored; local annotations are preserved, including those
+from later matching local observations, without duplicating provenance tags.
 This feed does not seed the local decoder's hash/AP state or change its results.
 New live FT8 Decode packets are accepted, including low-confidence results;
 replays, off-air WAV playback and other packet types are ignored. A free
