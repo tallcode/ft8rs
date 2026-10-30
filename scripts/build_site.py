@@ -76,6 +76,7 @@ def build(release, output):
     (output / "index.html").write_text(fallback, encoding="utf-8")
     shutil.copy2(SITE / "style.css", output / "style.css")
     shutil.copy2(SITE / "language.js", output / "language.js")
+    shutil.copy2(SITE / "sensitivity.svg", output / "sensitivity.svg")
     (output / ".nojekyll").touch()
 
 

@@ -57,6 +57,7 @@ class BuildSiteTests(unittest.TestCase):
             for asset in release["assets"]:
                 self.assertIn(asset["browser_download_url"], links.links)
             self.assertTrue((output / "style.css").is_file())
+            self.assertTrue((output / "sensitivity.svg").is_file())
             self.assertTrue((output / ".nojekyll").is_file())
 
     def test_both_languages_share_release_and_have_manual_language_links(self):

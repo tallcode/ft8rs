@@ -81,6 +81,31 @@ ol {
   font-size: 0.925rem;
 }
 
+.download-note {
+  margin: 0.5rem 0;
+  color: #6b6b6b;
+  font-size: 0.85rem;
+  line-height: 1.65;
+}
+
+.sensitivity-chart {
+  margin: 1.25rem 0 2rem;
+  overflow-x: auto;
+}
+
+.sensitivity-chart img {
+  display: block;
+  width: 100%;
+  min-width: 35rem;
+  height: auto;
+}
+
+.sensitivity-chart figcaption {
+  color: #555;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
 dt {
   font-weight: 600;
 }
