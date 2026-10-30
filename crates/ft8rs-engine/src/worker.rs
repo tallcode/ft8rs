@@ -415,8 +415,10 @@ fn supervise(
             }
         };
         let started = Instant::now();
+        let mut deadline_expired = false;
         let result = (|| -> Result<(), String> {
             if started >= deadline {
+                deadline_expired = true;
                 return Err("live decode deadline expired in queue".into());
             }
             if worker.is_none() {
@@ -435,6 +437,7 @@ fn supervise(
                     pending.push_back(command);
                 }
                 if started.elapsed() >= budget || Instant::now() >= deadline {
+                    deadline_expired = true;
                     return Err("live decode exceeded the 10-second budget".into());
                 }
                 match child
@@ -470,7 +473,11 @@ fn supervise(
                 return;
             }
             log::warn!("{error}; worker terminated and reaped before next slot");
-            let _ = events.send(EngineEvent::Error(error));
+            // A deadline is normal live scheduling: keep the diagnostic log
+            // without showing a GUI error. Actual worker failures still surface.
+            if !deadline_expired {
+                let _ = events.send(EngineEvent::Error(error));
+            }
             if let Some(timestamp) = timestamp {
                 aborted = Some(timestamp.clone());
                 let _ = events.send(EngineEvent::SlotComplete { timestamp, count });
@@ -569,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn deadline_kills_cpu_work_preserves_callbacks_and_recovers_next_slot() {
+    fn deadline_silently_kills_cpu_work_preserves_callbacks_and_recovers_next_slot() {
         let (tx, rx) = mpsc::channel();
         let (events, results) = mpsc::channel();
         let thread = thread::spawn(move || {
@@ -585,13 +592,11 @@ mod tests {
         tx.send(stage("261030_120000", SlotStage::N50, vec![0.0; 32]))
             .unwrap();
         let mut decoded = 0;
-        let mut timeout = false;
         loop {
             match results.recv_timeout(Duration::from_secs(3)).unwrap() {
                 EngineEvent::Decode(_) => decoded += 1,
                 EngineEvent::Error(message) => {
-                    assert!(message.contains("budget"));
-                    timeout = true;
+                    panic!("normal deadline must not show a GUI error: {message}");
                 }
                 EngineEvent::SlotComplete { count, .. } => {
                     assert_eq!(count, 1);
@@ -601,7 +606,6 @@ mod tests {
             }
         }
         assert_eq!(decoded, 1);
-        assert!(timeout);
         assert!(start.elapsed() < Duration::from_secs(2));
         tx.send(stage("261030_120015", SlotStage::N50, vec![0.0; 32]))
             .unwrap();
@@ -673,11 +677,12 @@ mod tests {
         tx.send(stage("261030_120000", SlotStage::N50, vec![0.0; 32]))
             .unwrap();
         loop {
-            if matches!(
-                results.recv_timeout(Duration::from_secs(3)).unwrap(),
-                EngineEvent::SlotComplete { .. }
-            ) {
-                break;
+            match results.recv_timeout(Duration::from_secs(3)).unwrap() {
+                EngineEvent::SlotComplete { .. } => break,
+                EngineEvent::Error(message) => {
+                    panic!("cumulative deadline must be silent: {message}")
+                }
+                _ => {}
             }
         }
         assert!(
@@ -707,9 +712,31 @@ mod tests {
             || panic!("expired work must not start a child"),
             Duration::from_millis(100),
         );
-        assert!(results.try_iter().any(
-            |event| matches!(event, EngineEvent::Error(message) if message.contains("queue"))
-        ));
+        let results: Vec<_> = results.try_iter().collect();
+        assert!(!results
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Error(_))));
+        assert!(results
+            .iter()
+            .any(|event| matches!(event, EngineEvent::SlotComplete { count: 0, .. })));
+    }
+
+    #[test]
+    fn actual_worker_failures_still_reach_the_gui() {
+        let (tx, rx) = mpsc::channel();
+        let (events, results) = mpsc::channel();
+        tx.send(stage("261030_120000", SlotStage::N50, vec![]))
+            .unwrap();
+        tx.send(DecodeCmd::Stop).unwrap();
+        supervise(
+            StreamDecodeConfig::default(),
+            rx,
+            events,
+            || Err("could not start decoder worker".into()),
+            LIVE_BUDGET,
+        );
+        assert!(results.try_iter().any(|event| matches!(event,
+            EngineEvent::Error(message) if message == "could not start decoder worker")));
     }
 
     #[test]

@@ -276,8 +276,10 @@ Queued stages also expire after ten seconds instead of delaying current audio.
 The parent checks the deadline at a 5 ms polling granularity. At expiry it kills
 and reaps the entire child, keeps the messages already displayed, drops remaining
 stages for that slot and uses a fresh native session on the next slot. Stop also
-terminates active work immediately. Normal slots keep their native sessions and
-normal configuration migration; only a timeout/crash discards learned state.
+terminates active work immediately. Budget expiry and stale queued work are
+handled silently in the GUI and recorded only in the diagnostic log; actual
+worker failures still appear as errors. Normal slots keep their native sessions
+and normal configuration migration; only a timeout/crash discards learned state.
 No cancellation code or thresholds are added to the native decoder algorithms.
 The standalone file/CLI decode path remains available for unbounded offline work.
 
