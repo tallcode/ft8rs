@@ -102,7 +102,8 @@ class PackageReleaseTests(unittest.TestCase):
                 (binaries / binary).write_bytes(binary.encode())
             database = root / "crates/ft8rs-core/ALLCALL7.TXT"
             database.parent.mkdir(parents=True)
-            database.write_bytes(b"private test database")
+            database.write_bytes(b"current runtime database for release packages")
+            database.with_name("ALLCALL7.TXT.2022").write_bytes(b"historical regression database")
             for platform in ["linux", "windows"]:
                 info = build_metadata(self.env(), platform)
                 archive = package(root, info, root / "dist")
@@ -118,6 +119,7 @@ class PackageReleaseTests(unittest.TestCase):
                     expected = {"ft8rs.exe", "ft8rs-gui.exe"}
                 self.assertEqual(set(files), {prefix + name for name in expected | {"ALLCALL7.TXT", "BUILD-INFO.json", "README.txt"}})
                 self.assertEqual(json.loads(files[prefix + "BUILD-INFO.json"]), info)
+                self.assertEqual(files[prefix + "ALLCALL7.TXT"], database.read_bytes())
                 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
                 self.assertEqual(Path(str(archive) + ".sha256").read_text(), f"{digest}  {archive.name}\n")
 

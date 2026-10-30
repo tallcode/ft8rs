@@ -24,6 +24,7 @@
     <main>
       <section aria-labelledby="about">
         <h2 id="about">这是什么</h2>
+        <p>FT8 是业余无线电中用于弱信号通信的一种数字模式。它以 15 秒为一个收发时隙，通过简短、结构化的消息交换呼号、网格位置、信号报告和通联确认，适合在信号较弱时进行基本信息交流。它不是语音模式，也不是用来长篇聊天的。更多背景可阅读 <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">WSJT-X 官方用户指南</a>。</p>
         <p>ft8.rs 是一款 FT8 解码软件。将电台或 SDR 的接收音频送入电脑，就可以查看收到的呼号、信号强度和消息。</p>
         <p>它只接收，不带发射功能。你可以用它收听频段活动，也可以针对一个呼号持续监听。软件提供 WSJT-X、JTDX、Hybrid 和 DX 四种解码模式。</p>
         <p>如果你同时使用 WSJT-X，还可以通过 Compare 在同一张消息列表中对照两个软件的接收结果。</p>
@@ -40,7 +41,9 @@
             <span class="note">目前仅提供命令行工具，解压后在终端运行 <code>./ft8rs --help</code>。</span></li>
         </ul>
         <p class="note">Windows 和 Linux 安装包适用于支持 x86-64-v3 指令集的 Intel / AMD 处理器，不适用于 ARM。macOS 暂未提供安装包。</p>
-        <p>安装包内已包含呼号数据库 <code>ALLCALL7.TXT</code>，请将它保留在程序旁边。</p>
+        <p class="note">目前提供的程序未做代码签名。Windows 可能显示“未知发布者”或 SmartScreen 提示；请确认下载来自本项目的 GitHub Releases，并可使用下方的校验文件核对下载完整性。</p>
+        <p>安装包内已包含呼号数据库 <code>ALLCALL7.TXT</code>，请将它保留在程序旁边。它供 JTDX 相关解码路径过滤部分误解码。</p>
+        <p>数据库可从 <a href="https://sourceforge.net/projects/jtdx/files/">JTDX 官方下载目录</a>单独更新，目前核对的版本为 <strong>20251217</strong>（<code>ALLCALL7_20251217_rc160.zip</code>）。退出软件后，将压缩包中的 <code>ALLCALL7.TXT</code> 替换到程序旁边，再重新启动即可。以后更新时，请在该目录中选择日期较新的 ALLCALL7 数据库压缩包。</p>
         <p><a href="$release_url">本次发布详情</a> · <a href="$checksums_url">下载校验文件</a> · <a href="https://github.com/tallcode/ft8rs/releases">所有版本</a></p>
       </section>
 
@@ -54,7 +57,13 @@
           <li><strong>选择模式。</strong>初次使用可以保留默认的 WSJT-X。在 <strong>Settings → Decode</strong> 中可以切换其他模式。</li>
           <li><strong>开始收听。</strong>点击主窗口的播放按钮。软件按 15 秒一轮接收 FT8，完成一轮接收后会陆续显示消息；点击停止按钮结束收听。</li>
         </ol>
-        <p>一般收听不必填写自己的呼号。需要时可在 <strong>Settings → Station</strong> 填写呼号和网格位置。</p>
+        <h3 id="station">什么时候填写自己的呼号</h3>
+        <p>普通频段收听可以留空，没有自己的呼号也能使用。在 <strong>Settings → Station</strong> 中，<strong>My Callsign</strong> 填写自己的呼号，<strong>My Grid</strong> 填写自己的网格位置；它们与主窗口中目标电台的 <strong>Callsign / Grid</strong> 是分开的。</p>
+        <ul>
+          <li><strong>关注涉及自己呼号的消息时：</strong>填写正确的 My Callsign，可以为解码器提供已知呼号线索，辅助部分弱信号和压缩呼号的识别；消息列表也会突出显示自己的呼号。这不是所有信号都会更容易解码的增益开关。</li>
+          <li><strong>使用 DX 关注一个目标时：</strong>主窗口的目标 Callsign 是必填项，自己的呼号仍可留空。如果同时提供有效且不同的本站呼号和目标呼号，软件可启用额外的呼号对上下文恢复，尝试补充与这对呼号有关的消息。</li>
+        </ul>
+        <p>这些字段只提供接收和解码上下文。填写呼号不会启用发射功能，ft8.rs 始终只接收。</p>
 
         <h3 id="modes">怎样选择解码模式</h3>
         <p>在 <strong>Settings → Decode → Profile</strong> 中选择模式，也可以使用 <strong>Profile</strong> 菜单。</p>
@@ -106,7 +115,7 @@
     </main>
 
     <footer>
-      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://github.com/tallcode/ft8rs/issues">反馈问题</a> · GPL-3.0-only</p>
+      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://wsjtx.github.io/wsjtx/index.html">WSJT-X 官网</a> · <a href="https://github.com/WSJTX/wsjtx">WSJT-X 源码</a> · <a href="https://github.com/tallcode/ft8rs/issues">反馈问题</a> · GPL-3.0-only</p>
     </footer>
   </body>
 </html>
