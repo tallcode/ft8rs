@@ -494,20 +494,11 @@ impl Ft8rsApp {
     }
 
     fn push_decode(&mut self, record: ft8rs_engine::protocol::DecodeRecord) {
-        let ts = record.timestamp;
-        let slot_key = ts.milliseconds_since_midnight() / 15_000;
-        let row = record.row;
+        let slot_key = record.timestamp.milliseconds_since_midnight() / 15_000;
         // Message in a fixed-width column so the provenance tag forms its own
         // trailing column (slot boundaries are shown by the alternating bg).
-        let text = format!(
-            "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
-            ts.format_time(),
-            row.snr.round() as i32,
-            row.dt,
-            row.freq.round() as i64,
-            clean_message(&row.msg),
-            provenance_tag(record.provenance),
-        );
+        let text = local_decode_text(&record);
+        let row = record.row;
         self.ingest(
             slot_key,
             row.freq,
@@ -2098,6 +2089,29 @@ fn format_ms_time(ms: u32) -> String {
     format!("{:02}{:02}{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
+/// Keep all annotations supplied locally, with provenance in the trailing column.
+fn local_decode_text(record: &ft8rs_engine::protocol::DecodeRecord) -> String {
+    let row = &record.row;
+    let mut annotations: Vec<_> = row
+        .msg
+        .split_whitespace()
+        .filter(|t| is_annotation(t))
+        .collect();
+    let provenance = provenance_tag(record.provenance);
+    if !provenance.is_empty() && !annotations.contains(&provenance) {
+        annotations.push(provenance);
+    }
+    format!(
+        "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
+        record.timestamp.format_time(),
+        row.snr.round() as i32,
+        row.dt,
+        row.freq.round() as i64,
+        clean_message(&row.msg),
+        annotations.join(" "),
+    )
+}
+
 /// External rows display only the message body, without decoder annotations.
 fn external_decode_text(decode: &crate::wsjtx_udp::ExternalDecode) -> String {
     format!(
@@ -2155,10 +2169,26 @@ fn fold_decode_row(rows: &mut [Row], incoming: &Row, tolerance: f64) -> bool {
             && tokens_compatible(&row.tokens, &incoming.tokens)
         {
             if incoming.source == DecodeSource::Local && row.source == DecodeSource::External {
+                let resolved = row.tokens.clone();
                 row.text.clone_from(&incoming.text);
                 row.freq = incoming.freq;
                 row.dt = incoming.dt;
                 row.tokens.clone_from(&incoming.tokens);
+                retain_resolved_hash_calls(row, &resolved);
+            } else {
+                retain_resolved_hash_calls(row, &incoming.tokens);
+                if incoming.source == DecodeSource::Local {
+                    for annotation in incoming
+                        .text
+                        .split_whitespace()
+                        .filter(|t| is_annotation(t))
+                    {
+                        if !row.text.split_whitespace().any(|token| token == annotation) {
+                            row.text.push(' ');
+                            row.text.push_str(annotation);
+                        }
+                    }
+                }
             }
             if row.source != incoming.source {
                 row.source = DecodeSource::Both;
@@ -2167,6 +2197,28 @@ fn fold_decode_row(rows: &mut [Row], incoming: &Row, tolerance: f64) -> bool {
         }
     }
     false
+}
+
+/// Enrich only the displayed row, keeping its measurements and provenance.
+/// Calls learned from UDP never feed back into a native decoder session.
+fn retain_resolved_hash_calls(row: &mut Row, known: &[String]) {
+    let mut placeholders = row.text.match_indices("<...>");
+    let mut replacements = Vec::new();
+    for (token, known) in row.tokens.iter_mut().zip(known) {
+        if is_hash_token(token) {
+            let position = placeholders.next().map(|(position, _)| position);
+            if !is_hash_token(known) {
+                token.clone_from(known);
+                if let Some(position) = position {
+                    replacements.push((position, format!("<{known}>")));
+                }
+            }
+        }
+    }
+    // Replace from the end so longer calls do not shift earlier positions.
+    for (position, call) in replacements.into_iter().rev() {
+        row.text.replace_range(position..position + 5, &call);
+    }
 }
 
 /// Normalize a decode message for merge matching: drop WSJT-X annotations, then
@@ -2924,6 +2976,167 @@ mod tests {
                 assert_eq!(rows[0].source, DecodeSource::Both);
                 assert_eq!(rows[0].text, local_text);
                 assert_eq!(rows[0].freq, 1002.0);
+            }
+        }
+    }
+
+    #[test]
+    fn compare_retains_resolved_hash_calls_in_both_arrival_orders() {
+        for (local_message, external_message, expected_message) in [
+            ("<...> W1AW RR73", "<PJ4X> W1AW RR73", "<PJ4X> W1AW RR73"),
+            ("PJ4X <...> -16", "PJ4X <W1AW> -16", "PJ4X <W1AW> -16"),
+            ("<PJ4X> W1AW RR73", "<...> W1AW RR73", "<PJ4X> W1AW RR73"),
+            (
+                "<...> <W1AW> RR73",
+                "<PJ4X> <...> RR73",
+                "<PJ4X> <W1AW> RR73",
+            ),
+            (
+                "<...> <...> RR73",
+                "<PJ4X> <W1AW> RR73",
+                "<PJ4X> <W1AW> RR73",
+            ),
+            ("<...> <...> RR73", "<...> <W1AW> RR73", "<...> <W1AW> RR73"),
+        ] {
+            let local = || Row {
+                text: format!("120000 -20   0.1  1002  {local_message:<20} exp"),
+                gen: 1,
+                freq: 1002.0,
+                dt: 0.1,
+                tokens: norm_tokens(local_message),
+                source: DecodeSource::Local,
+            };
+            let external = || Row {
+                text: external_decode_text(&crate::wsjtx_udp::ExternalDecode {
+                    ms_since_midnight: 43_200_000,
+                    snr: -19,
+                    dt: 0.2,
+                    freq: 1000,
+                    message: external_message.into(),
+                }),
+                gen: 1,
+                freq: 1000.0,
+                dt: 0.2,
+                tokens: norm_tokens(external_message),
+                source: DecodeSource::External,
+            };
+            for local_first in [true, false] {
+                let mut rows = Vec::new();
+                let mut display = Vec::new();
+                let observations = if local_first {
+                    [local(), external()]
+                } else {
+                    [external(), local()]
+                };
+                for observation in observations {
+                    insert_decode_row(&mut rows, &mut display, observation, 7.0);
+                }
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].source, DecodeSource::Both);
+                assert_eq!(rows[0].tokens, norm_tokens(expected_message));
+                assert!(rows[0].text.starts_with("120000 -20   0.1  1002  "));
+                assert_eq!(clean_message(&rows[0].text[24..]), expected_message);
+                assert!(rows[0].text.ends_with(" exp"));
+                assert_eq!(rows[0].freq, 1002.0);
+                assert_eq!(rows[0].dt, 0.1);
+
+                // Neither source's later unresolved observation may erase a call.
+                let text = rows[0].text.clone();
+                for source in [DecodeSource::Local, DecodeSource::External] {
+                    let report = rows[0].tokens.last().unwrap();
+                    let unresolved = Row {
+                        tokens: norm_tokens(&format!("<...> <...> {report}")),
+                        source,
+                        ..local()
+                    };
+                    assert!(fold_decode_row(&mut rows, &unresolved, 7.0));
+                    assert_eq!(rows[0].text, text);
+                    assert_eq!(rows[0].tokens, norm_tokens(expected_message));
+                }
+                // A resolved call must also narrow subsequent merge matching.
+                let mut conflicting = external();
+                conflicting.tokens = rows[0].tokens.clone();
+                let index = conflicting.tokens[..2]
+                    .iter()
+                    .position(|token| !is_hash_token(token))
+                    .unwrap();
+                conflicting.tokens[index] = "W9XYZ".into();
+                assert!(!fold_decode_row(&mut rows, &conflicting, 7.0));
+                assert_eq!(rows[0].text, text);
+            }
+        }
+    }
+
+    #[test]
+    fn compare_ignores_udp_annotations_and_preserves_all_local_annotations() {
+        let local = |message: &str, provenance| {
+            let record = ft8rs_engine::protocol::DecodeRecord {
+                timestamp: ft8rs::SlotTimestamp::parse("120000").unwrap(),
+                row: ft8rs::stream::StreamDecodedMessage {
+                    freq: 1002.0,
+                    dt: 0.1,
+                    snr: -20.0,
+                    msg: message.into(),
+                    sync: 0.0,
+                    itone: [0; 79],
+                },
+                provenance,
+                stage: ft8rs_engine::protocol::DecodeStage::Final,
+            };
+            Row {
+                text: local_decode_text(&record),
+                gen: 1,
+                freq: record.row.freq,
+                dt: record.row.dt,
+                tokens: norm_tokens(message),
+                source: DecodeSource::Local,
+            }
+        };
+        for local_first in [true, false] {
+            let native = local(
+                "<...> W1AW RR73 ? a7 exp",
+                StreamDecodeProvenance::Experiment,
+            );
+            let decode = crate::wsjtx_udp::ExternalDecode {
+                ms_since_midnight: 43_200_000,
+                snr: -19,
+                dt: 0.2,
+                freq: 1000,
+                message: "<PJ4X> W1AW RR73 ?a31 dp im".into(),
+            };
+            let external = Row {
+                text: external_decode_text(&decode),
+                gen: 1,
+                freq: decode.freq as f64,
+                dt: decode.dt,
+                tokens: norm_tokens(&decode.message),
+                source: DecodeSource::External,
+            };
+            let (first, second) = if local_first {
+                (native, external)
+            } else {
+                (external, native)
+            };
+            let mut rows = vec![first];
+            assert!(fold_decode_row(&mut rows, &second, 7.0));
+            assert_eq!(rows[0].source, DecodeSource::Both);
+            assert!(rows[0].text.contains("<PJ4X> W1AW RR73"));
+            let annotations = |row: &Row| {
+                row.text
+                    .split_whitespace()
+                    .filter(|token| is_annotation(token))
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(annotations(&rows[0]), ["?", "a7", "exp"]);
+            let repeated = local(
+                "<...> W1AW RR73 sic",
+                StreamDecodeProvenance::CooperativeRecovery,
+            );
+            for _ in 0..2 {
+                assert!(fold_decode_row(&mut rows, &repeated, 7.0));
+                assert_eq!(annotations(&rows[0]), ["?", "a7", "exp", "sic"]);
+                assert_eq!(rows[0].tokens, norm_tokens("<PJ4X> W1AW RR73"));
             }
         }
     }
