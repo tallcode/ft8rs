@@ -5,9 +5,10 @@ use ft8rs::stream::{
     StreamDecodeSession,
 };
 const SHORT_TARGET_COUNT: usize = 21;
-const LONG_TARGET_ACCEPTED_FLOOR: usize = 424;
+const LONG_TARGET_ACCEPTED_FLOOR: usize = 434;
 const JTDX_SHORT_TARGET_ACCEPTED_FLOOR: usize = 20;
-const JTDX_LONG_TARGET_ACCEPTED_FLOOR: usize = 430;
+const JTDX_LONG_TARGET_ACCEPTED_FLOOR: usize = 453;
+const JTDX_LONG_ONE_PARTITION_TARGET_COUNT: usize = 453;
 const HYBRID_LONG_TARGET_COUNT: usize = 465;
 
 #[derive(Clone, Debug)]
@@ -163,19 +164,11 @@ fn parse_baseline_with(path: &str, is_ignored: fn(&str) -> bool) -> Vec<Baseline
 }
 
 fn is_ignored_baseline_marker(value: &str) -> bool {
-    // Extra column semantics:
-    //   blank = multi-verified baseline
-    //   W     = WSJT-X-only decode, still part of the WSJT-X target baseline
-    //   J/E   = JTDX/other extra decodes, ignored while aligning to WSJT-X
-    matches!(value.trim().to_ascii_uppercase().as_str(), "J" | "E")
+    !value.split('|').any(|mode| mode.trim() == "W")
 }
 
 fn is_ignored_jtdx_baseline_marker(value: &str) -> bool {
-    // Extra column semantics for JTDX:
-    //   blank = multi-verified baseline
-    //   J     = JTDX-only decode, still part of the JTDX target baseline
-    //   W/E   = WSJT-X/other extra decodes, ignored while aligning to JTDX
-    matches!(value.trim().to_ascii_uppercase().as_str(), "W" | "E")
+    !value.split('|').any(|mode| mode.trim() == "J")
 }
 
 fn assert_release_mode() {
@@ -705,16 +698,34 @@ fn test_hybrid_staged_matches_oneshot() {
 #[test]
 #[ignore = "manual JTDX profile gate; run with --release --ignored"]
 fn test_jtdx_profile_long_audio() {
+    assert_jtdx_long_audio(
+        "tests/ft8/230208_140300.csv",
+        4,
+        JTDX_LONG_TARGET_ACCEPTED_FLOOR,
+    );
+}
+
+#[test]
+#[ignore = "manual one-partition JTDX recording gate; run with --profile fast --ignored"]
+fn test_jtdx_profile_long_audio_one_partition() {
+    assert_jtdx_long_audio(
+        "tests/ft8/230208_140300.csv",
+        1,
+        JTDX_LONG_ONE_PARTITION_TARGET_COUNT,
+    );
+}
+
+fn assert_jtdx_long_audio(reference: &str, partitions: usize, required: usize) {
     assert_release_mode();
     let s12k = samples_12k_from_wav("tests/ft8/230208_140300.wav");
     let sps = 15 * 12000;
     let dur_12k = s12k.len() as f64 / 12000.0;
     let nseg = (dur_12k / 15.0).ceil() as usize;
-    let baseline = parse_jtdx_baseline("tests/ft8/230208_140300.csv");
+    let baseline = parse_jtdx_baseline(reference);
     let primary_total = baseline.iter().filter(|row| !row.ignored).count();
     // Pin the calibrated operating point: auto band count depends on CPU count.
     let mut decoder = JtdxStreamDecodeSession::new(StreamDecodeConfig {
-        jtdx_threads: 4,
+        jtdx_threads: partitions,
         ..Default::default()
     });
     let mut primary_matched = 0;
@@ -758,11 +769,11 @@ fn test_jtdx_profile_long_audio() {
     }
 
     assert!(
-        primary_matched >= JTDX_LONG_TARGET_ACCEPTED_FLOOR,
-        "JTDX LONG: primary {}/{} < {}, total matched {}/{}",
+        primary_matched >= required,
+        "JTDX LONG ({partitions} partition(s)): primary {}/{} < {}, total matched {}/{}",
         primary_matched,
         primary_total,
-        JTDX_LONG_TARGET_ACCEPTED_FLOOR,
+        required,
         total_matched,
         baseline.len()
     );

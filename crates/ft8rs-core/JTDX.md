@@ -47,7 +47,7 @@ therefore affects false-decode filtering and slot-local subtraction.
 
 `crates/ft8rs-core/ALLCALL7.TXT` is the newer runtime snapshot shipped with the
 application. `ALLCALL7.TXT.2022` is the separate historical snapshot used by the
-430/431 calibration. They are not interchangeable: the current runtime copy is
+historical recording calibration. They are not interchangeable: the current runtime copy is
 not the original checkout's 2022 CallDB.
 
 Release packages include the runtime file next to the binary. Local builds copy
@@ -167,16 +167,14 @@ configuration rather than a pure speed setting.
 
 ## Calibrated Baseline
 
-JTDX fixture rows use `Extra` markers as follows:
+JTDX fixture rows use the pipe-separated `Extra` memberships described in
+`docs/VALIDATION.md`. Rows containing `J` are the JTDX targets; a blank value
+means the reviewed message was absent from this fixed replay.
 
-```text
-blank -> target row
-J     -> JTDX target row
-W     -> WSJT-X-only reference row, not a JTDX target
-E     -> excluded row
-```
+The current long fixture uses one JTDX partition and has 453/453 target rows.
+The separate four-partition gate checks the same 453 targets.
 
-The long-fixture acceptance point is fixed:
+The four-partition acceptance point is fixed:
 
 ```text
 fixture          = 230208_140300.wav, all 19 slots in one reused session
@@ -186,14 +184,14 @@ jtdx_threads     = 4 logical bands
 swl              = false
 nagcc            = false
 user QSO context = none
-accepted floor   = 430/431 target rows
+accepted floor   = 453/453 target rows
 ```
 
 The constructor retains its existing high-sensitivity mapping. The four-band
 setting belongs to calibration; production defaults to one partition. Automatic
 mode must record the actual core/band count when comparing results, because
 `threads=0` is not a fixed operating point across machines. Do not lower the
-430/431 threshold or alter aligned decoder code to compensate for a different
+453/453 threshold or alter aligned decoder code to compensate for a different
 partition setting.
 
 Run the calibrated local gate with the private-database helper:
@@ -206,7 +204,7 @@ The short fixture retains its existing 20/20 target floor. The remaining
 long-fixture no-user-context miss is:
 
 ```text
-230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,J
+230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,
 ```
 
 QSO-assisted recovery is a separate operating point and must not be counted as a

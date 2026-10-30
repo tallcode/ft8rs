@@ -318,7 +318,7 @@ fn historical_recordings_preserve_required_rows_and_export_per_message_snapshots
         for adapter in ADAPTERS {
             let config = StreamDecodeConfig {
                 nfa: if long { 200.0 } else { 100.0 },
-                jtdx_threads: if long && adapter.name == "jtdx" { 4 } else { 1 },
+                jtdx_threads: 1,
                 mycall: (adapter.target_only && long).then(|| "F1MLZ".into()),
                 hiscall: adapter
                     .target_only
@@ -343,11 +343,13 @@ fn historical_recordings_preserve_required_rows_and_export_per_message_snapshots
             for line in baseline.lines().skip(1) {
                 let parts: Vec<_> = line.split(',').collect();
                 let marker = parts.get(5).copied().unwrap_or("").trim();
-                let included = match adapter.name {
-                    "wsjtx" => !matches!(marker, "J" | "E"),
-                    "jtdx" => !matches!(marker, "W" | "E"),
-                    _ => marker != "E",
+                let mode = match adapter.name {
+                    "wsjtx" => "W",
+                    "jtdx" | "dx" => "J",
+                    "hybrid-exp" => "He",
+                    _ => "H",
                 };
+                let included = marker.split('|').any(|value| value.trim() == mode);
                 if !included || adapter.target_only {
                     continue;
                 }
@@ -401,9 +403,11 @@ fn historical_recordings_preserve_required_rows_and_export_per_message_snapshots
             }
             let required = match (adapter.name, long) {
                 ("wsjtx", false) => Some(21),
-                ("wsjtx", true) => Some(424),
+                ("wsjtx", true) => Some(434),
                 ("jtdx", false) => Some(20),
-                ("jtdx", true) => Some(430),
+                ("jtdx", true) => Some(453),
+                ("hybrid", true) => Some(476),
+                ("hybrid-exp", true) => Some(479),
                 _ => None,
             };
             if let Some(required) = required {
@@ -413,12 +417,11 @@ fn historical_recordings_preserve_required_rows_and_export_per_message_snapshots
                     adapter.name
                 );
             }
-            if adapter.name == "jtdx" && long {
-                // Preserve identities, not just the 430 count: recovering the
-                // known miss must never compensate for losing a different row.
+            if !adapter.target_only {
                 assert!(
-                    missing.iter().all(|row| row == "16: F1MLZ UA3QNA -04"),
-                    "JTDX lost a previously required message: {missing:?}"
+                    missing.is_empty(),
+                    "{} lost fixture rows: {missing:?}",
+                    adapter.name
                 );
             }
             if adapter.target_only {

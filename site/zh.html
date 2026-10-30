@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="ft8.rs 基于 WSJT-X 和 JTDX，以 Rust 重新实现 FT8 解码，并加入了自研的实验性解码功能。">
     <title>ft8.rs — FT8 解码器的 Rust 实现</title>
-    <link rel="stylesheet" href="${asset_prefix}style.css">
+    <link rel="stylesheet" href="${asset_prefix}style.css?v=$style_version">
     <link rel="alternate" hreflang="zh" href="${language_prefix}zh/">
     <link rel="alternate" hreflang="en" href="${language_prefix}en/">
   </head>
@@ -101,13 +101,33 @@
         <p>Compare 只用于显示对照，不会把 WSJT-X 的消息送回 ft8.rs 帮助解码，颜色也不代表消息一定正确。<strong>Settings → Output</strong> 则是把 ft8.rs 的结果发送给其他软件，默认端口为 <code>2238</code>，与这里的接收设置是两个功能。</p>
 
         <h3 id="sensitivity">灵敏度对比</h3>
+        <h4>人工数据测试（合成音频）</h4>
         <p>我们生成了 144 组包含已知目标消息的 FT8 音频，专门测试稳定弱信号和几种干扰条件。在这组测试中，开启实验解码的 Hybrid 解出了 102 组目标；原有 Hybrid 为 50 组。</p>
         <figure class="sensitivity-chart">
-          <img src="${asset_prefix}sensitivity.svg" width="680" height="296" alt="144 组测试中，WSJT-X 解出 39 组、JTDX 解出 30 组、Hybrid 解出 50 组、Hybrid 加实验解码解出 102 组。">
+          <img src="${asset_prefix}synthetic.svg" width="680" height="296" alt="144 组测试中，WSJT-X 解出 39 组、JTDX 解出 30 组、Hybrid 解出 50 组、Hybrid 加实验解码解出 102 组。">
           <figcaption>图中是解出的已知目标数，满分为 144。WSJT-X 和 JTDX 指 ft8.rs 内重新实现的解码路径，并非另行运行的原版程序。</figcaption>
         </figure>
         <p>测试音频由 FT8 消息波形（参照 WSJT-X 的 <code>gen_ft8wave.f90</code> 实现生成）与人工生成的噪声、持续单音或重叠信号混合而成；每条路径都处理同一份 15 秒音频，并按预先知道的消息、频率和时间核对结果。另外 48 组没有目标消息的控制音频用于检查误解码，未计入图表。</p>
         <p>这是一组有意挑选的实验条件。日常接收中，弱信号往往会同时受到变化的衰落、漂移和干扰影响，很少有这样稳定、可控的信号。因此，图中的提升不能推算为实际使用时的解码率，也不保证每一轮都能多收到消息。</p>
+
+        <h4 id="recording">真实数据测试（录音回放）</h4>
+        <p>另一组对比使用同一段真实录音的 19 个时隙，以持续会话顺序回放。图中显示各模式的原始输出行数；经人工审查匹配的消息记为真实，其余输出记为误码。</p>
+        <figure class="sensitivity-chart">
+          <img src="${asset_prefix}recording.svg" width="680" height="296" alt="长录音回放的原始输出行数：WSJT-X 434、JTDX 455、Hybrid 478、Hybrid 加实验解码 481。">
+          <figcaption>各模式颜色与上图一致。真实消息和误码的数量见下表。</figcaption>
+        </figure>
+        <div class="comparison-table-scroll">
+          <table class="comparison-table">
+            <thead><tr><th scope="col">模式</th><th scope="col">原始</th><th scope="col">真实</th><th scope="col">误码</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">WSJT-X</th><td>434</td><td>434</td><td>0</td></tr>
+              <tr><th scope="row">JTDX</th><td>455</td><td>453</td><td>2</td></tr>
+              <tr><th scope="row">Hybrid</th><td>478</td><td>476</td><td>2</td></tr>
+              <tr><th scope="row">Hybrid + exp</th><td>481</td><td>479</td><td>2</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="comparison-note">本次两条误码都已出现在单独的 JTDX 模式中，Hybrid 和 Hybrid + exp 没有增加新的误码。回放使用固定的 2022 年版呼号库，JTDX 固定为 1 个分区；重复显示的消息仍按行计数。这些数字不能推算日常接收的正确率。</p>
 
         <h3>没有收到消息？</h3>
         <p>先检查接收频率、电脑时间和音频输入。在 <strong>Settings → Audio</strong> 查看电平，确认选中的是接收机音频，且输入没有过载。如果电平一直没有变化，请检查设备、声道和系统的音频输入权限。</p>

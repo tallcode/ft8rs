@@ -103,6 +103,8 @@ fn recording(fields: &[String], adapter: Adapter) -> Retention {
         mycall: (adapter.target_only && long).then(|| "F1MLZ".into()),
         ..Default::default()
     };
+    // Exact degraded-corpus requirements are frozen in retention.tsv. The current
+    // CSV is used only for the diagnostic target/other-reference classification.
     let csv =
         std::fs::read_to_string(support::root().join(format!("ft8/{}.csv", fields[2]))).unwrap();
     let start = SlotTimestamp::parse(&fields[2]).unwrap();
@@ -110,14 +112,17 @@ fn recording(fields: &[String], adapter: Adapter) -> Retention {
     for line in csv.lines().skip(1) {
         let parts: Vec<_> = line.split(',').collect();
         let marker = parts.get(5).map_or("", |p| p.trim());
-        let included = match adapter.name {
-            "wsjtx" => !matches!(marker, "J" | "E"),
-            "jtdx" => !matches!(marker, "W" | "E"),
-            _ => marker != "E",
-        } && (!adapter.target_only
-            || normal(parts[4])
-                .split_whitespace()
-                .any(|word| Some(word) == config.hiscall.as_deref()));
+        let mode = match adapter.name {
+            "wsjtx" => "W",
+            "jtdx" | "dx" => "J",
+            "hybrid-exp" => "He",
+            _ => "H",
+        };
+        let included = marker.split('|').any(|value| value.trim() == mode)
+            && (!adapter.target_only
+                || normal(parts[4])
+                    .split_whitespace()
+                    .any(|word| Some(word) == config.hiscall.as_deref()));
         references.insert((parts[0].into(), normal(parts[4])), included);
     }
     let target_total = references.values().filter(|&&included| included).count();

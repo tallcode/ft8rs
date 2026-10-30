@@ -6,8 +6,7 @@ existing decoders. Hybrid also offers an opt-in private ft8rs specialist branch.
 Hybrid does not alter the native algorithms under
 `lib_wsjtx/` or `lib_jtdx/`; source-alignment corrections are reviewed separately.
 
-Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md),
-[shared architecture](COOPERATIVE_DECODER_DESIGN.md).
+Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md).
 
 ## Optional specialist branch
 
@@ -174,11 +173,79 @@ changing staged engine delivery; see [development checks](../../docs/DEVELOPMENT
 Preserve every previous signal under the same recording, configuration, CallDB
 and build conditions. Additions cannot compensate for losses. SWL-on and SWL-off
 change both native JTDX searches and are not guaranteed supersets of each other.
-Pure JTDX's four-partition 430/431 calibration remains separate from Hybrid.
+Pure JTDX's four-partition long-recording gate remains separate from Hybrid.
 
-The [2026-10-28 report](../../docs/reports/2026-10-28-hybrid.md) records partition
-experiments, payload-aware hash-display matching, and the implemented three-path
-replay. It retained all previous distinct messages in the measured SWL settings.
-Unannotated additions remain candidates; the finite recordings do not establish
-a universal sensitivity gain or real-time deadline. Current regression counts
-and operating points are in [validation](../../docs/VALIDATION.md).
+### Historical partition and three-path evidence (2026-10-28)
+
+The following are dated Release/RustFFT measurements on a 12-core Apple Silicon
+machine, using the shipped CallDB (SHA-256
+`17140773605b0d2a7a5a31458c11384d9efc413bf6288b262b7dd1f391ec32ea`),
+the 19-slot `230208_140300.wav` recording and persistent sessions. They are
+separate from the current 2022-CallDB regression point. The earlier two-path
+Hybrid kept all 466 original output rows at every JTDX partition setting:
+
+| Logical partitions | Raw rows | Wall time | CPU time | Latest callback |
+|---|---:|---:|---:|---:|
+| Auto (9 on that machine) | 466 | 68.87 s | 98.63 s | +2.09–2.12 s |
+| 4 | 466 | 56.73 s | 82.13 s | +1.58–1.59 s |
+| 1 | 467 | 50.42 s | 71.61 s | +1.50–1.51 s |
+
+The one extra row was `CQ Z3BZW FL21`, later reviewed as a wrong decode. One
+partition reduced processing cost in these recordings without a confirmed
+message gain. In the later three-path implementation replay, the SWL-off
+Hybrid kept all 466 earlier rows and produced 481 raw rows; with SWL on it kept
+all 465 distinct earlier messages and produced 482 raw rows. SWL changes both
+JTDX searches, so its on/off outputs are not a superset relation. All Hybrid
+callbacks in those runs arrived within the next-slot +3 s window, while all
+workers could finish later. The SWL-off three-path run used more total CPU than
+the old two-path run despite a shorter wall time. These are historical run
+measurements, not general performance guarantees.
+
+Two earlier unresolved hash displays at 14:03:30 and 14:03:45 had resolved
+counterparts with identical complete 79-tone payloads within each slot. Their
+resolved/unresolved presentations came from separate native hash books; the
+two slots did not have the same complete payload. This is why the ledger checks
+the full payload before deduplicating a hash-display expansion and never treats
+a short hash or similar text alone as identity evidence.
+
+### Reviewed continuous-recording comparison (2026-10-30)
+
+The homepage chart uses the same 19-slot WAV (SHA-256
+`5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e`),
+one persistent file session per mode, 200–3000 Hz, one JTDX partition and the
+historical `ALLCALL7.TXT.2022` database (SHA-256
+`e647033c0ed4ef2d7c3c56839cfbd819f224805bcd7e0689ac656a0e8b22b298`).
+The decoder binary used for the comparison has SHA-256
+`cfd1d9d65b989482862a0ca5eaea541a828a9970c8cf988f0c4b13a42d5aa08b`.
+Each output row counts, including repeated displays in different slots. CSV
+matches and the user's per-row review count as true:
+
+| Mode | Raw | True | Wrong |
+|---|---:|---:|---:|
+| WSJT-X | 434 | 434 | 0 |
+| JTDX | 455 | 453 | 2 |
+| Hybrid | 478 | 476 | 2 |
+| Hybrid + experiment | 481 | 479 | 2 |
+
+The reviewed wrong rows were `CQ Z3BZW FL21` at 14:04:00 and
+`CQ TL1XFI FK48` at 14:04:45. Both occurred in standalone JTDX, Hybrid and
+Hybrid + experiment; the latter two modes introduced no additional wrong rows
+in this run. The user reviewed 12 other previously unmatched slot/message rows
+as real, and they are now included in `tests/ft8/230208_140300.csv`:
+
+| UTC slot | Reviewed real message |
+|---|---|
+| 14:03:45 | `KB3Z DD0ZL JO40` |
+| 14:04:45 | `CQ M0BEN IO92` |
+| 14:05:00 | `CQ OH5NBJ KP41`; `4S6NCH UA6ADA KN95` |
+| 14:05:30 | `CQ OH5NBJ KP41`; `E25CRF DL1R 73` |
+| 14:06:00 | `CQ IW1PUR JN44` |
+| 14:06:30 | `CQ F1PPH JN07` |
+| 14:07:00 | `CQ F1PPH JN07` |
+| 14:07:15 | `VE7ON IU0IFR JN61` |
+| 14:07:30 | `4S6NCH IW0RLC 73`; `CQ F1PPH JN07` |
+
+These labels are review judgments for this finite recording, not an estimated
+field error rate.
+Current regression counts and operating points are in
+[validation](../../docs/VALIDATION.md).

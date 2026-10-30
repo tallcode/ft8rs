@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare a candidate per-message retention baseline from an explicit replay.
 
-Only rows matching existing, profile-appropriate CSV reference targets become
+Only rows matching the current, profile-appropriate CSV reference targets become
 requirements. Other-reference and unlabelled observations stay in the report;
 they are never automatically promoted to truth or counted as confirmed gains.
 """
@@ -70,7 +70,8 @@ def main():
             target='UA3QNA' if sources[row[1]]=='230208_140300' else 'F5RXL'
             def included(reference):
                 marker=(reference.get('Extra') or '').strip()
-                allowed=marker not in (['J','E'] if row[0]=='wsjtx' else ['W','E'] if row[0]=='jtdx' else ['E'])
+                mode={'wsjtx':'W','jtdx':'J','dx':'J','hybrid-exp':'He'}.get(row[0],'H')
+                allowed=mode in marker.split('|')
                 return allowed and (not registry[row[0]] or target in row[3].split())
             classification='target' if any(included(r) for r in candidates) else 'other-reference' if candidates else 'unlabelled'
             assert classification==row[6], f'incorrect reference classification: {row}'

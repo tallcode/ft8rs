@@ -47,20 +47,13 @@ Release tests protect the active alignment baseline.
 | Fixture | Active target |
 |---|---:|
 | `tests/ft8/210703_133430.wav` | `21/21` WSJT-X target rows; every target row is required |
-| `tests/ft8/230208_140300.wav` | `424/424` WSJT-X target rows |
+| `tests/ft8/230208_140300.wav` | `434/434` WSJT-X target rows |
 
-CSV `Extra` semantics:
-
-- blank `Extra`: verified target row;
-- `W`: WSJT-X extra row, included in the WSJT-X target;
-- `J`: JTDX extra row, ignored for WSJT-X miss/diff;
-- `E`: other/problem row, ignored for WSJT-X miss/diff.
-
-The short fixture now uses the same `Extra` column as the long fixture. Current
-marker counts are:
-
-- `210703_133430.csv`: blank `20`, `W` `1`;
-- `230208_140300.csv`: blank `411`, `W` `13`, `J` `20`, `E` `14`.
+CSV `Extra` is a pipe-separated list of decoder memberships: `W` (WSJT-X),
+`J` (JTDX), `H` (Hybrid), `He` (Hybrid + experimental decoding). A blank value
+means the reviewed reference message was absent from the fixed replay. The
+long fixture has 434 `W` rows. The historical degraded-recording requirements
+are frozen separately in `tests/decoder/data/ft8/degraded/retention.tsv`.
 
 The short test's old `19` acceptance floor was inherited from the early
 streaming decoder and remained after the documented `21/21` milestone. The

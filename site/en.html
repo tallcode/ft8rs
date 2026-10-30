@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="ft8.rs reimplements FT8 decoding from WSJT-X and JTDX in Rust, with additional experimental decoding features.">
     <title>ft8.rs — A Rust implementation of an FT8 decoder</title>
-    <link rel="stylesheet" href="${asset_prefix}style.css">
+    <link rel="stylesheet" href="${asset_prefix}style.css?v=$style_version">
     <link rel="alternate" hreflang="zh" href="${language_prefix}zh/">
     <link rel="alternate" hreflang="en" href="${language_prefix}en/">
   </head>
@@ -101,13 +101,33 @@
         <p>Compare only changes the display; WSJT-X messages do not feed back into ft8.rs decoding, and source colors do not prove a message is correct. <strong>Settings → Output</strong> is a separate function that sends ft8.rs results to other programs, using port <code>2238</code> by default.</p>
 
         <h3 id="sensitivity">Sensitivity comparison</h3>
+        <h4>Synthetic data test</h4>
         <p>We generated 144 FT8 recordings with known target messages to test stable weak signals and selected interference conditions. In this set, Hybrid with experimental decoding recovered 102 targets; standard Hybrid recovered 50.</p>
         <figure class="sensitivity-chart">
-          <img src="${asset_prefix}sensitivity.svg" width="680" height="296" alt="Of 144 test cases, WSJT-X recovered 39 targets, JTDX 30, Hybrid 50, and Hybrid with experimental decoding 102.">
+          <img src="${asset_prefix}synthetic.svg" width="680" height="296" alt="Of 144 test cases, WSJT-X recovered 39 targets, JTDX 30, Hybrid 50, and Hybrid with experimental decoding 102.">
           <figcaption>The chart shows known targets recovered out of 144. WSJT-X and JTDX refer to their reimplemented paths inside ft8.rs, not separately run original applications.</figcaption>
         </figure>
         <p>Each recording combines a generated FT8 waveform (produced by an implementation based on WSJT-X's <code>gen_ft8wave.f90</code>) with synthetic noise, a continuous tone, or overlapping signals. Every path processes the same 15-second audio, and results are checked against the known message, frequency and timing. Another 48 recordings without target messages were used to check for false decodes; they are excluded from the chart.</p>
         <p>These conditions were deliberately chosen for the experiment. In everyday reception, weak signals often face changing fading, drift and interference; they are rarely this stable or controlled. The increase shown here cannot be used to predict real-world decode rates, and it does not mean every receive slot will yield more messages.</p>
+
+        <h4 id="recording">Real recording test</h4>
+        <p>Another comparison replays 19 slots from the same real recording in one continuous session. The chart shows each mode's raw output rows. Messages matched by manual review count as true; all remaining outputs count as false decodes.</p>
+        <figure class="sensitivity-chart">
+          <img src="${asset_prefix}recording.svg" width="680" height="296" alt="Raw output rows from the long recording replay: WSJT-X 434, JTDX 455, Hybrid 478, and Hybrid with experimental decoding 481.">
+          <figcaption>Method colors match the chart above. Counts of true messages and false decodes are in the table.</figcaption>
+        </figure>
+        <div class="comparison-table-scroll">
+          <table class="comparison-table">
+            <thead><tr><th scope="col">Mode</th><th scope="col">Raw</th><th scope="col">True</th><th scope="col">False</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">WSJT-X</th><td>434</td><td>434</td><td>0</td></tr>
+              <tr><th scope="row">JTDX</th><td>455</td><td>453</td><td>2</td></tr>
+              <tr><th scope="row">Hybrid</th><td>478</td><td>476</td><td>2</td></tr>
+              <tr><th scope="row">Hybrid + exp</th><td>481</td><td>479</td><td>2</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="comparison-note">Both false decodes in this test also appear in the standalone JTDX mode; Hybrid and Hybrid + exp add no further false decodes. The replay uses the fixed 2022 callsign database and one JTDX partition; repeated displays remain separate rows. These results do not predict everyday reception accuracy.</p>
 
         <h3>No messages?</h3>
         <p>Check the receive frequency, computer clock and audio input first. In <strong>Settings → Audio</strong>, check that the receiver's audio is selected and the level is not overloaded. If the level never changes, check the device, channel and your system's audio input permissions.</p>
