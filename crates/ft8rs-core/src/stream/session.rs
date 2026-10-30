@@ -38,7 +38,7 @@ pub(crate) fn seeded_jtdx_session(
     session
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DecodeProfile {
     Wsjtx,
     Jtdx,
@@ -163,7 +163,7 @@ impl A7SaveEntry {
 }
 
 #[allow(non_snake_case)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StreamDecodeConfig {
     pub profile: DecodeProfile,
     pub nfa: f64,
@@ -312,7 +312,7 @@ pub struct StreamDecodedMessage {
     pub itone: [i32; 79],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StreamDecodeProvenance {
     /// The upstream result does not expose whether its regular path used AP.
     Unknown,

@@ -9,6 +9,9 @@ pub mod protocol;
 pub mod reconfig;
 pub mod report;
 pub mod soundcard;
+mod worker;
+
+pub use worker::run_decode_worker_if_requested;
 
 pub use engine::EngineHandle;
 

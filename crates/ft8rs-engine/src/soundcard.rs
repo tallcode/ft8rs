@@ -39,7 +39,7 @@ pub(crate) struct AudioCapture {
 }
 
 /// Which staged decode a ready window corresponds to (nzhsym 41/47/50).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum SlotStage {
     N41,
     N47,
@@ -783,9 +783,11 @@ fn input_devices_with_info() -> Result<Vec<(cpal::Device, SoundcardDeviceInfo)>,
     let mut rows = Vec::new();
 
     for host_id in cpal::available_hosts() {
+        log::info!("Opening audio host {host_id:?}");
         let host = cpal::host_from_id(host_id)
             .map_err(|err| format!("failed to open audio host {host_id:?}: {err}"))?;
         let host_name = format!("{host_id:?}");
+        log::info!("Querying default input on {host_name}");
         let default_input = host
             .default_input_device()
             .and_then(|device| device.description().ok().map(|d| d.name().to_string()));
@@ -798,9 +800,12 @@ fn input_devices_with_info() -> Result<Vec<(cpal::Device, SoundcardDeviceInfo)>,
                 .description()
                 .map(|d| d.name().to_string())
                 .unwrap_or_else(|_| "<unknown device>".to_string());
+            log::info!("Querying input format: {host_name} / {name}");
             let Some(input) = default_input_config(&device) else {
+                log::warn!("Skipping input without a default format: {host_name} / {name}");
                 continue;
             };
+            log::info!("Audio input: {host_name} / {name}: {input:?}");
 
             let info = SoundcardDeviceInfo {
                 index: rows.len(),
@@ -876,7 +881,7 @@ fn select_input_device(selector: &str) -> Result<(cpal::Device, SoundcardDeviceI
 /// Wall-clock unix-ms at the input callback — the block's approximate capture
 /// time, stamped here (like WSJT-X's `currentMSecsSinceEpoch()` in `writeData`) so
 /// the accumulator can grid it to UTC regardless of how long it queues downstream.
-fn capture_now_ms() -> i64 {
+pub(crate) fn capture_now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -1062,6 +1067,21 @@ mod tests {
             }
         }
         (stages, done)
+    }
+
+    #[test]
+    fn whole_capture_blocks_can_exceed_fifteen_seconds() {
+        const B: i64 = 1_700_000_010;
+        let mut acc = PeriodAccumulator::new(SR);
+        // 1024-sample driver blocks don't divide a 15 s period. In a continuous
+        // stream some slots contain one extra block; this is valid capture.
+        let (stages, _) = drive(&mut acc, 1024, SR as usize * 61 / 1024, B * 1000);
+        let lengths: Vec<_> = stages
+            .iter()
+            .filter(|(stage, _, _)| *stage == SlotStage::N50)
+            .map(|(_, _, len)| *len)
+            .collect();
+        assert!(lengths.iter().any(|&len| len > 180_000), "{lengths:?}");
     }
 
     #[test]

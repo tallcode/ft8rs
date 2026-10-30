@@ -18,8 +18,13 @@ pub(crate) struct ExperimentInput<'a> {
 }
 
 pub(crate) fn decode(
-    input: ExperimentInput<'_>,
+    mut input: ExperimentInput<'_>,
     emit: &mut dyn FnMut(&StreamDecodedMessage),
 ) -> ExperimentDiagnostics {
+    // Live capture assigns complete driver blocks to a slot. A valid slot may
+    // therefore be slightly longer than 15 s. Analyze at most one slot instead
+    // of rejecting the whole capture; this immutable view cannot alter native
+    // workers' audio or pad a partial slot with unobserved samples.
+    input.samples = &input.samples[..input.samples.len().min(180_000)];
     receiver::run(input, emit)
 }

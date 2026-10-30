@@ -35,7 +35,7 @@ pub enum EngineCommand {
 /// Which staged decode produced a row (decision 12). The wsjtx
 /// profile emits early partial decodes before the slot ends; other profiles
 /// produce only `Final`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DecodeStage {
     /// Early decode within the slot (low-latency wsjtx nzhsym=41 pass).
     Early,
@@ -67,7 +67,7 @@ pub enum EngineStatus {
 }
 
 /// Where the currently effective DX grid came from (decision 4, option C).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HisgridSource {
     None,
     /// Entered by the operator.
@@ -77,7 +77,7 @@ pub enum HisgridSource {
 }
 
 /// Read-only snapshot of the DX target intel for the GUI panel (P4 fills it).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DxContextSnapshot {
     pub target: String,
     pub foci: Vec<f64>,
