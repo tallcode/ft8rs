@@ -149,6 +149,20 @@ artifacts expire after one day; the files published to Releases remain there.
 This guide describes packaging; it does not publish a release when running
 tests or editing documentation.
 
+Release packages copy `crates/ft8rs-core/ALLCALL7.TXT`, the current runtime
+database. It is already byte-identical to the official JTDX **20251217** database
+(99,741 callsigns), with SHA-256
+`17140773605b0d2a7a5a31458c11384d9efc413bf6288b262b7dd1f391ec32ea`.
+Source: [JTDX files](https://sourceforge.net/projects/jtdx/files/), archive
+`ALLCALL7_20251217_rc160.zip` (SHA-256
+`5bf0661bf59fe6e015d4562c31a14f643bdeaae0b3c0b5a6587feccf4888dd5d`).
+Check upstream before a release and update the runtime copy when a newer database
+is available; builds package the checked-in copy for reproducibility.
+Keep `ALLCALL7.TXT.2022` unchanged for calibrated regressions:
+`scripts/test-decoders.sh` places it beside private test executables without
+replacing the runtime database. Packaging tests use distinct runtime/historical
+fixtures and require archives to contain the runtime bytes only.
+
 SemVer prerelease tags (for example `v0.0.25-rc.1`) are marked as GitHub
 prereleases. They do not replace the latest stable release or update the homepage.
 

@@ -24,6 +24,7 @@
     <main>
       <section aria-labelledby="about">
         <h2 id="about">About</h2>
+        <p>FT8 is an amateur-radio digital mode for weak-signal communication. It uses 15-second transmit/receive slots and short, structured messages to exchange callsigns, grid locators, signal reports and contact acknowledgements. It is intended for basic exchanges rather than voice or long conversations. See the <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">official WSJT-X User Guide</a> for background.</p>
         <p>ft8.rs decodes FT8 signals. Feed audio from your radio or SDR into your computer to see received callsigns, signal levels and messages.</p>
         <p>It is receive-only, with no transmit function. Listen to activity across the band or follow a particular callsign. Four decoding modes are available: WSJT-X, JTDX, Hybrid and DX.</p>
         <p>If you also use WSJT-X, Compare lets you view both programs' reception results in one message list.</p>
@@ -40,7 +41,9 @@
             <span class="note">Command-line tool only. Extract the archive and run <code>./ft8rs --help</code> in a terminal.</span></li>
         </ul>
         <p class="note">Windows and Linux packages require an Intel / AMD processor with x86-64-v3 support. They do not run on ARM. A macOS package is not currently available.</p>
-        <p>The callsign database, <code>ALLCALL7.TXT</code>, is included. Keep it next to the program.</p>
+        <p class="note">The distributed programs are not code-signed. Windows may show an “Unknown publisher” or SmartScreen prompt. Check that your download comes from this project's GitHub Releases; the checksum file below can also be used to verify download integrity.</p>
+        <p>The callsign database, <code>ALLCALL7.TXT</code>, is included. Keep it next to the program. JTDX-based decoding paths use it to filter some false decodes.</p>
+        <p>You can update the database separately from the <a href="https://sourceforge.net/projects/jtdx/files/">official JTDX download directory</a>. The currently verified version is <strong>20251217</strong> (<code>ALLCALL7_20251217_rc160.zip</code>). Exit ft8.rs, replace <code>ALLCALL7.TXT</code> next to the program with the file from the archive, then restart. For future updates, choose the newest dated ALLCALL7 database archive in that directory.</p>
         <p><a href="$release_url">Release details</a> · <a href="$checksums_url">Download checksums</a> · <a href="https://github.com/tallcode/ft8rs/releases">All versions</a></p>
       </section>
 
@@ -54,7 +57,13 @@
           <li><strong>Choose a mode.</strong> Start with the default WSJT-X mode. You can try other modes in <strong>Settings → Decode</strong>.</li>
           <li><strong>Start listening.</strong> Click the play button in the main window. FT8 reception follows 15-second slots; decoded messages appear as they become available after each slot. Click stop to finish.</li>
         </ol>
-        <p>You do not need to enter your own callsign for general listening. If needed, enter your callsign and grid locator in <strong>Settings → Station</strong>.</p>
+        <h3 id="station">When to enter your own callsign</h3>
+        <p>Leave it blank for general band listening; you can use ft8.rs without having a callsign. In <strong>Settings → Station</strong>, <strong>My Callsign</strong> is your own callsign and <strong>My Grid</strong> is your grid locator. They are separate from the target station's <strong>Callsign / Grid</strong> in the main window.</p>
+        <ul>
+          <li><strong>When following messages involving your callsign:</strong> entering the correct My Callsign supplies known-call context that can help decode some weak signals and resolve compressed callsigns. Your callsign is also highlighted in the message list. It is not a general sensitivity boost for all signals.</li>
+          <li><strong>When following a target in DX:</strong> the target Callsign in the main window is required, but your own callsign remains optional. A valid, distinct own/target callsign pair enables additional context recovery to attempt supplementary messages involving that pair.</li>
+        </ul>
+        <p>These fields supply reception and decoding context only. Entering a callsign does not enable transmission; ft8.rs remains receive-only.</p>
 
         <h3 id="modes">Choosing a decoding mode</h3>
         <p>Select a mode in <strong>Settings → Decode → Profile</strong> or use the <strong>Profile</strong> menu.</p>
@@ -106,7 +115,7 @@
     </main>
 
     <footer>
-      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://github.com/tallcode/ft8rs/issues">Report an issue</a> · GPL-3.0-only</p>
+      <p><a href="https://github.com/tallcode/ft8rs">GitHub</a> · <a href="https://wsjtx.github.io/wsjtx/index.html">WSJT-X website</a> · <a href="https://github.com/WSJTX/wsjtx">WSJT-X source</a> · <a href="https://github.com/tallcode/ft8rs/issues">Report an issue</a> · GPL-3.0-only</p>
     </footer>
   </body>
 </html>
