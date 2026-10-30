@@ -1,7 +1,0 @@
-method	snr	correct	wrong	trials	mean_ms	max_ms
-blind-sic-joint	-18	2	0	2	4349.186	4355.909
-blind-sic-joint	-20	1	0	2	4379.295	4397.935
-blind-sic-smooth	-18	2	0	2	4351.047	4352.622
-blind-sic-smooth	-20	1	0	2	4387.624	4407.041
-native	-18	2	0	2	293.655	297.577
-native	-20	0	0	2	290.262	302.428

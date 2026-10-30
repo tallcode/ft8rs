@@ -1,3 +1,0 @@
-# Evidence snapshots keep exact measured bytes, including TSV empty fields and
-# original source formatting. Normal code outside campaigns keeps its checks.
-** -text -whitespace

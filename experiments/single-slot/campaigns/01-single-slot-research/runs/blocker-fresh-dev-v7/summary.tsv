@@ -1,3 +1,0 @@
-method	snr	correct	wrong	trials	mean_ms	max_ms
-blind-receiver	-24	0	0	8	4412.554	4451.747
-native	-24	0	0	8	272.378	321.686

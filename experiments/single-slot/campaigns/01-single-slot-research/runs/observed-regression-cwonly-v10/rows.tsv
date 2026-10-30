@@ -1,3 +1,0 @@
-scenario	seed	snr	method	correct	wrong	ms	message
-cwonly	2026313198	-24	native	0	0	150.924	
-cwonly	2026313198	-24	blind-conditional	0	0	2374.667	

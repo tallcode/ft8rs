@@ -1,8 +1,0 @@
-{
-  "freeze_sha256": "999fb008dda19ac949431005cbe19977c68dda10f0170f258839e1b7544d9ffb",
-  "binary_sha256": "c1d2bdfaa4c3dfcd42cadf49f65499cf141e4328e05a66820c5a8fdfddd91a86",
-  "algorithm_changed_after_development": false,
-  "development_report_sha256": "97a7e22307b5bab4f84001b1503cde4f83abac131c912eaa2cc537054856b3dd",
-  "confirmation_root": 2026102951001,
-  "status": "frozen before confirmation"
-}

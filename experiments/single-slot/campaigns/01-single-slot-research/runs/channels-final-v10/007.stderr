@@ -1,8 +1,0 @@
-FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_mq_2026102809.wav	0	native	CQ K1ABC FN42	1000.000000	0.000000	native
-STAGE	discover	68.125	96
-STAGE	search	2374.297	1
-CONDITIONAL	CQ K1ABC FN42	2493.010	2463.666	1000.008500	-0.000750
-CALLBACK	conditional	2391.312	CQ K1ABC FN42	1000.008500	-0.000750
-STAGE	discover	68.260	96
-STAGE	search	2383.412	0
-FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_mq_2026102809.wav	0	conditional	CQ K1ABC FN42	1000.008500	-0.000750	conditional-h0-1-amp

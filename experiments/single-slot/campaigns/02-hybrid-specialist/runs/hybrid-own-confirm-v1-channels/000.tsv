@@ -1,5 +1,0 @@
-file	slot	method	ms	rows
-/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_disturbed_2026102801.wav	0	native	220.714	CQ K1ABC FN42@1000.000/-0.010/native
-/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_disturbed_2026102801.wav	0	jtdx	466.191	CQ K1ABC FN42@1000.000/-0.005/Regular
-/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_disturbed_2026102801.wav	0	hybrid	588.759	CQ K1ABC FN42@1000.000/-0.010/Unknown
-/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_disturbed_2026102801.wav	0	hybrid-specialist	2904.585	CQ K1ABC FN42@1000.000/-0.010/Unknown

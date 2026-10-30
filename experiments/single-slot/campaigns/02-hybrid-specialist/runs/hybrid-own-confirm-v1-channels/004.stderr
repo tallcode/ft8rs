@@ -1,9 +1,0 @@
-FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_mm_2026102801.wav	0	native	CQ K1ABC FN42	1000.000000	0.000000	native
-CALLBACK	jtdx	325.139	CQ K1ABC FN42	1000.000000	0.005000
-FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_mm_2026102801.wav	0	jtdx	CQ K1ABC FN42	1000.000000	0.005000	Regular
-CALLBACK	hybrid	236.026	CQ K1ABC FN42	1000.000000	0.000000
-HYBRID_DIAG	false	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(536.747833ms), Some(363.918292ms), Some(360.474292ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 536.867708ms, specialist: SpecialistDiagnostics { fec_calls: 0, tentative_rows: 0, rejected_rows: 0, accepted_rows: 0, residual_searches: 0, budget_exhausted: false, elapsed: 0ns, accepted_scores: [], accepted_methods: [], error: None } }
-FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_mm_2026102801.wav	0	hybrid	CQ K1ABC FN42	1000.000000	0.000000	Unknown
-CALLBACK	hybrid-specialist	233.629	CQ K1ABC FN42	1000.000000	0.000000
-HYBRID_DIAG	true	HybridSlotDiagnostics { baseline_rows: 1, agc_rows: 1, baseline_finish: [Some(533.936125ms), Some(360.427916ms), Some(356.907875ms)], recovery_budget_skips: 0, recovered_rows: 0, recovery_tasks: 0, accepted_seeds: 0, rejected_seeds: 0, elapsed: 5.190159375s, specialist: SpecialistDiagnostics { fec_calls: 3561, tentative_rows: 1, rejected_rows: 0, accepted_rows: 1, residual_searches: 1, budget_exhausted: false, elapsed: 4.65610225s, accepted_scores: [583.7348877438379], accepted_methods: ["h0-1-amp"], error: None } }
-FILE_ROW	/Volumes/ZHITAI/Workspace/ft8rs/crates/ft8rs-core/tests/decoder/data/ft8/channels/jtdx_mm_2026102801.wav	0	hybrid-specialist	CQ K1ABC FN42	1000.000000	0.000000	Unknown

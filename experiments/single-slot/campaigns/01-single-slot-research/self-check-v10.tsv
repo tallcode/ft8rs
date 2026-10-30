@@ -1,6 +1,0 @@
-dt	observed_noise	including_padding	expected
--2.1	0.566192	0.236778	0.533333
--0.7	0.541212	0.496320	0.533333
-0.1	0.544163	0.544163	0.533333
-1.9	0.537845	0.526569	0.533333
-noise observability, silence rejection and payload identity checks passed
