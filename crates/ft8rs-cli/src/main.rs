@@ -153,6 +153,9 @@ struct MonitorArgs {
 }
 
 fn main() {
+    if ft8rs_engine::run_decode_worker_if_requested() {
+        return;
+    }
     if let Err(err) = run() {
         eprintln!("{err}");
         std::process::exit(1);

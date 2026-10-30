@@ -62,6 +62,7 @@ struct Row {
     // arrive out of order and rows from different days cannot collide.
     gen: u64,
     freq: f64,
+    dt: f64,
     tokens: Vec<String>,
     source: DecodeSource,
 }
@@ -510,6 +511,7 @@ impl Ft8rsApp {
         self.ingest(
             slot_key,
             row.freq,
+            row.dt,
             text,
             norm_tokens(&row.msg),
             DecodeSource::Local,
@@ -522,27 +524,21 @@ impl Ft8rsApp {
         self.ingest(
             slot_key,
             decode.freq as f64,
+            decode.dt,
             text,
             norm_tokens(&decode.message),
             DecodeSource::External,
         );
     }
 
-    /// Merge a decode into the row list. In compare mode a local and an external
-    /// decode of the same signal (same slot + freq within tolerance + compatible
-    /// message) collapse to one `Both` row. **Same-source rows are never folded:**
-    /// each source is already deduplicated upstream (the engine merges hybrid's
-    /// WSJT-X + JTDX output; WSJT-X UDP sends each decode once), so folding
-    /// same-source would drop genuinely distinct rows — e.g. a jtdx-unique hybrid
-    /// decode that differs from a WSJT-X row only in dt (the fold key has no dt
-    /// term). No match appends a new row.
-    ///
-    /// UTC day resolution prevents a recurring transmission from merging with
-    /// yesterday's retained rows, while tolerating different source latencies.
+    /// Fold repeat observations using slot, frequency, DT and message. Local
+    /// provenance wins over an external observation; late results are inserted
+    /// into their original UTC section, including across midnight.
     fn ingest(
         &mut self,
         slot_key: u32,
         freq: f64,
+        dt: f64,
         text: String,
         tokens: Vec<String>,
         source: DecodeSource,
@@ -555,26 +551,20 @@ impl Ft8rsApp {
             .as_secs();
         let gen = absolute_slot(slot_key, now);
 
-        if fold_into_cross_source(&mut self.rows, gen, freq, self.udp_in_tol, &tokens, source) {
-            return;
-        }
-        if self.rows.last().is_none_or(|row| row.gen != gen) {
-            self.display_items.push(DisplayItem::Separator(gen));
-        }
-        self.display_items
-            .push(DisplayItem::Decode(self.rows.len()));
-        self.rows.push(Row {
+        let incoming = Row {
             text,
             gen,
             freq,
+            dt,
             tokens,
             source,
-        });
-        if self.rows.len() > MAX_ROWS {
-            let drop = self.rows.len() - MAX_ROWS;
-            self.rows.drain(..drop);
-            self.display_items = display_items(&self.rows);
-        }
+        };
+        insert_decode_row(
+            &mut self.rows,
+            &mut self.display_items,
+            incoming,
+            self.udp_in_tol,
+        );
     }
 
     /// Start/stop/restart the WSJT-X listener to match the current settings.
@@ -2120,30 +2110,59 @@ fn external_decode_text(decode: &crate::wsjtx_udp::ExternalDecode) -> String {
     )
 }
 
-/// Fold `(freq, tokens)` into an existing **cross-source** row of the current
-/// batch (`gen`), upgrading it to `Both`; returns true if folded. Same-source
-/// rows are never folded: each source is already deduplicated upstream (the
-/// engine merges hybrid's WSJT-X + JTDX output), so folding same-source would
-/// drop genuinely distinct rows (e.g. a jtdx-unique decode that differs from a
-/// WSJT-X row only in dt, which this fold key does not consider).
-fn fold_into_cross_source(
-    rows: &mut [Row],
-    gen: u64,
-    freq: f64,
-    tol: f64,
-    tokens: &[String],
-    source: DecodeSource,
-) -> bool {
-    for row in rows.iter_mut() {
-        if matches!(
-            (row.source, source),
-            (DecodeSource::Local, DecodeSource::External)
-                | (DecodeSource::External, DecodeSource::Local)
-        ) && row.gen == gen
-            && (row.freq - freq).abs() <= tol
-            && tokens_compatible(&row.tokens, tokens)
+fn insert_decode_row(
+    rows: &mut Vec<Row>,
+    display: &mut Vec<DisplayItem>,
+    incoming: Row,
+    tolerance: f64,
+) {
+    if fold_decode_row(rows, &incoming, tolerance) {
+        return;
+    }
+    let gen = incoming.gen;
+    let index = rows.partition_point(|row| row.gen <= gen);
+    let append = index == rows.len();
+    if append {
+        if rows.last().is_none_or(|row| row.gen != gen) {
+            display.push(DisplayItem::Separator(gen));
+        }
+        display.push(DisplayItem::Decode(index));
+    }
+    rows.insert(index, incoming);
+    if !append {
+        *display = display_items(rows);
+    }
+    if rows.len() > MAX_ROWS {
+        rows.drain(..rows.len() - MAX_ROWS);
+        *display = display_items(rows);
+    }
+}
+
+/// Merge repeated observations of the same transmission. SNR and annotation
+/// changes do not create a new signal. DT keeps distinct same-message signals
+/// apart; cross-source matching retains the configured frequency tolerance.
+fn fold_decode_row(rows: &mut [Row], incoming: &Row, tolerance: f64) -> bool {
+    for row in rows {
+        let same_source = row.source == incoming.source;
+        let tolerance = if same_source {
+            tolerance.min(5.0)
+        } else {
+            tolerance
+        };
+        if row.gen == incoming.gen
+            && (row.freq - incoming.freq).abs() <= tolerance
+            && (row.dt - incoming.dt).abs() <= 0.3
+            && tokens_compatible(&row.tokens, &incoming.tokens)
         {
-            row.source = DecodeSource::Both;
+            if incoming.source == DecodeSource::Local && row.source == DecodeSource::External {
+                row.text.clone_from(&incoming.text);
+                row.freq = incoming.freq;
+                row.dt = incoming.dt;
+                row.tokens.clone_from(&incoming.tokens);
+            }
+            if row.source != incoming.source {
+                row.source = DecodeSource::Both;
+            }
             return true;
         }
     }
@@ -2637,11 +2656,83 @@ mod tests {
     use super::*;
 
     #[test]
+    fn repeated_udp_observations_and_late_rows_stay_in_one_slot_section() {
+        let row = |gen, source, dt, snr| Row {
+            text: format!("{snr} JA8IIK/P SV9GPV -18"),
+            gen,
+            freq: 1137.0,
+            dt,
+            tokens: norm_tokens("JA8IIK/P SV9GPV -18"),
+            source,
+        };
+        let mut rows = Vec::new();
+        let mut display = Vec::new();
+        insert_decode_row(
+            &mut rows,
+            &mut display,
+            row(1, DecodeSource::External, 2.4, -6),
+            7.0,
+        );
+        insert_decode_row(
+            &mut rows,
+            &mut display,
+            row(1, DecodeSource::External, 2.4, -8),
+            7.0,
+        );
+        assert_eq!(rows.len(), 1);
+        insert_decode_row(
+            &mut rows,
+            &mut display,
+            row(1, DecodeSource::Local, 2.4, -7),
+            7.0,
+        );
+        insert_decode_row(
+            &mut rows,
+            &mut display,
+            row(1, DecodeSource::External, 2.4, -9),
+            7.0,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source, DecodeSource::Both);
+        assert!(rows[0].text.starts_with("-7 "));
+        // Same payload at a distinct DT is a separate transmission.
+        insert_decode_row(
+            &mut rows,
+            &mut display,
+            row(1, DecodeSource::Local, 0.1, -20),
+            7.0,
+        );
+        assert_eq!(rows.len(), 2);
+        insert_decode_row(
+            &mut rows,
+            &mut display,
+            row(3, DecodeSource::External, 0.1, -20),
+            7.0,
+        );
+        insert_decode_row(
+            &mut rows,
+            &mut display,
+            row(2, DecodeSource::Local, 0.1, -20),
+            7.0,
+        );
+        assert_eq!(rows.iter().map(|r| r.gen).collect::<Vec<_>>(), [1, 1, 2, 3]);
+        let sections: Vec<_> = display
+            .iter()
+            .filter_map(|item| match item {
+                DisplayItem::Separator(gen) => Some(*gen),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sections, [1, 2, 3]);
+    }
+
+    #[test]
     fn separators_mark_first_and_subsequent_nonempty_slots() {
         let row = |gen| Row {
             text: String::new(),
             gen,
             freq: 1000.0,
+            dt: 0.0,
             tokens: Vec::new(),
             source: DecodeSource::Local,
         };
@@ -2782,6 +2873,62 @@ mod tests {
     }
 
     #[test]
+    fn compare_keeps_local_provenance_in_both_arrival_orders() {
+        let message = "CQ K1ABC FN42";
+        for provenance in [
+            StreamDecodeProvenance::Experiment,
+            StreamDecodeProvenance::CooperativeRecovery,
+            StreamDecodeProvenance::ContextRecovery,
+            StreamDecodeProvenance::ApMask,
+        ] {
+            let local_text = format!(
+                "120000 -20   0.1  1002  {message} {}",
+                provenance_tag(provenance)
+            );
+            let external_text = format!("120000 -19   0.2  1000  {message}");
+            for first in [DecodeSource::Local, DecodeSource::External] {
+                let local_first = first == DecodeSource::Local;
+                let mut rows = vec![Row {
+                    text: if local_first {
+                        local_text.clone()
+                    } else {
+                        external_text.clone()
+                    },
+                    gen: 1,
+                    freq: if local_first { 1002.0 } else { 1000.0 },
+                    dt: 0.0,
+                    tokens: norm_tokens(message),
+                    source: first,
+                }];
+                assert!(fold_decode_row(
+                    &mut rows,
+                    &Row {
+                        gen: 1,
+                        freq: if local_first { 1000.0 } else { 1002.0 },
+                        dt: 0.0,
+                        tokens: norm_tokens(message),
+                        source: if local_first {
+                            DecodeSource::External
+                        } else {
+                            DecodeSource::Local
+                        },
+                        text: (if local_first {
+                            &external_text
+                        } else {
+                            &local_text
+                        })
+                        .to_string()
+                    },
+                    7.0
+                ));
+                assert_eq!(rows[0].source, DecodeSource::Both);
+                assert_eq!(rows[0].text, local_text);
+                assert_eq!(rows[0].freq, 1002.0);
+            }
+        }
+    }
+
+    #[test]
     fn unknown_provenance_does_not_prevent_compare_matching() {
         let message = "CQ BA7SAY OL53";
         for (first, second) in [
@@ -2795,16 +2942,21 @@ mod tests {
                 ),
                 gen: 3362,
                 freq: 2367.0,
+                dt: 0.0,
                 tokens: norm_tokens(message),
                 source: first,
             }];
-            assert!(fold_into_cross_source(
+            assert!(fold_decode_row(
                 &mut rows,
-                3362,
-                2369.0,
-                7.0,
-                &norm_tokens("CQ BA7SAY OL53 ? a2"),
-                second
+                &Row {
+                    gen: 3362,
+                    freq: 2369.0,
+                    dt: 0.0,
+                    tokens: norm_tokens("CQ BA7SAY OL53 ? a2"),
+                    source: second,
+                    text: message.to_string()
+                },
+                7.0
             ));
             assert_eq!(rows[0].source, DecodeSource::Both);
         }
@@ -2848,19 +3000,24 @@ mod tests {
                 text: text.to_string(),
                 gen: u64::from(external.ms_since_midnight / 15_000),
                 freq: 1118.0,
+                dt: 0.0,
                 tokens: tokens.clone(),
                 source: first,
             }];
-            assert!(fold_into_cross_source(
+            assert!(fold_decode_row(
                 &mut rows,
-                u64::from(external.ms_since_midnight / 15_000),
-                1118.0,
-                7.0,
-                incoming,
-                source,
+                &Row {
+                    gen: u64::from(external.ms_since_midnight / 15_000),
+                    freq: 1118.0,
+                    dt: 0.0,
+                    tokens: incoming.to_vec(),
+                    source,
+                    text: local_text.to_string()
+                },
+                7.0
             ));
             assert_eq!(rows[0].source, DecodeSource::Both);
-            assert_eq!(rows[0].text, text);
+            assert_eq!(rows[0].text, local_text);
         }
 
         // Removing annotations must give the same display as a plain payload.
@@ -2936,59 +3093,74 @@ mod tests {
     }
 
     #[test]
-    fn same_source_rows_never_fold_but_cross_source_merges_to_both() {
+    fn repeated_rows_fold_and_distinct_dt_signals_are_preserved() {
         let mk = |source, freq, msg: &str| Row {
             text: String::new(),
             gen: 1,
             freq,
+            dt: 0.0,
             tokens: norm_tokens(msg),
             source,
         };
         let mut rows = vec![mk(DecodeSource::Local, 1000.0, "CQ K1ABC FN42")];
 
-        // A second LOCAL decode of the "same" signal (within tol) must NOT fold —
-        // the engine already deduplicated local output, so this is a genuinely
-        // distinct row (e.g. jtdx-unique differing only in dt). It appends.
-        assert!(!fold_into_cross_source(
+        // An identical local observation is a duplicate, regardless of SNR.
+        assert!(fold_decode_row(
             &mut rows,
-            1,
-            1002.0,
-            7.0,
-            &norm_tokens("CQ K1ABC FN42"),
-            DecodeSource::Local,
+            &Row {
+                gen: 1,
+                freq: 1002.0,
+                dt: 0.0,
+                tokens: norm_tokens("CQ K1ABC FN42"),
+                source: DecodeSource::Local,
+                text: String::new()
+            },
+            7.0
         ));
         assert_eq!(rows[0].source, DecodeSource::Local);
 
         // An EXTERNAL decode of the same signal folds into the local row → Both.
-        assert!(fold_into_cross_source(
+        assert!(fold_decode_row(
             &mut rows,
-            1,
-            1001.0,
-            7.0,
-            &norm_tokens("CQ K1ABC FN42"),
-            DecodeSource::External,
+            &Row {
+                gen: 1,
+                freq: 1001.0,
+                dt: 0.0,
+                tokens: norm_tokens("CQ K1ABC FN42"),
+                source: DecodeSource::External,
+                text: String::new()
+            },
+            7.0
         ));
         assert_eq!(rows[0].source, DecodeSource::Both);
-        // The matched pair is complete: neither source can consume it again.
+        // A Both row continues to absorb repeat observations from either source.
         for source in [DecodeSource::Local, DecodeSource::External] {
-            assert!(!fold_into_cross_source(
+            assert!(fold_decode_row(
                 &mut rows,
-                1,
-                1001.0,
-                7.0,
-                &norm_tokens("CQ K1ABC FN42"),
-                source
+                &Row {
+                    gen: 1,
+                    freq: 1001.0,
+                    dt: 0.0,
+                    tokens: norm_tokens("CQ K1ABC FN42"),
+                    source,
+                    text: String::new()
+                },
+                7.0
             ));
         }
 
         // A different gen (different slot) never folds.
-        assert!(!fold_into_cross_source(
+        assert!(!fold_decode_row(
             &mut rows,
-            2,
-            1000.0,
-            7.0,
-            &norm_tokens("CQ K1ABC FN42"),
-            DecodeSource::External,
+            &Row {
+                gen: 2,
+                freq: 1000.0,
+                dt: 0.0,
+                tokens: norm_tokens("CQ K1ABC FN42"),
+                source: DecodeSource::External,
+                text: String::new()
+            },
+            7.0
         ));
     }
 
@@ -3018,17 +3190,22 @@ mod tests {
                     text: String::new(),
                     gen: 2702,
                     freq: 1118.0,
+                    dt: 0.0,
                     tokens: norm_tokens("CQ ZL2AGY RF70 a7"),
                     source: first,
                 }];
                 assert_eq!(
-                    fold_into_cross_source(
+                    fold_decode_row(
                         &mut rows,
-                        2702,
-                        1118.0 + offset,
-                        tolerance,
-                        &norm_tokens("CQ ZL2AGY RF70 ? a1"),
-                        incoming,
+                        &Row {
+                            gen: 2702,
+                            freq: 1118.0 + offset,
+                            dt: 0.0,
+                            tokens: norm_tokens("CQ ZL2AGY RF70 ? a1"),
+                            source: incoming,
+                            text: String::new()
+                        },
+                        tolerance
                     ),
                     expected,
                     "source={first:?}, tolerance={tolerance}, offset={offset}",

@@ -69,19 +69,47 @@ fn hybrid_cw_experiment_adds_truth_without_replacing_baseline() {
     let samples: Vec<f32> = audio.iter().map(|&x| x as f32).collect();
     let timestamp = SlotTimestamp::parse("261029_120000").unwrap();
     let mut results = Vec::new();
-    for enabled in [false, true] {
+    for (enabled, staged, extra_samples) in [
+        (false, false, 0),
+        (true, false, 0),
+        (true, true, 0),
+        (true, true, 256),
+    ] {
         let mut session = HybridStreamDecodeSession::new(StreamDecodeConfig {
             hybrid_experiment: enabled,
             ..Default::default()
         });
         let mut callbacks = Vec::new();
-        let rows = session
-            .decode_slot_streaming_at(&timestamp, &samples, |row| {
-                callbacks.push(row.clone());
-                Ok(())
-            })
-            .unwrap();
+        let mut input = samples.clone();
+        input.extend(std::iter::repeat_n(0.0, extra_samples));
+        let mut emit = |row: &crate::stream::session::StreamDecodedWithProvenance| {
+            callbacks.push(row.clone());
+            Ok(())
+        };
+        let rows = if staged {
+            let mut state = session.start_slot();
+            session
+                .decode_slot_nzhsym41_tagged(&timestamp, &mut state, &input[..144_000], &mut emit)
+                .unwrap();
+            session.subtract_slot_nzhsym47(&mut state, &input[..165_888]);
+            session
+                .decode_slot_nzhsym50_tagged(&timestamp, state, &input, &mut emit)
+                .unwrap()
+        } else {
+            session
+                .decode_slot_streaming_tagged_at(&timestamp, &input, &mut emit)
+                .unwrap()
+        };
         assert_eq!(callbacks.len(), rows.len());
+        if enabled {
+            let recovered = callbacks.iter().find(|row| row.decode.msg == "CQ K1ABC FN42")
+                .unwrap_or_else(|| panic!("missing CW callback: staged={staged} extra_samples={extra_samples} diagnostics={:?}", session.last_diagnostics().experiment));
+            assert_eq!(
+                recovered.provenance,
+                crate::stream::session::StreamDecodeProvenance::Experiment
+            );
+            assert_eq!(session.last_diagnostics().experiment.accepted_rows, 1);
+        }
         results.push(rows);
     }
     for row in &results[0] {
@@ -92,6 +120,9 @@ fn hybrid_cw_experiment_adds_truth_without_replacing_baseline() {
     assert!(!results[0].iter().any(|r| r.msg == "CQ K1ABC FN42"));
     assert!(results[1].iter().any(|r| r.msg == "CQ K1ABC FN42"));
     assert!(results[1].iter().all(|r| r.msg == "CQ K1ABC FN42"));
+    for rows in &results[2..] {
+        assert_eq!(format!("{rows:?}"), format!("{:?}", results[1]));
+    }
 }
 
 fn waveform_row(message: &str, f: f64, dt: f64) -> (Row, Vec<f64>) {

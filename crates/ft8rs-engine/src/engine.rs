@@ -2,7 +2,7 @@
 //!
 //! A controllable, long-lived engine the GUI drives over channels. Two actors:
 //!
-//! - **Decode actor** (own thread): holds the decode session for its whole life,
+//! - **Decode actor** (supervised child process): holds its session while healthy,
 //!   processes staged decode commands (wsjtx nzhsym 41/47/50 early decode, others
 //!   final-only), and can `Reconfigure` in place (rebuild session, migrate hash).
 //! - **Engine/control thread**: owns the cpal capture + UTC-aligned slot timing,
@@ -13,7 +13,9 @@
 //! restarts only capture — the session and all decode state survive (decision 5).
 //! Config changes (L1) reconfigure the actor at the next slot
 //! boundary; the control loop polls commands every ~50 ms so Stop/Shutdown are
-//! prompt even mid-slot (decode runs off-thread). The existing blocking CLI path
+//! prompt even mid-slot. A ten-second cumulative per-slot watchdog kills and
+//! reaps overrunning native work, then starts the next slot with a fresh session.
+//! The existing blocking CLI path
 //! in `soundcard.rs` is untouched.
 //!
 //! Nothing here touches `lib_wsjtx`/`lib_jtdx`.
@@ -57,7 +59,7 @@ const POLL: Duration = Duration::from_millis(50);
 /// staged messages). If the decoder can't keep up with real time the producer
 /// sheds whole slots rather than growing this queue without bound (each N50
 /// stage carries a full ~720 KB slot buffer).
-const DECODE_QUEUE_CAP: usize = 8;
+pub(crate) const DECODE_QUEUE_CAP: usize = 8;
 /// Bound on the engine→GUI event queue (~34 slots of decodes; ~200 KB worst
 /// case). The GUI drains it every frame (~150 ms), so this only fills if the GUI
 /// stops draining for many seconds (e.g. minimized on a platform that suspends
@@ -160,7 +162,7 @@ fn run_monitor(
         format: format.clone(),
     });
 
-    let (dec_cmd_tx, dec_evt_rx) = spawn_decode_actor(effective_config(&state.config));
+    let (dec_cmd_tx, dec_evt_rx) = crate::worker::spawn(effective_config(&state.config));
 
     // WSJT-X-style capture alignment: no sleep-to-boundary or drain. The
     // accumulator grids every captured block onto the UTC 15 s slot by its capture
@@ -208,6 +210,11 @@ fn run_monitor(
                     input_peak = 0.0;
                     last_level = Instant::now();
                 }
+                let submitted = capture_stage_submitted(
+                    Instant::now(),
+                    crate::soundcard::capture_now_ms(),
+                    chunk.capture_ms,
+                );
                 let out = acc.push(&chunk.samples, chunk.capture_ms);
                 for (stage, timestamp, samples_12k) in out.stages {
                     // Wait for decode-queue space rather than dropping the slot (the
@@ -219,6 +226,7 @@ fn run_monitor(
                             stage,
                             timestamp,
                             samples_12k,
+                            submitted,
                         },
                         cmd_rx,
                         &dec_evt_rx,
@@ -491,11 +499,17 @@ fn forward_decode_events(
 }
 
 fn refresh_devices(event_tx: &SyncSender<EngineEvent>) {
+    log::info!("Refreshing audio input devices");
     match list_soundcards() {
         Ok(devices) => {
+            log::info!(
+                "Audio enumeration completed: {} input devices",
+                devices.len()
+            );
             let _ = event_tx.try_send(EngineEvent::DevicesRefreshed(devices));
         }
         Err(err) => {
+            log::error!("Audio enumeration failed: {err}");
             let _ = event_tx.try_send(EngineEvent::Error(err));
         }
     }
@@ -513,6 +527,11 @@ fn build_udp(config: Option<&UdpConfig>, event_tx: &SyncSender<EngineEvent>) -> 
     }
 }
 
+fn capture_stage_submitted(now: Instant, now_ms: i64, capture_ms: i64) -> Instant {
+    let age = Duration::from_millis(now_ms.saturating_sub(capture_ms).max(0) as u64);
+    now.checked_sub(age).unwrap_or(now)
+}
+
 fn effective_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
     let mut config = config.clone();
     config.cooperative_realtime = true;
@@ -524,16 +543,14 @@ fn effective_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
 
 // ── Decode actor ────────────────────────────────────────────────────────────
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Keep configuration ownership inline in the existing bounded actor channel"
-)]
-enum DecodeCmd {
+pub(crate) enum DecodeCmd {
     Stage {
         stage: SlotStage,
         timestamp: SlotTimestamp,
         samples_12k: Vec<f32>,
+        submitted: Instant,
     },
+    Barrier(Sender<()>),
     Reconfigure {
         config: StreamDecodeConfig,
         reset_dx_target: bool,
@@ -627,6 +644,7 @@ fn send_record(
     }));
 }
 
+#[cfg(test)]
 fn spawn_decode_actor(
     config: StreamDecodeConfig,
 ) -> (SyncSender<DecodeCmd>, Receiver<EngineEvent>) {
@@ -640,11 +658,12 @@ fn spawn_decode_actor(
     (cmd_tx, evt_rx)
 }
 
-fn decode_actor(
+pub(crate) fn decode_actor(
     config: StreamDecodeConfig,
     cmd_rx: Receiver<DecodeCmd>,
     evt_tx: Sender<EngineEvent>,
 ) {
+    let mut experiment_enabled = config.hybrid_experiment;
     let mut session = build_session(&config);
     // wsjtx staged state plus the count of early rows already emitted at nzhsym=41.
     let mut slot_state: Option<(StreamSlotDecodeState, usize)> = None;
@@ -655,11 +674,15 @@ fn decode_actor(
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
             DecodeCmd::Stop => break,
+            DecodeCmd::Barrier(done) => {
+                let _ = done.send(());
+            }
             DecodeCmd::Reconfigure {
                 config,
                 reset_dx_target,
                 reset_dx_operator,
             } => {
+                experiment_enabled = config.hybrid_experiment;
                 let calls = export_hash(&session);
                 session = reconfigure_session(session, config, reset_dx_target, reset_dx_operator);
                 import_hash(&mut session, &calls);
@@ -670,6 +693,7 @@ fn decode_actor(
                 stage,
                 timestamp,
                 samples_12k,
+                submitted: _,
             } => match (&mut session, stage) {
                 (DecodeSession::Wsjtx(s), SlotStage::N41) => {
                     let mut state = s.start_slot_decode();
@@ -751,6 +775,15 @@ fn decode_actor(
                                 Ok(())
                             },
                         );
+                        if let ProfileStreamDecodeSession::Hybrid(session) = p {
+                            log::info!(
+                                "Hybrid slot {}: experiment_enabled={} samples={} diagnostics={:?}",
+                                timestamp.format_time(),
+                                experiment_enabled,
+                                samples_12k.len(),
+                                session.last_diagnostics().experiment,
+                            );
+                        }
                         match result {
                             Ok(count) => {
                                 if let Some(snapshot) = p.dx_context_snapshot() {
@@ -791,6 +824,16 @@ mod tests {
         ))
     }
 
+    #[test]
+    fn capture_queue_age_is_included_in_the_decode_deadline() {
+        let now = Instant::now();
+        assert_eq!(
+            capture_stage_submitted(now, 25_000, 10_000),
+            now - Duration::from_secs(15)
+        );
+        assert_eq!(capture_stage_submitted(now, 10_000, 25_000), now);
+    }
+
     fn feed_slot(cmd_tx: &SyncSender<DecodeCmd>, ts: &SlotTimestamp, s12k: &[f32]) {
         let slice = |n: usize| s12k[..(n * NZHSYM_STRIDE).min(s12k.len())].to_vec();
         for (n, stage) in [
@@ -804,6 +847,7 @@ mod tests {
                     stage,
                     timestamp: ts.clone(),
                     samples_12k: samples,
+                    submitted: Instant::now(),
                 })
                 .unwrap();
         }

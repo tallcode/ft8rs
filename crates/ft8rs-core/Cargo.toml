@@ -18,6 +18,7 @@ default = []
 fftw = []
 
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
 rustfft = "6.4.1"
 hound = "3.5.1"
 num-bigint = "0.5.1"

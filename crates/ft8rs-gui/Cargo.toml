@@ -10,9 +10,10 @@ name = "ft8rs-gui"
 path = "src/main.rs"
 
 [dependencies]
+log = "0.4.34"
 ft8rs-core = { path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
-eframe = { version = "0.37.0", features = ["persistence"] }
+eframe = { version = "0.37.0", features = ["persistence", "glow"] }
 egui_extras = { version = "0.37.0", default-features = false, features = ["svg"] }
 muda = "0.21.2"
 # Read a font's vertical metrics (line gap) at load time so we can re-center its

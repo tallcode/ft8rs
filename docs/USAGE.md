@@ -145,9 +145,9 @@ monitoring continues until stopped. CLI output streams rows as they are produced
 ```
 
 The completion line describes slot completion, not the arrival time of its first
-message. Hybrid/DX monitoring uses real-time task-start budgets. Existing native
-calls can finish later and still emit results. File mode uses canonical ordering
-and can select different additional recovery opportunities.
+message. The blocking CLI monitor retains its existing real-time task-start
+budgets. The GUI uses the hard process watchdog described below. File mode uses
+canonical ordering and can select different additional recovery opportunities.
 
 ### WAV decoding
 
@@ -218,6 +218,8 @@ acceptance, use identical audio, context and database with the
 
 | Symptom | Check |
 |---|---|
+| GUI exits before showing a window, while CLI works | Windows defaults to DX12, avoiding automatic Vulkan enumeration. An affected Windows 11 / i5-9600T machine could launch 0.0.24 after setting `WGPU_BACKEND=dx12`. Read `%LOCALAPPDATA%\ft8rs\logs\ft8rs-gui.log` on newer builds. Returned startup graphics errors retry with OpenGL before the app starts; set `FT8RS_RENDERER=glow` to bypass wgpu, including when a driver crashes before it can return an error. The previous session is saved as `ft8rs-gui.previous.log`. |
+| No GUI diagnostic log is created | If the executable cannot reach `main` (e.g. a missing imported DLL or a native loader failure), inspect Windows Event Viewer → Windows Logs → Application for the failed executable, module and exception code. |
 | No messages and input peak stays silent | Correct receive endpoint, actual opened format, per-channel peaks, microphone/input permission |
 | Audio is present but unexpectedly weak | Mono/Left/Right selection, single-sided source mixed down, opposite-phase channels, receiver levels |
 | GUI cannot start DX | Fill the target Callsign; your own callsign is optional |
@@ -236,5 +238,59 @@ after Deep decode, for Hybrid.
 It is disabled by default and saved across restarts. Enabling it adds the
 independent stable weak-signal/interference receiver; supplementary lines end in
 `exp`. Native callbacks still arrive first. The branch uses the remaining soft
-budget up to roughly ten seconds from slot processing start; an in-flight task
-may finish later. See the [receiver design and evidence](../crates/ft8rs-core/src/decode/experiment/README.md).
+budget up to roughly ten seconds from slot processing start in file/CLI mode.
+GUI monitoring additionally enforces the hard process deadline below. See the [receiver design and evidence](../crates/ft8rs-core/src/decode/experiment/README.md).
+
+An `exp` suffix identifies an additional experimental result; it is not a
+per-slot activity indicator. Rows already decoded by a native path retain their
+native provenance. Compare mode preserves the local suffix even when the
+external WSJT-X UDP row arrived first. The GUI log records whether the experiment
+was enabled, input sample count, FEC/accepted counts and budget exhaustion per
+completed Hybrid slot, so a disabled branch, an exhausted budget and a search
+with no accepted additions can be distinguished.
+
+Windows uses only the DX12 wgpu backend by default. An explicit `WGPU_BACKEND`
+still overrides it; other platforms keep their existing backend defaults.
+To force the OpenGL renderer for one launch in Windows PowerShell:
+
+```powershell
+$env:FT8RS_RENDERER = "glow"
+.\ft8rs-gui.exe
+```
+
+Use `Remove-Item Env:FT8RS_RENDERER` to restore the default renderer for subsequent
+launches from that shell. Normal Windows builds use the OS graphics stack and do
+not require FFTW. Startup logs distinguish graphics initialization, application
+creation and audio device enumeration; the input stream opens only when
+monitoring starts. If the preferred log directory is unwritable, the GUI tries
+`logs` beside the executable and then `ft8rs/logs` in the system temporary directory.
+
+
+### GUI real-time deadline and comparison ordering
+
+The GUI runs live decoding in a persistent child process using private pipes.
+Every received callback is forwarded immediately. Each slot has a cumulative
+10-second work budget across its early/subtract/final stages, including pipe
+transport and process startup, while idle waiting for more audio is excluded.
+Queued stages also expire after ten seconds instead of delaying current audio.
+The parent checks the deadline at a 5 ms polling granularity. At expiry it kills
+and reaps the entire child, keeps the messages already displayed, drops remaining
+stages for that slot and uses a fresh native session on the next slot. Stop also
+terminates active work immediately. Normal slots keep their native sessions and
+normal configuration migration; only a timeout/crash discards learned state.
+No cancellation code or thresholds are added to the native decoder algorithms.
+The standalone file/CLI decode path remains available for unbounded offline work.
+
+The comparison table consolidates repeated observations from the same UDP source
+and repeats received after a row has become `Both`. Matching includes UTC slot,
+message, frequency and DT (within 0.3 s), so distinct same-message signals at
+different DT are retained. Local measurements/provenance win when a local and
+external row merge. A late result is inserted in its original slot section rather
+than adding another old separator below the current slot. This grouping does not
+claim that an external UDP result itself arrived on time.
+
+WSJT-X's `Network/MessageClient.cpp` suppresses only consecutively identical
+serialized packets; changed SNR/DT/annotation fields are different packets, and
+multicast can send on multiple interfaces. `widgets/mainwindow.cpp::replayDecodes`
+uses `New=false`, which the ft8rs listener excludes. Repeated `New=true` observations
+still require display deduplication.

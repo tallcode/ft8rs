@@ -51,7 +51,11 @@ Initial metrics include one/three-symbol amplitude, four-symbol Bessel likelihoo
 and three-symbol per-tone robust likelihood. Pilot-coherent detection uses only
 fully observed sync symbols. Effective sample counts are carried through block
 metrics; missing samples do not become low-noise observations. Input lengths
-between 120000 and 180000 samples are accepted, with other lengths skipped.
+between 120000 and 180000 samples are accepted by the receiver, with shorter
+inputs skipped. The Hybrid-only module boundary limits longer live captures to
+their first 180000 samples: whole driver blocks can make a valid live slot
+slightly longer than 15 seconds. This is a read-only slice; native inputs are
+unchanged and partial slots are never padded for experimental observation.
 
 Up to three strongly persistent spectral lines can be fitted on the private copy.
 The original audio remains available to all native paths. This is a stationary

@@ -1048,6 +1048,7 @@ dependencies = [
  "egui-winit",
  "egui_glow",
  "egui_system_font_provider",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -1513,6 +1514,7 @@ dependencies = [
  "hound",
  "num-bigint",
  "rustfft",
+ "serde",
 ]
 
 [[package]]
@@ -1521,6 +1523,9 @@ version = "0.0.0"
 dependencies = [
  "cpal",
  "ft8rs-core",
+ "log",
+ "ron",
+ "serde",
 ]
 
 [[package]]
@@ -1535,6 +1540,7 @@ dependencies = [
  "ft8rs-engine",
  "ico",
  "image",
+ "log",
  "muda",
  "raw-window-handle",
  "winresource",
