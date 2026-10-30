@@ -3,6 +3,7 @@
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 from html import escape
 import json
 from pathlib import Path
@@ -59,6 +60,7 @@ def release_values(release):
 
 def build(release, output):
     values = {key: escape(value, quote=True) for key, value in release_values(release).items()}
+    values["style_version"] = hashlib.sha256((SITE / "style.css").read_bytes()).hexdigest()[:8]
     templates = {
         language: Template((SITE / f"{language}.html").read_text(encoding="utf-8"))
         for language in ("zh", "en")
@@ -76,7 +78,8 @@ def build(release, output):
     (output / "index.html").write_text(fallback, encoding="utf-8")
     shutil.copy2(SITE / "style.css", output / "style.css")
     shutil.copy2(SITE / "language.js", output / "language.js")
-    shutil.copy2(SITE / "sensitivity.svg", output / "sensitivity.svg")
+    shutil.copy2(SITE / "synthetic.svg", output / "synthetic.svg")
+    shutil.copy2(SITE / "recording.svg", output / "recording.svg")
     (output / ".nojekyll").touch()
 
 

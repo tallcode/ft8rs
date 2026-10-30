@@ -13,8 +13,10 @@ session. Native baseline tests have SWL/AGC off and no user QSO context.
 
 | Profile | Short recording `210703_133430` | Long recording `230208_140300` |
 |---|---:|---:|
-| WSJT-X | 21/21 target rows, every target required | 424/424 target rows |
-| JTDX | 20/20 target rows | 430/431 target rows, fixed four logical partitions |
+| WSJT-X (`W`) | 21/21 target rows, every target required | 434/434 target rows |
+| JTDX (`J`) | 20/20 target rows | 453/453 target rows, fixed one partition |
+| Hybrid (`H`) | 21/21 target rows | 476/476 target rows |
+| Hybrid + experiment (`He`) | 21/21 target rows | 479/479 target rows |
 
 The decoder runner uses `ALLCALL7.TXT.2022`, SHA-256:
 
@@ -22,30 +24,35 @@ The decoder runner uses `ALLCALL7.TXT.2022`, SHA-256:
 e647033c0ed4ef2d7c3c56839cfbd819f224805bcd7e0689ac656a0e8b22b298
 ```
 
-Production defaults to one JTDX partition; explicit zero is machine-dependent
-automatic selection. Neither is a substitute for the four-partition long
-calibration. The shipped runtime CallDB is a different snapshot and can change
-results. Do not replace either database to make a test pass.
+Production defaults to one JTDX partition; the current recording CSV pins this
+setting. The four-partition long-recording gate also checks the current JTDX
+target rows. Explicit zero is machine-dependent automatic selection. The
+shipped runtime CallDB is a different snapshot and can change results. Do not
+replace either database to make a test pass.
 
-CSV `Extra` markers select the applicable reference rows:
+CSV `Extra` lists the decoders that produced each reference row in the fixed
+replay, separated by `|`:
 
 | Marker | Interpretation |
 |---|---|
-| blank | Shared reference target |
-| `W` | WSJT-X target; excluded from the pure JTDX target set |
-| `J` | JTDX target; excluded from the pure WSJT-X target set |
-| `E` | Excluded/problem row |
+| `W` | WSJT-X |
+| `J` | JTDX |
+| `H` | Hybrid |
+| `He` | Hybrid with experimental decoding enabled |
+| blank | Reviewed reference message, absent from this fixed replay |
 
-Hybrid evaluates the union of applicable non-E references. DX evaluates only
-target-related messages under its configured target/context. Raw output counts
-can include excluded or unlabelled rows and must not be confused with target
-coverage. Recovery requires its own operating point rather than being credited
-to a no-user-context native baseline.
+The current fixed replay uses `ALLCALL7.TXT.2022`, 100–3000 Hz for the short
+recording, 200–3000 Hz for the long recording, and one JTDX partition. Reviewed
+additions are included; the two identified wrong decodes are not reference rows. DX evaluates only
+target-related messages under its configured target/context. The degraded
+retention corpus keeps its exact required rows in `retention.tsv`; its diagnostic
+classification uses the current CSV. Raw output counts can include unlabelled
+rows and must not be confused with target coverage.
 
 The known pure JTDX long miss remains:
 
 ```text
-230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,J
+230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,
 ```
 
 It cannot be offset by a different new row. The WSJT-X short test's former floor

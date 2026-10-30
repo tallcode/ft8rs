@@ -3,6 +3,7 @@
 from copy import deepcopy
 from html.parser import HTMLParser
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -57,7 +58,8 @@ class BuildSiteTests(unittest.TestCase):
             for asset in release["assets"]:
                 self.assertIn(asset["browser_download_url"], links.links)
             self.assertTrue((output / "style.css").is_file())
-            self.assertTrue((output / "sensitivity.svg").is_file())
+            self.assertTrue((output / "synthetic.svg").is_file())
+            self.assertTrue((output / "recording.svg").is_file())
             self.assertTrue((output / ".nojekyll").is_file())
 
     def test_both_languages_share_release_and_have_manual_language_links(self):
@@ -69,7 +71,7 @@ class BuildSiteTests(unittest.TestCase):
                 html = (output / language / "index.html").read_text(encoding="utf-8")
                 self.assertIn("<strong>1.2.3</strong>", html)
                 self.assertIn(f'href="../{other}/"', html)
-                self.assertIn('href="../style.css"', html)
+                self.assertRegex(html, r'href="\.\./style\.css\?v=[0-9a-f]{8}"')
                 self.assertNotIn("<script", html)
                 self.assertNotIn("$", html)
                 for asset in release["assets"]:

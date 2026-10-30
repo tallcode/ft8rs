@@ -7,8 +7,7 @@ JTDX AGC path. `mycall` is optional; a valid full call pair unlocks additional
 context recovery. Target-only listening uses ordinary search without inventing
 the missing call.
 
-Related notes: [JTDX](JTDX.md), [WSJT-X](WSJTX.md), [Hybrid](HYBRID.md),
-[shared architecture](COOPERATIVE_DECODER_DESIGN.md).
+Related notes: [JTDX](JTDX.md), [WSJT-X](WSJTX.md), [Hybrid](HYBRID.md).
 
 ## Execution
 
@@ -128,16 +127,50 @@ Watterson channels and degraded historical recordings through the DX adapter.
 DX's target filter is part of its contract; it does not need to return unrelated
 messages from the general corpus.
 
-The [2026-10-28 report](../../docs/reports/2026-10-28-dx.md) separates prototype
-experiments from implemented behavior. The measured implementation preserved
-all previous target messages and seven additional known-truth synthetic
-recoveries across the four controlled comparisons. Unlabelled real-recording
-candidates were not treated as confirmed gains. That finite set establishes
-neither an absolute false-positive rate nor a fixed dB sensitivity improvement.
+### Historical implementation evidence (2026-10-28)
+
+The implemented three-way DX path was measured with Release/RustFFT, 12 visible
+cores, one JTDX partition and the shipped CallDB (SHA-256
+`17140773605b0d2a7a5a31458c11384d9efc413bf6288b262b7dd1f391ec32ea`).
+Processes ran serially; each timing is one offline replay from the full-slot
+audio boundary, excluding soundcard and GUI latency. All previous target rows
+were retained in these real-recording comparisons:
+
+| Target | Previous → implemented target rows | Wall time, previous → implemented | Latest target callback | All workers finished |
+|---|---:|---:|---:|---:|
+| UA3QNA | 2 → 2 | 59.31 → 63.82 s | +1.63 s | +4.15 s |
+| CU3HN | 14 → 20 | 67.01 → 71.36 s | +2.69 s | +7.66 s |
+| DD0ZL | 5 → 5 | 59.28 → 63.80 s | +0.55 s | +4.14 s |
+| RK4FF | 9 → 9 | 59.08 → 63.27 s | +0.12 s | +4.15 s |
+
+At the time of that run, five of CU3HN's six added real-recording rows lacked
+reference annotations. They were not claimed as verified gains. The extra
+three-way observations increased CPU cost; CU3HN process CPU rose from 89.80 s
+to 182.80 s. A prototype with additional JTDX residual deep search finished
+its slowest optional worker at next-slot +14.71 s. The implemented version
+retains the protected native work and uses one bounded WSJT-X recovery round.
+
+Controlled synthetic cases injected known target messages with near-frequency
+interference, gain changes and target-absent controls. Across the two development
+and two held-out interference configurations, the implemented path retained
+seven additional correct recoveries over the previous DX path. The per-case
+counts (eight injected target messages each) were 3→5, 2→5, 4→4 and 2→4;
+no wrong formal outputs occurred in those four cases. A prior prototype emitted
+an incomplete `<> BG5ATV -07` with only a target call configured; requiring a
+complete legal call pair for new WSJT-X QSO context removed it while retaining
+the correct native message. The broader implemented synthetic replay covered
+272 distinct waveforms, 195 without target-related traffic, with no wrong
+formal outputs observed. These finite, idealized signals do not establish a
+field false-positive rate or a fixed dB sensitivity gain.
+
+The known-truth waveform and incomplete-context gates remain in the local test
+suite. Unlabelled real-recording candidates from this historical run were not
+promoted automatically; later CSV and user-review annotations have their own
+operating point in [validation](../../docs/VALIDATION.md).
 
 A focus that succeeds after external seeding does not establish cold-start
 sensitivity. Recovery rows must not promote their own hypotheses into strong
 observations. Compare callback arrival, all-worker completion and next-slot
-queueing separately. See [shared architecture](COOPERATIVE_DECODER_DESIGN.md),
+queueing separately. See [Hybrid](HYBRID.md),
 [current validation conditions](../../docs/VALIDATION.md) and
 [development checks](../../docs/DEVELOPMENT.md).

@@ -2,7 +2,7 @@
   <title id="title">Known targets recovered in 144 synthetic test cases</title>
   <desc id="description">WSJT-X 39, JTDX 30, Hybrid 50, Hybrid with experimental decoder 102.</desc>
   <style>
-    text { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #243342; }
+    text { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Liberation Sans", Arial, sans-serif; fill: #243342; }
     .label { font-size: 17px; font-weight: 600; }
     .value { font-size: 20px; font-weight: 700; }
     .axis { font-size: 13px; fill: #667381; }

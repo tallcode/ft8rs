@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 296" role="img" aria-labelledby="title description">
+  <title id="title">Output rows from a real recording</title>
+  <desc id="description">WSJT-X 434, JTDX 455, Hybrid 478, Hybrid with experimental decoding 481.</desc>
+  <style>
+    text { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Liberation Sans", Arial, sans-serif; fill: #243342; }
+    .label { font-size: 17px; font-weight: 600; }
+    .value { font-size: 20px; font-weight: 700; }
+    .axis { font-size: 13px; fill: #667381; }
+  </style>
+  <g aria-hidden="true">
+    <rect x="205" y="32" width="400" height="34" rx="6" fill="#f0f2f4"/>
+    <rect x="205" y="84" width="400" height="34" rx="6" fill="#f0f2f4"/>
+    <rect x="205" y="136" width="400" height="34" rx="6" fill="#f0f2f4"/>
+    <rect x="205" y="188" width="400" height="34" rx="6" fill="#f0f2f4"/>
+    <rect x="205" y="32" width="289.3" height="34" rx="6" fill="#60778e"/>
+    <rect x="205" y="84" width="303.3" height="34" rx="6" fill="#7e96a6"/>
+    <rect x="205" y="136" width="318.7" height="34" rx="6" fill="#247a86"/>
+    <rect x="205" y="188" width="320.7" height="34" rx="6" fill="#d45e34"/>
+    <text class="label" x="0" y="55">WSJT-X</text>
+    <text class="label" x="0" y="107">JTDX</text>
+    <text class="label" x="0" y="159">Hybrid</text>
+    <text class="label" x="0" y="211">Hybrid + exp</text>
+    <text class="value" x="504" y="55">434</text>
+    <text class="value" x="518" y="107">455</text>
+    <text class="value" x="534" y="159">478</text>
+    <text class="value" x="536" y="211">481</text>
+    <path d="M205 239H605" stroke="#d2d8dd"/>
+    <path d="M205 239v6M272 239v6M338 239v6M405 239v6M472 239v6M538 239v6M605 239v6" stroke="#d2d8dd"/>
+    <text class="axis" x="205" y="265" text-anchor="middle">0</text>
+    <text class="axis" x="272" y="265" text-anchor="middle">100</text>
+    <text class="axis" x="338" y="265" text-anchor="middle">200</text>
+    <text class="axis" x="405" y="265" text-anchor="middle">300</text>
+    <text class="axis" x="472" y="265" text-anchor="middle">400</text>
+    <text class="axis" x="538" y="265" text-anchor="middle">500</text>
+    <text class="axis" x="605" y="265" text-anchor="middle">600</text>
+  </g>
+</svg>

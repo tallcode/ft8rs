@@ -1,9 +1,13 @@
 :root {
   color-scheme: light;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Liberation Sans", Arial, sans-serif;
   line-height: 1.8;
   color: #222;
   background: #fff;
+}
+
+html:lang(zh-CN) {
+  font-family: "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
 }
 
 body {
@@ -47,6 +51,11 @@ h2 {
 h3 {
   margin-top: 1.75rem;
   font-size: 1.05rem;
+}
+
+h4 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 1rem;
 }
 
 a {
@@ -106,6 +115,40 @@ ol {
   line-height: 1.6;
 }
 
+.comparison-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.comparison-table {
+  width: 100%;
+  box-sizing: border-box;
+  border-collapse: collapse;
+  border: 1px solid #d8d8d8;
+  font-size: 0.925rem;
+}
+
+.comparison-table th,
+.comparison-table td {
+  padding: 0.35rem 0.65rem;
+  border: 1px solid #d8d8d8;
+}
+
+.comparison-table th:first-child {
+  text-align: left;
+  white-space: nowrap;
+}
+
+.comparison-table th:not(:first-child),
+.comparison-table td {
+  text-align: right;
+}
+
+.comparison-note {
+  color: #555;
+  font-size: 0.925rem;
+}
+
 dt {
   font-weight: 600;
 }
@@ -115,6 +158,7 @@ dd {
 }
 
 code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
   font-size: 0.9em;
 }
 
