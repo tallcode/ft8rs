@@ -1,4 +1,4 @@
-//! Reconfiguration planner (P1).
+//! Reconfiguration planner.
 //!
 //! Pure, deterministic logic that decides — given the engine's current desired
 //! state and a newly submitted desired state — *what* the engine must do to
@@ -8,7 +8,7 @@
 //!
 //! This is the single source of truth for the dynamic-switch rules. It has no
 //! audio, no threads, no I/O, so it is exhaustively unit-tested below. The
-//! actors (P2) merely execute the plan it returns.
+//! actors merely execute the plan it returns.
 //!
 //! Nothing here touches `lib_wsjtx`/`lib_jtdx`.
 
@@ -43,7 +43,7 @@ pub enum StateBucket {
 /// The GUI submits a full `EngineState`; the planner diffs old vs. new.
 #[derive(Clone, Debug)]
 pub struct EngineState {
-    /// Soundcard selector (index or name), or `None` for the default device.
+    /// Soundcard selector (id:<CPAL ID>, index or unique name), or `None` for default.
     pub device: Option<String>,
     /// Which physical channel of a multi-channel device feeds the decoder.
     pub channel: InputChannel,
@@ -153,7 +153,7 @@ pub fn plan_reconfig(old: &EngineState, new: &EngineState) -> ReconfigOutcome {
     if !changed.is_empty() {
         out.rebuild_session = true;
         // S1 scratch is reset by definition (rebuilding the session). Hash book
-        // migrates today; S3 (A7/AP/evidence) migration is deferred (§5.3), so
+        // migrates today; S3 (A7/AP/evidence) migration is not implemented, so
         // it is reset for now (a one-slot transient AP loss on user action).
         out.reset.insert(StateBucket::Scratch);
         out.migrate.insert(StateBucket::HashBook);
@@ -178,7 +178,7 @@ pub fn plan_reconfig(old: &EngineState, new: &EngineState) -> ReconfigOutcome {
             }
             // Changing the operator call resets only S5 (mycall-derived intel);
             // FrequencyOrigin lets the DX store keep target-derived candidates,
-            // the observed parity, and the harvested grid (§6.5).
+            // the observed parity, and the harvested grid.
             if changed.contains(&ConfigField::MyCall) {
                 out.reset.insert(StateBucket::DxOperator);
             }

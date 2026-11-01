@@ -1,16 +1,16 @@
-//! Live monitor engine (P2).
+//! Live monitor engine.
 //!
 //! A controllable, long-lived engine the GUI drives over channels. Two actors:
 //!
 //! - **Decode actor** (supervised child process): holds its session while healthy,
-//!   processes staged decode commands (wsjtx nzhsym 41/47/50 early decode, others
-//!   final-only), and can `Reconfigure` in place (rebuild session, migrate hash).
+//!   processes staged decode commands (WSJT-X/Hybrid nzhsym 41/47/50 early
+//!   decode; JTDX/DX final-only), and can `Reconfigure` in place (rebuild session, migrate hash).
 //! - **Engine/control thread**: owns the cpal capture + UTC-aligned slot timing,
 //!   feeds staged samples to the Decode actor, routes its decode events to the GUI
 //!   and the UDP sink, and applies reconfig plans at slot boundaries.
 //!
 //! Because the Decode actor is separate and long-lived, a device change (L2)
-//! restarts only capture — the session and all decode state survive (decision 5).
+//! restarts only capture — the session and all decode state survive.
 //! Config changes (L1) reconfigure the actor at the next slot
 //! boundary; the control loop polls commands every ~50 ms so Stop/Shutdown are
 //! prompt even mid-slot. A ten-second cumulative per-slot watchdog kills and
@@ -35,6 +35,7 @@ use ft8rs::stream::session::{
 };
 use ft8rs::SlotTimestamp;
 
+use crate::events::GuiEvents;
 use crate::protocol::{
     DecodeRecord, DecodeStage, DxContextSnapshot, EngineCommand, EngineEvent, EngineStatus,
     HisgridSource,
@@ -55,24 +56,13 @@ const SLOT_SECONDS: u64 = 15;
 const DX_MONITOR_WATCHDOG_MS: u64 = 12_000;
 /// Command/event polling granularity inside the capture loop.
 const POLL: Duration = Duration::from_millis(50);
-/// Bound on the decode actor's staged-command backlog (~2.5 slots of the three
-/// staged messages). If the decoder can't keep up with real time the producer
-/// sheds whole slots rather than growing this queue without bound (each N50
-/// stage carries a full ~720 KB slot buffer).
+/// Bound on staged commands; `send_stage` waits while continuing to poll controls.
 pub(crate) const DECODE_QUEUE_CAP: usize = 8;
-/// Bound on the engine→GUI event queue (~34 slots of decodes; ~200 KB worst
-/// case). The GUI drains it every frame (~150 ms), so this only fills if the GUI
-/// stops draining for many seconds (e.g. minimized on a platform that suspends
-/// the loop). The control thread must never block on the GUI, so it `try_send`s
-/// and drops on full: dropped rows are cosmetic (Status/DX/Error/devices are
-/// superseded by later events; the GUI ignores Reconfigured/SlotComplete), and
-/// the backlog self-heals when the GUI resumes.
-const GUI_EVENT_QUEUE_CAP: usize = 1024;
 
 /// Handle the GUI holds to drive the engine. Dropping it shuts the engine down.
 pub struct EngineHandle {
     cmd_tx: Sender<EngineCommand>,
-    event_rx: Receiver<EngineEvent>,
+    event_rx: GuiEvents,
     join: Option<JoinHandle<()>>,
 }
 
@@ -80,9 +70,8 @@ impl EngineHandle {
     /// Spawn the engine thread (starts Idle).
     pub fn spawn() -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel();
-        // Bounded so a paused/stalled GUI can't grow this without bound; the
-        // engine control thread never blocks on it (see `GUI_EVENT_QUEUE_CAP`).
-        let (event_tx, event_rx) = mpsc::sync_channel(GUI_EVENT_QUEUE_CAP);
+        let event_rx = GuiEvents::default();
+        let event_tx = event_rx.clone();
         let join = thread::spawn(move || engine_loop(cmd_rx, event_tx));
         Self {
             cmd_tx,
@@ -98,7 +87,7 @@ impl EngineHandle {
 
     /// Non-blocking poll for the next engine event (call each GUI frame).
     pub fn try_recv(&self) -> Option<EngineEvent> {
-        self.event_rx.try_recv().ok()
+        self.event_rx.try_recv()
     }
 }
 
@@ -113,8 +102,8 @@ impl Drop for EngineHandle {
 
 // ── Engine control thread ───────────────────────────────────────────────────
 
-fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: SyncSender<EngineEvent>) {
-    let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Idle));
+fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: GuiEvents) {
+    event_tx.send(EngineEvent::Status(EngineStatus::Idle));
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
             EngineCommand::Shutdown => return,
@@ -124,7 +113,7 @@ fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: SyncSender<EngineEvent
             EngineCommand::RefreshDevices => refresh_devices(&event_tx),
             EngineCommand::StartMonitor(state) => match run_monitor(&cmd_rx, &event_tx, state) {
                 MonitorExit::Stopped => {
-                    let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Idle));
+                    event_tx.send(EngineEvent::Status(EngineStatus::Idle));
                 }
                 MonitorExit::Shutdown => return,
             },
@@ -139,7 +128,7 @@ enum MonitorExit {
 
 fn run_monitor(
     cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &SyncSender<EngineEvent>,
+    event_tx: &GuiEvents,
     mut state: EngineState,
 ) -> MonitorExit {
     let mut udp = build_udp(state.udp.as_ref(), event_tx);
@@ -152,30 +141,27 @@ fn run_monitor(
     } = match start_input_stream(state.device.as_deref(), state.channel) {
         Ok(parts) => parts,
         Err(err) => {
-            let _ = event_tx.try_send(EngineEvent::Error(err));
+            event_tx.send(EngineEvent::Error(err));
             return MonitorExit::Stopped;
         }
     };
     let mut sample_rate = format.sample_rate;
-    let _ = event_tx.try_send(EngineEvent::CaptureStarted {
+    event_tx.send(EngineEvent::CaptureStarted {
         device_name,
         format: format.clone(),
     });
 
     let (dec_cmd_tx, dec_evt_rx) = crate::worker::spawn(effective_config(&state.config));
 
-    // WSJT-X-style capture alignment: no sleep-to-boundary or drain. The
-    // accumulator grids every captured block onto the UTC 15 s slot by its capture
-    // timestamp (splitting the straddling block at the exact sample), so the decode
-    // window no longer jitters by a whole driver block on high-latency / bursty
-    // virtual drivers like FlexRadio DAX.
+    // Whole callback blocks are assigned to UTC slots by callback wall-clock
+    // time and appended by sample count; there is no sample-level boundary split.
     let mut acc = PeriodAccumulator::new(sample_rate);
     let mut pending: Option<EngineState> = None;
     let mut last_audio = Instant::now();
     let mut last_level = Instant::now();
     let mut channel_peaks = vec![0.0f32; format.channels as usize];
     let mut input_peak = 0.0f32;
-    let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
+    event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
 
     loop {
         match drain_commands(cmd_rx, event_tx, &mut pending) {
@@ -192,7 +178,7 @@ fn run_monitor(
         match rx.recv_timeout(POLL) {
             Ok(chunk) => {
                 if let Some(err) = chunk.error {
-                    let _ = event_tx.try_send(EngineEvent::Error(err));
+                    event_tx.send(EngineEvent::Error(err));
                     return teardown(dec_cmd_tx, stream);
                 }
                 last_audio = Instant::now();
@@ -201,7 +187,7 @@ fn run_monitor(
                 }
                 input_peak = input_peak.max(peak_level(&chunk.samples));
                 if last_level.elapsed() >= Duration::from_millis(100) {
-                    let _ = event_tx.try_send(EngineEvent::CaptureLevels {
+                    event_tx.send(EngineEvent::CaptureLevels {
                         channel_peaks: channel_peaks.clone(),
                         peak: input_peak,
                         xruns: chunk.xruns,
@@ -248,16 +234,18 @@ fn run_monitor(
                     }
                 }
                 if let Some(diag) = out.completed {
-                    // Input level + capture diagnostics for the GUI, and the natural
-                    // point to apply a queued reconfiguration.
-                    let _ = event_tx.try_send(EngineEvent::InputLevel(diag.peak));
-                    let _ = event_tx.try_send(EngineEvent::CaptureDiag {
+                    // Diagnostics require a decodable slot; reconfiguration only
+                    // requires a UTC boundary, including a discarded first slot.
+                    event_tx.send(EngineEvent::InputLevel(diag.peak));
+                    event_tx.send(EngineEvent::CaptureDiag {
                         samples: diag.samples,
                         blocks: diag.blocks,
                         avg_block: diag.avg_block,
                         jitter_ms: diag.max_jitter_ms,
                         sample_rate,
                     });
+                }
+                if out.boundary_crossed {
                     if let Some(mut new_state) = pending.take() {
                         let mut outcome = plan_reconfig(&state, &new_state);
                         if outcome.rebuild_output {
@@ -283,7 +271,7 @@ fn run_monitor(
                                     sample_rate = format.sample_rate;
                                     channel_peaks = vec![0.0; format.channels as usize];
                                     input_peak = 0.0;
-                                    let _ = event_tx.try_send(EngineEvent::CaptureStarted {
+                                    event_tx.send(EngineEvent::CaptureStarted {
                                         device_name: capture.device_name,
                                         format: format.clone(),
                                     });
@@ -291,16 +279,15 @@ fn run_monitor(
                                     last_audio = Instant::now();
                                 }
                                 Err(err) => {
-                                    let _ = event_tx.try_send(EngineEvent::Error(format!(
+                                    event_tx.send(EngineEvent::Error(format!(
                                         "device switch failed, keeping current input: {err}"
                                     )));
-                                    let _ =
-                                        event_tx.try_send(EngineEvent::CaptureSelectionRejected {
-                                            requested_device: new_state.device.clone(),
-                                            requested_channel: new_state.channel,
-                                            active_device: state.device.clone(),
-                                            active_channel: state.channel,
-                                        });
+                                    event_tx.send(EngineEvent::CaptureSelectionRejected {
+                                        requested_device: new_state.device.clone(),
+                                        requested_channel: new_state.channel,
+                                        active_device: state.device.clone(),
+                                        active_channel: state.channel,
+                                    });
                                     new_state.device = state.device.clone();
                                     new_state.channel = state.channel;
                                     outcome.restart_capture = false;
@@ -308,7 +295,7 @@ fn run_monitor(
                                 }
                             }
                         }
-                        let _ = event_tx.try_send(EngineEvent::Reconfigured(outcome));
+                        event_tx.send(EngineEvent::Reconfigured(outcome));
                         state = new_state;
                     }
                 }
@@ -334,20 +321,29 @@ fn run_monitor(
             state.channel,
             &mut pending,
         ) {
-            Reconnect::Ok(capture) => {
+            Reconnect::Ok {
+                capture,
+                device,
+                channel,
+            } => {
+                let mut active = state.clone();
+                active.device = device;
+                active.channel = channel;
+                event_tx.send(EngineEvent::Reconfigured(plan_reconfig(&state, &active)));
+                state = active;
                 stream = capture.stream;
                 rx = capture.rx;
                 format = capture.format;
                 sample_rate = format.sample_rate;
                 channel_peaks = vec![0.0; format.channels as usize];
                 input_peak = 0.0;
-                let _ = event_tx.try_send(EngineEvent::CaptureStarted {
+                event_tx.send(EngineEvent::CaptureStarted {
                     device_name: capture.device_name,
                     format: format.clone(),
                 });
                 acc = PeriodAccumulator::new(sample_rate);
                 last_audio = Instant::now();
-                let _ = event_tx.try_send(EngineEvent::Status(EngineStatus::Monitoring));
+                event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
             }
             Reconnect::Stop => {
                 let _ = dec_cmd_tx.send(DecodeCmd::Stop);
@@ -358,7 +354,7 @@ fn run_monitor(
                 return MonitorExit::Shutdown;
             }
             Reconnect::Failed => {
-                let _ = event_tx.try_send(EngineEvent::Error(
+                event_tx.send(EngineEvent::Error(
                     "audio device unavailable; monitoring stopped".to_string(),
                 ));
                 let _ = dec_cmd_tx.send(DecodeCmd::Stop);
@@ -374,8 +370,12 @@ fn teardown(dec_cmd_tx: SyncSender<DecodeCmd>, stream: cpal::Stream) -> MonitorE
     MonitorExit::Stopped
 }
 
-enum Reconnect {
-    Ok(AudioCapture),
+enum Reconnect<T = AudioCapture> {
+    Ok {
+        capture: T,
+        device: Option<String>,
+        channel: InputChannel,
+    },
     Stop,
     Shutdown,
     Failed,
@@ -386,12 +386,32 @@ enum Reconnect {
 /// Shutdown stay responsive; gives up after a bounded number of tries.
 fn reconnect_capture(
     cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &SyncSender<EngineEvent>,
+    event_tx: &GuiEvents,
     device: Option<&str>,
     channel: InputChannel,
     pending: &mut Option<EngineState>,
 ) -> Reconnect {
-    let _ = event_tx.try_send(EngineEvent::Error(
+    reconnect_capture_with(
+        cmd_rx,
+        event_tx,
+        device,
+        channel,
+        pending,
+        start_input_stream,
+        || thread::sleep(Duration::from_millis(400)),
+    )
+}
+
+fn reconnect_capture_with<T>(
+    cmd_rx: &Receiver<EngineCommand>,
+    event_tx: &GuiEvents,
+    device: Option<&str>,
+    channel: InputChannel,
+    pending: &mut Option<EngineState>,
+    mut open: impl FnMut(Option<&str>, InputChannel) -> Result<T, String>,
+    mut pause: impl FnMut(),
+) -> Reconnect<T> {
+    event_tx.send(EngineEvent::Error(
         "audio device lost; reconnecting…".to_string(),
     ));
     for attempt in 0..30 {
@@ -400,11 +420,19 @@ fn reconnect_capture(
             CmdFlow::Stop => return Reconnect::Stop,
             CmdFlow::Shutdown => return Reconnect::Shutdown,
         }
-        if let Ok(parts) = start_input_stream(device, channel) {
-            return Reconnect::Ok(parts);
+        let (device, channel) = pending
+            .as_ref()
+            .map(|state| (state.device.as_deref(), state.channel))
+            .unwrap_or((device, channel));
+        if let Ok(capture) = open(device, channel) {
+            return Reconnect::Ok {
+                capture,
+                device: device.map(str::to_owned),
+                channel,
+            };
         }
         if attempt + 1 < 30 {
-            thread::sleep(Duration::from_millis(400));
+            pause();
         }
     }
     Reconnect::Failed
@@ -422,16 +450,15 @@ enum StageSend {
 /// Enqueue a decode stage, waiting for queue space if the actor is momentarily
 /// behind rather than dropping the slot. While waiting it keeps forwarding decode
 /// events and processing control commands, so Stop/Shutdown/reconfig stay
-/// responsive and the GUI keeps updating. Capture audio keeps buffering in the
-/// cpal channel meanwhile and is re-synced at the next slot boundary's drain, so
-/// the backlog can't grow without bound.
+/// responsive and the GUI keeps updating. Audio buffers in the unbounded capture
+/// channel meanwhile; the worker includes queue age in its staged-work deadline.
 #[allow(clippy::too_many_arguments)]
 fn send_stage(
     dec_cmd_tx: &SyncSender<DecodeCmd>,
     cmd: DecodeCmd,
     cmd_rx: &Receiver<EngineCommand>,
     dec_evt_rx: &Receiver<EngineEvent>,
-    event_tx: &SyncSender<EngineEvent>,
+    event_tx: &GuiEvents,
     udp: &mut Option<UdpOutput>,
     pending: &mut Option<EngineState>,
 ) -> StageSend {
@@ -462,7 +489,7 @@ enum CmdFlow {
 
 fn drain_commands(
     cmd_rx: &Receiver<EngineCommand>,
-    event_tx: &SyncSender<EngineEvent>,
+    event_tx: &GuiEvents,
     pending: &mut Option<EngineState>,
 ) -> CmdFlow {
     loop {
@@ -485,20 +512,20 @@ fn drain_commands(
 /// Sink failures are isolated (logged-and-dropped), never stopping decode.
 fn forward_decode_events(
     dec_evt_rx: &Receiver<EngineEvent>,
-    event_tx: &SyncSender<EngineEvent>,
+    event_tx: &GuiEvents,
     udp: &mut Option<UdpOutput>,
 ) {
     while let Ok(evt) = dec_evt_rx.try_recv() {
         if let EngineEvent::Decode(record) = &evt {
             if let Some(sink) = udp.as_ref() {
-                let _ = sink.on_decode(record.timestamp.clone(), &record.row);
+                sink.on_decode_best_effort(record.timestamp.clone(), &record.row);
             }
         }
-        let _ = event_tx.try_send(evt);
+        event_tx.send(evt);
     }
 }
 
-fn refresh_devices(event_tx: &SyncSender<EngineEvent>) {
+fn refresh_devices(event_tx: &GuiEvents) {
     log::info!("Refreshing audio input devices");
     match list_soundcards() {
         Ok(devices) => {
@@ -506,22 +533,22 @@ fn refresh_devices(event_tx: &SyncSender<EngineEvent>) {
                 "Audio enumeration completed: {} input devices",
                 devices.len()
             );
-            let _ = event_tx.try_send(EngineEvent::DevicesRefreshed(devices));
+            event_tx.send(EngineEvent::DevicesRefreshed(devices));
         }
         Err(err) => {
             log::error!("Audio enumeration failed: {err}");
-            let _ = event_tx.try_send(EngineEvent::Error(err));
+            event_tx.send(EngineEvent::Error(err));
         }
     }
 }
 
-fn build_udp(config: Option<&UdpConfig>, event_tx: &SyncSender<EngineEvent>) -> Option<UdpOutput> {
+fn build_udp(config: Option<&UdpConfig>, event_tx: &GuiEvents) -> Option<UdpOutput> {
     let config = config?;
     match UdpOutput::new(config.clone()) {
         Ok(sink) => Some(sink),
         Err(err) => {
             // Output failure must not stop decode: disable sink.
-            let _ = event_tx.try_send(EngineEvent::Error(format!("UDP disabled: {err}")));
+            event_tx.send(EngineEvent::Error(format!("UDP disabled: {err}")));
             None
         }
     }
@@ -543,6 +570,10 @@ fn effective_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
 
 // ── Decode actor ────────────────────────────────────────────────────────────
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The eight-entry staged queue bounds the inline configuration overhead to a few KB"
+)]
 pub(crate) enum DecodeCmd {
     Stage {
         stage: SlotStage,
@@ -648,10 +679,8 @@ fn send_record(
 fn spawn_decode_actor(
     config: StreamDecodeConfig,
 ) -> (SyncSender<DecodeCmd>, Receiver<EngineEvent>) {
-    // Bounded so a decoder that falls behind real time sheds slots (see the
-    // producer's `try_send`) instead of growing an unbounded backlog of slot
-    // buffers. Stop/Reconfigure use a blocking `send`; they are rare and must
-    // not be dropped, and only ever wait for one in-flight slot to drain.
+    // Test-only in-process actor queue. Tests feed with blocking sends;
+    // production uses the supervised worker and responsive `send_stage` loop.
     let (cmd_tx, cmd_rx) = mpsc::sync_channel::<DecodeCmd>(DECODE_QUEUE_CAP);
     let (evt_tx, evt_rx) = mpsc::channel::<EngineEvent>();
     thread::spawn(move || decode_actor(config, cmd_rx, evt_tx));
@@ -806,22 +835,59 @@ pub(crate) fn decode_actor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     const NZHSYM_STRIDE: usize = 3456;
     const SHORT_FIXTURE: &str = "../ft8rs-core/tests/ft8/210703_133430.wav";
 
-    fn load_fixture_12k() -> Option<Vec<f32>> {
-        if !Path::new(SHORT_FIXTURE).exists() {
-            eprintln!("skipping decode-actor test: fixture {SHORT_FIXTURE} not present");
-            return None;
-        }
-        let audio = ft8rs::input::audio::read_wav_mono_f32(SHORT_FIXTURE).ok()?;
-        Some(resample_linear(
-            &audio.samples,
-            audio.sample_rate,
-            TARGET_SAMPLE_RATE,
-        ))
+    fn load_fixture_12k() -> Vec<f32> {
+        let audio = ft8rs::input::audio::read_wav_mono_f32(SHORT_FIXTURE)
+            .expect("versioned short recording must be readable");
+        resample_linear(&audio.samples, audio.sample_rate, TARGET_SAMPLE_RATE)
+    }
+
+    #[test]
+    fn reconnect_uses_latest_selection_received_between_attempts() {
+        let (tx, rx) = mpsc::channel();
+        let events = GuiEvents::default();
+        let mut pending = None;
+        let mut attempts = Vec::new();
+        let result = reconnect_capture_with(
+            &rx,
+            &events,
+            Some("old"),
+            InputChannel::Left,
+            &mut pending,
+            |device, channel| {
+                attempts.push((device.map(str::to_owned), channel));
+                if attempts.len() == 1 {
+                    tx.send(EngineCommand::ApplyState(EngineState {
+                        device: Some("new".into()),
+                        channel: InputChannel::Right,
+                        config: StreamDecodeConfig::default(),
+                        udp: None,
+                    }))
+                    .unwrap();
+                    Err("old device unavailable".into())
+                } else {
+                    Ok(())
+                }
+            },
+            || {},
+        );
+        assert_eq!(
+            attempts,
+            vec![
+                (Some("old".into()), InputChannel::Left),
+                (Some("new".into()), InputChannel::Right)
+            ]
+        );
+        assert!(
+            matches!(result, Reconnect::Ok {device:Some(device),channel:InputChannel::Right,..} if device=="new")
+        );
+        assert!(
+            pending.is_some(),
+            "decode/output config remains pending until a boundary"
+        );
     }
 
     #[test]
@@ -868,9 +934,7 @@ mod tests {
 
     #[test]
     fn decode_actor_reproduces_wsjtx_short_slot_and_reconfigures() {
-        let Some(s12k) = load_fixture_12k() else {
-            return;
-        };
+        let s12k = load_fixture_12k();
         let ts = SlotTimestamp::parse("210703_133430").unwrap();
 
         let (cmd_tx, evt_rx) = spawn_decode_actor(StreamDecodeConfig::default());
@@ -916,9 +980,6 @@ mod tests {
     fn decode_actor_hybrid_long_emits_jtdx_unique() {
         use ft8rs::stream::profile::ProfileStreamDecodeSession;
         const LONG_FIXTURE: &str = "../ft8rs-core/tests/ft8/230208_140300.wav";
-        if !Path::new(LONG_FIXTURE).exists() {
-            return;
-        }
         let audio = ft8rs::input::audio::read_wav_mono_f32(LONG_FIXTURE).unwrap();
         let s12k = resample_linear(&audio.samples, audio.sample_rate, TARGET_SAMPLE_RATE);
         let sps = 15 * TARGET_SAMPLE_RATE as usize;
@@ -964,9 +1025,7 @@ mod tests {
     #[test]
     fn decode_actor_hybrid_matches_oneshot() {
         use ft8rs::stream::profile::ProfileStreamDecodeSession;
-        let Some(s12k) = load_fixture_12k() else {
-            return;
-        };
+        let s12k = load_fixture_12k();
         let ts = SlotTimestamp::parse("210703_133430").unwrap();
         let hybrid_cfg = || StreamDecodeConfig {
             profile: DecodeProfile::Hybrid,

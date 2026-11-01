@@ -117,7 +117,7 @@ struct DecodeArgs {
 
 #[derive(Args)]
 struct MonitorArgs {
-    /// Input device selector: use the Index shown by `ft8rs monitor`, or the full device name.
+    /// Input selector: listed index, unique full name, or the listed id:... selector.
     /// Omit this option to list input devices.
     #[arg(short = 'i', long, help_heading = "Input")]
     device: Option<String>,
@@ -198,7 +198,6 @@ fn run_file(args: FileArgs) -> Result<(), String> {
 }
 
 fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String> {
-    validate_decode_args(args)?;
     // FFT threads/patience are no longer CLI-configurable; initialize the FFT
     // backend with its defaults (only the FFTW build honors non-default values).
     ft8rs::set_fft_threads(1)?;
@@ -226,9 +225,12 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
     if let Some(high) = args.high {
         config.nfb = high;
     }
-    if let Some(rx_frequency) = args.rx_frequency {
-        config.nfqso = rx_frequency;
-    }
+    ft8rs::stream::validation::validate_frequency_range(config.nfa, config.nfb)?;
+    config.nfqso = ft8rs::stream::validation::normalize_rx_frequency(
+        args.rx_frequency.unwrap_or(config.nfqso),
+        config.nfa,
+        config.nfb,
+    )?;
     config.swl = args.swl;
     if let Some(partitions) = args.jtdx_threads {
         config.jtdx_threads = usize::from(partitions);
@@ -243,15 +245,6 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
         return Err("--profile dx requires --his-call CALL".to_string());
     }
     Ok(config)
-}
-
-fn validate_decode_args(args: &DecodeArgs) -> Result<(), String> {
-    if let (Some(low), Some(high)) = (args.low, args.high) {
-        if low >= high {
-            return Err("--low must be less than --high".to_string());
-        }
-    }
-    Ok(())
 }
 
 fn normalized_nonempty(value: &Option<String>) -> Option<String> {
@@ -311,8 +304,8 @@ fn run_monitor_ls() -> Result<(), String> {
         let format = format_soundcard_format(&device.input);
 
         println!(
-            "{:<5} {:<12} {:<40} {:<10} {}",
-            device.index, device.host, device.name, default_mark, format
+            "{:<5} {:<12} {:<40} {:<10} {}  id:{}",
+            device.index, device.host, device.name, default_mark, format, device.id
         );
     }
 
@@ -329,6 +322,32 @@ fn format_soundcard_format(format: &SoundcardFormatInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frequency_validation_includes_defaults_and_nonfinite_values() {
+        for options in [
+            vec!["--low", "5000"],
+            vec!["--high", "100"],
+            vec!["--low", "NaN"],
+            vec!["--high", "inf"],
+            vec!["--rx-frequency", "NaN"],
+        ] {
+            let mut argv = vec!["ft8rs", "file", "input.wav"];
+            argv.extend(options);
+            let Command::File(args) = Cli::try_parse_from(argv).unwrap().command else {
+                unreachable!()
+            };
+            assert!(stream_decode_config(&args.decode).is_err());
+        }
+        let Command::File(args) =
+            Cli::try_parse_from(["ft8rs", "file", "input.wav", "--low", "100"])
+                .unwrap()
+                .command
+        else {
+            unreachable!()
+        };
+        assert!(stream_decode_config(&args.decode).is_ok());
+    }
 
     #[test]
     fn experiment_is_opt_in_and_hybrid_only() {

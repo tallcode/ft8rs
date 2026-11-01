@@ -292,20 +292,19 @@ independent confirmation or update native AP/hash memory. Evaluate each declared
 specialty with known truth; partial standalone coverage is acceptable, but added
 correct rows never erase errors or lost baseline rows in the report.
 
-The single-slot research campaigns live under `experiments/single-slot/campaigns/`.
-Preserve raw inputs/outputs, failures, interrupted runs, frozen code/binaries,
-configuration and hashes. Use a new immutable run directory for every replay.
-The first campaign archive remains unchanged; the second copies completed
-batches into the repository between timed processes. The third campaign freezes
-current product source before development/confirmation and records every callback
-with exact displayed field retention. Its raw text and source are versioned.
-Large binary/audio material
-is ignored by Git and must also be backed up as filesystem content.
-New synthetic input WAVs are reproducible local resources: keep their generator,
-seeds, configuration, hashes and compact results in source control, while leaving
-the generated audio and frozen binaries ignored. Retain the local copies for
-the research archive. Existing historical recordings and accepted native fixture
-management remain unchanged.
+The single-slot research campaigns are local archives under
+`experiments/single-slot/campaigns/`. The entire `/experiments/` tree, including
+raw text and frozen source, is currently ignored by Git and is absent from a
+fresh clone. Preserve these local archives and back them up separately; do not
+assume that committing product code publishes the campaign evidence. Keep raw
+inputs/outputs, failures, interrupted runs, frozen source/binaries, configuration
+and hashes. Use a new immutable run directory for each replay and leave existing
+campaign archives unchanged.
+New synthetic input WAVs should retain generators, seeds, configuration, hashes
+and compact results at explicit versioned paths before being used as shared
+regression evidence. Generated audio and frozen binaries can remain in the
+separately backed-up local archive. Existing historical recordings and accepted
+native fixture management remain unchanged.
 
 Compare old and new outputs per signal with the same recording, configuration,
 CallDB, build profile and FFT backend. An added row cannot compensate for a lost
@@ -320,4 +319,8 @@ hard display deadline.
 
 Current operating points and recorded limitations live in
 [validation](VALIDATION.md); detailed experimental timings live in
-[dated reports](README.md#dated-research-and-measurements).
+[decoder implementation and research notes](README.md#decoder-implementation).
+
+Local `crates/wsjtx` and `crates/jtdx` symlinks may point to external upstream
+source checkouts for development/reference comparisons. They are untracked,
+are not workspace members, and are not required for ordinary Rust builds.

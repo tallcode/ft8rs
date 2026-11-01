@@ -152,6 +152,25 @@ Local evidence is under the ignored directory
 `workspace-fast.log`, `core-fast-all.log`, `engine-long.log`, `doctests.log`,
 `before/`, `after/`, `compare.log` and `validation.json`.
 
+## Runtime and input fixes — 2026-11-01
+
+Local verification used macOS ARM, Rust/Cargo 1.97.1, default RustFFT and the
+optimized `fast` profile, based on `1576198` plus the runtime/input fixes.
+Workspace library/binary tests passed 265 cases (four routine ignored gates).
+The default decoder runner passed 175 core unit tests and 27 integration tests;
+those 175 unit tests overlap the workspace total. Its ten ignored integration
+gates were not run. Separately, the production-worker long-recording gate passed,
+retaining all 478 reference rows with exact decode fields and provenance.
+
+Before/after CLI controls used identical recordings, configuration and a private
+copy of the 2022 CallDB above. Complete displayed output was byte-identical for
+WSJT-X, JTDX and Hybrid on both recordings: respectively 21/434, 20/455 and
+21/478 observed rows. These are preserved output counts, including unlabelled
+rows, not new known-truth gains or replacement target thresholds.
+All-target Clippy with `-D warnings`, formatting, Python (11 cases), Node (5 cases)
+and diff checks passed. WSJT-X delivery batching and native decoder sources were
+unchanged. This run does not establish FFTW results or Windows/DAX hardware parity.
+
 ## Limits and follow-up validation
 
 The JTDX geography filter remains a deliberate partial port; implausible
@@ -161,12 +180,14 @@ absolute false-positive rate. SWL and different partition counts can change
 candidate sets. Full AP-pattern, drift and collision coverage can still grow.
 
 The listening display target is usually the next slot +2/+3 seconds. Callback
-arrival, worker tail and next-slot queueing are separate measurements; running
-native calls cannot be forcibly cancelled. Offline staged replay excludes actual
+arrival, worker tail and next-slot queueing are separate measurements. Native
+calls do not support cooperative thread cancellation. The GUI can enforce
+its deadline by terminating the supervised child process; the standalone CLI
+waits for running native calls. Offline staged replay excludes actual
 soundcard/GUI latency. Long live monitoring, dense-band stress and Windows DAX
 hardware parity remain separate measurements.
 
 Historical Hybrid/DX costs and known-truth experiments are retained in
-[dated reports](README.md#dated-research-and-measurements), with their original
-revisions, CallDBs and timing definitions. Do not mix those counts with the 2022
+[decoder implementation and research notes](README.md#decoder-implementation),
+with their original revisions, CallDBs and timing definitions. Do not mix those counts with the 2022
 regression operating point above.

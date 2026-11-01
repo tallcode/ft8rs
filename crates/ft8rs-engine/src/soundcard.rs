@@ -63,18 +63,14 @@ pub(crate) struct SlotDiag {
 /// decoder (in order), and, when a slot just finished, its diagnostics.
 #[derive(Default)]
 pub(crate) struct AccOutput {
+    pub boundary_crossed: bool,
     pub stages: Vec<(SlotStage, SlotTimestamp, Vec<f32>)>,
     pub completed: Option<SlotDiag>,
 }
 
-/// WSJT-X-style capture alignment. Instead of sleeping to the boundary, draining,
-/// and re-collecting (which cuts the audio at a point unrelated to the driver's
-/// block grid — fine for small USB blocks, but jitters by a whole block on large
-/// virtual-driver blocks like FlexRadio DAX), we accumulate continuously and place
-/// every incoming block on the UTC 15 s grid using its capture timestamp, splitting
-/// the one block that straddles a boundary at the exact sample. Each slot therefore
-/// gets its true `[boundary, boundary+15s)` window (a small constant driver-latency
-/// offset aside), so the decode window no longer wanders between slots.
+/// Whole-block UTC alignment, matching the native once-per-callback boundary
+/// check. Samples are appended by count within that slot; callback timestamps
+/// are not hardware sampling timestamps and do not split straddling blocks.
 pub(crate) struct PeriodAccumulator {
     sample_rate: u32,
     boundary: Option<i64>, // current slot's start (unix seconds, multiple of 15)
@@ -123,6 +119,7 @@ impl PeriodAccumulator {
                 // Crossed into a new slot: finish the old one, start fresh.
                 self.finalize(&mut out);
                 self.reset(slot);
+                out.boundary_crossed = true;
             }
             // Clock stepped back into an already-finished slot: ignore this block.
             Some(b) if slot < b => return out,
@@ -272,6 +269,8 @@ impl InputChannel {
 
 #[derive(Clone, Debug)]
 pub struct SoundcardDeviceInfo {
+    /// Backend-qualified CPAL device ID; names are display labels only.
+    pub id: String,
     pub index: usize,
     pub host: String,
     pub name: String,
@@ -326,8 +325,9 @@ where
 
     // WSJT-X-style: no sleep-to-boundary / drain. Feed every captured block to the
     // accumulator, which grids it to UTC by its capture timestamp and streams the
-    // staged windows. Sends are blocking (unbounded worker queue), so nothing is
-    // ever dropped — the decoder is throttled by, never races ahead of, capture.
+    // staged windows. The unbounded worker queue does not intentionally drop
+    // commands here. Sends do not provide backpressure: the CLI
+    // decode-command queue is unbounded and can accumulate if decoding is slow.
     let mut acc = PeriodAccumulator::new(sample_rate);
     let mut slots_done = 0usize;
     loop {
@@ -790,7 +790,7 @@ fn input_devices_with_info() -> Result<Vec<(cpal::Device, SoundcardDeviceInfo)>,
         log::info!("Querying default input on {host_name}");
         let default_input = host
             .default_input_device()
-            .and_then(|device| device.description().ok().map(|d| d.name().to_string()));
+            .and_then(|device| device.id().ok().map(|id| id.to_string()));
 
         for device in host
             .input_devices()
@@ -807,10 +807,20 @@ fn input_devices_with_info() -> Result<Vec<(cpal::Device, SoundcardDeviceInfo)>,
             };
             log::info!("Audio input: {host_name} / {name}: {input:?}");
 
+            let id = match device.id() {
+                Ok(id) => id.to_string(),
+                Err(err) => {
+                    log::warn!(
+                        "Skipping input without device identity: {host_name} / {name}: {err}"
+                    );
+                    continue;
+                }
+            };
             let info = SoundcardDeviceInfo {
+                is_default_input: default_input.as_deref() == Some(id.as_str()),
+                id,
                 index: rows.len(),
                 host: host_name.clone(),
-                is_default_input: default_input.as_deref() == Some(name.as_str()),
                 name,
                 input,
             };
@@ -840,42 +850,74 @@ fn select_input_device(selector: &str) -> Result<(cpal::Device, SoundcardDeviceI
         return Err("no audio input devices found".to_string());
     }
 
+    let infos: Vec<_> = devices.iter().map(|(_, info)| info.clone()).collect();
+    let index = resolve_input_selector(selector, &infos)?;
+    Ok(devices.into_iter().nth(index).unwrap())
+}
+
+fn resolve_input_selector(
+    selector: &str,
+    devices: &[SoundcardDeviceInfo],
+) -> Result<usize, String> {
+    if let Some(id) = selector.strip_prefix("id:") {
+        return devices
+            .iter()
+            .position(|info| info.id == id)
+            .ok_or_else(|| {
+                format!("saved audio input '{selector}' is unavailable; select an input device")
+            });
+    }
     if selector == "default" {
-        if let Some((device, info)) = devices
-            .iter()
-            .find(|(_, info)| info.is_default_input)
-            .map(|(device, info)| (device.clone(), info.clone()))
-        {
-            return Ok((device, info));
+        if let Some(index) = devices.iter().position(|info| info.is_default_input) {
+            return Ok(index);
         }
     }
-
     if let Ok(index) = selector.parse::<usize>() {
-        if let Some((device, info)) = devices
-            .iter()
-            .find(|(_, info)| info.index == index)
-            .map(|(device, info)| (device.clone(), info.clone()))
-        {
-            return Ok((device, info));
+        if let Some(position) = devices.iter().position(|info| info.index == index) {
+            return Ok(position);
         }
     }
-
-    if let Some((device, info)) = devices
+    let mut matches = devices
         .iter()
-        .find(|(_, info)| info.name == selector)
-        .map(|(device, info)| (device.clone(), info.clone()))
-    {
-        return Ok((device, info));
+        .enumerate()
+        .filter(|(_, info)| info.name == selector);
+    if let Some((index, _)) = matches.next() {
+        if matches.next().is_some() {
+            return Err(format!(
+                "audio input name '{selector}' is ambiguous; select a device by index or ID"
+            ));
+        }
+        return Ok(index);
     }
-
     let available = devices
         .iter()
-        .map(|(_, info)| format!("{}='{}'", info.index, info.name))
+        .map(|info| format!("{}='{}'", info.index, info.name))
         .collect::<Vec<_>>()
         .join(", ");
     Err(format!(
         "audio input device '{selector}' not found; use one of: {available}"
     ))
+}
+
+/// Migrate a persisted GUI name only when it uniquely identifies an input.
+/// Missing selections stay explicit and will fail on Start instead of falling back.
+pub fn migrate_device_name(
+    selector: &str,
+    devices: &[SoundcardDeviceInfo],
+) -> Result<String, String> {
+    if selector.starts_with("id:") {
+        return Ok(selector.to_owned());
+    }
+    let mut matches = devices.iter().filter(|info| info.name == selector);
+    let Some(device) = matches.next() else {
+        return Ok(selector.to_owned());
+    };
+    if matches.next().is_some() {
+        return Err(format!(
+            "saved audio input name '{selector}' is ambiguous; select the intended input again"
+        ));
+    }
+    Ok(format!("id:{}", device.id))
 }
 
 /// Wall-clock unix-ms at the input callback — the block's approximate capture
@@ -989,6 +1031,58 @@ mod tests {
     use ft8rs::SlotTimestamp;
 
     const SR: u32 = 12_000; // downsample_12k is a passthrough here, keeping buffers small
+
+    #[test]
+    fn duplicate_input_names_require_identity_and_legacy_migration_is_explicit() {
+        use super::{
+            migrate_device_name, resolve_input_selector, SoundcardDeviceInfo, SoundcardFormatInfo,
+        };
+        let mut devices: Vec<_> = (0..2)
+            .map(|index| SoundcardDeviceInfo {
+                id: format!("Host:input-{index}"),
+                index,
+                host: "Host".into(),
+                name: "USB Audio".into(),
+                is_default_input: index == 1,
+                input: SoundcardFormatInfo {
+                    channels: 1,
+                    sample_rate: 48_000,
+                    sample_format: "f32".into(),
+                },
+            })
+            .collect();
+        assert!(resolve_input_selector("USB Audio", &devices).is_err());
+        assert!(migrate_device_name("USB Audio", &devices).is_err());
+        assert_eq!(
+            resolve_input_selector("id:Host:input-1", &devices).unwrap(),
+            1
+        );
+        assert_eq!(resolve_input_selector("default", &devices).unwrap(), 1);
+        assert_eq!(resolve_input_selector("0", &devices).unwrap(), 0);
+        devices.reverse();
+        assert_eq!(
+            resolve_input_selector("id:Host:input-1", &devices).unwrap(),
+            0
+        );
+        assert!(resolve_input_selector("id:missing", &devices).is_err());
+        devices.pop();
+        assert_eq!(
+            migrate_device_name("USB Audio", &devices).unwrap(),
+            "id:Host:input-1"
+        );
+    }
+
+    #[test]
+    fn discarded_partial_slot_still_reports_reconfiguration_boundary() {
+        let mut acc = PeriodAccumulator::new(SR);
+        for ms in (10_000..15_000).step_by(100) {
+            assert!(!acc.push(&[0.0; 1200], ms).boundary_crossed);
+        }
+        let out = acc.push(&[0.0; 1200], 15_000);
+        assert!(out.boundary_crossed);
+        assert!(out.completed.is_none());
+        assert!(out.stages.is_empty());
+    }
 
     #[test]
     fn capture_xruns_do_not_stop_audio_and_reach_diagnostics() {
@@ -1142,7 +1236,7 @@ mod tests {
     // Synthetic opposite-phase input: averaging cancels it; Mono must retain
     // signal. This is a regression case, not a claim about every DAX driver.
     #[test]
-    fn antiphase_stereo_cancels_under_mono_but_survives_single_channel() {
+    fn antiphase_stereo_cancels_under_mix_but_survives_single_channel() {
         let left = [0.1f32, -0.2, 0.3, -0.4];
         let interleaved: Vec<f32> = left.iter().flat_map(|&l| [l, -l]).collect();
 

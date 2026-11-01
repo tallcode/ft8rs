@@ -124,9 +124,9 @@ known-message audio, Watterson channels, state/false-output checks and fixed noi
 versions of historical recordings. Generation and candidate-review scripts are
 preserved for explicit upstream updates.
 
-The WSJT-X reference targets are **21/21** for the short recording and **424/424**
-for the long recording. JTDX's calibrated targets are **20/20** and **430/431**;
-the long case fixes four partitions and the 2022 CallDB. Every required old
+The WSJT-X reference targets are **21/21** for the short recording and **434/434**
+for the long recording. JTDX's calibrated targets are **20/20** and **453/453**;
+the long case fixes one partition and the 2022 CallDB. Every required old
 message must remain; added or unlabelled rows cannot offset losses.
 
 [Test framework](crates/ft8rs-core/tests/decoder/README.md) ·

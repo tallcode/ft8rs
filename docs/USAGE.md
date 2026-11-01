@@ -34,11 +34,13 @@ the previous target grid.
 
 Settings are retained between runs. Text edits commit when focus leaves the
 field; selections and toggles apply when changed. Running decode changes take
-effect at a slot boundary and can reset AP memory. Device/channel changes reopen
+effect at the next observed UTC slot boundary, even if the initial partial slot
+was too short to decode, and can reset AP memory. Device/channel changes reopen
 capture and realign it while retaining the decode session. A failed device switch
 keeps the previous input and reports the error. Output changes rebuild only the
-output sink. Controls stay responsive while background decoding finishes; an
-already-running native decoder call cannot be forcibly interrupted.
+output sink. Native calls do not support cooperative cancellation inside a
+thread. The GUI can stop active work by terminating its supervised decoder
+process; the standalone CLI waits for running native calls to finish.
 
 DX manages SWL/deep passes internally, so its generic SWL, `nagain` and advanced
 filter controls are disabled. The GUI uses the default JTDX partition setting;
@@ -79,12 +81,18 @@ For WAV files, multichannel samples are averaged before resampling. The CLI
 prepare a mono recording if the file contains different left/right signals.
 The final partial WAV slot is zero-padded and decoded.
 
+Dated file timestamps advance the calendar across midnight, month/year ends and
+leap days. `YYMMDD` input uses years 2000–2099; `YYYYMMDD` is also accepted.
+Time-only `HHMMSS` input wraps at midnight without attaching a date.
+
 ## Profiles and context
 
 The [README profile table](../README.md#decode-profiles) gives the four modes.
 The defaults are WSJT-X, a 200–3000 Hz decode band, and no operator/target context.
 Callsign and grid context can assist AP/hash decoding; RX is an audio offset in
-Hz, not the radio's RF dial frequency.
+Hz, not the radio's RF dial frequency. Both CLI and GUI require finite bounds
+with `0 ≤ Low < High ≤ 5000 Hz`. RX must be finite and in 0–5000 Hz; zero or an
+RX outside the selected decode band disables QSO focus.
 
 Hybrid always has three baseline paths: WSJT-X, JTDX/noAGC and JTDX/AGC.
 **Cross cancellation** is enabled by default and can be disabled without removing
@@ -135,7 +143,10 @@ target/release/ft8rs monitor --device 0 --profile dx \
   --my-call F1MLZ --his-call UA3QNA --rx-frequency 1153
 ```
 
-Device selection accepts the listed index or full device name. Without `--slots`,
+Device selection accepts the listed index, an unambiguous full device name, or
+the printed `id:<backend-qualified-device-id>` selector. The GUI saves device IDs; a legacy saved name
+migrates only when it matches one input. Duplicate names require selecting the
+intended input again. Missing IDs never fall back to another input. Without `--slots`,
 monitoring continues until stopped. CLI output streams rows as they are produced:
 
 ```text
@@ -165,7 +176,7 @@ The file command writes console results; UDP output options are monitor-only.
 
 | Option | Alias | Applies to | Meaning/default |
 |---|---|---|---|
-| `--device` | `-i` | Monitor | Input index or exact name; omitted lists devices |
+| `--device` | `-i` | Monitor | Input index, unique name, or `id:...`; omitted lists devices |
 | `--channel` | | Monitor | `mono` (default), `left`, `right`, `mix` |
 | `--slots` | `-S` | Monitor | Slot limit; omitted keeps listening |
 | `--start-time` | `-s` | File | First slot timestamp |
@@ -286,6 +297,14 @@ worker failures still appear as errors. Normal slots keep their native sessions
 and normal configuration migration; only a timeout/crash discards learned state.
 No cancellation code or thresholds are added to the native decoder algorithms.
 The standalone file/CLI decode path remains available for unbounded offline work.
+
+If the GUI stops consuming events, capture levels and state snapshots retain
+only their latest values. Errors and device-selection rollbacks remain queued.
+At most 1024 decoded rows wait for the GUI; additional rows are counted and
+logged when the GUI resumes. A warning also appears if no other error is active.
+The mailbox does not wait for the GUI to consume events. UDP send errors leave decoding running
+and enter the diagnostic log at most once per 30 seconds, with a cumulative
+failure count; a successful UDP send does not establish remote receipt.
 
 The comparison table consolidates repeated observations from the same UDP source
 and repeats received after a row has become `Both`. Matching includes UTC slot,

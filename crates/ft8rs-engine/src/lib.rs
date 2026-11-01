@@ -5,6 +5,7 @@
 //! Offline WAV decoding stays in the core crate; this crate is for live monitor.
 
 pub mod engine;
+mod events;
 pub mod protocol;
 pub mod reconfig;
 pub mod report;

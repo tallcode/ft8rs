@@ -1,6 +1,6 @@
 //! Shared build-time version logic for the ft8rs binary crates.
 //!
-//! Each binary crate (`ft8rs-cli`, later `ft8rs-gui`) calls [`emit_version`]
+//! Each binary crate (`ft8rs-cli`, `ft8rs-gui`) calls [`emit_version`]
 //! from its own `build.rs` so that `env!("FT8RS_VERSION")` resolves in that
 //! crate. `cargo:rustc-env` only applies to the package whose build script
 //! emits it, so the logic is shared as a library rather than living in one

@@ -1,4 +1,6 @@
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use ft8rs::stream::StreamDecodedMessage;
 use ft8rs::SlotTimestamp;
@@ -18,6 +20,28 @@ pub struct UdpConfig {
 pub struct UdpOutput {
     socket: UdpSocket,
     destination: SocketAddr,
+    failures: Mutex<SendFailures>,
+}
+
+#[derive(Default)]
+struct SendFailures {
+    count: u64,
+    last_log: Option<Instant>,
+}
+
+impl SendFailures {
+    fn record(&mut self, now: Instant) -> Option<u64> {
+        self.count = self.count.saturating_add(1);
+        if self
+            .last_log
+            .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(30))
+        {
+            self.last_log = Some(now);
+            Some(self.count)
+        } else {
+            None
+        }
+    }
 }
 
 impl UdpOutput {
@@ -33,6 +57,7 @@ impl UdpOutput {
         Ok(Self {
             socket,
             destination,
+            failures: Mutex::new(SendFailures::default()),
         })
     }
 
@@ -51,6 +76,20 @@ impl UdpOutput {
                 )
             })?;
         Ok(())
+    }
+
+    /// Live output failures never interrupt decoding. Log the first failure and
+    /// at most one per 30 seconds thereafter, with the cumulative failure count.
+    pub(crate) fn on_decode_best_effort(
+        &self,
+        timestamp: SlotTimestamp,
+        row: &StreamDecodedMessage,
+    ) {
+        if let Err(error) = self.on_decode(timestamp, row) {
+            if let Some(count) = self.failures.lock().unwrap().record(Instant::now()) {
+                log::warn!("{error}; UDP send failures since output opened: {count}");
+            }
+        }
     }
 }
 
@@ -111,6 +150,20 @@ mod tests {
     use super::build_decode_packet;
     use ft8rs::stream::StreamDecodedMessage;
     use ft8rs::SlotTimestamp;
+
+    #[test]
+    fn send_failures_count_every_error_and_rate_limit_diagnostics() {
+        let mut failures = super::SendFailures::default();
+        let now = std::time::Instant::now();
+        assert_eq!(failures.record(now), Some(1));
+        for _ in 0..100 {
+            assert_eq!(failures.record(now), None);
+        }
+        assert_eq!(
+            failures.record(now + std::time::Duration::from_secs(30)),
+            Some(102)
+        );
+    }
 
     #[test]
     fn builds_decode_packet_header_and_payload_shape() {

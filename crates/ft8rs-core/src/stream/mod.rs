@@ -2,6 +2,7 @@ pub mod profile;
 pub mod session;
 pub mod slot;
 pub mod time;
+pub mod validation;
 
 pub use profile::ProfileStreamDecodeSession;
 pub use session::{DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage};

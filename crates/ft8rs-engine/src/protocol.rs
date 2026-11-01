@@ -1,10 +1,9 @@
-//! Engine ↔ GUI protocol (P1).
+//! Engine ↔ GUI protocol.
 //!
 //! The formal contract between the live engine and any front-end: commands the
 //! GUI sends, events the engine emits, and the snapshot payloads used for state
-//! migration and the DX intel panel. These are plain data types; the actors (P2)
-//! produce and consume them. Defining them now (rather than as GUI details)
-//! keeps the boundary stable.
+//! migration and the DX intel panel. These are plain data types; the actors
+//! produce and consume them independently of GUI drawing.
 //!
 //! Nothing here touches `lib_wsjtx`/`lib_jtdx`.
 
@@ -32,9 +31,9 @@ pub enum EngineCommand {
     Shutdown,
 }
 
-/// Which staged decode produced a row (decision 12). The wsjtx
-/// profile emits early partial decodes before the slot ends; other profiles
-/// produce only `Final`.
+/// Which staged decode produced a row. The wsjtx
+/// and Hybrid profiles emit early partial decodes before the slot ends;
+/// JTDX and DX produce only `Final`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DecodeStage {
     /// Early decode within the slot (low-latency wsjtx nzhsym=41 pass).
@@ -66,7 +65,7 @@ pub enum EngineStatus {
     Error(String),
 }
 
-/// Where the currently effective DX grid came from (decision 4, option C).
+/// Where the currently effective DX grid came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HisgridSource {
     None,
@@ -76,7 +75,7 @@ pub enum HisgridSource {
     Harvested,
 }
 
-/// Read-only snapshot of the DX target intel for the GUI panel (P4 fills it).
+/// Read-only snapshot of the DX target intel for the GUI panel.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DxContextSnapshot {
     pub target: String,
@@ -104,6 +103,8 @@ pub struct SessionSnapshot {
     reason = "Preserve the public event API and avoid an extra allocation per decoded message"
 )]
 pub enum EngineEvent {
+    /// Decode rows lost while the GUI was stalled, since its last drain.
+    DecodeRowsDropped(u64),
     Status(EngineStatus),
     Decode(DecodeRecord),
     SlotComplete {

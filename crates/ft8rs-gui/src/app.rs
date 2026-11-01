@@ -1,4 +1,4 @@
-//! ft8rs GUI (P3) — egui front-end over the live engine.
+//! ft8rs GUI — egui front-end over the live engine.
 //!
 //! Monitor-only (file decode stays in the CLI). The four hot fields
 //! (mycall/hiscall/hisgrid/nfqso) + Monitor button sit at the bottom; everything
@@ -106,7 +106,7 @@ pub struct Ft8rsApp {
     udp_in_tol: f64,
 
     devices: Vec<SoundcardDeviceInfo>,
-    selected_device: Option<String>, // device name; None = default
+    selected_device: Option<String>, // id:<backend-qualified ID>; None = default
     input_channel: InputChannel,     // which channel of a multi-channel device to decode
     input_peak: Option<f32>,         // recent capture peak; None until audio arrives
     capture_format: Option<(String, SoundcardFormatInfo)>,
@@ -160,8 +160,8 @@ impl Ft8rsApp {
         let engine = EngineHandle::spawn();
         let _ = engine.send(EngineCommand::RefreshDevices);
 
-        // Restore persisted settings. Devices are keyed by name; a missing
-        // saved device is reported on Start, so we never listen to the wrong rig.
+        // Restore IDs; legacy names migrate after enumeration only if unique.
+        // Missing or ambiguous selections are reported instead of falling back.
         let storage = cc.storage;
         let load = |key: &str, default: &str| -> String {
             storage
@@ -303,16 +303,28 @@ impl Ft8rsApp {
             ..StreamDecodeConfig::default()
         };
         (config.nfa, config.nfb) = parse_frequency_range(&self.nfa, &self.nfb)?;
-        // nfqso only counts inside the [nfa, nfb] band; 0 or out-of-band means
-        // "no QSO focus" (passed as 0) so it never perturbs the decode.
-        let nfqso = self.nfqso.trim().parse::<f64>().unwrap_or(0.0);
-        config.nfqso = if nfqso >= config.nfa && nfqso <= config.nfb {
-            nfqso
-        } else {
-            0.0
-        };
+        let nfqso = self
+            .nfqso
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "RX frequency must be a number".to_owned())?;
+        config.nfqso =
+            ft8rs::stream::validation::normalize_rx_frequency(nfqso, config.nfa, config.nfb)?;
         Ok(EngineState {
-            device: self.selected_device.clone(),
+            device: self
+                .selected_device
+                .as_deref()
+                .map(|selector| {
+                    let migrated =
+                        ft8rs_engine::soundcard::migrate_device_name(selector, &self.devices)?;
+                    if !migrated.starts_with("id:") {
+                        return Err(format!(
+                            "Saved input '{selector}' is unavailable; select an input device"
+                        ));
+                    }
+                    Ok(migrated)
+                })
+                .transpose()?,
             channel: self.input_channel,
             config,
             udp: self.udp_config()?,
@@ -378,7 +390,7 @@ impl Ft8rsApp {
 
     /// Push a live config change to the engine, if monitoring and it differs.
     /// A change that discards DX intel (target switch) is deferred to a confirm
-    /// dialog instead of applied immediately (decision 4 / §6.1).
+    /// dialog instead of applied immediately.
     fn apply_if_changed(&mut self) {
         if self.dx_needs_hiscall() {
             self.error = Some("profile dx requires His Call".to_string());
@@ -430,7 +442,15 @@ impl Ft8rsApp {
                     }
                     self.status = status;
                 }
-                EngineEvent::DevicesRefreshed(devices) => self.devices = devices,
+                EngineEvent::DevicesRefreshed(devices) => {
+                    if let Some(selected) = self.selected_device.as_deref() {
+                        match ft8rs_engine::soundcard::migrate_device_name(selected, &devices) {
+                            Ok(id) => self.selected_device = Some(id),
+                            Err(err) => self.error = Some(err),
+                        }
+                    }
+                    self.devices = devices;
+                }
                 EngineEvent::InputLevel(peak) => self.input_peak = Some(peak),
                 EngineEvent::CaptureStarted {
                     device_name,
@@ -485,6 +505,11 @@ impl Ft8rsApp {
                 EngineEvent::Reconfigured(_) => {}
                 EngineEvent::DxContext(snapshot) => self.dx = Some(snapshot),
                 EngineEvent::Error(err) => self.error = Some(err),
+                EngineEvent::DecodeRowsDropped(count) => {
+                    let message = format!("GUI backlog full: {count} decoded rows were dropped");
+                    log::warn!("{message}");
+                    self.error.get_or_insert(message);
+                }
             }
         }
         // Compare mode: fold in external (WSJT-X) decodes.
@@ -1795,17 +1820,43 @@ fn section_heading(ui: &mut egui::Ui, text: &str) {
 
 /// Standard Button + Popup controls allow the menu to size independently of
 /// its trigger, including shrinking an open menu when the window gets smaller.
+fn input_device_label(device: &SoundcardDeviceInfo, devices: &[SoundcardDeviceInfo]) -> String {
+    if devices
+        .iter()
+        .filter(|other| other.name == device.name)
+        .count()
+        > 1
+    {
+        format!("{} ({}, #{})", device.name, device.host, device.index)
+    } else {
+        device.name.clone()
+    }
+}
+
 fn input_device_combo(
     ui: &mut egui::Ui,
     selected_device: &mut Option<String>,
     devices: &[SoundcardDeviceInfo],
 ) -> egui::Response {
-    let selected = selected_device.as_deref().unwrap_or("Default").to_string();
+    let selected = selected_device
+        .as_deref()
+        .map(|selector| {
+            devices
+                .iter()
+                .find(|device| selector == format!("id:{}", device.id))
+                .map(|device| input_device_label(device, devices))
+                .unwrap_or_else(|| selector.to_owned())
+        })
+        .unwrap_or_else(|| "Default".to_owned());
     let field_width = ui.available_width();
     let popup_margin = egui::Frame::popup(ui.style()).total_margin().sum().x;
     let font = egui::TextStyle::Button.resolve(ui.style());
-    let text_width = std::iter::once("Default")
-        .chain(devices.iter().map(|device| device.name.as_str()))
+    let text_width = std::iter::once("Default".to_owned())
+        .chain(
+            devices
+                .iter()
+                .map(|device| input_device_label(device, devices)),
+        )
         .map(|name| {
             ui.fonts_mut(|fonts| {
                 fonts
@@ -1847,12 +1898,13 @@ fn input_device_combo(
                 .show(ui, |ui| {
                     ui.selectable_value(selected_device, None, "Default");
                     for device in devices {
+                        let label = input_device_label(device, devices);
                         ui.selectable_value(
                             selected_device,
-                            Some(device.name.clone()),
-                            &device.name,
+                            Some(format!("id:{}", device.id)),
+                            label,
                         )
-                        .on_hover_text(&device.name);
+                        .on_hover_text(format!("{} / {}", device.host, device.id));
                     }
                 });
         });
@@ -1986,13 +2038,11 @@ fn parse_frequency_range(low: &str, high: &str) -> Result<(f64, f64), String> {
         value
             .trim()
             .parse::<f64>()
-            .ok()
-            .filter(|v| v.is_finite() && (0.0..=5000.0).contains(v))
+            .map_err(|_| "Frequency range must contain numbers".to_owned())
     };
-    match (parse(low), parse(high)) {
-        (Some(low), Some(high)) if low < high => Ok((low, high)),
-        _ => Err("Frequency range must satisfy 0 ≤ Low < High ≤ 5000 Hz".to_string()),
-    }
+    let (low, high) = (parse(low)?, parse(high)?);
+    ft8rs::stream::validation::validate_frequency_range(low, high)?;
+    Ok((low, high))
 }
 
 fn parse_port(value: &str) -> Result<u16, String> {
@@ -3588,6 +3638,7 @@ mod tests {
             "很长的设备名称".repeat(30),
         ]
         .map(|name| SoundcardDeviceInfo {
+            id: name.clone(),
             index: 0,
             host: "Test".to_string(),
             name,
@@ -3668,6 +3719,7 @@ mod tests {
         let ctx = egui::Context::default();
         apply_style(&ctx, egui::Theme::Light);
         let devices = [SoundcardDeviceInfo {
+            id: "Test:input".into(),
             index: 0,
             host: "Test".to_owned(),
             name: "DAX Audio RX 1 (FlexRadio Systems DAX Audio)".to_owned(),

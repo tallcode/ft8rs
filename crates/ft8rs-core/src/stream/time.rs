@@ -1,39 +1,54 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SlotTimestamp {
-    prefix: Option<String>,
+    date: Option<Date>,
     seconds_of_day: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Date {
+    days: i64,
+    full_year: bool,
 }
 
 impl SlotTimestamp {
     pub fn parse(value: &str) -> Result<Self, String> {
         let trimmed = value.trim();
         if let Some((prefix, time)) = trimmed.rsplit_once('_') {
-            validate_date_prefix(prefix)?;
+            let date = parse_date_prefix(prefix)?;
             return parse_hhmmss(time).map(|seconds_of_day| Self {
-                prefix: Some(prefix.to_string()),
+                date: Some(date),
                 seconds_of_day,
             });
         }
 
         parse_hhmmss(trimmed).map(|seconds_of_day| Self {
-            prefix: None,
+            date: None,
             seconds_of_day,
         })
     }
 
     pub fn add_seconds(&self, seconds: i64) -> Self {
-        let day = 24 * 60 * 60;
-        let t = (self.seconds_of_day as i64 + seconds).rem_euclid(day);
+        let total = self.seconds_of_day as i128 + seconds as i128;
         Self {
-            prefix: self.prefix.clone(),
-            seconds_of_day: t as u32,
+            date: self.date.as_ref().map(|date| Date {
+                days: date.days + total.div_euclid(86_400) as i64,
+                full_year: date.full_year,
+            }),
+            seconds_of_day: total.rem_euclid(86_400) as u32,
         }
     }
 
     pub fn format(&self) -> String {
         let time = self.format_time();
-        match &self.prefix {
-            Some(prefix) => format!("{prefix}_{time}"),
+        match &self.date {
+            Some(date) => {
+                let (year, month, day) = civil_from_days(date.days);
+                if date.full_year {
+                    format!("{year:04}{month:02}{day:02}_{time}")
+                } else {
+                    format!("{:02}{month:02}{day:02}_{time}", year.rem_euclid(100))
+                }
+            }
             None => time,
         }
     }
@@ -59,15 +74,17 @@ impl SlotTimestamp {
     pub fn from_unix_seconds_utc(seconds: i64) -> Self {
         let days = seconds.div_euclid(86_400);
         let seconds_of_day = seconds.rem_euclid(86_400) as u32;
-        let (year, month, day) = civil_from_days(days);
         Self {
-            prefix: Some(format!("{:02}{month:02}{day:02}", year.rem_euclid(100))),
+            date: Some(Date {
+                days,
+                full_year: false,
+            }),
             seconds_of_day,
         }
     }
 }
 
-fn civil_from_days(days: i64) -> (i32, u32, u32) {
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -78,7 +95,7 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     let day = doy - (153 * mp + 2).div_euclid(5) + 1;
     let month = mp + if mp < 10 { 3 } else { -9 };
     let year = y + if month <= 2 { 1 } else { 0 };
-    (year as i32, month as u32, day as u32)
+    (year, month as u32, day as u32)
 }
 
 fn parse_hhmmss(value: &str) -> Result<u32, String> {
@@ -94,15 +111,37 @@ fn parse_hhmmss(value: &str) -> Result<u32, String> {
     Ok(h * 3600 + m * 60 + s)
 }
 
-fn validate_date_prefix(prefix: &str) -> Result<(), String> {
-    let valid_len = prefix.len() == 6 || prefix.len() == 8;
-    if valid_len && prefix.bytes().all(|b| b.is_ascii_digit()) {
-        Ok(())
-    } else {
-        Err(format!(
-            "invalid date prefix '{prefix}', expected YYMMDD or YYYYMMDD"
-        ))
+// Gregorian civil-date arithmetic, inverse of `civil_from_days`.
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let month = i64::from(month) + if month > 2 { -3 } else { 9 };
+    let doy = (153 * month + 2) / 5 + i64::from(day) - 1;
+    era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
+}
+
+fn parse_date_prefix(prefix: &str) -> Result<Date, String> {
+    let invalid = || format!("invalid date '{prefix}', expected a valid YYMMDD or YYYYMMDD date");
+    if !matches!(prefix.len(), 6 | 8) || !prefix.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid());
     }
+    // YY dates use 2000..2099 on input; arithmetic retains the actual century.
+    let year_len = prefix.len() - 4;
+    let year = prefix[..year_len].parse::<i64>().unwrap() + if year_len == 2 { 2000 } else { 0 };
+    let month = prefix[year_len..year_len + 2].parse::<u32>().unwrap();
+    let day = prefix[year_len + 2..].parse::<u32>().unwrap();
+    if year == 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return Err(invalid());
+    }
+    let days = days_from_civil(year, month, day);
+    if civil_from_days(days) != (year, month, day) {
+        return Err(invalid());
+    }
+    Ok(Date {
+        days,
+        full_year: year_len == 4,
+    })
 }
 
 impl std::fmt::Display for SlotTimestamp {
@@ -114,6 +153,43 @@ impl std::fmt::Display for SlotTimestamp {
 #[cfg(test)]
 mod tests {
     use super::SlotTimestamp;
+
+    #[test]
+    fn dated_arithmetic_handles_calendar_boundaries_both_ways() {
+        for (before, after) in [
+            ("261031_235945", "261101_000000"),
+            ("261231_235945", "270101_000000"),
+            ("240228_235945", "240229_000000"),
+            ("20240229_235945", "20240301_000000"),
+            ("21000228_235945", "21000301_000000"),
+            ("991231_235945", "000101_000000"),
+        ] {
+            let original = SlotTimestamp::parse(before).unwrap();
+            let next = original.add_seconds(15);
+            assert_eq!(next.format(), after);
+            assert_eq!(next.add_seconds(-15), original);
+        }
+        assert_eq!(
+            SlotTimestamp::parse("20261101_000000")
+                .unwrap()
+                .add_seconds(-15)
+                .format(),
+            "20261031_235945"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_calendar_dates() {
+        for value in [
+            "261332_120000",
+            "260229_120000",
+            "20260431_120000",
+            "00000101_000000",
+            "21000229_120000",
+        ] {
+            assert!(SlotTimestamp::parse(value).is_err(), "{value}");
+        }
+    }
 
     #[test]
     fn parses_timestamp() {
