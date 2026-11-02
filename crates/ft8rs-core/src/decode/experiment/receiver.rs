@@ -232,6 +232,36 @@ fn lse(x: &[f64]) -> f64 {
     let m = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     m + x.iter().map(|v| (v - m).exp()).sum::<f64>().ln()
 }
+/// Keep each partition's original max, subtraction and ascending-pattern sum.
+/// One partition per bit contains the global maximum: those identical exp
+/// arguments can share a cache, without rescaling a different partition's sum.
+fn bessel_llrs(scores: &[f64], bits: usize, exps: &mut Vec<f64>, output: &mut [f64]) {
+    debug_assert_eq!(scores.len(), 1 << bits);
+    debug_assert_eq!(output.len(), bits);
+    let peak = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    exps.clear();
+    exps.extend(scores.iter().map(|v| (v - peak).exp()));
+    for (bit, value) in output.iter_mut().enumerate() {
+        let run = 1 << (bits - 1 - bit);
+        let partition = |offset: usize| {
+            let selected = || {
+                scores
+                    .chunks_exact(2 * run)
+                    .flat_map(|chunk| chunk[offset..offset + run].iter().copied())
+            };
+            let m = selected().fold(f64::NEG_INFINITY, f64::max);
+            let sum = if m.to_bits() == peak.to_bits() {
+                exps.chunks_exact(2 * run)
+                    .flat_map(|chunk| chunk[offset..offset + run].iter().copied())
+                    .sum::<f64>()
+            } else {
+                selected().map(|v| (v - m).exp()).sum::<f64>()
+            };
+            m + sum.ln()
+        };
+        *value = partition(run) - partition(0);
+    }
+}
 fn metrics(s: &Spectrum, block: usize, mode: &str) -> Vec<f64> {
     let var = variance(s);
     let varq: [f64; 8] = std::array::from_fn(|q| {
@@ -262,6 +292,7 @@ fn metrics(s: &Spectrum, block: usize, mode: &str) -> Vec<f64> {
     .max(0.1 * var)
     .sqrt();
     let mut llr = vec![0.0; 174];
+    let mut bessel_exps = Vec::new();
     for (half, base) in [7, 43].iter().enumerate() {
         let mut k = 0;
         while k < 29 {
@@ -284,6 +315,17 @@ fn metrics(s: &Spectrum, block: usize, mode: &str) -> Vec<f64> {
                     "robust" => log_i0(2.0 * amp * z.norm()) - amp * amp * invsum,
                     _ => panic!("mode"),
                 };
+            }
+            if mode == "bessel" {
+                let start = half * 87 + k * 3;
+                bessel_llrs(
+                    &scores,
+                    3 * b,
+                    &mut bessel_exps,
+                    &mut llr[start..start + 3 * b],
+                );
+                k += b;
+                continue;
             }
             for bit in 0..3 * b {
                 let mut a = Vec::new();

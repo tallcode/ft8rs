@@ -9,3 +9,9 @@ jtdx
 
 # Research code, results, and generated assets are archived locally only.
 /experiments/
+
+# Local agent instructions and working notes.
+AGENTS.md
+CLAUDE.md
+/FUTURE.md
+/.future/

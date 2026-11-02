@@ -12,13 +12,17 @@ Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md).
 
 `--profile hybrid --hybrid-experiment` enables the ft8rs single-slot receive DSP.
 It is disabled by default and has no standalone profile or public decoder API.
-The GUI does not yet expose an enable switch. See [specialist implementation](src/decode/experiment/README.md)
+The GUI exposes **Experimental decoder** in Hybrid's Decode settings.
+See [specialist implementation](src/decode/experiment/README.md)
 for the independent front end, soft metrics, conditional waveform admission,
 single residual search and known limitations.
 
-The specialist starts after all existing native/recovery callbacks, using the
-remaining ten-second slot-work budget. Its output is appended through the
-payload-aware ledger, never replacing native representatives. Tagged rows use
+The specialist starts after the three native workers and their streaming
+callbacks finish, using isolated audio and a baseline snapshot. It can run
+alongside the SIC tail within the remaining ten-second slot-work budget. A
+separate FIFO holds its output until all native/SIC publications complete;
+native callbacks never wait for it. Its output is appended through the
+payload-aware ledger, preserving native representatives. Tagged rows use
 `Experiment` / CLI/GUI marker `exp`; passive specialist evidence cannot create
 independent confirmation or seed native AP/hash memory. `--no-hybrid-sic`
 continues to control the original cross-decoder cancellation, not the private

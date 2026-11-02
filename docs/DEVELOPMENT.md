@@ -1,8 +1,12 @@
 # Build and development
 
-Run commands from the repository root. Project constraints and the direct-main
-integration workflow are in [AGENTS.md](../AGENTS.md). Local checks are required;
-CI does not replace local decoder validation.
+Run commands from the repository root. Local checks are required; CI does not
+replace local decoder validation. Decoder constraints are described under
+[Decoder change review](#decoder-change-review).
+
+This repository integrates directly into `main` without pull requests. Before
+committing or merging, synchronize remote `main`, resolve conflicts and complete
+the applicable local checks and optimized tests. Then commit and push `main`.
 
 ## Workspace
 

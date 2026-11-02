@@ -46,6 +46,10 @@ pub struct HybridSlotDiagnostics {
     pub baseline_rows: usize,
     pub agc_rows: usize,
     pub baseline_finish: [Option<Duration>; 3],
+    pub workers_finish: Duration,
+    pub experiment_start: Option<Duration>,
+    pub experiment_finish: Option<Duration>,
+    pub experiment_publish_start: Option<Duration>,
     pub recovery_budget_skips: usize,
     pub recovered_rows: usize,
     pub recovery_tasks: usize,
@@ -65,6 +69,88 @@ enum WorkerEvent {
     AgcDone(Result<Vec<StreamDecodedWithProvenance>, String>),
     Recovered(SignalSource, StreamDecodedMessage),
     RecoveryDone(Result<CancellationStats, String>),
+}
+
+// A separate FIFO cannot add DSP traffic to the native callback event queue.
+// Results remain buffered until the coordinator opens the publication gate.
+enum ExperimentEvent {
+    Row(StreamDecodedMessage),
+    Done(Result<ExperimentDiagnostics, String>, Duration, Duration),
+}
+
+fn spawn_experiment<'scope, 'env>(
+    scope: &'scope thread::Scope<'scope, 'env>,
+    clock: Instant,
+    work: impl FnOnce(&mut dyn FnMut(&StreamDecodedMessage)) -> Result<ExperimentDiagnostics, String>
+        + Send
+        + 'scope,
+) -> mpsc::Receiver<ExperimentEvent> {
+    let (tx, rx) = mpsc::channel();
+    scope.spawn(move || {
+        let start = clock.elapsed();
+        let result = guard_worker(|| {
+            work(&mut |row| {
+                let _ = tx.send(ExperimentEvent::Row(row.clone()));
+            })
+        });
+        let _ = tx.send(ExperimentEvent::Done(result, start, clock.elapsed()));
+    });
+    rx
+}
+
+fn publish_experiment<F>(
+    rx: mpsc::Receiver<ExperimentEvent>,
+    clock: Instant,
+    diagnostics: &mut HybridSlotDiagnostics,
+    ledger: &mut OutputLedger,
+    error: &mut Option<String>,
+    emit: &mut F,
+) -> Vec<StreamDecodedMessage>
+where
+    F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+{
+    // Native/SIC errors retain the old policy of suppressing the experiment.
+    // A callback error during exp still retains its collected passive rows.
+    let admit = error.is_none();
+    diagnostics.experiment_publish_start = Some(clock.elapsed());
+    let mut rows = Vec::new();
+    for event in rx {
+        match event {
+            ExperimentEvent::Row(row) => {
+                if admit {
+                    publish(
+                        ledger,
+                        SignalSource::Recovery,
+                        &row,
+                        StreamDecodeProvenance::Experiment,
+                        error,
+                        emit,
+                    );
+                    rows.push(row);
+                }
+            }
+            ExperimentEvent::Done(result, start, finish) => {
+                diagnostics.experiment_start = Some(start);
+                diagnostics.experiment_finish = Some(finish);
+                match result {
+                    Ok(report) => diagnostics.experiment = report,
+                    Err(failure) => diagnostics.experiment.error = Some(failure),
+                }
+                return rows;
+            }
+        }
+    }
+    diagnostics.experiment.error = Some("experiment worker closed without completion".into());
+    rows
+}
+
+fn baseline_snapshot(
+    wsjtx: &[StreamDecodedMessage],
+    jtdx: &[StreamDecodedMessage],
+    agc: &[StreamDecodedWithProvenance],
+) -> Vec<StreamDecodedMessage> {
+    let agc: Vec<_> = agc.iter().map(|row| row.decode.clone()).collect();
+    merge_decodes(&merge_decodes(wsjtx, jtdx), &agc)
 }
 
 pub struct HybridStreamDecodeSession {
@@ -220,6 +306,7 @@ impl HybridStreamDecodeSession {
         let mut j_rows: Option<Vec<StreamDecodedWithProvenance>> = None;
         let mut agc_rows = Vec::new();
         let mut agc_error = None;
+        let mut agc_done = false;
         let mut pending_j = Vec::new();
         let mut recovery_rows: [Vec<StreamDecodedMessage>; 2] = [Vec::new(), Vec::new()];
         let mut scheduled = [false; 2];
@@ -230,7 +317,10 @@ impl HybridStreamDecodeSession {
         let wsjtx = &mut self.wsjtx;
         let jtdx = &mut self.jtdx;
         let jtdx_agc = &mut self.jtdx_agc;
+        let mut baseline = None;
+        let mut experiment_rows = Vec::new();
         thread::scope(|scope| {
+            let mut experiment_rx = None;
             let (tx, rx) = mpsc::channel();
             let w_tx = tx.clone();
             scope.spawn(move || {
@@ -354,6 +444,7 @@ impl HybridStreamDecodeSession {
                         }
                     }
                     WorkerEvent::AgcDone(result) => {
+                        agc_done = true;
                         finished += 1;
                         diagnostics.baseline_finish[2] = Some(clock.elapsed());
                         match result {
@@ -461,80 +552,86 @@ impl HybridStreamDecodeSession {
                         let _ = task_tx.send(WorkerEvent::RecoveryDone(result));
                     });
                 }
+                if config.hybrid_experiment
+                    && experiment_rx.is_none()
+                    && first_error.is_none()
+                    && w_rows.is_some()
+                    && j_rows.is_some()
+                    && agc_done
+                {
+                    // All three Done events follow their callbacks. Only owned
+                    // snapshots cross into exp; no native session or SIC rows do.
+                    baseline = Some(baseline_snapshot(&w_seen, &j_seen, &agc_rows));
+                    let input = samples.to_vec();
+                    let models = baseline.as_ref().unwrap().clone();
+                    let (low, high) = (config.nfa, config.nfb);
+                    experiment_rx = Some(spawn_experiment(scope, clock, move |emit| {
+                        Ok(crate::decode::experiment::decode(
+                            crate::decode::experiment::ExperimentInput {
+                                samples: &input,
+                                baseline: &models,
+                                low,
+                                high,
+                                deadline: clock + Duration::from_secs(10),
+                            },
+                            emit,
+                        ))
+                    }));
+                }
             }
-        });
-        // Deterministic file output: baseline first, fixed recovery direction.
-        if !realtime {
-            for group in &recovery_rows {
-                for row in group {
+            diagnostics.workers_finish = clock.elapsed();
+            // Deterministic file output: baseline first, fixed recovery direction.
+            if !realtime {
+                for group in &recovery_rows {
+                    for row in group {
+                        publish(
+                            &mut ledger,
+                            SignalSource::Recovery,
+                            row,
+                            StreamDecodeProvenance::CooperativeRecovery,
+                            &mut first_error,
+                            &mut on_decode,
+                        );
+                    }
+                }
+                // Preserve the prior baseline/recovery ordering in file mode. The
+                // supplemental branch cannot replace an existing representative.
+                for row in &agc_rows {
                     publish(
                         &mut ledger,
-                        SignalSource::Recovery,
-                        row,
-                        StreamDecodeProvenance::CooperativeRecovery,
+                        SignalSource::Jtdx,
+                        &row.decode,
+                        row.provenance,
                         &mut first_error,
                         &mut on_decode,
                     );
                 }
             }
-            // Preserve the prior baseline/recovery ordering in file mode. The
-            // supplemental branch cannot replace an existing representative.
-            for row in &agc_rows {
-                publish(
+            diagnostics.agc_rows = agc_rows.len();
+            let baseline =
+                baseline.get_or_insert_with(|| baseline_snapshot(&w_seen, &j_seen, &agc_rows));
+            diagnostics.baseline_rows = baseline.len();
+            // The native/SIC publication order is now complete. Only this gate may
+            // admit exp rows; waiting for exp cannot delay an original callback.
+            if let Some(rx) = experiment_rx {
+                experiment_rows = publish_experiment(
+                    rx,
+                    clock,
+                    &mut diagnostics,
                     &mut ledger,
-                    SignalSource::Jtdx,
-                    &row.decode,
-                    row.provenance,
                     &mut first_error,
                     &mut on_decode,
                 );
             }
-        }
+        });
+        let baseline = baseline.unwrap_or_default();
         let w_rows = w_rows.unwrap_or_default();
         let j_rows = j_rows.unwrap_or_default();
-        diagnostics.agc_rows = agc_rows.len();
-        let agc_plain: Vec<_> = agc_rows.iter().map(|row| row.decode.clone()).collect();
-        let mut baseline = merge_decodes(&w_seen, &j_seen);
-        baseline = merge_decodes(&baseline, &agc_plain);
-        diagnostics.baseline_rows = baseline.len();
-        // Original workers and their callbacks finish first. Supplementary DSP
-        // cannot replace their representatives or change persistent native state.
-        let mut experiment_rows = Vec::new();
-        if config.hybrid_experiment && first_error.is_none() {
-            let result = guard_worker(|| {
-                Ok(crate::decode::experiment::decode(
-                    crate::decode::experiment::ExperimentInput {
-                        samples,
-                        baseline: &baseline,
-                        low: config.nfa,
-                        high: config.nfb,
-                        deadline: clock + Duration::from_secs(10),
-                    },
-                    &mut |row| {
-                        experiment_rows.push(row.clone());
-                        publish(
-                            &mut ledger,
-                            SignalSource::Recovery,
-                            row,
-                            StreamDecodeProvenance::Experiment,
-                            &mut first_error,
-                            &mut on_decode,
-                        );
-                    },
-                ))
-            });
-            match result {
-                Ok(report) => diagnostics.experiment = report,
-                Err(error) => diagnostics.experiment.error = Some(error),
-            }
-        }
         diagnostics.recovered_rows = ledger
             .tagged()
             .iter()
             .filter(|r| !baseline.iter().any(|b| same_signal(b, &r.decode)))
             .count();
-        diagnostics.elapsed = clock.elapsed();
-        self.diagnostics = diagnostics;
         // Both AGC variants remain one decoder family in passive evidence; a
         // repeated JTDX result cannot manufacture independent confirmation.
         self.last_evidence_store = build_passive_evidence_store_from_tagged(&w_rows, &j_rows);
@@ -562,6 +659,8 @@ impl HybridStreamDecodeSession {
         self.active_call_context
             .update_from_evidence(&self.last_evidence_store);
         self.early.clear();
+        diagnostics.elapsed = clock.elapsed();
+        self.diagnostics = diagnostics;
         if let Some(error) = first_error.or(agc_error) {
             Err(error)
         } else {
@@ -803,6 +902,139 @@ fn is_shared_full_call_candidate(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffered_exp_keeps_native_and_sic_priority_without_blocking_callbacks() {
+        use std::cell::RefCell;
+        let native = decoded(1000.0, 0.5, "CQ K1ABC FN42");
+        let recovered = decoded(1500.0, 0.5, "CQ W9XYZ EN50");
+        let unique = decoded(2000.0, 0.5, "CQ G4ABC IO91");
+        let observed = RefCell::new(Vec::new());
+        let mut emit = |row: &StreamDecodedWithProvenance| {
+            observed.borrow_mut().push(row.clone());
+            Ok(())
+        };
+        thread::scope(|scope| {
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let rows = [native.clone(), recovered.clone(), unique.clone()];
+            let clock = Instant::now();
+            let rx = spawn_experiment(scope, clock, move |emit| {
+                for row in &rows {
+                    emit(row);
+                }
+                ready_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(ExperimentDiagnostics::default())
+            });
+            ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            // Exp has produced all rows, but is still running. These callbacks
+            // must run before it can complete or acquire a ledger representative.
+            let mut ledger = OutputLedger::default();
+            let mut error = None;
+            publish(
+                &mut ledger,
+                SignalSource::Wsjtx,
+                &native,
+                StreamDecodeProvenance::Unknown,
+                &mut error,
+                &mut emit,
+            );
+            publish(
+                &mut ledger,
+                SignalSource::Recovery,
+                &recovered,
+                StreamDecodeProvenance::CooperativeRecovery,
+                &mut error,
+                &mut emit,
+            );
+            assert_eq!(observed.borrow().len(), 2);
+            release_tx.send(()).unwrap();
+            let mut diagnostics = HybridSlotDiagnostics::default();
+            let raw = publish_experiment(
+                rx,
+                clock,
+                &mut diagnostics,
+                &mut ledger,
+                &mut error,
+                &mut emit,
+            );
+            assert_eq!(raw.len(), 3);
+            assert!(error.is_none());
+            let rows = observed.borrow();
+            assert_eq!(
+                rows.iter()
+                    .map(|row| row.decode.msg.as_str())
+                    .collect::<Vec<_>>(),
+                [native.msg, recovered.msg, unique.msg]
+            );
+            assert_eq!(
+                rows.iter().map(|row| row.provenance).collect::<Vec<_>>(),
+                [
+                    StreamDecodeProvenance::Unknown,
+                    StreamDecodeProvenance::CooperativeRecovery,
+                    StreamDecodeProvenance::Experiment
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn prior_native_error_suppresses_already_computed_exp_rows() {
+        thread::scope(|scope| {
+            let clock = Instant::now();
+            let rx = spawn_experiment(scope, clock, |emit| {
+                emit(&decoded(2000.0, 0.5, "CQ G4ABC IO91"));
+                Ok(ExperimentDiagnostics::default())
+            });
+            let mut error = Some("native callback failed".to_string());
+            let mut ledger = OutputLedger::default();
+            let mut diagnostics = HybridSlotDiagnostics::default();
+            let rows = publish_experiment(
+                rx,
+                clock,
+                &mut diagnostics,
+                &mut ledger,
+                &mut error,
+                &mut |_| panic!("native error must suppress exp"),
+            );
+            assert!(rows.is_empty());
+            assert!(ledger.tagged().is_empty());
+            assert_eq!(error.as_deref(), Some("native callback failed"));
+            assert!(diagnostics.experiment_finish.is_some());
+        });
+    }
+
+    #[test]
+    fn exp_callback_failure_keeps_collected_passive_rows_and_original_error() {
+        thread::scope(|scope| {
+            let clock = Instant::now();
+            let rx = spawn_experiment(scope, clock, |emit| {
+                emit(&decoded(1000.0, 0.5, "CQ K1ABC FN42"));
+                emit(&decoded(2000.0, 0.5, "CQ G4ABC IO91"));
+                Ok(ExperimentDiagnostics::default())
+            });
+            let mut error = None;
+            let mut ledger = OutputLedger::default();
+            let mut diagnostics = HybridSlotDiagnostics::default();
+            let mut callbacks = 0;
+            let rows = publish_experiment(
+                rx,
+                clock,
+                &mut diagnostics,
+                &mut ledger,
+                &mut error,
+                &mut |_| {
+                    callbacks += 1;
+                    Err("exp callback failed".into())
+                },
+            );
+            assert_eq!(callbacks, 1);
+            assert_eq!(rows.len(), 2);
+            assert_eq!(ledger.tagged().len(), 2);
+            assert_eq!(error.as_deref(), Some("exp callback failed"));
+        });
+    }
 
     #[test]
     fn agc_branches_share_swl_and_preserve_explicit_partitions() {

@@ -9,11 +9,10 @@ unless a section says otherwise.
 | Document | Contents |
 |---|---|
 | [Usage](USAGE.md) | GUI controls, soundcard/channel setup, CLI reference, UDP and troubleshooting |
-| [Development](DEVELOPMENT.md) | Workspace, optimized builds, FFTW, packaging and local checks |
+| [Development](DEVELOPMENT.md) | Workspace, optimized builds, FFTW, packaging, local checks and integration rules |
 | [Validation](VALIDATION.md) | Reproducible recording baselines, CallDB/configuration, evidence limits and latest local run |
 | [Decoder tests](../crates/ft8rs-core/tests/decoder/README.md) | Shared adapters, fixed corpus, test coverage and result comparison |
 | [Reference-data updates](../crates/ft8rs-core/tests/decoder/UPDATING.md) | Native generators, candidate capture, review and adoption |
-| [Project rules](../AGENTS.md) | Native-code boundary, message preservation, local tests and repository workflow |
 
 ## Decoder implementation
 

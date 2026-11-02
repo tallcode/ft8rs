@@ -3,12 +3,12 @@
 The `experiment` module owns the independent receive DSP. Hybrid schedules
 it through a crate-private boundary; algorithm ownership is independent of Hybrid.
 It has no standalone `DecodeProfile`, executable or public decoder constructor.
-The initial integration is opt-in with `StreamDecodeConfig.hybrid_experiment` or
+The receiver is opt-in with `StreamDecodeConfig.hybrid_experiment` or
 CLI `--profile hybrid --hybrid-experiment`; it is disabled by default. The GUI
 exposes **Experimental decoder** at the bottom of Decode settings, after Deep
-decode, when Hybrid is
-selected. Its value is persisted and a change rebuilds the decode session at the
-next slot boundary without restarting audio capture. The [2026-10-29 report](EXPERIMENTS.md)
+decode, when Hybrid is selected. Its value is persisted and a change rebuilds the
+decode session at the next slot boundary without restarting audio capture. The
+[2026-10-29 report](EXPERIMENTS.md)
 records frozen known-truth confirmation and original-recording observations.
 
 ## Current layout
@@ -19,10 +19,9 @@ records frozen known-truth confirmation and original-recording observations.
 - `tests.rs` keeps input/budget/CW, sync-only and weak-retention regressions outside runtime code.
 - `EXPERIMENTS.md` records the pre-layout frozen measurement, not a new benchmark.
 
-The completed development adds native nuisance models, data-symbol admission,
-regularized channel fitting and the GUI/reconfiguration path. The first two
-campaigns and the pre-development measurement remain frozen. New development
-and confirmation belong to the third campaign; see [development evidence](DEVELOPMENT.md).
+The receiver includes native nuisance models, data-symbol admission and
+regularized channel fitting. The research campaigns and their measurements are
+historical records; see [development evidence](DEVELOPMENT.md).
 
 ## Scope and native boundary
 
@@ -48,7 +47,9 @@ FEC uses the existing BP+OSD entry with its existing argument value 2; this is n
 a claim that the argument changes the native OSD flip order.
 
 Initial metrics include one/three-symbol amplitude, four-symbol Bessel likelihood
-and three-symbol per-tone robust likelihood. Pilot-coherent detection uses only
+and three-symbol per-tone robust likelihood. Bessel demapping reuses identical
+exponential terms across bit partitions while retaining the original candidate
+and summation order. Pilot-coherent detection uses only
 fully observed sync symbols. Effective sample counts are carried through block
 metrics; missing samples do not become low-noise observations. Input lengths
 between 120000 and 180000 samples are accepted by the receiver, with shorter
@@ -91,12 +92,18 @@ every overlapping station.
 
 ## Scheduling and output
 
-All native workers and their existing recovery complete first. Their callbacks
-are forwarded before experimental work starts. The receiver uses the remaining
-time until ten seconds after Hybrid slot processing began and at most 4096 FEC
-calls across its searches. Checks occur between candidates, FEC calls and coarse fit frequency steps;
-an active FEC or FFT is not preempted, so ten seconds is a soft work limit. Existing
-native work can exceed that time independently, in which case the specialist
+The experimental worker starts after all three native workers finish and their
+streaming callbacks have been forwarded. It owns a separate audio copy and an
+immutable baseline snapshot, and can compute alongside the remaining SIC work.
+Its separate FIFO buffers results until all native/SIC publications complete;
+file mode retains the existing fixed SIC-direction and AGC supplement order.
+Only then may experimental results enter the output ledger. Native callbacks
+never wait for the experimental worker. No native session, mutable audio or
+recovery result is supplied to it. The receiver uses the remaining time until
+ten seconds after Hybrid slot processing began and at most 4096 FEC
+calls across its searches. Checks occur between candidates, FEC calls and coarse
+fit frequency steps; an active FEC or FFT is not preempted, so ten seconds is a
+soft work limit. Existing native work can exceed that time independently, in which case the specialist
 skips. No GPU or external training data is required.
 
 Supplementary results pass through the existing payload-aware ledger after all
@@ -111,9 +118,12 @@ User callback failures retain the normal error behavior.
 `HybridSlotDiagnostics.experiment` records FEC calls, tentative/rejected/accepted
 rows, full-frame/data scores and methods, native model counts/rejections,
 data-support rejections, conditioning/initial/residual stage durations, residual
-searches, budget exhaustion, elapsed time and a worker error if any. Estimated
-SNR is derived from fitted waveform
-support and should not be treated as an independently measured station SNR.
+searches, budget exhaustion, elapsed time and a worker error if any.
+Hybrid diagnostics separately record native/SIC completion, experimental worker
+start/finish and its publication gate.
+These wall intervals can overlap and must not be added as serial stages. Estimated
+SNR is derived from fitted waveform support and should not be treated as an
+independently measured station SNR.
 
 ## Acceptance
 
@@ -129,9 +139,9 @@ zero error on arbitrary interference. Measure callback arrival separately from
 all-worker completion, and run timed processes serially with the same input,
 configuration, CallDB and build conditions.
 
-## Experiment tools
+## Historical experiment records
 
-Current product measurement tools and the isolated generator are in
+The development measurement tools and isolated generator were archived locally in
 `experiments/single-slot/campaigns/03-experiment-development/{tools,sources}`.
 They freeze source and a release binary before serial measurement, use a private
 CallDB, save raw per-row callbacks, exact baseline-field retention, truth/errors,
@@ -145,21 +155,7 @@ names; the current module/flag/provenance names are `experiment`,
 `--hybrid-experiment`, and `Experiment`. The common decoder test factory registers
 `hybrid-exp` as a Hybrid configuration variant, not a standalone decode profile.
 
-## Cleanup verification
-
-The foundation cleanup passed 197 core fast tests, workspace library/binary tests,
-all-target Clippy and formatting checks. Three existing stored inputs (AWGN, CW,
-and two FT8 blockers) reproduced the frozen message sets after CLI rounding,
-with `exp` only on experimental additions. No new random samples or sensitivity
-claim were produced. The local check record is in the second campaign's
-`checks/layout-cleanup-2026-10-29/cleanup-manifest.json`.
-
-The subsequent full development passed 199 core checks plus 63 remaining workspace
-checks, fresh release confirmation and original-recording baseline comparisons.
-See [the full development report](DEVELOPMENT.md) for counts, callbacks, native
-error handling and the experimental coverage traded away by this version.
-
-The three campaign 03 recording additions were subsequently accepted as
+The three campaign 03 recording additions were accepted as
 supplemental annotations by the user after checking callsigns and grids. Their
 `user-review` origin and the previous unlabelled interpretation are preserved;
 see the recording section of [the development report](DEVELOPMENT.md).

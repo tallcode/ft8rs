@@ -1,4 +1,108 @@
 use super::*;
+
+// Scalar definition used before the Bessel optimization. Keep its independent
+// bit partitioning and summation as an exact floating-point regression oracle.
+fn reference_bessel_llrs(scores: &[f64], bits: usize) -> Vec<f64> {
+    (0..bits)
+        .map(|bit| {
+            let mut one = Vec::new();
+            let mut zero = Vec::new();
+            for (pattern, &score) in scores.iter().enumerate() {
+                if (pattern >> (bits - 1 - bit)) & 1 == 1 {
+                    one.push(score);
+                } else {
+                    zero.push(score);
+                }
+            }
+            lse(&one) - lse(&zero)
+        })
+        .collect()
+}
+
+#[test]
+fn bessel_marginals_preserve_every_llr_bit() {
+    let mut state = 0x1234_5678_9abc_def0u64;
+    let mut exps = Vec::new();
+    // Includes the one-symbol final block, ties, cancellation near zero,
+    // exp underflow, widely separated maxima and realistic log-I0 scores.
+    for block in 1..=4 {
+        let bits = 3 * block;
+        for case in 0..64 {
+            let mut scores: Vec<f64> = (0..1 << bits)
+                .map(|pattern| {
+                    state ^= state >> 12;
+                    state ^= state << 25;
+                    state ^= state >> 27;
+                    let u = (state.wrapping_mul(2685821657736338717) >> 11) as f64
+                        / (1u64 << 53) as f64;
+                    match case % 8 {
+                        0 => 0.0,
+                        1 => (pattern % 13) as f64,
+                        2 => (u - 0.5) * 2e5,
+                        3 => 1.0 + (pattern % 8) as f64 * f64::EPSILON,
+                        4 => {
+                            if pattern % 2 == 0 {
+                                -0.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        5 => log_i0(200.0 * u.sqrt()),
+                        6 => (u - 0.5) * 24.0,
+                        _ => {
+                            if pattern == case {
+                                1e4
+                            } else {
+                                u
+                            }
+                        }
+                    }
+                })
+                .collect();
+            for pass in 0..2 {
+                let expected = reference_bessel_llrs(&scores, bits);
+                let mut actual = vec![0.0; bits];
+                bessel_llrs(&scores, bits, &mut exps, &mut actual);
+                for (bit, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+                    assert_eq!(
+                        actual.to_bits(),
+                        expected.to_bits(),
+                        "block={block} case={case} pass={pass} bit={bit}"
+                    );
+                }
+                scores.reverse();
+            }
+        }
+    }
+}
+
+#[test]
+fn bessel_marginals_preserve_nonfinite_behavior() {
+    let cases = [
+        [f64::NEG_INFINITY; 8],
+        [f64::INFINITY; 8],
+        [f64::NAN; 8],
+        [
+            0.0,
+            1.0,
+            f64::NAN,
+            2.0,
+            -1.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            3.0,
+        ],
+    ];
+    for scores in cases {
+        let expected = reference_bessel_llrs(&scores, 3);
+        let mut actual = vec![0.0; 3];
+        bessel_llrs(&scores, 3, &mut Vec::new(), &mut actual);
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+    }
+}
+
 #[test]
 fn partial_input_is_not_observed_zero_padding() {
     let band = Band::new(&vec![0.0; 144000], 1000.0);
