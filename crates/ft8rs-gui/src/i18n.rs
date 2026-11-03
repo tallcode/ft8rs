@@ -77,7 +77,7 @@ impl Locale {
         }
         match english {
             "About" => "关于",
-            "About ft8.rs" => "关于 ft8.rs",
+            "About ft8rs" => "关于 ft8rs",
             "Settings" => "设置",
             "Settings…" => "设置…",
             "Profile" => "解码方案",
@@ -129,7 +129,7 @@ impl Locale {
             "Merges WSJT-X decodes with the local ones to compare sensitivity." => "合并 WSJT-X 与本地解码结果以对比灵敏度。",
             "Color shows the source:" => "颜色表示来源：",
             "only WSJT-X" => "仅 WSJT-X",
-            "only ft8.rs" => "仅 ft8.rs",
+            "only ft8rs" => "仅 ft8rs",
             "both decoders" => "两者均解出",
             "Narrow-band filter" => "窄带滤波",
             "Hide duplicates" => "隐藏重复消息",

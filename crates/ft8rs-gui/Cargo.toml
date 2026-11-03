@@ -6,8 +6,10 @@ license = "GPL-3.0-only"
 description = "FT8 streaming decoder GUI (egui)"
 
 [[bin]]
-name = "ft8rs-gui"
+name = "ft8rs"
 path = "src/main.rs"
+# The core library also uses `ft8rs`; keep its API documentation intact.
+doc = false
 
 [dependencies]
 log = "0.4.35"

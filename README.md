@@ -13,16 +13,17 @@ has no FFTW runtime dependency. The product supports FT8 reception only.
 
 ## Build and start
 
-Run commands from the repository root with a stable Rust toolchain:
+Run commands from the repository root with a stable Rust toolchain. The GUI
+executable is `ft8rs`; terminal commands use `ft8rs-cli`.
 
 ```sh
 # Graphical live monitor
 cargo build --release -p ft8rs-gui
-target/release/ft8rs-gui
+target/release/ft8rs
 
 # Command-line decoder
 cargo build --release -p ft8rs-cli
-target/release/ft8rs --help
+target/release/ft8rs-cli --help
 ```
 
 On Windows the executables have an `.exe` suffix. Linux CLI builds need ALSA
@@ -127,24 +128,24 @@ WSJT-X UDP feed into the display; **Output** sends ft8rs decode reports.
 
 ```sh
 # List audio input devices
-target/release/ft8rs monitor
+target/release/ft8rs-cli monitor
 
 # Monitor by index or exact device name
-target/release/ft8rs monitor --device 0
-target/release/ft8rs monitor --device "VB-Cable A" --channel mono --profile hybrid
+target/release/ft8rs-cli monitor --device 0
+target/release/ft8rs-cli monitor --device "VB-Cable A" --channel mono --profile hybrid
 
 # Decode a timestamped recording from this repository
-target/release/ft8rs file crates/ft8rs-core/tests/ft8/210703_133430.wav
+target/release/ft8rs-cli file crates/ft8rs-core/tests/ft8/210703_133430.wav
 
 # Supply a start time when the filename has no YYMMDD_HHMMSS timestamp
-target/release/ft8rs file recording.wav --start-time 230208_140300
+target/release/ft8rs-cli file recording.wav --start-time 230208_140300
 
 # Listen for one target, using your call as additional context
-target/release/ft8rs monitor --device 0 \
+target/release/ft8rs-cli monitor --device 0 \
   --profile dx --my-call F1MLZ --his-call UA3QNA
 
 # Send live decode reports to the default destination, 127.0.0.1:2238
-target/release/ft8rs monitor --device 0 --udp
+target/release/ft8rs-cli monitor --device 0 --udp
 ```
 
 `--channel mono` requests a native mono stream and uses channel 1 if only a
@@ -214,5 +215,5 @@ source-alignment notes and dated experiment reports. Listening latency is
 measured separately from all-worker completion; a +2/+3-second display target
 is not a hard deadline for native calls already running.
 
-Licensed under GPL-3.0-only. Run `ft8rs license` or open the GUI's **About**
+Licensed under GPL-3.0-only. Run `ft8rs-cli license` or open the GUI's **About**
 window for copyright, attribution and the WSJT-X notice.

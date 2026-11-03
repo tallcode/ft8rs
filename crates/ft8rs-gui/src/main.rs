@@ -13,6 +13,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+pub(crate) const APP_NAME: &str = "ft8rs";
+
 /// The app logo, embedded so it works without an external file (used both for the
 /// OS window/dock/taskbar icon and the About dialog).
 pub(crate) const LOGO_PNG: &[u8] = include_bytes!("../assets/ft8rs.png");
@@ -53,7 +55,7 @@ fn main() -> eframe::Result<()> {
         }
     };
     log::info!(
-        "Starting FT8.RS {} on {} / {} (renderer: {renderer:?})",
+        "Starting ft8rs {} on {} / {} (renderer: {renderer:?})",
         env!("FT8RS_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -94,7 +96,7 @@ fn run_gui(
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([820.0, 760.0])
         .with_min_inner_size([480.0, 440.0])
-        .with_title("FT8.RS");
+        .with_title(APP_NAME);
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
     }
@@ -114,7 +116,7 @@ fn run_gui(
     }
     log::info!("Initializing native window and graphics adapter: {renderer:?}");
     eframe::run_native(
-        "ft8rs",
+        APP_NAME,
         options,
         Box::new(move |cc| {
             log::info!("Graphics initialized; creating application");

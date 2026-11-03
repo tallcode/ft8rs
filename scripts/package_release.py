@@ -66,13 +66,13 @@ def build_metadata(env, platform):
 def readme_text(info):
     """Daily-use instructions for the binaries included on this platform."""
     windows = info["platform"] == "windows"
-    cli = r".\ft8rs.exe" if windows else "./ft8rs"
+    cli = r".\ft8rs-cli.exe" if windows else "./ft8rs-cli"
     if windows:
         start = (
             "WINDOWS QUICK START\n"
             "1. Extract the entire ZIP into a folder. Keep ALLCALL7.TXT beside\n"
-            "   ft8rs.exe and ft8rs-gui.exe.\n"
-            "2. Double-click ft8rs-gui.exe.\n"
+            "   ft8rs.exe and ft8rs-cli.exe.\n"
+            "2. Double-click ft8rs.exe.\n"
             "3. In Settings > Audio, select the receiver input and the channel\n"
             "   carrying the signal. Route receiver audio to this input.\n"
             "4. Choose a decode profile, then press Play to start monitoring.\n"
@@ -85,17 +85,17 @@ def readme_text(info):
         start = (
             "LINUX QUICK START\n"
             "1. Extract the entire archive, then open a terminal in its folder.\n"
-            "   Keep ALLCALL7.TXT beside ft8rs.\n"
-            "2. Run ./ft8rs monitor to list audio input devices.\n"
+            "   Keep ALLCALL7.TXT beside ft8rs-cli.\n"
+            "2. Run ./ft8rs-cli monitor to list audio input devices.\n"
             "3. Choose a device and route receiver audio to that input, then run\n"
-            "   ./ft8rs monitor --device 0 --profile wsjtx\n"
+            "   ./ft8rs-cli monitor --device 0 --profile wsjtx\n"
             "   Replace 0 with the device index shown on your system.\n"
             "4. Press Ctrl+C to stop monitoring.\n"
             "This archive contains the CLI. It requires the system ALSA runtime\n"
             "libraries and permission to access your audio input.\n"
         )
     return (
-        f"ft8.rs {info['version']} ({info['channel']})\n\n"
+        f"ft8rs {info['version']} ({info['channel']})\n\n"
         "A receive-only FT8 audio monitor.\n\n"
         + start
         + "\nCOMMAND-LINE USE\n"
@@ -127,7 +127,7 @@ def readme_text(info):
 def package(root, info, output):
     output.mkdir(parents=True, exist_ok=True)
     windows = info["platform"] == "windows"
-    binaries = ["ft8rs.exe", "ft8rs-gui.exe"] if windows else ["ft8rs"]
+    binaries = ["ft8rs.exe", "ft8rs-cli.exe"] if windows else ["ft8rs-cli"]
     with tempfile.TemporaryDirectory(prefix="ft8rs-package-", dir=output) as work:
         staging = Path(work) / info["package_name"]
         staging.mkdir()

@@ -6,9 +6,8 @@ license = "GPL-3.0-only"
 description = "FT8 streaming decoder CLI"
 
 [[bin]]
-name = "ft8rs"
+name = "ft8rs-cli"
 path = "src/main.rs"
-# The core library also uses `ft8rs`; avoid overwriting its API documentation.
 doc = false
 
 [dependencies]

@@ -14,8 +14,8 @@ the applicable local checks and optimized tests. Then commit and push `main`.
 |---|---|---|
 | `ft8rs` (`crates/ft8rs-core`) | Native FT8 mirrors, stream sessions, WAV input and orchestration | Rust library named `ft8rs` |
 | `ft8rs-engine` | Capture, UTC slot staging, decode actor, reconfiguration and UDP | Library shared by the frontends |
-| `ft8rs-cli` | File/monitor commands and console output | `ft8rs` |
-| `ft8rs-gui` | egui live monitor, settings and external UDP comparison | `ft8rs-gui` |
+| `ft8rs-cli` | File/monitor commands and console output | `ft8rs-cli` |
+| `ft8rs-gui` | egui live monitor, settings and external UDP comparison | `ft8rs` |
 | `ft8rs-build` | Shared build-time Git/release version metadata | Build helper |
 
 The production decoder is Rust. Fortran, Boost and a native upstream checkout are
@@ -120,7 +120,7 @@ On macOS:
 scripts/bundle-macos.sh
 ```
 
-This builds the release GUI and assembles `dist/ft8.rs.app` with icon, microphone
+This builds the release GUI and assembles `dist/ft8rs.app` with icon, microphone
 usage metadata and CallDB. macOS can require input permission; local bundles are
 unsigned. The `Build packages` workflow in `.github/workflows/release.yml` builds
 Windows CLI + GUI in one Cargo invocation; Linux always builds and packages only

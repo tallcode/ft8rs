@@ -22,7 +22,7 @@ const VERSION: &str = env!("FT8RS_VERSION");
 const DX_MONITOR_WATCHDOG_MS: u64 = 12_000;
 
 #[derive(Parser)]
-#[command(name = "ft8rs", version = VERSION, about = "FT8 streaming decoder")]
+#[command(name = "ft8rs-cli", version = VERSION, about = "FT8 streaming decoder")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -332,7 +332,7 @@ mod tests {
             vec!["--high", "inf"],
             vec!["--rx-frequency", "NaN"],
         ] {
-            let mut argv = vec!["ft8rs", "file", "input.wav"];
+            let mut argv = vec!["ft8rs-cli", "file", "input.wav"];
             argv.extend(options);
             let Command::File(args) = Cli::try_parse_from(argv).unwrap().command else {
                 unreachable!()
@@ -340,7 +340,7 @@ mod tests {
             assert!(stream_decode_config(&args.decode).is_err());
         }
         let Command::File(args) =
-            Cli::try_parse_from(["ft8rs", "file", "input.wav", "--low", "100"])
+            Cli::try_parse_from(["ft8rs-cli", "file", "input.wav", "--low", "100"])
                 .unwrap()
                 .command
         else {
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn experiment_is_opt_in_and_hybrid_only() {
         for profile in ["wsjtx", "jtdx", "hybrid", "dx"] {
-            let mut argv = vec!["ft8rs", "file", "recording.wav", "--profile", profile];
+            let mut argv = vec!["ft8rs-cli", "file", "recording.wav", "--profile", profile];
             if profile == "dx" {
                 argv.extend(["--his-call", "K1ABC"]);
             }
@@ -383,7 +383,7 @@ mod tests {
     fn partition_default_and_explicit_auto_reach_the_decoder_config() {
         for profile in ["jtdx", "hybrid"] {
             for (option, expected) in [(None, 1), (Some("0"), 0), (Some("4"), 4)] {
-                let mut argv = vec!["ft8rs", "file", "recording.wav", "--profile", profile];
+                let mut argv = vec!["ft8rs-cli", "file", "recording.wav", "--profile", profile];
                 if let Some(partitions) = option {
                     argv.extend(["--jtdx-threads", partitions]);
                 }
@@ -397,9 +397,13 @@ mod tests {
                 );
             }
         }
-        assert!(
-            Cli::try_parse_from(["ft8rs", "file", "recording.wav", "--jtdx-threads", "25"])
-                .is_err()
-        );
+        assert!(Cli::try_parse_from([
+            "ft8rs-cli",
+            "file",
+            "recording.wav",
+            "--jtdx-threads",
+            "25"
+        ])
+        .is_err());
     }
 }

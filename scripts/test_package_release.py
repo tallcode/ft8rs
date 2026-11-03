@@ -98,7 +98,7 @@ class PackageReleaseTests(unittest.TestCase):
             root = Path(directory)
             binaries = root / "target/release"
             binaries.mkdir(parents=True)
-            for binary in ["ft8rs", "ft8rs-gui", "ft8rs.exe", "ft8rs-gui.exe"]:
+            for binary in ["ft8rs-cli", "ft8rs", "ft8rs.exe", "ft8rs-cli.exe"]:
                 (binaries / binary).write_bytes(binary.encode())
             database = root / "crates/ft8rs-core/ALLCALL7.TXT"
             database.parent.mkdir(parents=True)
@@ -111,12 +111,12 @@ class PackageReleaseTests(unittest.TestCase):
                 if platform == "linux":
                     with tarfile.open(archive) as contents:
                         files = {m.name: contents.extractfile(m).read() for m in contents if m.isfile()}
-                        self.assertTrue(contents.getmember(prefix + "ft8rs").mode & 0o111)
-                    expected = {"ft8rs"}
+                        self.assertTrue(contents.getmember(prefix + "ft8rs-cli").mode & 0o111)
+                    expected = {"ft8rs-cli"}
                 else:
                     with zipfile.ZipFile(archive) as contents:
                         files = {name: contents.read(name) for name in contents.namelist() if not name.endswith("/")}
-                    expected = {"ft8rs.exe", "ft8rs-gui.exe"}
+                    expected = {"ft8rs.exe", "ft8rs-cli.exe"}
                 self.assertEqual(set(files), {prefix + name for name in expected | {"ALLCALL7.TXT", "BUILD-INFO.json", "README.txt"}})
                 self.assertEqual(json.loads(files[prefix + "BUILD-INFO.json"]), info)
                 self.assertEqual(files[prefix + "ALLCALL7.TXT"], database.read_bytes())
@@ -126,11 +126,11 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertIn(info["commit"], readme)
                 self.assertIn("--start-time 261103_120000", readme)
                 if platform == "windows":
-                    self.assertIn("Double-click ft8rs-gui.exe", readme)
-                    self.assertIn(r".\ft8rs.exe monitor", readme)
+                    self.assertIn("Double-click ft8rs.exe", readme)
+                    self.assertIn(r".\ft8rs-cli.exe monitor", readme)
                 else:
-                    self.assertIn("./ft8rs monitor", readme)
-                    self.assertNotIn("ft8rs-gui.exe", readme)
+                    self.assertIn("./ft8rs-cli monitor", readme)
+                    self.assertNotIn("ft8rs.exe", readme)
                 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
                 self.assertEqual(Path(str(archive) + ".sha256").read_text(), f"{digest}  {archive.name}\n")
 

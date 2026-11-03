@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 #
-# Build a macOS .app bundle for the ft8.rs GUI.
+# Build a macOS .app bundle for the ft8rs GUI.
 #
 # macOS release packaging runs locally (hosted-runner queue times keep macOS
-# disabled in CI). This assembles dist/ft8.rs.app from a release build of
+# disabled in CI). This assembles dist/ft8rs.app from a release build of
 # ft8rs-gui, generating the .icns from the PNG logo and writing an Info.plist
 # that includes the microphone-usage string — without it a bundled app crashes
 # the moment it opens the soundcard on modern macOS.
 #
 # Usage:  ./scripts/bundle-macos.sh
-# Output: dist/ft8.rs.app  (double-click to run; drag to /Applications to install)
+# Output: dist/ft8rs.app  (double-click to run; drag to /Applications to install)
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-APP_NAME="ft8.rs"
-BIN_NAME="ft8rs-gui"
+APP_NAME="ft8rs"
+BIN_NAME="ft8rs"
 BUNDLE_ID="io.github.tallcode.ft8rs"
 PNG="crates/ft8rs-gui/assets/ft8rs.png"
 ALLCALL="crates/ft8rs-core/ALLCALL7.TXT"
@@ -85,7 +85,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>ft8.rs captures audio from your selected input device to decode FT8 signals.</string>
+    <string>ft8rs captures audio from your selected input device to decode FT8 signals.</string>
 </dict>
 </plist>
 PLIST

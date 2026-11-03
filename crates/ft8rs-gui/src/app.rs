@@ -301,13 +301,13 @@ impl Ft8rsApp {
         }
     }
 
-    /// Window title: `FT8.RS - {MyCallsign} - {Profile}` (callsign omitted when
+    /// Window title: `ft8rs - {MyCallsign} - {Profile}` (callsign omitted when
     /// unset). Pushed to the OS only when it changes.
     fn sync_title(&mut self, ctx: &egui::Context) {
         let profile = profile_label(self.profile);
         let title = match norm(&self.mycall) {
-            Some(call) => format!("FT8.RS - {call} - {profile}"),
-            None => format!("FT8.RS - {profile}"),
+            Some(call) => format!("ft8rs - {call} - {profile}"),
+            None => format!("ft8rs - {profile}"),
         };
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -1466,7 +1466,7 @@ impl Ft8rsApp {
                 let default = ui.visuals().text_color();
                 for (source, label) in [
                     (DecodeSource::External, tr("only WSJT-X")),
-                    (DecodeSource::Local, tr("only ft8.rs")),
+                    (DecodeSource::Local, tr("only ft8rs")),
                     (DecodeSource::Both, tr("both decoders")),
                 ] {
                     let color = source_color(source, dark, default);
@@ -1584,7 +1584,7 @@ impl Ft8rsApp {
         ctx.show_viewport_immediate(
             viewport_id,
             egui::ViewportBuilder::default()
-                .with_title(self.locale.text("About ft8.rs"))
+                .with_title(self.locale.text("About ft8rs"))
                 .with_inner_size([440.0, 500.0])
                 .with_resizable(false)
                 .with_minimize_button(false)
@@ -1620,9 +1620,7 @@ impl Ft8rsApp {
                                                 ui.add_space(6.0);
                                             }
                                             ui.label(
-                                                RichText::new(ft8rs::about::NAME)
-                                                    .size(18.0)
-                                                    .strong(),
+                                                RichText::new(crate::APP_NAME).size(18.0).strong(),
                                             );
                                             ui.add_space(4.0);
                                             ui.label(
@@ -1761,7 +1759,7 @@ impl Ft8rsApp {
                     .show(vctx, |ui| {
                         ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
                         ui.label(
-                            RichText::new("ft8.rs's FT8 decoder is based on WSJT-X:")
+                            RichText::new("ft8rs's FT8 decoder is based on WSJT-X:")
                                 .weak()
                                 .size(11.0),
                         );
@@ -2927,7 +2925,7 @@ fn install_menu(
     #[cfg(target_os = "macos")]
     {
         use muda::PredefinedMenuItem;
-        let app_menu = Submenu::new("ft8.rs", true);
+        let app_menu = Submenu::new(crate::APP_NAME, true);
         let quit = native.quit.as_ref().expect("macOS menu has a Quit item");
         let _ = app_menu.append_items(&[
             &about,

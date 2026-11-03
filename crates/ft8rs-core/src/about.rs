@@ -1,6 +1,6 @@
 //! Program identity, copyright, license, and third-party attribution.
 //!
-//! This is the single source of truth shared by the CLI (`ft8rs license`) and
+//! This is the single source of truth shared by the CLI (`ft8rs-cli license`) and
 //! the GUI About dialog, so the credits never drift between front-ends. The
 //! per-binary version string is injected separately (`env!("FT8RS_VERSION")`),
 //! since it lives in each binary crate, not here.

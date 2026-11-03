@@ -119,11 +119,11 @@ SWL-off are different searches and need not produce nested message sets.
 ## CLI
 
 ```sh
-target/release/ft8rs --help
-target/release/ft8rs monitor --help
-target/release/ft8rs file --help
-target/release/ft8rs --version
-target/release/ft8rs license
+target/release/ft8rs-cli --help
+target/release/ft8rs-cli monitor --help
+target/release/ft8rs-cli file --help
+target/release/ft8rs-cli --version
+target/release/ft8rs-cli license
 ```
 
 Tagged release builds print the release version. Development builds append the
@@ -133,13 +133,13 @@ Git revision and, when applicable, a dirty-worktree suffix.
 
 ```sh
 # Omitting --device lists inputs rather than starting capture
-target/release/ft8rs monitor
+target/release/ft8rs-cli monitor
 
-target/release/ft8rs monitor --device 0 --channel mono --slots 2
-target/release/ft8rs monitor --device "VB-Cable A" --profile jtdx --swl
-target/release/ft8rs monitor --device 0 --profile hybrid --no-hybrid-sic
+target/release/ft8rs-cli monitor --device 0 --channel mono --slots 2
+target/release/ft8rs-cli monitor --device "VB-Cable A" --profile jtdx --swl
+target/release/ft8rs-cli monitor --device 0 --profile hybrid --no-hybrid-sic
 
-target/release/ft8rs monitor --device 0 --profile dx \
+target/release/ft8rs-cli monitor --device 0 --profile dx \
   --my-call F1MLZ --his-call UA3QNA --rx-frequency 1153
 ```
 
@@ -163,8 +163,8 @@ canonical ordering and can select different additional recovery opportunities.
 ### WAV decoding
 
 ```sh
-target/release/ft8rs file crates/ft8rs-core/tests/ft8/210703_133430.wav
-target/release/ft8rs file recording.wav --start-time 230208_140300 --profile hybrid
+target/release/ft8rs-cli file crates/ft8rs-core/tests/ft8/210703_133430.wav
+target/release/ft8rs-cli file recording.wav --start-time 230208_140300 --profile hybrid
 ```
 
 A `YYMMDD_HHMMSS` timestamp in the filename sets the first slot's UTC time.
@@ -199,7 +199,7 @@ Outgoing reports are WSJT-X-compatible Decode packets (schema 2, message type 2)
 with client ID `ft8rs` and mode `FT8`. Enable them in GUI **Output** or CLI:
 
 ```sh
-target/release/ft8rs monitor --device 0 --udp \
+target/release/ft8rs-cli monitor --device 0 --udp \
   --udp-host 127.0.0.1 --udp-port 2238
 ```
 
@@ -275,7 +275,7 @@ To force the OpenGL renderer for one launch in Windows PowerShell:
 
 ```powershell
 $env:FT8RS_RENDERER = "glow"
-.\ft8rs-gui.exe
+.\ft8rs.exe
 ```
 
 Use `Remove-Item Env:FT8RS_RENDERER` to restore the default renderer for subsequent
