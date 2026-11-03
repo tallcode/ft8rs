@@ -63,6 +63,67 @@ def build_metadata(env, platform):
     }
 
 
+def readme_text(info):
+    """Daily-use instructions for the binaries included on this platform."""
+    windows = info["platform"] == "windows"
+    cli = r".\ft8rs.exe" if windows else "./ft8rs"
+    if windows:
+        start = (
+            "WINDOWS QUICK START\n"
+            "1. Extract the entire ZIP into a folder. Keep ALLCALL7.TXT beside\n"
+            "   ft8rs.exe and ft8rs-gui.exe.\n"
+            "2. Double-click ft8rs-gui.exe.\n"
+            "3. In Settings > Audio, select the receiver input and the channel\n"
+            "   carrying the signal. Route receiver audio to this input.\n"
+            "4. Choose a decode profile, then press Play to start monitoring.\n"
+            "   Press Stop to stop capture. Results follow UTC 15-second slots.\n"
+            "5. Allow microphone access for desktop applications in Windows\n"
+            "   privacy settings if capture is unavailable.\n"
+            "Use Settings > General > Language to select the UI language.\n"
+        )
+    else:
+        start = (
+            "LINUX QUICK START\n"
+            "1. Extract the entire archive, then open a terminal in its folder.\n"
+            "   Keep ALLCALL7.TXT beside ft8rs.\n"
+            "2. Run ./ft8rs monitor to list audio input devices.\n"
+            "3. Choose a device and route receiver audio to that input, then run\n"
+            "   ./ft8rs monitor --device 0 --profile wsjtx\n"
+            "   Replace 0 with the device index shown on your system.\n"
+            "4. Press Ctrl+C to stop monitoring.\n"
+            "This archive contains the CLI. It requires the system ALSA runtime\n"
+            "libraries and permission to access your audio input.\n"
+        )
+    return (
+        f"ft8.rs {info['version']} ({info['channel']})\n\n"
+        "A receive-only FT8 audio monitor.\n\n"
+        + start
+        + "\nCOMMAND-LINE USE\n"
+        "Open a terminal in the extracted folder. Examples:\n\n"
+        f"  {cli} monitor\n"
+        f"  {cli} monitor --device 0 --profile wsjtx\n"
+        f"  {cli} file recording.wav --start-time 261103_120000\n"
+        f"  {cli} --help\n\n"
+        "PROFILES AND DATABASE\n"
+        "Start with WSJT-X for ordinary listening. JTDX and Hybrid offer other\n"
+        "receive paths. DX requires a target callsign. Keep ALLCALL7.TXT next\n"
+        "to the executables for JTDX, Hybrid and DX callsign lookup.\n\n"
+        "IF NO MESSAGES APPEAR\n"
+        "Check the selected input and channel, receiver audio routing and\n"
+        "input level. Ensure the signal is FT8 and synchronize the system\n"
+        "clock. Allow a slot to finish before judging the first results.\n\n"
+        "RUNTIME REQUIREMENTS\n"
+        "These x86-64 builds require an x86-64-v3-capable CPU. This build uses\n"
+        "RustFFT and has no FFTW runtime dependency.\n\n"
+        "HELP AND LICENSE\n"
+        f"User guide: https://github.com/{info['repository']}/blob/{info['commit']}/docs/USAGE.md\n"
+        f"Run {cli} license for copyright and license notices.\n\n"
+        "BUILD DETAILS\n"
+        f"Source: {info['commit']}\nRef: {info['ref']}\nBuild: {info['run_url']}\n"
+        "See BUILD-INFO.json for the full build record.\n"
+    )
+
+
 def package(root, info, output):
     output.mkdir(parents=True, exist_ok=True)
     windows = info["platform"] == "windows"
@@ -78,11 +139,7 @@ def package(root, info, output):
         shutil.copy2(root / "crates/ft8rs-core/ALLCALL7.TXT", staging / "ALLCALL7.TXT")
         (staging / "BUILD-INFO.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
         (staging / "README.txt").write_text(
-            f"ft8.rs {info['version']} ({info['channel']})\n\n"
-            + "\n".join(binaries)
-            + "\n\nKeep ALLCALL7.TXT next to the binaries.\n"
-            "This build uses RustFFT and has no FFTW runtime dependency.\n"
-            f"Source: {info['commit']}\nRef: {info['ref']}\nBuild: {info['run_url']}\n",
+            readme_text(info),
             encoding="utf-8",
         )
         suffix = ".zip" if windows else ".tar.gz"

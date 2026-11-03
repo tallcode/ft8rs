@@ -120,6 +120,17 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertEqual(set(files), {prefix + name for name in expected | {"ALLCALL7.TXT", "BUILD-INFO.json", "README.txt"}})
                 self.assertEqual(json.loads(files[prefix + "BUILD-INFO.json"]), info)
                 self.assertEqual(files[prefix + "ALLCALL7.TXT"], database.read_bytes())
+                readme = files[prefix + "README.txt"].decode("utf-8")
+                self.assertTrue(readme.isascii())
+                self.assertIn(info["version"], readme)
+                self.assertIn(info["commit"], readme)
+                self.assertIn("--start-time 261103_120000", readme)
+                if platform == "windows":
+                    self.assertIn("Double-click ft8rs-gui.exe", readme)
+                    self.assertIn(r".\ft8rs.exe monitor", readme)
+                else:
+                    self.assertIn("./ft8rs monitor", readme)
+                    self.assertNotIn("ft8rs-gui.exe", readme)
                 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
                 self.assertEqual(Path(str(archive) + ".sha256").read_text(), f"{digest}  {archive.name}\n")
 

@@ -8,6 +8,23 @@
 //! from a real-time callback.
 //! The underlying WSJT-X Rust port, thresholds and pass order are unchanged.
 //!
+//! # Input and delivery
+//!
+//! Supply exactly 15 seconds of finite mono PCM at 12-192 kHz. The first sample
+//! corresponds to the supplied UTC 15-second boundary. Assemble capture chunks
+//! in the calling application before decoding a complete slot.
+//!
+//! [`Audio`] borrows the input without changing it. [`Config`] contains receive
+//! settings and optional native AP context. [`Message`] preserves native text
+//! and measurements; [`Error`] reports invalid configuration, time or audio.
+//! Empty output is a successful decode with no messages.
+//!
+//! Start with [`Decoder::decode`] for collected output, or
+//! [`Decoder::decode_with_callback`] for early and final batches. Callback
+//! delivery and completion of the entire slot are separate events.
+//!
+//! # Example
+//!
 //! ```no_run
 //! use ft8rs::wsjtx::{Audio, Config, Decoder, SlotTimestamp};
 //!
@@ -42,12 +59,26 @@ const SLOT_SECONDS: usize = 15;
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
+    /// A receive setting is outside its allowed range or contains invalid text.
     InvalidConfig(String),
+    /// A timestamp could not be parsed as a valid UTC date/time.
     InvalidTimestamp(String),
+    /// The parsed timestamp is not on a UTC 15-second slot boundary.
     UnalignedSlot,
+    /// The supplied rate, in Hz, is outside 12,000..=192,000.
     UnsupportedSampleRate(u32),
-    InvalidAudioLength { expected: usize, actual: usize },
-    NonFiniteSample { index: usize },
+    /// The buffer does not contain exactly 15 seconds at the supplied rate.
+    InvalidAudioLength {
+        /// Required sample count, equal to `sample_rate * 15`.
+        expected: usize,
+        /// Supplied sample count.
+        actual: usize,
+    },
+    /// The input contains a NaN or infinite sample.
+    NonFiniteSample {
+        /// Zero-based index in the caller's input buffer.
+        index: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -83,16 +114,24 @@ impl std::error::Error for Error {}
 pub struct SlotTimestamp(crate::stream::time::SlotTimestamp);
 
 impl SlotTimestamp {
+    /// Parse a UTC date/time; see the supported formats on [`SlotTimestamp`].
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidTimestamp`] for malformed or invalid dates/times.
+    /// Slot alignment is checked by the decode methods, not by this parser.
     pub fn parse(value: &str) -> Result<Self, Error> {
         value.parse()
     }
 
+    /// Construct a UTC timestamp from whole seconds since the Unix epoch.
+    /// Slot alignment is checked when decoding.
     pub fn from_unix_seconds_utc(seconds: i64) -> Self {
         Self(crate::stream::time::SlotTimestamp::from_unix_seconds_utc(
             seconds,
         ))
     }
 
+    /// Offset the timestamp by whole seconds, handling UTC date boundaries.
     pub fn add_seconds(&self, seconds: i64) -> Self {
         Self(self.0.add_seconds(seconds))
     }
@@ -127,6 +166,8 @@ pub struct Audio<'a> {
 }
 
 impl<'a> Audio<'a> {
+    /// Borrow mono PCM with its rate in Hz. The decode methods validate the
+    /// samples, rate and length; this constructor does not copy or validate.
     pub fn mono_f32(samples: &'a [f32], sample_rate: u32) -> Self {
         Self {
             samples,
@@ -139,29 +180,41 @@ impl<'a> Audio<'a> {
 ///
 /// Callsigns/grid are optional lookup/AP context, not independent evidence of
 /// reception. This entry point never invokes JTDX, Hybrid, DX or experiment DSP.
+/// Text fields must contain printable ASCII. They are passed through without
+/// rewriting; validation does not check callsign or locator grammar.
+/// Configuration is validated by [`Decoder::new`].
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Inclusive search limits in audio Hz: 0 <= min < max <= 5000.
+    /// Lower search limit in audio Hz. Default: 200.0.
+    /// Must satisfy `0 <= frequency_min_hz < frequency_max_hz <= 5000`.
     pub frequency_min_hz: f64,
+    /// Upper search limit in audio Hz. Default: 3000.0.
+    /// Both search limits must be finite.
     pub frequency_max_hz: f64,
-    /// Original WSJT-X depth, 1 (shallow) through 3 (deep).
+    /// Original WSJT-X depth, 1 (shallow) through 3 (deep). Default: 3.
     pub decode_depth: usize,
     /// Maximum synchronization candidates; must be greater than zero.
+    /// Default: 1000.
     pub max_candidates: usize,
+    /// Enable native a priori (AP) decoding. Default: true.
     pub ap_enabled: bool,
+    /// Restrict native AP masks to CQ-only operation. Default: false.
     pub ap_cq_only: bool,
-    /// Original `nQSOProgress`, 0..=5.
+    /// Original `nQSOProgress`, 0..=5. Default: 0.
     pub qso_progress: usize,
-    /// Original `ncontest`, 0..=8; zero selects ordinary operation.
+    /// Original `ncontest`, 0..=8; zero selects ordinary operation. Default: 0.
     pub contest_mode: usize,
-    /// Original `nfqso` in audio Hz; zero disables QSO focus.
+    /// Original `nfqso` in audio Hz; zero disables QSO focus. Default: 0.0.
+    /// Must be finite and within 0..=5000.
     pub qso_frequency_hz: f64,
-    /// Original `napwid` in Hz.
+    /// Original `napwid` in Hz. Default: 50.0.
+    /// Must be finite and within 0..=5000.
     pub ap_width_hz: f64,
-    /// ASCII callsign context, passed through without rewriting.
+    /// Optional station callsign context. Default: `None`.
     pub my_call: Option<String>,
+    /// Optional peer callsign context. Default: `None`.
     pub his_call: Option<String>,
-    /// ASCII locator context, passed through without rewriting.
+    /// Optional peer locator context for native list decoding. Default: `None`.
     pub his_grid: Option<String>,
 }
 
@@ -247,11 +300,17 @@ impl Config {
 /// No AP subtype or independent confirmation is inferred from native results.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
+    /// UTC slot timestamp supplied by the caller.
     pub slot: SlotTimestamp,
+    /// Native decoded FT8 message text.
     pub text: String,
+    /// Native signal-to-noise estimate in dB.
     pub snr_db: f64,
+    /// Native decoder DT estimate in seconds.
     pub dt_seconds: f64,
+    /// Decoded signal frequency in audio Hz.
     pub frequency_hz: f64,
+    /// Native synchronization metric; its scale depends on the decode path.
     pub sync: f64,
 }
 
@@ -263,6 +322,10 @@ pub struct Decoder {
 
 impl Decoder {
     /// Validate configuration and create a fresh receive session.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidConfig`] for invalid ranges, non-finite settings
+    /// or text containing non-ASCII/control characters.
     pub fn new(config: Config) -> Result<Self, Error> {
         let config = config.into_native()?;
         let session = StreamDecodeSession::new(config.clone());
@@ -277,7 +340,12 @@ impl Decoder {
     /// AP history advances normally. Use `reset` for a new receiving context.
     /// 12 kHz audio is borrowed directly; other rates use the existing input
     /// module's anti-alias conversion. Caller audio is never modified.
-    /// Invalid input returns an error before any session state is changed.
+    /// An empty vector is a successful decode with no messages.
+    ///
+    /// # Errors
+    /// Returns [`Error::UnalignedSlot`], [`Error::UnsupportedSampleRate`],
+    /// [`Error::InvalidAudioLength`] or [`Error::NonFiniteSample`] before any
+    /// session state is changed.
     pub fn decode(&mut self, slot: SlotTimestamp, audio: Audio<'_>) -> Result<Vec<Message>, Error> {
         let mut messages = Vec::new();
         self.decode_with_callback(slot, audio, |batch| messages.extend(batch))?;
@@ -296,6 +364,12 @@ impl Decoder {
     /// Callbacks run synchronously on the decoding thread and should return
     /// promptly. Returning `Ok(())` from this method signals slot completion;
     /// no empty batch is emitted. Input rules are the same as [`Self::decode`].
+    ///
+    /// # Errors
+    /// Returns the same input errors as [`Self::decode`], before changing
+    /// session state or invoking the callback.
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// use ft8rs::wsjtx::{Audio, Config, Decoder, SlotTimestamp};

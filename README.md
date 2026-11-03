@@ -1,5 +1,8 @@
 # ft8rs
 
+[![crates.io](https://img.shields.io/crates/v/ft8rs.svg)](https://crates.io/crates/ft8rs)
+[![docs.rs](https://docs.rs/ft8rs/badge.svg)](https://docs.rs/ft8rs/latest/ft8rs/)
+
 `ft8rs` is a receive-only FT8 decoder written in Rust, with a graphical live
 monitor, a command-line interface and a UI-independent decode core. It supports
 live soundcard input, timestamped WAV recordings and optional UDP decode reports.
@@ -35,6 +38,8 @@ tests; changing the database can change decoded results.
 
 ## Rust library: audio to messages
 
+See the [WSJT-X library overview](crates/ft8rs-core/README.md) and
+[API reference](https://docs.rs/ft8rs/latest/ft8rs/wsjtx/) for the core library.
 The `ft8rs` package provides the library named `ft8rs`. Add it with
 `ft8rs = "0.1"` in your Cargo dependencies. The public
 `ft8rs::wsjtx` facade decodes one complete UTC-aligned FT8 slot at a time using
@@ -45,7 +50,7 @@ use ft8rs::wsjtx::{Audio, Config, Decoder, SlotTimestamp};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut decoder = Decoder::new(Config::default())?;
-    // Supply 15 seconds of mono f32 PCM, starting at this UTC slot boundary.
+    // Replace this silent buffer with 15 seconds of captured mono PCM.
     let samples = vec![0.0_f32; 15 * 48_000];
     let messages = decoder.decode(
         SlotTimestamp::parse("261103_120000")?,

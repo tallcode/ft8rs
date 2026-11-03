@@ -1,13 +1,15 @@
 # Documentation
 
-Start with the [project README](../README.md) for building, launching and choosing
-a decoder profile. Commands in these documents run from the repository root
-unless a section says otherwise.
+Start with the [project README](../README.md) for library installation, building
+the applications and choosing a decoder profile. Commands in these documents
+run from the repository root unless a section says otherwise.
 
 ## Use and maintain ft8rs
 
 | Document | Contents |
 |---|---|
+| [Library guide](../crates/ft8rs-core/README.md) | Cargo installation, PCM input, stateful decoding and batch callbacks |
+| [API reference](https://docs.rs/ft8rs/latest/ft8rs/wsjtx/) | Public WSJT-X decoder types, configuration and error contracts |
 | [Usage](USAGE.md) | GUI controls, soundcard/channel setup, CLI reference, UDP and troubleshooting |
 | [Development](DEVELOPMENT.md) | Workspace, optimized builds, FFTW, packaging, local checks and integration rules |
 | [Validation](VALIDATION.md) | Reproducible recording baselines, CallDB/configuration, evidence limits and latest local run |
