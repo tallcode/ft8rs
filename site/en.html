@@ -97,7 +97,8 @@
           <li><strong>Set WSJT-X's UDP output.</strong> Send WSJT-X's UDP reports to <code>127.0.0.1</code>, port <code>2237</code>. This assumes both programs run on the same computer. If another program already uses that port, choose a free port and change it in both programs.</li>
           <li><strong>Wait for new receive slots.</strong> The message list uses source colors, with a legend in Compare settings: only WSJT-X, only ft8.rs, or both decoders. Comparison uses new live reports; it does not import WSJT-X's message history.</li>
         </ol>
-        <p><strong>Match ± Hz</strong> is the frequency matching tolerance, initially ±7 Hz. Messages are merged as “both” when their slot and message content match and their audio frequencies are within this tolerance. SNR and DT do not have to be identical. Changes to the tolerance affect subsequently received messages.</p>
+        <p><strong>Match ± Hz</strong> is the frequency matching tolerance, initially ±7 Hz. Messages are merged as “both” when their slot and message content match, their DT values differ by at most 0.3 seconds and their audio frequencies are within this tolerance. SNR does not have to be identical. Changes to the tolerance affect subsequently received messages.</p>
+        <p>If the listening address or port is unavailable, the app shows an error and disables comparison. Correct the settings or free the port, then enable <strong>Listen to WSJT-X (UDP)</strong> again.</p>
         <p>Compare only changes the display; WSJT-X messages do not feed back into ft8.rs decoding, and source colors do not prove a message is correct. <strong>Settings → Output</strong> is a separate function that sends ft8.rs results to other programs, using port <code>2238</code> by default.</p>
 
         <h3 id="sensitivity">Sensitivity comparison</h3>

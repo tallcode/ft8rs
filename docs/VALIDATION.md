@@ -171,6 +171,44 @@ All-target Clippy with `-D warnings`, formatting, Python (11 cases), Node (5 cas
 and diff checks passed. WSJT-X delivery batching and native decoder sources were
 unchanged. This run does not establish FFTW results or Windows/DAX hardware parity.
 
+## GUI input and documentation hygiene — 2026-11-03
+
+The GUI batches message insertion while preserving the sequential history limit,
+slot ordering, local provenance and hash enrichment. One comparison worker owns
+socket binding, receiving and closure; channel disconnection controls its
+lifetime. UI configuration changes neither join that worker nor wait for a
+receive timeout. Stale bind results and messages queued under an old endpoint
+are isolated. Decoder algorithms, search settings and the process watchdog are
+unchanged.
+
+On macOS ARM, the optimized `fast` workspace library/binary tests passed 286
+cases with zero failures; four existing manual long gates remained ignored.
+This includes 57 GUI tests covering full row/display-index equivalence across
+different batch boundaries and capacity limits, late input, hash enrichment,
+loopback delivery/rebinding, stale failures, mailbox replacement and shutdown
+while the socket owner is blocked. Tests ran serially beside a private 2022
+CallDB copy; the runtime database was not replaced.
+
+Workspace all-target type checking, all-target Clippy with `-D warnings`, format
+and diff checks passed. Python site/packaging checks passed 11 cases with warnings
+treated as errors; the Node language-routing checks passed five cases. Both
+localized pages were generated using test release metadata for local validation,
+without deploying or changing the published download version. Documentation now
+states the existing 0.3-second DT matching requirement and the asynchronous
+comparison settings lifecycle. No Windows interactive/GPU validation was run.
+
+Strict API documentation checking exposed a CLI/core documentation filename
+collision, an unescaped CPAL selector and four broken links in three mathematical
+comments inside the JTDX parity module. All are fixed, and workspace API
+documentation builds with `RUSTDOCFLAGS="-D warnings"`. The only native-mirror
+change is Markdown code formatting on those three comment lines; executable
+code and parity data are unchanged. No lint suppression is added.
+
+Local logs and generated site fixtures are under `target/hygiene-checks/`;
+earlier data-path timing evidence is in the ignored
+`experiments/performance/2026-11-03-ui-implementation/` archive. Those timing
+probes exclude native-window and GPU latency and are not i5-9600T measurements.
+
 ## Limits and follow-up validation
 
 The JTDX geography filter remains a deliberate partial port; implausible

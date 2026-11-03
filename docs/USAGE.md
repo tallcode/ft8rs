@@ -216,12 +216,17 @@ from later matching local observations, without duplicating provenance tags.
 This feed does not seed the local decoder's hash/AP state or change its results.
 New live FT8 Decode packets are accepted, including low-confidence results;
 replays, off-air WAV playback and other packet types are ignored. A free
-listening port is required.
+listening port is required. Listener changes are applied in the background;
+the window does not wait for the old socket to close. If binding fails, the
+error is shown and comparison is disabled. Correct the host/port or release the
+occupied port, then enable comparison again. Changing the endpoint discards
+queued messages from the old listener.
 The incoming Decode mode accepts the native WSJT-X/JTDX symbol `~` as well as
 `FT8`. Local and external display/matching use the message body with decoder
 annotations such as `?` and `a1` removed. Matching requires the same UTC slot,
-compatible message tokens and a frequency difference no greater than the current
-**Match ± Hz** setting. SNR, DT and the trailing provenance column do not
+compatible message tokens, DT within 0.3 s and a frequency difference no greater
+than the current **Match ± Hz** setting. Repeated single-source rows use at most
+5 Hz of frequency tolerance. SNR and the trailing provenance column do not
 participate. Changes to the tolerance apply to subsequently arriving messages;
 existing rows are not matched again.
 
@@ -302,7 +307,14 @@ If the GUI stops consuming events, capture levels and state snapshots retain
 only their latest values. Errors and device-selection rollbacks remain queued.
 At most 1024 decoded rows wait for the GUI; additional rows are counted and
 logged when the GUI resumes. A warning also appears if no other error is active.
-The mailbox does not wait for the GUI to consume events. UDP send errors leave decoding running
+The mailbox does not wait for the GUI to consume events. The display processes
+incoming messages in batches, keeping at most 20,000 history rows. An input
+frame targets about 2 ms of message consumption; remaining events stay queued
+and request another frame. History compaction runs once after the batch, so
+this is a cooperative budget, not a hard frame-time guarantee. Late rows retain
+their original slot and local measurements/provenance still win on merge.
+
+UDP send errors leave decoding running
 and enter the diagnostic log at most once per 30 seconds, with a cumulative
 failure count; a successful UDP send does not establish remote receipt.
 

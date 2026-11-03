@@ -79,7 +79,7 @@ struct NmCache {
     lens: [usize; 83],
 }
 
-/// Mn[j] = check indices (0-based) for bit j (0..173). Each entry has exactly 3 elements.
+/// `Mn[j]` = check indices (0-based) for bit j (0..173). Each entry has exactly 3 elements.
 pub fn mn(j: usize) -> [usize; 3] {
     let base = j * 3;
     [
@@ -89,7 +89,7 @@ pub fn mn(j: usize) -> [usize; 3] {
     ]
 }
 
-/// Nm[i] = bit indices (0-based) for check i (0..82). Variable length (nrw[i] elements).
+/// `Nm[i]` = bit indices (0-based) for check i (0..82). Variable length (`nrw[i]` elements).
 /// Returns a slice of up to 7 elements.
 pub fn nm(i: usize) -> &'static [usize] {
     static NM_CACHE: OnceLock<NmCache> = OnceLock::new();
@@ -113,7 +113,7 @@ pub fn nm(i: usize) -> &'static [usize] {
 
     &cache.rows[i][..cache.lens[i]]
 }
-/// nrw[i] = row weight for check i
+/// `nrw[i]` = row weight for check i
 pub fn nrw(i: usize) -> usize {
     NRW_DATA[i]
 }

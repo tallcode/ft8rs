@@ -97,7 +97,8 @@
           <li><strong>设置 WSJT-X 的 UDP 输出。</strong>将 WSJT-X 的 UDP 报告发送地址设为 <code>127.0.0.1</code>、端口设为 <code>2237</code>。这里假设两个软件在同一台电脑上；如果端口已被其他软件占用，两边一起改用一个空闲端口。</li>
           <li><strong>等待新的接收时隙。</strong>消息列表会按来源显示不同颜色，图例可在 Compare 设置页查看：仅 WSJT-X、仅 ft8.rs、两者都有。它对照的是新收到的实时消息，不会导入 WSJT-X 的历史列表。</li>
         </ol>
-        <p><strong>Match ± Hz</strong> 是频率匹配容差，默认为 ±7 Hz。同一时隙、消息内容匹配且音频频率差在容差内时，会合并为“两者都有”；SNR 或 DT 数值不必完全相同。调整容差只影响之后收到的消息。</p>
+        <p><strong>Match ± Hz</strong> 是频率匹配容差，默认为 ±7 Hz。同一时隙、消息内容匹配、DT 差不超过 0.3 秒且音频频率差在容差内时，会合并为“两者都有”，SNR 数值不必完全相同。调整容差只影响之后收到的消息。</p>
+        <p>如果监听地址或端口不可用，软件会显示错误并关闭对比监听。修正设置或释放端口后，再次开启 <strong>Listen to WSJT-X (UDP)</strong>。</p>
         <p>Compare 只用于显示对照，不会把 WSJT-X 的消息送回 ft8.rs 帮助解码，颜色也不代表消息一定正确。<strong>Settings → Output</strong> 则是把 ft8.rs 的结果发送给其他软件，默认端口为 <code>2238</code>，与这里的接收设置是两个功能。</p>
 
         <h3 id="sensitivity">灵敏度对比</h3>

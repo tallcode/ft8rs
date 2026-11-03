@@ -43,7 +43,7 @@ pub enum StateBucket {
 /// The GUI submits a full `EngineState`; the planner diffs old vs. new.
 #[derive(Clone, Debug)]
 pub struct EngineState {
-    /// Soundcard selector (id:<CPAL ID>, index or unique name), or `None` for default.
+    /// Soundcard selector (`id:<CPAL ID>`, index or unique name), or `None` for default.
     pub device: Option<String>,
     /// Which physical channel of a multi-channel device feeds the decoder.
     pub channel: InputChannel,

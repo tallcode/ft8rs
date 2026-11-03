@@ -8,6 +8,8 @@ description = "FT8 streaming decoder CLI"
 [[bin]]
 name = "ft8rs"
 path = "src/main.rs"
+# The core library also uses `ft8rs`; avoid overwriting its API documentation.
+doc = false
 
 [dependencies]
 ft8rs-core = { path = "../ft8rs-core" }

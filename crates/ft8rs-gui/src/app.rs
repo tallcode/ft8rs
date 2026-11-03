@@ -25,10 +25,11 @@ use ft8rs_engine::report::UdpConfig;
 use ft8rs_engine::soundcard::{InputChannel, SoundcardDeviceInfo, SoundcardFormatInfo};
 use ft8rs_engine::EngineHandle;
 
-/// Hard cap on retained decode rows. Rendering is virtualized (see `decode_rows`)
-/// so this only bounds memory and the per-decode dedupe scan, not scroll cost;
-/// the oldest rows are dropped once the list grows past it (see `ingest`).
+/// Hard cap on retained decode rows. Painting is virtualized; DecodeBatch
+/// applies this limit after each insertion and compacts once per input frame.
 const MAX_ROWS: usize = 20_000;
+/// Cooperative input budget; final batch compaction happens once afterwards.
+const EVENT_BUDGET: Duration = Duration::from_millis(2);
 const DIALOG_FOCUS_ATTEMPTS: u8 = 3;
 const DIALOG_FOCUS_INTERVAL: Duration = Duration::from_millis(100);
 /// Slightly larger than WSJT-X's default 10 pt (~13.33 logical pixels at
@@ -70,6 +71,7 @@ enum DecodeSource {
     Both,
 }
 
+#[cfg_attr(test, derive(Clone, Debug, PartialEq))]
 struct Row {
     text: String,
     // Merge keys (compare mode): same real slot + freq within tolerance +
@@ -84,6 +86,7 @@ struct Row {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 enum DisplayItem {
     Decode(usize),
     Separator(u64),
@@ -169,7 +172,7 @@ pub struct Ft8rsApp {
     last_title: String,
     // The app logo as an egui texture (None if it failed to decode).
     logo: Option<egui::TextureHandle>,
-    // Running WSJT-X UDP listener (compare mode); None when disabled/stopped.
+    // Persistent socket owner; retained while disabled so rebinds are serialized.
     udp_in: Option<crate::wsjtx_udp::UdpIn>,
     udp_in_dirty: bool,
 }
@@ -493,8 +496,15 @@ impl Ft8rsApp {
         }
     }
 
-    fn pump_events(&mut self) {
-        while let Some(event) = self.engine.try_recv() {
+    fn pump_events(&mut self, ctx: &egui::Context) {
+        let clock = Instant::now();
+        let mut batch = DecodeBatch::new(&mut self.rows, &mut self.display_items, self.udp_in_tol);
+        // Keep the existing local-before-external consumption order, with one
+        // budget for both sources rather than an unbounded drain of either.
+        while clock.elapsed() < EVENT_BUDGET {
+            let Some(event) = self.engine.try_recv() else {
+                break;
+            };
             match event {
                 EngineEvent::Status(status) => {
                     if status == EngineStatus::Idle {
@@ -566,7 +576,7 @@ impl Ft8rsApp {
                     jitter_ms,
                     sample_rate,
                 } => self.capture_diag = Some((samples, blocks, avg_block, jitter_ms, sample_rate)),
-                EngineEvent::Decode(record) => self.push_decode(record),
+                EngineEvent::Decode(record) => batch.insert(local_decode_row(record)),
                 EngineEvent::SlotComplete { count, .. } => self.last_slot_decodes = Some(count),
                 EngineEvent::Reconfigured(_) => {}
                 EngineEvent::DxContext(snapshot) => self.dx = Some(snapshot),
@@ -578,112 +588,64 @@ impl Ft8rsApp {
                 }
             }
         }
-        // Compare mode: fold in external (WSJT-X) decodes.
-        while let Some(decode) = self.udp_in.as_ref().and_then(|udp| udp.try_recv()) {
-            self.merge_external(decode);
+        while clock.elapsed() < EVENT_BUDGET {
+            let Some(decode) = self.udp_in.as_ref().and_then(|udp| udp.try_recv()) else {
+                break;
+            };
+            batch.insert(external_decode_row(decode));
+        }
+        if clock.elapsed() >= EVENT_BUDGET {
+            // Leave unconsumed events in their original mailboxes and continue
+            // next frame instead of waiting for the idle 150 ms refresh.
+            ctx.request_repaint();
         }
     }
 
-    fn push_decode(&mut self, record: ft8rs_engine::protocol::DecodeRecord) {
-        let slot_key = record.timestamp.milliseconds_since_midnight() / 15_000;
-        // Message in a fixed-width column so the provenance tag forms its own
-        // trailing column (slot boundaries are shown by the alternating bg).
-        let text = local_decode_text(&record);
-        let row = record.row;
-        self.ingest(
-            slot_key,
-            row.freq,
-            row.dt,
-            text,
-            norm_tokens(&row.msg),
-            DecodeSource::Local,
-        );
-    }
-
-    fn merge_external(&mut self, decode: crate::wsjtx_udp::ExternalDecode) {
-        let slot_key = decode.ms_since_midnight / 15_000;
-        let text = external_decode_text(&decode);
-        self.ingest(
-            slot_key,
-            decode.freq as f64,
-            decode.dt,
-            text,
-            norm_tokens(&decode.message),
-            DecodeSource::External,
-        );
-    }
-
-    /// Fold repeat observations using slot, frequency, DT and message. Local
-    /// provenance wins over an external observation; late results are inserted
-    /// into their original UTC section, including across midnight.
-    fn ingest(
-        &mut self,
-        slot_key: u32,
-        freq: f64,
-        dt: f64,
-        text: String,
-        tokens: Vec<String>,
-        source: DecodeSource,
-    ) {
-        // The two sources can deliver adjacent slots out of order. Resolve the
-        // time-of-day against today's nearest UTC slot, including midnight.
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let gen = absolute_slot(slot_key, now);
-
-        let incoming = Row {
-            text,
-            gen,
-            freq,
-            dt,
-            tokens,
-            source,
-        };
-        insert_decode_row(
-            &mut self.rows,
-            &mut self.display_items,
-            incoming,
-            self.udp_in_tol,
-        );
-    }
-
-    /// Start/stop/restart the WSJT-X listener to match the current settings.
-    /// Called every frame; cheap when nothing changed.
-    fn sync_udp_in(&mut self) {
-        if !std::mem::take(&mut self.udp_in_dirty) {
-            return;
-        }
-        if !self.udp_in_on {
-            self.udp_in = None; // drop stops the thread
-            return;
-        }
-        let port = match parse_port(&self.udp_in_port) {
-            Ok(port) => port,
-            Err(_) => return,
-        };
-        let host = self.udp_in_host.trim();
-        if host.is_empty() {
-            return;
-        }
-        let needs_restart = match &self.udp_in {
-            Some(udp) => udp.host != host || udp.port != port,
-            None => true,
-        };
-        if !needs_restart {
-            return;
-        }
-        self.udp_in = None;
-        match crate::wsjtx_udp::UdpIn::spawn(host, port) {
-            Ok(udp) => {
-                self.udp_in = Some(udp);
-                self.error = None;
+    /// Submit configuration to the socket owner; never bind, close or join here.
+    fn sync_udp_in(&mut self, ctx: &egui::Context) {
+        if std::mem::take(&mut self.udp_in_dirty) {
+            let target = if !self.udp_in_on {
+                Some(None)
+            } else {
+                parse_port(&self.udp_in_port)
+                    .ok()
+                    .filter(|_| !self.udp_in_host.trim().is_empty())
+                    .map(|port| Some((self.udp_in_host.trim(), port)))
+            };
+            if let Some(target) = target {
+                if self.udp_in.is_none() && target.is_some() {
+                    let wake = ctx.clone();
+                    match crate::wsjtx_udp::UdpIn::spawn(move || wake.request_repaint()) {
+                        Ok(listener) => self.udp_in = Some(listener),
+                        Err(err) => {
+                            self.udp_in_on = false;
+                            self.error = Some(err);
+                        }
+                    }
+                }
+                if let Some(listener) = &mut self.udp_in {
+                    match listener.configure(target) {
+                        // Clear the previous error on submission, not on a
+                        // delayed acknowledgement that could erase a newer
+                        // capture/engine error.
+                        Ok(true) if self.udp_in_on => self.error = None,
+                        Ok(_) => {}
+                        Err(err) => {
+                            self.udp_in_on = false;
+                            self.error = Some(err);
+                        }
+                    }
+                }
             }
-            Err(err) => {
-                // Disable to avoid a per-frame rebind loop; surface the error.
+        }
+        // Submit new settings before reading acknowledgements: a late failure
+        // from a superseded bind must not disable a newer valid selection.
+        while let Some(result) = self.udp_in.as_ref().and_then(|udp| udp.try_status()) {
+            if let Err(err) = result {
                 self.udp_in_on = false;
+                self.udp_in_dirty = true;
                 self.error = Some(err);
+                ctx.request_repaint();
             }
         }
     }
@@ -1874,9 +1836,9 @@ impl eframe::App for Ft8rsApp {
             self.styled_theme = theme;
         }
         self.sync_title(&ctx);
-        self.sync_udp_in();
+        self.sync_udp_in(&ctx);
         self.pump_menu();
-        self.pump_events();
+        self.pump_events(&ctx);
 
         // macOS and Windows use a native menu bar; only the fallback platforms
         // (Linux) get an in-window top menu panel.
@@ -2449,32 +2411,106 @@ fn external_decode_text(decode: &crate::wsjtx_udp::ExternalDecode) -> String {
     )
 }
 
-fn insert_decode_row(
-    rows: &mut Vec<Row>,
-    display: &mut Vec<DisplayItem>,
-    incoming: Row,
+/// One frame of input. The logical prefix preserves per-insertion eviction:
+/// removed rows cannot participate in later folds, even before physical drain.
+struct DecodeBatch<'a> {
+    rows: &'a mut Vec<Row>,
+    display: &'a mut Vec<DisplayItem>,
+    prefix: usize,
+    rebuild: bool,
     tolerance: f64,
-) {
-    if fold_decode_row(rows, &incoming, tolerance) {
-        return;
-    }
-    let gen = incoming.gen;
-    let index = rows.partition_point(|row| row.gen <= gen);
-    let append = index == rows.len();
-    if append {
-        if rows.last().is_none_or(|row| row.gen != gen) {
-            display.push(DisplayItem::Separator(gen));
+}
+
+impl<'a> DecodeBatch<'a> {
+    fn new(rows: &'a mut Vec<Row>, display: &'a mut Vec<DisplayItem>, tolerance: f64) -> Self {
+        Self {
+            rows,
+            display,
+            prefix: 0,
+            rebuild: false,
+            tolerance,
         }
-        display.push(DisplayItem::Decode(index));
     }
-    rows.insert(index, incoming);
-    if !append {
-        *display = display_items(rows);
+
+    fn insert(&mut self, incoming: Row) {
+        let live = &mut self.rows[self.prefix..];
+        let low = live.partition_point(|row| row.gen < incoming.gen);
+        let high = live.partition_point(|row| row.gen <= incoming.gen);
+        if fold_decode_row(&mut live[low..high], &incoming, self.tolerance) {
+            return;
+        }
+        let index = self.prefix + high;
+        if index == self.rows.len() && !self.rebuild {
+            if self.rows.last().is_none_or(|row| row.gen != incoming.gen) {
+                self.display.push(DisplayItem::Separator(incoming.gen));
+            }
+            self.display.push(DisplayItem::Decode(index));
+        } else {
+            self.rebuild = true;
+        }
+        self.rows.insert(index, incoming);
+        let prefix = self.rows.len().saturating_sub(MAX_ROWS);
+        if prefix > self.prefix {
+            self.prefix = prefix;
+            self.rebuild = true;
+        }
     }
-    if rows.len() > MAX_ROWS {
-        rows.drain(..rows.len() - MAX_ROWS);
-        *display = display_items(rows);
+}
+
+impl Drop for DecodeBatch<'_> {
+    fn drop(&mut self) {
+        if self.prefix != 0 {
+            self.rows.drain(..self.prefix);
+        }
+        if self.rebuild {
+            *self.display = display_items(self.rows);
+        }
     }
+}
+
+/// Map time-of-day to its nearest real UTC slot, including late midnight rows.
+fn decode_row(
+    slot_key: u32,
+    freq: f64,
+    dt: f64,
+    text: String,
+    tokens: Vec<String>,
+    source: DecodeSource,
+) -> Row {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    Row {
+        text,
+        gen: absolute_slot(slot_key, now),
+        freq,
+        dt,
+        tokens,
+        source,
+    }
+}
+
+fn local_decode_row(record: ft8rs_engine::protocol::DecodeRecord) -> Row {
+    decode_row(
+        record.timestamp.milliseconds_since_midnight() / 15_000,
+        record.row.freq,
+        record.row.dt,
+        local_decode_text(&record),
+        norm_tokens(&record.row.msg),
+        DecodeSource::Local,
+    )
+}
+
+fn external_decode_row(decode: crate::wsjtx_udp::ExternalDecode) -> Row {
+    decode_row(
+        decode.ms_since_midnight / 15_000,
+        decode.freq as f64,
+        decode.dt,
+        external_decode_text(&decode),
+        norm_tokens(&decode.message),
+        DecodeSource::External,
+    )
 }
 
 /// Merge repeated observations of the same transmission. SNR and annotation
@@ -3010,6 +3046,111 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn insert_decode_row(
+        rows: &mut Vec<Row>,
+        display: &mut Vec<DisplayItem>,
+        incoming: Row,
+        tolerance: f64,
+    ) {
+        DecodeBatch::new(rows, display, tolerance).insert(incoming);
+    }
+
+    // Frozen sequential UI operation, before batching. This is intentionally
+    // independent of DecodeBatch's indexing/eviction bookkeeping.
+    fn insert_decode_row_reference(
+        rows: &mut Vec<Row>,
+        display: &mut Vec<DisplayItem>,
+        incoming: Row,
+        tolerance: f64,
+    ) {
+        if fold_decode_row(rows, &incoming, tolerance) {
+            return;
+        }
+        let gen = incoming.gen;
+        let index = rows.partition_point(|row| row.gen <= gen);
+        let append = index == rows.len();
+        if append {
+            if rows.last().is_none_or(|row| row.gen != gen) {
+                display.push(DisplayItem::Separator(gen));
+            }
+            display.push(DisplayItem::Decode(index));
+        }
+        rows.insert(index, incoming);
+        if !append {
+            *display = display_items(rows);
+        }
+        if rows.len() > MAX_ROWS {
+            rows.drain(..rows.len() - MAX_ROWS);
+            *display = display_items(rows);
+        }
+    }
+
+    #[test]
+    fn batch_matches_sequential_rows_across_capacity_late_and_hash_updates() {
+        let row = |gen, id| {
+            let message = format!("CQ K{id}ABC FN42");
+            Row {
+                text: message.clone(),
+                gen,
+                freq: 200.0 + (id % 2800) as f64,
+                dt: 0.0,
+                tokens: norm_tokens(&message),
+                source: DecodeSource::Local,
+            }
+        };
+        for initial in [0, MAX_ROWS - 10, MAX_ROWS] {
+            let initial_rows: Vec<_> = (0..initial).map(|i| row((i / 40) as u64, i)).collect();
+            let mut seed = 739u64;
+            let mut input = Vec::new();
+            for i in 0..1536 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let mut incoming = if seed.is_multiple_of(3) && !initial_rows.is_empty() {
+                    initial_rows[(seed as usize / 3) % initial_rows.len()].clone()
+                } else {
+                    row(498 + seed % 8, i + seed as usize % 10000)
+                };
+                if seed.is_multiple_of(5) {
+                    incoming.tokens[1] = "<...>".into();
+                    incoming.text = "CQ <...> FN42".into();
+                }
+                if seed.is_multiple_of(7) {
+                    incoming.source = DecodeSource::External;
+                }
+                if seed.is_multiple_of(11) {
+                    incoming.text.push_str(" exp");
+                }
+                input.push(incoming);
+            }
+            for chunk_size in [1, 17, 128, 1536] {
+                let mut expected = initial_rows.clone();
+                let mut expected_display = display_items(&expected);
+                let mut actual = expected.clone();
+                let mut actual_display = expected_display.clone();
+                for chunk in input.chunks(chunk_size) {
+                    for incoming in chunk {
+                        insert_decode_row_reference(
+                            &mut expected,
+                            &mut expected_display,
+                            incoming.clone(),
+                            7.0,
+                        );
+                    }
+                    {
+                        let mut batch = DecodeBatch::new(&mut actual, &mut actual_display, 7.0);
+                        for incoming in chunk {
+                            batch.insert(incoming.clone());
+                        }
+                    }
+                    assert_eq!(
+                        actual, expected,
+                        "initial={initial}, chunk_size={chunk_size}"
+                    );
+                    assert_eq!(actual_display, expected_display);
+                }
+            }
+        }
+    }
 
     #[test]
     fn repeated_udp_observations_and_late_rows_stay_in_one_slot_section() {

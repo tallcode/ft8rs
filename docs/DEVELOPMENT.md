@@ -58,6 +58,32 @@ CLI and Linux CLI; macOS app packaging runs locally. The configured Windows MSVC
 and Linux GNU x86-64 targets use `target-cpu=x86-64-v3`; older CPUs need a separate
 build configuration and validation.
 
+## GUI event and comparison lifecycle
+
+The UI consumes local events before external comparison rows with a shared
+2 ms input budget. If it yields, the unconsumed events remain in their mailboxes
+and it requests another frame. `DecodeBatch` limits deduplication to the same
+absolute UTC slot and uses a logical evicted prefix to preserve the sequential
+20,000-row history limit. Physical compaction and display-index rebuilding run
+once when the batch leaves scope. Neither the consumption budget nor the
+subsequent compaction is a hard real-time guarantee.
+
+The comparison listener has one persistent worker owning socket binding,
+hostname resolution, receiving and closure. UI configuration requests are
+non-blocking and coalesced by the worker. Generations reject stale binding
+acknowledgements; a replacement decode mailbox isolates rows queued under an
+old endpoint. The worker closes the previous socket before rebinding. Dropping
+the GUI handle disconnects its command channel, cancelling queued binds and
+ending the worker after the current receive returns. No UI-thread join or
+per-change reaper thread is needed. Bind failures disable comparison and surface
+the error; successful delayed acknowledgements cannot clear a newer engine error.
+
+GUI regression tests compare complete rows and display indices against the
+frozen sequential insertion operation across different batch boundaries,
+capacity limits, late input and hash enrichment. Loopback tests cover rebinding,
+stale failures, mailbox replacement and shutdown while the owner is blocked.
+These changes do not alter decoding, native sessions or the process watchdog.
+
 ## FFT backend
 
 RustFFT at the native 3840-point sync size is the default. FFTW is compile-time

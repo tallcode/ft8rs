@@ -11,15 +11,15 @@
 //! message:utf8, low_confidence:bool, off_air:bool`.
 
 use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
+use std::thread;
 use std::time::Duration;
 
 const MAGIC: u32 = 0xadbccbda;
 const TYPE_DECODE: u32 = 2;
 const NULL_STRING: u32 = 0xffff_ffff;
+const DECODE_QUEUE_CAP: usize = 4096;
+const RECEIVE_POLL: Duration = Duration::from_millis(100);
 
 /// A decode received from WSJT-X over UDP.
 #[derive(Clone, Debug)]
@@ -31,69 +31,167 @@ pub struct ExternalDecode {
     pub message: String,
 }
 
-/// A running listener thread. Dropping it stops the thread.
+#[derive(Clone, PartialEq, Eq)]
+struct Endpoint {
+    host: String,
+    port: u16,
+}
+
+struct Configure {
+    generation: u64,
+    endpoint: Option<Endpoint>,
+    rows: SyncSender<ExternalDecode>,
+}
+
+struct Status {
+    generation: u64,
+    result: Result<(), String>,
+}
+
+/// Non-blocking GUI handle. One worker owns every socket from bind to close.
+/// Dropping the command sender stops that worker; the GUI never joins it.
 pub struct UdpIn {
-    pub host: String,
-    pub port: u16,
-    stop: Arc<AtomicBool>,
-    rx: Receiver<ExternalDecode>,
-    handle: Option<JoinHandle<()>>,
+    commands: Sender<Configure>,
+    status: Receiver<Status>,
+    rows: Receiver<ExternalDecode>,
+    endpoint: Option<Endpoint>,
+    generation: u64,
 }
 
 impl UdpIn {
-    /// Bind `host:port` and start receiving. Errors if the bind fails (e.g. the
-    /// port is already in use).
-    pub fn spawn(host: &str, port: u16) -> Result<Self, String> {
-        let socket = UdpSocket::bind((host, port))
-            .map_err(|err| format!("UDP listen on {host}:{port} failed: {err}"))?;
-        // Periodic timeout so the loop can observe the stop flag.
-        socket
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .map_err(|err| format!("UDP receive timeout: {err}"))?;
-
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_thread = stop.clone();
-        let (tx, rx) = mpsc::sync_channel(4096);
-        let handle = thread::spawn(move || {
-            let mut buf = [0u8; 2048];
-            while !stop_thread.load(Ordering::Relaxed) {
-                match socket.recv_from(&mut buf) {
-                    Ok((n, _)) => {
-                        if let Some(decode) = parse_decode(&buf[..n]) {
-                            match tx.try_send(decode) {
-                                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
-                                Err(mpsc::TrySendError::Disconnected(_)) => break,
-                            }
-                        }
-                    }
-                    Err(err) => match err.kind() {
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => continue,
-                        _ => thread::sleep(Duration::from_millis(50)),
-                    },
-                }
-            }
-        });
-
+    pub fn spawn(wake: impl Fn() + Send + 'static) -> Result<Self, String> {
+        let (commands, input) = mpsc::channel();
+        let (status_tx, status) = mpsc::channel();
+        let (_, rows) = mpsc::sync_channel(DECODE_QUEUE_CAP);
+        let worker = thread::Builder::new()
+            .name("ft8rs-compare".into())
+            .spawn(move || listen(input, status_tx, wake))
+            .map_err(|err| format!("UDP listener worker: {err}"))?;
+        // The channel endpoints own the lifetime. Detach once; dropping the
+        // GUI handle disconnects commands and makes the socket owner exit.
+        drop(worker);
         Ok(Self {
-            host: host.to_string(),
-            port,
-            stop,
-            rx,
-            handle: Some(handle),
+            commands,
+            status,
+            rows,
+            endpoint: None,
+            generation: 0,
         })
     }
 
-    /// Drain one pending decode, if any.
+    /// Submit a desired endpoint, or disable listening. Bind, close and DNS
+    /// resolution run on the worker. Returns whether a request was submitted.
+    /// Each request gets its own decode mailbox, so queued rows from an old
+    /// endpoint cannot leak into a new selection.
+    pub fn configure(&mut self, endpoint: Option<(&str, u16)>) -> Result<bool, String> {
+        let endpoint = endpoint.map(|(host, port)| Endpoint {
+            host: host.into(),
+            port,
+        });
+        if self.endpoint == endpoint {
+            return Ok(false);
+        }
+        let generation = self.generation.wrapping_add(1);
+        let (rows, rx) = mpsc::sync_channel(DECODE_QUEUE_CAP);
+        self.commands
+            .send(Configure {
+                generation,
+                endpoint: endpoint.clone(),
+                rows,
+            })
+            .map_err(|_| "UDP listener worker stopped".to_owned())?;
+        self.generation = generation;
+        self.endpoint = endpoint;
+        self.rows = rx;
+        Ok(true)
+    }
+
+    /// Ignore acknowledgements for settings superseded while bind was pending.
+    pub fn try_status(&self) -> Option<Result<(), String>> {
+        while let Ok(status) = self.status.try_recv() {
+            if status.generation == self.generation {
+                return Some(status.result);
+            }
+        }
+        None
+    }
+
     pub fn try_recv(&self) -> Option<ExternalDecode> {
-        self.rx.try_recv().ok()
+        self.rows.try_recv().ok()
     }
 }
 
-impl Drop for UdpIn {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+fn bind(endpoint: &Endpoint) -> Result<UdpSocket, String> {
+    let socket = UdpSocket::bind((endpoint.host.as_str(), endpoint.port)).map_err(|err| {
+        format!(
+            "UDP listen on {}:{} failed: {err}",
+            endpoint.host, endpoint.port
+        )
+    })?;
+    socket
+        .set_read_timeout(Some(RECEIVE_POLL))
+        .map_err(|err| format!("UDP receive timeout: {err}"))?;
+    Ok(socket)
+}
+
+fn listen(commands: Receiver<Configure>, status: Sender<Status>, wake: impl Fn()) {
+    let mut active: Option<(UdpSocket, SyncSender<ExternalDecode>)> = None;
+    let mut buf = [0u8; 2048];
+    loop {
+        let command = if active.is_none() {
+            match commands.recv() {
+                Ok(command) => Some(command),
+                Err(_) => return,
+            }
+        } else {
+            match commands.try_recv() {
+                Ok(command) => Some(command),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => return,
+            }
+        };
+        if let Some(mut command) = command {
+            // Coalesce rapid edits, and close the old socket before rebinding
+            // even when the new host resolves to the very same local port.
+            loop {
+                match commands.try_recv() {
+                    Ok(newer) => command = newer,
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => return,
+                }
+            }
+            active.take();
+            let result = match command.endpoint {
+                Some(endpoint) => bind(&endpoint).map(|socket| {
+                    active = Some((socket, command.rows));
+                }),
+                None => Ok(()),
+            };
+            if status
+                .send(Status {
+                    generation: command.generation,
+                    result,
+                })
+                .is_err()
+            {
+                return;
+            }
+            wake();
+            continue;
+        }
+        let (socket, rows) = active.as_ref().expect("active socket was checked above");
+        match socket.recv_from(&mut buf) {
+            Ok((n, _)) => {
+                if let Some(decode) = parse_decode(&buf[..n]) {
+                    if rows.try_send(decode).is_ok() {
+                        wake();
+                    }
+                }
+            }
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {}
+                _ => thread::sleep(Duration::from_millis(50)),
+            },
         }
     }
 }
@@ -205,6 +303,146 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn await_status(udp: &UdpIn) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(status) = udp.try_status() {
+                return status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "listener acknowledgement timed out"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn free_port() -> u16 {
+        UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    #[test]
+    fn dropped_handle_cancels_queued_bind_before_opening_a_socket() {
+        let (commands, input) = mpsc::channel();
+        let (status_tx, status) = mpsc::channel();
+        let (rows, _) = mpsc::sync_channel(DECODE_QUEUE_CAP);
+        commands
+            .send(Configure {
+                generation: 1,
+                endpoint: Some(Endpoint {
+                    host: "127.0.0.1".into(),
+                    port: 0,
+                }),
+                rows,
+            })
+            .unwrap();
+        drop(commands);
+        listen(input, status_tx, || {
+            panic!("cancelled bind was acknowledged")
+        });
+        assert!(status.try_recv().is_err());
+    }
+
+    #[test]
+    fn rebind_closes_old_socket_and_disable_releases_port() {
+        let port = free_port();
+        let mut udp = UdpIn::spawn(|| {}).unwrap();
+        assert!(udp.configure(Some(("127.0.0.1", port))).unwrap());
+        assert!(!udp.configure(Some(("127.0.0.1", port))).unwrap());
+        await_status(&udp).unwrap();
+        // Same port, overlapping bind addresses: succeeds only after close.
+        udp.configure(Some(("0.0.0.0", port))).unwrap();
+        await_status(&udp).unwrap();
+        udp.configure(None).unwrap();
+        await_status(&udp).unwrap();
+        let _available = UdpSocket::bind(("127.0.0.1", port)).unwrap();
+    }
+
+    #[test]
+    fn superseded_bind_failure_cannot_disable_new_selection() {
+        let occupied = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let (wake_tx, wake_rx) = mpsc::channel();
+        let mut udp = UdpIn::spawn(move || {
+            let _ = wake_tx.send(());
+        })
+        .unwrap();
+        udp.configure(Some(("127.0.0.1", port))).unwrap();
+        wake_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        // Leave the failure queued, then supersede its generation.
+        udp.configure(Some(("127.0.0.1", free_port()))).unwrap();
+        await_status(&udp).unwrap();
+        assert!(udp.try_status().is_none());
+    }
+
+    #[test]
+    fn switching_endpoints_discards_only_the_old_mailbox() {
+        let (wake_tx, wake_rx) = mpsc::channel();
+        let mut udp = UdpIn::spawn(move || {
+            let _ = wake_tx.send(());
+        })
+        .unwrap();
+        let first = free_port();
+        udp.configure(Some(("127.0.0.1", first))).unwrap();
+        await_status(&udp).unwrap();
+        wake_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        client
+            .send_to(&native_wsjtx_packet(), ("127.0.0.1", first))
+            .unwrap();
+        // The wake follows a successful enqueue; leave that old row unread.
+        wake_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let second = free_port();
+        udp.configure(Some(("127.0.0.1", second))).unwrap();
+        assert!(udp.try_recv().is_none());
+        await_status(&udp).unwrap();
+        wake_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        client
+            .send_to(&native_wsjtx_packet(), ("127.0.0.1", second))
+            .unwrap();
+        wake_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(udp.try_recv().unwrap().message, "CQ BA7SAY OL53");
+    }
+
+    #[test]
+    fn reconfigure_and_drop_do_not_wait_for_socket_owner() {
+        let (wake_tx, wake_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut udp = UdpIn::spawn(move || {
+            let _ = wake_tx.send(());
+            let _ = release_rx.recv_timeout(Duration::from_secs(3));
+        })
+        .unwrap();
+        let port = free_port();
+        udp.configure(Some(("127.0.0.1", port))).unwrap();
+        wake_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        // Deliberately hold the socket owner, then check the GUI can still
+        // submit a close and drop its handle. Release before any assertion so
+        // even a regression cannot leave a blocked worker behind.
+        let (done_tx, done_rx) = mpsc::channel();
+        let ui = thread::spawn(move || {
+            udp.configure(None).unwrap();
+            drop(udp);
+            done_tx.send(()).unwrap();
+        });
+        let completed = done_rx.recv_timeout(Duration::from_millis(500));
+        release_tx.send(()).unwrap();
+        ui.join().unwrap();
+        assert!(
+            matches!(
+                wake_rx.recv_timeout(Duration::from_secs(2)),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            ),
+            "socket owner did not exit after the handle was dropped"
+        );
+        let _available = UdpSocket::bind(("127.0.0.1", port)).unwrap();
+        assert!(completed.is_ok(), "UI waited for a blocked socket owner");
+    }
 
     fn put_string(out: &mut Vec<u8>, s: &str) {
         out.extend_from_slice(&(s.len() as u32).to_be_bytes());
@@ -354,7 +592,9 @@ mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let udp = UdpIn::spawn("127.0.0.1", port).expect("spawn listener");
+        let mut udp = UdpIn::spawn(|| {}).expect("spawn listener");
+        udp.configure(Some(("127.0.0.1", port))).unwrap();
+        await_status(&udp).unwrap();
 
         let client = UdpSocket::bind("127.0.0.1:0").unwrap();
         let pkt = native_wsjtx_packet();
