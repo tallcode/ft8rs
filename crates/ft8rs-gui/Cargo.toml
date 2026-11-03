@@ -11,15 +11,15 @@ path = "src/main.rs"
 
 [dependencies]
 log = "0.4.35"
+sys-locale = "0.3.2"
+ttf-parser = "0.25.1"
+# Reuse the same OS font discovery component used by egui_system_font_provider.
+fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 ft8rs-core = { path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
 eframe = { version = "0.37.0", features = ["persistence", "glow"] }
 egui_extras = { version = "0.37.0", default-features = false, features = ["svg"] }
 muda = "0.21.2"
-# Read a font's vertical metrics (line gap) at load time so we can re-center its
-# glyphs in the row box — fixes the top-shifted text with large-line-gap faces
-# like Windows Consolas. Version matches epaint's ab_glyph.
-ab_glyph = "0.2.32"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # Windows-only: extract the HWND from eframe's window handle to attach a native

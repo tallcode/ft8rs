@@ -8,9 +8,13 @@
 //! separators show only the time.
 
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Color32, RichText};
+
+use crate::fonts::{install as install_fonts, FontSupport, CHINESE_UNAVAILABLE};
+use crate::i18n::{Language, Locale};
 
 use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance};
 use ft8rs_engine::protocol::{
@@ -37,6 +41,7 @@ const TABLE_PAD: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum SettingsTab {
+    General,
     Audio,
     Decode,
     Frequency,
@@ -45,6 +50,17 @@ enum SettingsTab {
     Compare,
     Advanced,
 }
+
+const SETTINGS_TABS: [(SettingsTab, &str); 8] = [
+    (SettingsTab::General, "General"),
+    (SettingsTab::Station, "Station"),
+    (SettingsTab::Audio, "Audio"),
+    (SettingsTab::Decode, "Decode"),
+    (SettingsTab::Frequency, "Frequency"),
+    (SettingsTab::Output, "Output"),
+    (SettingsTab::Compare, "Compare"),
+    (SettingsTab::Advanced, "Advanced"),
+];
 
 /// Where a decode row came from, for the compare-mode coloring.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -75,6 +91,8 @@ enum DisplayItem {
 
 pub struct Ft8rsApp {
     engine: EngineHandle,
+    activation: Arc<crate::single_instance::Activation>,
+    main_focus: DialogFocus,
 
     // Hot fields (bottom bar).
     mycall: String,
@@ -83,6 +101,11 @@ pub struct Ft8rsApp {
     nfqso: String,
 
     // Settings.
+    language: Language,
+    locale: Locale,
+    requested_locale: Locale,
+    font_support: FontSupport,
+    locale_checked_at: Instant,
     profile: DecodeProfile,
     swl: bool,
     hybrid_sic: bool,
@@ -137,9 +160,9 @@ pub struct Ft8rsApp {
 
     menu_events: Receiver<muda::MenuEvent>,
 
-    // Native Profile menu checkmarks (macOS); empty elsewhere.
-    profile_menu: Vec<(DecodeProfile, muda::CheckMenuItem)>,
-    menu_profile_synced: DecodeProfile,
+    // Native menu handles and last synchronized presentation state.
+    native_menu: NativeMenu,
+    menu_synced: (DecodeProfile, Language, Locale),
     // Last theme the style was built for; re-applied when the OS theme flips.
     styled_theme: egui::Theme,
     // Last window title pushed to the OS (only re-sent when it changes).
@@ -152,9 +175,13 @@ pub struct Ft8rsApp {
 }
 
 impl Ft8rsApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        activation: Arc<crate::single_instance::Activation>,
+    ) -> Self {
+        activation.attach(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        install_fonts(&cc.egui_ctx);
+        let font_support = install_fonts(&cc.egui_ctx);
         let theme = cc.egui_ctx.theme();
         apply_style(&cc.egui_ctx, theme);
         let engine = EngineHandle::spawn();
@@ -174,6 +201,9 @@ impl Ft8rsApp {
                 .map(|value| value == "1")
                 .unwrap_or(default)
         };
+        let language = Language::parse(&load("language", "auto"));
+        let requested_locale = language.resolve_system();
+        let locale = font_support.locale(requested_locale);
         let device = load("device", "");
         let profile =
             DecodeProfile::parse(&load("profile", "wsjtx")).unwrap_or(DecodeProfile::Wsjtx);
@@ -184,7 +214,7 @@ impl Ft8rsApp {
         let hwnd = window_hwnd(cc);
         #[cfg(target_os = "windows")]
         let client_size = cc.winit_window().map(|window| window.inner_size());
-        let profile_menu = install_menu(profile, hwnd);
+        let native_menu = install_menu(profile, language, locale, hwnd);
         #[cfg(target_os = "windows")]
         if let (Some(window), Some(size)) = (cc.winit_window(), client_size) {
             if !window.is_maximized() {
@@ -203,6 +233,13 @@ impl Ft8rsApp {
 
         Self {
             engine,
+            activation,
+            main_focus: DialogFocus::default(),
+            language,
+            locale,
+            requested_locale,
+            font_support,
+            locale_checked_at: Instant::now(),
             mycall: load("mycall", ""),
             hiscall: load("hiscall", ""),
             hisgrid: load("hisgrid", ""),
@@ -251,8 +288,8 @@ impl Ft8rsApp {
             copyright_open: false,
             tab: SettingsTab::Station,
             menu_events,
-            profile_menu,
-            menu_profile_synced: profile,
+            native_menu,
+            menu_synced: (profile, language, locale),
             styled_theme: theme,
             last_title: String::new(),
             logo,
@@ -264,7 +301,7 @@ impl Ft8rsApp {
     /// Window title: `FT8.RS - {MyCallsign} - {Profile}` (callsign omitted when
     /// unset). Pushed to the OS only when it changes.
     fn sync_title(&mut self, ctx: &egui::Context) {
-        let profile = self.profile.as_str().to_ascii_uppercase();
+        let profile = profile_label(self.profile);
         let title = match norm(&self.mycall) {
             Some(call) => format!("FT8.RS - {call} - {profile}"),
             None => format!("FT8.RS - {profile}"),
@@ -344,6 +381,27 @@ impl Ft8rsApp {
         }))
     }
 
+    fn settings_validation_error(&self, tab: SettingsTab) -> Option<String> {
+        match tab {
+            SettingsTab::Frequency => parse_frequency_range(&self.nfa, &self.nfb).err(),
+            SettingsTab::Output => self.udp_config().err(),
+            SettingsTab::Compare if self.udp_in_on => {
+                if self.udp_in_host.trim().is_empty() {
+                    Some("UDP listen host is required".to_owned())
+                } else {
+                    parse_port(&self.udp_in_port).err()
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn invalid_monitor_settings_page(&self) -> Option<SettingsTab> {
+        [SettingsTab::Frequency, SettingsTab::Output]
+            .into_iter()
+            .find(|&tab| self.settings_validation_error(tab).is_some())
+    }
+
     fn toggle_monitor(&mut self) {
         if self.is_monitoring() {
             let _ = self.engine.send(EngineCommand::StopMonitor);
@@ -358,7 +416,12 @@ impl Ft8rsApp {
             return;
         }
         if self.dx_needs_hiscall() {
-            self.error = Some("profile dx requires His Call".to_string());
+            self.error = Some("DX requires a target callsign.".to_string());
+            return;
+        }
+        if let Some(tab) = self.invalid_monitor_settings_page() {
+            self.select_settings_tab(tab);
+            self.open_settings();
             return;
         }
         let state = match self.build_state() {
@@ -392,8 +455,11 @@ impl Ft8rsApp {
     /// A change that discards DX intel (target switch) is deferred to a confirm
     /// dialog instead of applied immediately.
     fn apply_if_changed(&mut self) {
+        if self.invalid_monitor_settings_page().is_some() {
+            return;
+        }
         if self.dx_needs_hiscall() {
-            self.error = Some("profile dx requires His Call".to_string());
+            self.error = Some("DX requires a target callsign.".to_string());
             return; // would be invalid; leave the running session as-is
         }
         let desired = match self.build_state() {
@@ -595,14 +661,10 @@ impl Ft8rsApp {
         }
         let port = match parse_port(&self.udp_in_port) {
             Ok(port) => port,
-            Err(err) => {
-                self.error = Some(err);
-                return;
-            }
+            Err(_) => return,
         };
         let host = self.udp_in_host.trim();
         if host.is_empty() {
-            self.error = Some("UDP listen host is required".to_string());
             return;
         }
         let needs_restart = match &self.udp_in {
@@ -628,24 +690,43 @@ impl Ft8rsApp {
 
     // ── UI ──────────────────────────────────────────────────────────────────
 
+    fn open_settings(&mut self) {
+        if self.tab == SettingsTab::Audio {
+            let _ = self.engine.send(EngineCommand::RefreshDevices);
+        }
+        self.settings_open = true;
+        self.settings_focus.request();
+    }
+
+    fn select_settings_tab(&mut self, tab: SettingsTab) {
+        if self.tab != tab {
+            self.tab = tab;
+            if tab == SettingsTab::Audio {
+                let _ = self.engine.send(EngineCommand::RefreshDevices);
+            }
+        }
+    }
+
     fn pump_menu(&mut self) {
+        let mut selected = false;
         while let Ok(event) = self.menu_events.try_recv() {
             match event.id.0.as_str() {
                 // Re-arm the focus request on every click, not just the first: the
                 // dialog may already be open but sitting behind the main window
                 // (native menu clicks don't raise an existing viewport), so a
                 // second click must still bring it to the front.
-                "settings" => {
-                    self.settings_open = true;
-                    self.settings_focus.request();
-                }
+                "settings" => self.open_settings(),
                 "about" => {
                     self.about_open = true;
                     self.about_focus.request();
                 }
                 id => {
-                    if let Some(name) = id.strip_prefix("profile:") {
+                    if let Some(name) = id.strip_prefix("language:") {
+                        self.language = Language::parse(name);
+                        selected = true;
+                    } else if let Some(name) = id.strip_prefix("profile:") {
                         if let Ok(profile) = DecodeProfile::parse(name) {
+                            selected = true;
                             if self.profile != profile {
                                 self.profile = profile;
                                 self.apply_if_changed();
@@ -655,31 +736,69 @@ impl Ft8rsApp {
                 }
             }
         }
-        self.sync_profile_menu();
+        self.sync_language_and_menu();
+        // Native check items toggle even when the selected value is clicked again.
+        if selected {
+            self.native_menu
+                .sync(self.profile, self.language, self.locale);
+        }
     }
 
-    /// Keep the native Profile menu checkmarks in sync with the current profile
-    /// (it can change from the menu, the settings combo, or a confirm revert).
-    fn sync_profile_menu(&mut self) {
-        if self.menu_profile_synced == self.profile {
-            return;
+    /// Language is a presentation preference; changing it never reconfigures the engine.
+    fn sync_language_and_menu(&mut self) {
+        if self.language != self.menu_synced.1
+            || (self.language == Language::Auto
+                && self.locale_checked_at.elapsed() >= Duration::from_secs(2))
+        {
+            self.requested_locale = self.language.resolve_system();
+            self.locale = self.font_support.locale(self.requested_locale);
+            self.locale_checked_at = Instant::now();
         }
-        for (profile, item) in &self.profile_menu {
-            item.set_checked(*profile == self.profile);
+        let current = (self.profile, self.language, self.locale);
+        if self.menu_synced != current {
+            self.native_menu
+                .sync(self.profile, self.language, self.locale);
+            self.menu_synced = current;
         }
-        self.menu_profile_synced = self.profile;
     }
 
     // In-window menu fallback for platforms without a native menu (Linux). macOS
     // and Windows attach a native menu bar instead.
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        let locale = self.locale;
+        let tr = |text| locale.text(text);
         ui.horizontal(|ui| {
-            if ui.button("Settings").clicked() {
-                self.settings_open = true;
-                self.settings_focus.request();
+            if ui.button(tr("Settings")).clicked() {
+                self.open_settings();
             }
-            if ui.button("About").clicked() {
+            ui.menu_button(tr("Profile"), |ui| {
+                for profile in MENU_PROFILES {
+                    if ui
+                        .selectable_label(self.profile == profile, profile_label(profile))
+                        .clicked()
+                    {
+                        self.profile = profile;
+                        self.apply_if_changed();
+                        ui.close();
+                    }
+                }
+            });
+            ui.menu_button(tr("Language"), |ui| {
+                for language in Language::ALL {
+                    if ui
+                        .selectable_value(
+                            &mut self.language,
+                            language,
+                            self.font_support.language_label(language, locale),
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                    }
+                }
+            });
+            if ui.button(tr("About")).clicked() {
                 self.about_open = true;
                 self.about_focus.request();
             }
@@ -687,12 +806,14 @@ impl Ft8rsApp {
     }
 
     fn dx_panel(&mut self, ui: &mut egui::Ui) {
+        let locale = self.locale;
+        let tr = |text| locale.text(text);
         ui.add_space(4.0);
-        ui.label(RichText::new("DX Intel").size(15.0).strong());
+        ui.label(RichText::new(tr("DX information")).size(15.0).strong());
         ui.separator();
         ui.add_space(4.0);
         let Some(dx) = &self.dx else {
-            ui.label(RichText::new("no data yet").weak());
+            ui.label(RichText::new(tr("No data yet")).weak());
             return;
         };
         let target = if dx.target.is_empty() {
@@ -700,10 +821,10 @@ impl Ft8rsApp {
         } else {
             &dx.target
         };
-        ui.label(format!("Target: {target}"));
+        ui.label(format!("{}: {target}", tr("Target")));
         ui.add_space(6.0);
 
-        ui.label("Foci (Hz):");
+        ui.label(format!("{}:", tr("Focus frequencies (Hz)")));
         if dx.foci.is_empty() {
             ui.label(RichText::new("   —").weak());
         } else {
@@ -714,25 +835,25 @@ impl Ft8rsApp {
         ui.add_space(6.0);
 
         let parity = match dx.tx_parity {
-            Some(0) => "even",
-            Some(_) => "odd",
+            Some(0) => tr("Even"),
+            Some(_) => tr("Odd"),
             None => "—",
         };
-        ui.label(format!("TX slot: {parity}"));
+        ui.label(format!("{}: {parity}", tr("Target TX slot")));
 
         let grid = dx.hisgrid.as_deref().unwrap_or("—");
         let source = match dx.hisgrid_source {
-            Some(HisgridSource::User) => " (user)",
-            Some(HisgridSource::Harvested) => " (decoded)",
+            Some(HisgridSource::User) => tr(" (user)"),
+            Some(HisgridSource::Harvested) => tr(" (decoded)"),
             _ => "",
         };
-        ui.label(format!("Grid: {grid}{source}"));
+        ui.label(format!("{}: {grid}{source}", tr("Grid")));
 
         let dt = dx
             .dt
             .map(|dt| format!("{dt:+.1}"))
             .unwrap_or_else(|| "—".to_string());
-        ui.label(format!("dt: {dt}"));
+        ui.label(format!("DT: {dt}"));
     }
 
     /// Pixel height of one decode line (used to size the header panel and rows).
@@ -878,6 +999,8 @@ impl Ft8rsApp {
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
+        let locale = self.locale;
+        let tr = |text| locale.text(text);
         // Uniform control height is the key to a stable row: every widget derives
         // its height from the 14-point font + 2·PAD_Y, with the interact-size floor removed
         // so nothing snaps to a different minimum. No nested layouts on the left —
@@ -894,7 +1017,7 @@ impl Ft8rsApp {
 
         ui.horizontal_centered(|ui| {
             let mut commit = false;
-            let call_label = ui.label("Callsign");
+            let call_label = ui.label(tr("Callsign"));
             // The first field's measured height is the canonical row height; every
             // other control is forced to match it exactly.
             let old_call = norm(&self.hiscall);
@@ -904,11 +1027,11 @@ impl Ft8rsApp {
             }
             commit |= r.lost_focus();
             let ctrl_h = r.rect.height();
-            let grid_label = ui.label("Grid");
+            let grid_label = ui.label(tr("Grid"));
             commit |= grid_field(ui, &mut self.hisgrid, 46.0)
                 .labelled_by(grid_label.id)
                 .lost_focus();
-            let rx_label = ui.label("RX");
+            let rx_label = ui.label(tr("RX"));
             let mut frequency = self.nfqso.parse::<u32>().unwrap_or(0);
             let response = ui
                 .add(
@@ -917,7 +1040,9 @@ impl Ft8rsApp {
                         .speed(1),
                 )
                 .labelled_by(rx_label.id)
-                .on_hover_text("Drag to adjust the receive frequency, or click to type.");
+                .on_hover_text(tr(
+                    "Drag to adjust the receive frequency, or click to type.",
+                ));
             if response.changed() {
                 self.nfqso = frequency.to_string();
                 commit = true;
@@ -943,9 +1068,9 @@ impl Ft8rsApp {
                 let enabled = self.is_monitoring() || !self.dx_needs_hiscall();
                 let response = monitor_button(ui, icon, fill, ctrl_h, enabled).on_hover_text(
                     if self.is_monitoring() {
-                        "Stop monitoring"
+                        tr("Stop monitoring")
                     } else {
-                        "Start monitoring"
+                        tr("Start monitoring")
                     },
                 );
                 response.widget_info(|| {
@@ -953,9 +1078,9 @@ impl Ft8rsApp {
                         egui::Role::Button,
                         enabled,
                         if self.is_monitoring() {
-                            "Stop monitoring"
+                            tr("Stop monitoring")
                         } else {
-                            "Start monitoring"
+                            tr("Start monitoring")
                         },
                     )
                 });
@@ -970,20 +1095,23 @@ impl Ft8rsApp {
     }
 
     fn settings_window(&mut self, ctx: &egui::Context) {
+        let locale = self.locale;
+        let tr = |text| locale.text(text);
         if !self.settings_open {
             return;
         }
         let mut commit = false;
         let mut close = false;
         let viewport_id = egui::ViewportId::from_hash_of("settings");
+        let min_height = settings_min_height(ctx, locale);
         // A resizable OS window (own viewport) with a native title bar. The tabs
         // live in a left SidePanel whose edge separator spans the full height.
         ctx.show_viewport_immediate(
             viewport_id,
             egui::ViewportBuilder::default()
-                .with_title("Settings")
-                .with_inner_size([560.0, 400.0])
-                .with_min_inner_size([480.0, 320.0])
+                .with_title(tr("Settings"))
+                .with_inner_size([560.0, min_height.max(480.0)])
+                .with_min_inner_size([480.0, min_height])
                 .with_resizable(true)
                 .with_minimize_button(false)
                 .with_maximize_button(false)
@@ -1001,29 +1129,14 @@ impl Ft8rsApp {
                             .inner_margin(egui::Margin::symmetric(12, 14)),
                     )
                     .show(vctx, |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("settings_navigation")
-                            .show(ui, |ui| {
-                                ui.with_layout(
-                                    egui::Layout::top_down_justified(egui::Align::LEFT),
-                                    |ui| {
-                                        for (tab, label) in [
-                                            (SettingsTab::Station, "Station"),
-                                            (SettingsTab::Audio, "Audio"),
-                                            (SettingsTab::Decode, "Decode"),
-                                            (SettingsTab::Frequency, "Frequency"),
-                                            (SettingsTab::Output, "Output"),
-                                            (SettingsTab::Compare, "Compare"),
-                                            (SettingsTab::Advanced, "Advanced"),
-                                        ] {
-                                            if ui.selectable_label(self.tab == tab, label).clicked()
-                                            {
-                                                self.tab = tab;
-                                            }
-                                        }
-                                    },
-                                );
-                            });
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                            for (tab, label) in SETTINGS_TABS {
+                                if ui.selectable_label(self.tab == tab, tr(label)).clicked() {
+                                    self.select_settings_tab(tab);
+                                }
+                            }
+                        });
                     });
                 egui::CentralPanel::default()
                     .frame(
@@ -1035,9 +1148,15 @@ impl Ft8rsApp {
                             ui.add_enabled_ui(self.pending_confirm.is_none(), |ui| {
                                 commit = self.settings_tab_ui(ui);
                             });
-                            if let Some(err) = &self.error {
+                            if let Some(message) = self.settings_validation_error(self.tab) {
                                 ui.add_space(6.0);
-                                ui.colored_label(ui.visuals().error_fg_color, err);
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(locale.text(&message))
+                                            .color(ui.visuals().error_fg_color),
+                                    )
+                                    .wrap(),
+                                );
                             }
                         });
                     });
@@ -1056,77 +1175,94 @@ impl Ft8rsApp {
     }
 
     fn settings_tab_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let locale = self.locale;
+        let tr = |text| locale.text(text);
         let mut commit = false;
         match self.tab {
-            SettingsTab::Audio => {
-                section_heading(ui, "Audio");
+            SettingsTab::General => {
+                section_heading(ui, tr("General"));
                 settings_form(ui, |ui| {
-                    commit |= setting_row(ui, "Input device", |ui| self.device_combo(ui));
-                    commit |= setting_row(ui, "Channel", |ui| {
+                    setting_row(ui, tr("Language"), |ui| {
+                        egui::ComboBox::from_id_salt("language")
+                            .width(ui.available_width())
+                            .selected_text(self.font_support.language_label(self.language, locale))
+                            .show_ui(ui, |ui| {
+                                for language in Language::ALL {
+                                    ui.selectable_value(
+                                        &mut self.language,
+                                        language,
+                                        self.font_support.language_label(language, locale),
+                                    );
+                                }
+                            });
+                        false
+                    });
+                });
+                if !self.font_support.chinese {
+                    ui.add_space(8.0);
+                    ui.label(CHINESE_UNAVAILABLE);
+                }
+            }
+            SettingsTab::Audio => {
+                section_heading(ui, tr("Audio"));
+                settings_form(ui, |ui| {
+                    commit |= setting_row(ui, tr("Input device"), |ui| self.device_combo(ui));
+                    commit |= setting_row(ui, tr("Channel"), |ui| {
                         let before = self.input_channel;
                         egui::ComboBox::from_id_salt("input_channel")
                             .width(ui.available_width())
                             .truncate()
                             .selected_text(match self.input_channel {
-                                InputChannel::Mono => "Mono",
-                                InputChannel::Left => "Left",
-                                InputChannel::Right => "Right",
-                                InputChannel::Mix => "Mix (average)",
+                                InputChannel::Mono => tr("Mono"),
+                                InputChannel::Left => tr("Left"),
+                                InputChannel::Right => tr("Right"),
+                                InputChannel::Mix => tr("Mix (average)"),
                             })
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
                                     &mut self.input_channel,
                                     InputChannel::Mono,
-                                    "Mono",
+                                    tr("Mono"),
                                 );
                                 ui.selectable_value(
                                     &mut self.input_channel,
                                     InputChannel::Left,
-                                    "Left",
+                                    tr("Left"),
                                 );
                                 ui.selectable_value(
                                     &mut self.input_channel,
                                     InputChannel::Right,
-                                    "Right",
+                                    tr("Right"),
                                 );
                                 ui.selectable_value(
                                     &mut self.input_channel,
                                     InputChannel::Mix,
-                                    "Mix (average)",
+                                    tr("Mix (average)"),
                                 );
                             });
                         self.input_channel != before
                     });
                 });
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Refresh").clicked() {
-                        let _ = self.engine.send(EngineCommand::RefreshDevices);
-                    }
-                    if let Some((name, format)) = &self.capture_format {
-                        ui.label(
+                if let Some((name, format)) = &self.capture_format {
+                    ui.add_space(2.0);
+                    ui.add(
+                        egui::Label::new(
                             RichText::new(format!(
-                                "Active: {name} · {}ch / {} Hz / {}",
-                                format.channels, format.sample_rate, format.sample_format
+                                "{}: {name} · {} {} / {} Hz / {}",
+                                tr("Active"),
+                                format.channels,
+                                tr("Ch"),
+                                format.sample_rate,
+                                format.sample_format,
                             ))
                             .weak(),
-                        );
-                    } else if let Some(dev) = self.current_device_info() {
-                        ui.label(
-                            RichText::new(format!(
-                                "Default format: {} · {}ch / {} Hz / {}",
-                                dev.host,
-                                dev.input.channels,
-                                dev.input.sample_rate,
-                                dev.input.sample_format
-                            ))
-                            .weak(),
-                        );
-                    }
-                });
+                        )
+                        .wrap(),
+                    );
+                }
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
-                    ui.label("Input level");
+                    ui.label(tr("Input level"));
                     match self.input_peak {
                         Some(peak) if peak > 0.0 => {
                             let dbfs = 20.0 * peak.log10();
@@ -1139,19 +1275,23 @@ impl Ft8rsApp {
                             } else {
                                 Color32::from_rgb(0xdc, 0x26, 0x26)
                             };
-                            let clipped = if dbfs >= -0.1 { " (near clipping)" } else { "" };
+                            let clipped = if dbfs >= -0.1 {
+                                tr(" (near clipping)")
+                            } else {
+                                ""
+                            };
                             ui.label(
                                 RichText::new(format!("{dbfs:.1} dBFS{clipped}")).color(color),
                             );
                         }
                         Some(_) => {
                             ui.label(
-                                RichText::new("silent (−inf dBFS)")
+                                RichText::new(tr("silent (−inf dBFS)"))
                                     .color(Color32::from_rgb(0xdc, 0x26, 0x26)),
                             );
                         }
                         None => {
-                            ui.label(RichText::new("— (start monitoring)").weak());
+                            ui.label(RichText::new(tr("— (start monitoring)")).weak());
                         }
                     }
                 });
@@ -1159,8 +1299,13 @@ impl Ft8rsApp {
                     ui.horizontal_wrapped(|ui| {
                         for (i, &peak) in self.channel_peaks.iter().enumerate() {
                             ui.label(
-                                RichText::new(format!("Ch {}: {} dBFS", i + 1, format_dbfs(peak)))
-                                    .weak(),
+                                RichText::new(format!(
+                                    "{} {}: {} dBFS",
+                                    tr("Ch"),
+                                    i + 1,
+                                    format_dbfs(peak)
+                                ))
+                                .weak(),
                             );
                         }
                     });
@@ -1168,8 +1313,10 @@ impl Ft8rsApp {
                 if self.capture_xruns > 0 {
                     ui.label(
                         RichText::new(format!(
-                            "Audio discontinuity reports: {} (monitoring continues)",
-                            self.capture_xruns
+                            "{}: {} ({})",
+                            tr("Audio discontinuity reports"),
+                            self.capture_xruns,
+                            tr("monitoring continues")
                         ))
                         .weak(),
                     );
@@ -1196,39 +1343,55 @@ impl Ft8rsApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(
                             RichText::new(format!(
-                                "slot: {secs:.1}s / {samples} smp · {blocks} blk (~{avg_block} smp) · "
+                                "{}: {secs:.1}s / {samples} {} · {blocks} {} (~{avg_block} {}) · ",
+                                tr("slot"),
+                                tr("smp"),
+                                tr("blk"),
+                                tr("smp")
                             ))
                             .weak(),
                         );
                         ui.label(
-                            RichText::new(format!("jitter {jitter_ms} ms")).color(jitter_color),
+                            RichText::new(format!("{} {jitter_ms} ms", tr("jitter")))
+                                .color(jitter_color),
                         );
-                        ui.label(RichText::new(format!(" · {decodes} dec")).weak());
+                        ui.label(RichText::new(format!(" · {decodes} {}", tr("dec"))).weak());
                     });
                 }
                 if self.input_channel == InputChannel::Mono
                     || self.input_channel == InputChannel::Mix
                 {
                     ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(
-                            "Mono requests one channel; if unavailable, uses channel 1. \
-                             Mix averages all channels and can cancel opposite-phase audio.",
-                        )
-                        .weak(),
-                    );
+                    for text in [
+                        tr("Mono requests one channel; if unavailable, uses channel 1."),
+                        tr("Mix averages all channels and can cancel opposite-phase audio."),
+                    ] {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            let line_height = ui.text_style_height(&egui::TextStyle::Small);
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(8.0, line_height),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().circle_filled(
+                                rect.center(),
+                                1.5,
+                                ui.visuals().weak_text_color(),
+                            );
+                            ui.add(egui::Label::new(RichText::new(text).small().weak()).wrap());
+                        });
+                    }
                 }
             }
             SettingsTab::Decode => {
-                section_heading(ui, "Decode");
-                let dx = self.profile == DecodeProfile::Dx;
+                section_heading(ui, tr("Decode"));
                 settings_form(ui, |ui| {
-                    commit |= setting_row(ui, "Profile", |ui| {
+                    commit |= setting_row(ui, tr("Profile"), |ui| {
                         let before = self.profile;
                         egui::ComboBox::from_id_salt("profile")
                             .width(ui.available_width())
                             .truncate()
-                            .selected_text(self.profile.as_str())
+                            .selected_text(profile_label(self.profile))
                             .show_ui(ui, |ui| {
                                 for profile in [
                                     DecodeProfile::Wsjtx,
@@ -1239,85 +1402,84 @@ impl Ft8rsApp {
                                     ui.selectable_value(
                                         &mut self.profile,
                                         profile,
-                                        profile.as_str(),
+                                        profile_label(profile),
                                     );
                                 }
                             });
                         self.profile != before
                     });
                     if self.profile == DecodeProfile::Hybrid {
-                        commit |= setting_row(ui, "Cross cancellation", |ui| {
+                        commit |= setting_row(ui, tr("Cross cancellation"), |ui| {
                             ui.add(egui::Checkbox::without_text(&mut self.hybrid_sic))
                                 .changed()
                         });
                     }
-                    commit |= setting_row(ui, "SWL", |ui| {
-                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.swl))
-                            .on_hover_text(
-                                "Controls both JTDX paths in Hybrid. DX manages SWL internally.",
-                            )
-                            .changed()
-                    });
-                    commit |= setting_row(ui, "Deep decode", |ui| {
-                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.nagain))
-                            .on_hover_text("Enable JTDX focused deep decoding (nagain).")
-                            .changed()
-                    });
+                    if matches!(self.profile, DecodeProfile::Jtdx | DecodeProfile::Hybrid) {
+                        commit |= setting_row(ui, "SWL", |ui| {
+                            ui.add(egui::Checkbox::without_text(&mut self.swl))
+                                .on_hover_text(tr("Controls both JTDX paths in Hybrid."))
+                                .changed()
+                        });
+                    }
+                    if self.profile != DecodeProfile::Dx {
+                        commit |= setting_row(ui, tr("Deep decode"), |ui| {
+                            ui.add(egui::Checkbox::without_text(&mut self.nagain))
+                                .on_hover_text(tr("Enable focused deep decoding (nagain)."))
+                                .changed()
+                        });
+                    }
                     if self.profile == DecodeProfile::Hybrid {
-                        commit |= setting_row(ui, "Experimental decoder", |ui| {
+                        commit |= setting_row(ui, tr("Experimental decoder"), |ui| {
                             ui.add(egui::Checkbox::without_text(&mut self.hybrid_experiment))
                                 .on_hover_text(
-                                    "Adds weak stable-signal and interference recovery. \
-                                     Results carry exp; processing may take about 10 seconds.",
+                                    tr("Adds weak stable-signal and interference recovery. Results carry exp; processing may take about 10 seconds."),
                                 )
                                 .changed()
                         });
                     }
                 });
-                if dx {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("dx forces SWL/nagain internally").weak());
-                }
             }
             SettingsTab::Frequency => {
-                section_heading(ui, "Frequency");
+                section_heading(ui, tr("Frequency"));
                 settings_form(ui, |ui| {
-                    commit |= setting_row(ui, "Low (Hz)", |ui| text_field(ui, &mut self.nfa));
-                    commit |= setting_row(ui, "High (Hz)", |ui| text_field(ui, &mut self.nfb));
+                    commit |= setting_row(ui, tr("Low (Hz)"), |ui| text_field(ui, &mut self.nfa));
+                    commit |= setting_row(ui, tr("High (Hz)"), |ui| text_field(ui, &mut self.nfb));
                 });
             }
             SettingsTab::Station => {
-                section_heading(ui, "Station");
+                section_heading(ui, tr("Station"));
                 settings_form(ui, |ui| {
-                    commit |= setting_row(ui, "My Callsign", |ui| {
+                    commit |= setting_row(ui, tr("My Callsign"), |ui| {
                         callsign_field(ui, &mut self.mycall, f32::INFINITY).lost_focus()
                     });
-                    commit |= setting_row(ui, "My Grid", |ui| {
+                    commit |= setting_row(ui, tr("My Grid"), |ui| {
                         grid_field(ui, &mut self.mygrid, f32::INFINITY).lost_focus()
                     });
                 });
             }
             SettingsTab::Output => {
-                section_heading(ui, "Output");
+                section_heading(ui, tr("Output"));
                 settings_form(ui, |ui| {
-                    commit |= setting_row(ui, "UDP reports", |ui| {
+                    commit |= setting_row(ui, tr("UDP reports"), |ui| {
                         ui.add(egui::Checkbox::without_text(&mut self.udp_on))
                             .changed()
                     });
-                    commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_host));
-                    commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_port));
+                    commit |= setting_row(ui, tr("Host"), |ui| text_field(ui, &mut self.udp_host));
+                    commit |= setting_row(ui, tr("Port"), |ui| text_field(ui, &mut self.udp_port));
                 });
             }
             SettingsTab::Compare => {
-                section_heading(ui, "Compare");
+                section_heading(ui, tr("Compare"));
                 settings_form(ui, |ui| {
-                    commit |= setting_row(ui, "Listen to WSJT-X (UDP)", |ui| {
+                    commit |= setting_row(ui, tr("Listen to WSJT-X (UDP)"), |ui| {
                         ui.add(egui::Checkbox::without_text(&mut self.udp_in_on))
                             .changed()
                     });
-                    commit |= setting_row(ui, "Host", |ui| text_field(ui, &mut self.udp_in_host));
-                    commit |= setting_row(ui, "Port", |ui| text_field(ui, &mut self.udp_in_port));
-                    commit |= setting_row(ui, "Match ± Hz", |ui| {
+                    commit |=
+                        setting_row(ui, tr("Host"), |ui| text_field(ui, &mut self.udp_in_host));
+                    commit |=
+                        setting_row(ui, tr("Port"), |ui| text_field(ui, &mut self.udp_in_port));
+                    commit |= setting_row(ui, tr("Match ± Hz"), |ui| {
                         ui.add(
                             egui::DragValue::new(&mut self.udp_in_tol)
                                 .speed(0.25)
@@ -1327,42 +1489,56 @@ impl Ft8rsApp {
                     });
                 });
                 ui.add_space(10.0);
-                ui.label(
-                    RichText::new("Merges WSJT-X decodes with the local ones to compare").weak(),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(tr(
+                            "Merges WSJT-X decodes with the local ones to compare sensitivity.",
+                        ))
+                        .small()
+                        .weak(),
+                    )
+                    .wrap(),
                 );
-                ui.label(RichText::new("sensitivity. Color shows the source:").weak());
+                ui.label(RichText::new(tr("Color shows the source:")).small().weak());
                 ui.add_space(4.0);
                 let dark = ui.visuals().dark_mode;
                 let default = ui.visuals().text_color();
-                ui.colored_label(
-                    source_color(DecodeSource::External, dark, default),
-                    "■ only WSJT-X",
-                );
-                ui.colored_label(
-                    source_color(DecodeSource::Local, dark, default),
-                    "■ only ft8.rs",
-                );
-                ui.colored_label(default, "■ both decoders");
+                for (source, label) in [
+                    (DecodeSource::External, tr("only WSJT-X")),
+                    (DecodeSource::Local, tr("only ft8.rs")),
+                    (DecodeSource::Both, tr("both decoders")),
+                ] {
+                    let color = source_color(source, dark, default);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.add(
+                            egui::Image::new(egui::include_image!("../assets/stop.svg"))
+                                .fit_to_exact_size(egui::Vec2::splat(16.0))
+                                .tint(color),
+                        );
+                        ui.colored_label(color, RichText::new(label).small());
+                    });
+                }
             }
             SettingsTab::Advanced => {
-                section_heading(ui, "Advanced");
+                section_heading(ui, tr("Advanced"));
                 settings_form(ui, |ui| {
                     let dx = self.profile == DecodeProfile::Dx;
-                    commit |= setting_row(ui, "Narrow-band filter", |ui| {
+                    commit |= setting_row(ui, tr("Narrow-band filter"), |ui| {
                         ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.filter))
                             .changed()
                     });
-                    commit |= setting_row(ui, "Hide duplicates", |ui| {
+                    commit |= setting_row(ui, tr("Hide duplicates"), |ui| {
                         ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_dupes))
                             .changed()
                     });
-                    commit |= setting_row(ui, "Hide <...> calls", |ui| {
+                    commit |= setting_row(ui, tr("Hide <...> calls"), |ui| {
                         ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_hash))
                             .changed()
                     });
                 });
                 ui.add_space(6.0);
-                ui.label(RichText::new("Changes take effect at the next slot.").weak());
+                ui.label(RichText::new(tr("Changes take effect at the next slot.")).weak());
             }
         }
         commit
@@ -1372,36 +1548,36 @@ impl Ft8rsApp {
     /// truncation. Long endpoint names remain available in the hover text.
     fn device_combo(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.selected_device.clone();
-        input_device_combo(ui, &mut self.selected_device, &self.devices);
+        let response =
+            input_device_combo(ui, &mut self.selected_device, &self.devices, self.locale);
+        if response.clicked() && egui::Popup::is_id_open(ui.ctx(), response.id.with("popup")) {
+            let _ = self.engine.send(EngineCommand::RefreshDevices);
+        }
         self.selected_device != before
     }
 
-    fn current_device_info(&self) -> Option<&SoundcardDeviceInfo> {
-        match &self.selected_device {
-            Some(name) => self.devices.iter().find(|dev| &dev.name == name),
-            None => self.devices.iter().find(|dev| dev.is_default_input),
-        }
-    }
-
     fn confirm_window(&mut self, ctx: &egui::Context) {
+        let locale = self.locale;
+        let tr = |text| locale.text(text);
         if self.pending_confirm.is_none() {
             return;
         }
         let mut decided: Option<bool> = None;
         let modal = egui::Modal::new(egui::Id::unique("confirm")).show(ctx, |ui| {
             ui.add_space(4.0);
-            ui.label(RichText::new("Switch DX target").size(15.0).strong());
+            ui.label(RichText::new(tr("Switch DX target")).size(15.0).strong());
             ui.add_space(8.0);
-            ui.label("This discards the collected DX intel.");
+            ui.label(tr("This clears the collected DX information."));
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     decided = Some(false);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let confirm =
-                        egui::Button::new(RichText::new("Switch").strong().color(Color32::WHITE))
-                            .fill(Color32::from_rgb(0x25, 0x63, 0xeb));
+                    let confirm = egui::Button::new(
+                        RichText::new(tr("Switch")).strong().color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(0x25, 0x63, 0xeb));
                     if ui.add(confirm).clicked() {
                         decided = Some(true);
                     }
@@ -1447,7 +1623,7 @@ impl Ft8rsApp {
         ctx.show_viewport_immediate(
             viewport_id,
             egui::ViewportBuilder::default()
-                .with_title("About ft8.rs")
+                .with_title(self.locale.text("About ft8.rs"))
                 .with_inner_size([440.0, 500.0])
                 .with_resizable(false)
                 .with_minimize_button(false)
@@ -1509,6 +1685,12 @@ impl Ft8rsApp {
                                                     ft8rs::about::LICENSE
                                                 ))
                                                 .weak(),
+                                            );
+                                            ui.add_space(4.0);
+                                            ui.hyperlink_to("ft8.rs", ft8rs::about::HOMEPAGE);
+                                            ui.hyperlink_to(
+                                                "github.com/tallcode/ft8rs",
+                                                ft8rs::about::SOURCE_REPOSITORY,
                                             );
                                         });
                                         ui.add_space(10.0);
@@ -1643,6 +1825,7 @@ impl Ft8rsApp {
 impl eframe::App for Ft8rsApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         let bs = |value: bool| if value { "1" } else { "0" }.to_string();
+        storage.set_string("language", self.language.as_str().to_owned());
         storage.set_string("mycall", self.mycall.clone());
         storage.set_string("hiscall", self.hiscall.clone());
         storage.set_string("hisgrid", self.hisgrid.clone());
@@ -1681,6 +1864,10 @@ impl eframe::App for Ft8rsApp {
     // reached via `ui.ctx()`.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.activation.take_request() {
+            self.main_focus.request();
+        }
+        self.main_focus.update(&ctx, Instant::now());
         // Follow the OS light/dark theme: re-apply the custom style when it flips.
         let theme = ctx.theme();
         if theme != self.styled_theme {
@@ -1699,14 +1886,24 @@ impl eframe::App for Ft8rsApp {
         egui::Panel::bottom("controls")
             .exact_size(46.0)
             .show(ui, |ui| self.bottom_bar(ui));
+        if self.requested_locale == Locale::Chinese && !self.font_support.chinese {
+            egui::Panel::bottom("font_status").show(ui, |ui| {
+                ui.add(egui::Label::new(CHINESE_UNAVAILABLE).wrap());
+            });
+        }
         if let Some(err) = &self.error {
             egui::Panel::bottom("error_status").show(ui, |ui| {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(format!("⚠ {err}")).color(ui.visuals().error_fg_color),
-                    )
-                    .wrap(),
-                );
+                let color = ui.visuals().error_fg_color;
+                ui.horizontal_top(|ui| {
+                    ui.add(
+                        egui::Image::new(egui::include_image!("../assets/warning.svg"))
+                            .fit_to_exact_size(egui::Vec2::splat(16.0))
+                            .tint(color),
+                    );
+                    ui.add(
+                        egui::Label::new(RichText::new(self.locale.text(err)).color(color)).wrap(),
+                    );
+                });
             });
         }
         if self.profile == DecodeProfile::Dx {
@@ -1730,6 +1927,7 @@ impl eframe::App for Ft8rsApp {
             .show(ui, |ui| self.decode_rows(ui));
 
         self.settings_window(&ctx);
+        self.sync_language_and_menu();
         self.about_window(&ctx);
         self.copyright_window(&ctx);
         self.confirm_window(&ctx);
@@ -1758,9 +1956,19 @@ fn callsign_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Re
 /// A Maidenhead grid field constrained to AA00: positions 0–1 uppercase letters,
 /// 2–3 digits, max 4 chars. Returns the Response.
 fn grid_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Response {
+    // TextEdit's width includes its margins. Measure all four characters with
+    // the active font and leave room for both padding and the end cursor.
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let min_width = ui.fonts_mut(|fonts| {
+        fonts
+            .layout_no_wrap("RR99".to_owned(), font, Color32::WHITE)
+            .size()
+            .x
+            .ceil()
+    }) + 20.0;
     let resp = ui.add(
         egui::TextEdit::singleline(value)
-            .desired_width(width)
+            .desired_width(width.max(min_width))
             .margin(egui::Margin::symmetric(8, 4)),
     );
     if resp.changed() {
@@ -1811,6 +2019,30 @@ fn monitor_button(
     .inner
 }
 
+/// Reserve enough client height for every navigation row at the current font metrics.
+fn settings_min_height(ctx: &egui::Context, locale: Locale) -> f32 {
+    let style = ctx.global_style();
+    let font = egui::TextStyle::Button.resolve(&style);
+    let text_height = ctx.fonts_mut(|fonts| {
+        SETTINGS_TABS
+            .iter()
+            .map(|(_, label)| {
+                fonts
+                    .layout_no_wrap(locale.text(label).to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .y
+            })
+            .fold(0.0f32, f32::max)
+    });
+    let row_height =
+        (text_height + 2.0 * style.spacing.button_padding.y).max(style.spacing.interact_size.y);
+    let rows = SETTINGS_TABS.len() as f32;
+    // Side-panel padding (14 top + bottom), row gaps and a little breathing room.
+    (28.0 + rows * row_height + (rows - 1.0) * style.spacing.item_spacing.y + 16.0)
+        .ceil()
+        .max(440.0)
+}
+
 /// A bold section heading for the settings content pane.
 fn section_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
@@ -1837,6 +2069,7 @@ fn input_device_combo(
     ui: &mut egui::Ui,
     selected_device: &mut Option<String>,
     devices: &[SoundcardDeviceInfo],
+    locale: Locale,
 ) -> egui::Response {
     let selected = selected_device
         .as_deref()
@@ -1847,11 +2080,11 @@ fn input_device_combo(
                 .map(|device| input_device_label(device, devices))
                 .unwrap_or_else(|| selector.to_owned())
         })
-        .unwrap_or_else(|| "Default".to_owned());
+        .unwrap_or_else(|| locale.text("Default").to_owned());
     let field_width = ui.available_width();
     let popup_margin = egui::Frame::popup(ui.style()).total_margin().sum().x;
     let font = egui::TextStyle::Button.resolve(ui.style());
-    let text_width = std::iter::once("Default".to_owned())
+    let text_width = std::iter::once(locale.text("Default").to_owned())
         .chain(
             devices
                 .iter()
@@ -1875,15 +2108,32 @@ fn input_device_combo(
         .push_id("input_device", |ui| {
             ui.add(
                 egui::Button::new(&selected)
-                    .right_text("▾")
+                    .right_text(egui::Atom::paint(
+                        egui::Vec2::splat(ui.spacing().icon_width),
+                        |ui, args| {
+                            // Same vector triangle and proportions as egui::ComboBox.
+                            let rect = egui::Rect::from_center_size(
+                                args.rect.center(),
+                                egui::vec2(args.rect.width() * 0.7, args.rect.height() * 0.45),
+                            );
+                            ui.painter().add(egui::Shape::rotated_triangle(
+                                rect,
+                                0.0,
+                                args.fallback_text_color,
+                            ));
+                        },
+                    ))
                     .truncate()
                     .min_size(egui::vec2(field_width, ui.spacing().interact_size.y)),
             )
         })
         .inner;
     response.widget_info(|| {
-        let mut info =
-            egui::WidgetInfo::labeled(egui::Role::ComboBox, ui.is_enabled(), "Input device");
+        let mut info = egui::WidgetInfo::labeled(
+            egui::Role::ComboBox,
+            ui.is_enabled(),
+            locale.text("Input device"),
+        );
         info.current_text_value = Some(selected.clone());
         info
     });
@@ -1896,7 +2146,7 @@ fn input_device_combo(
             egui::ScrollArea::vertical()
                 .max_height(ui.spacing().combo_height)
                 .show(ui, |ui| {
-                    ui.selectable_value(selected_device, None, "Default");
+                    ui.selectable_value(selected_device, None, locale.text("Default"));
                     for device in devices {
                         let label = input_device_label(device, devices);
                         ui.selectable_value(
@@ -2469,9 +2719,17 @@ fn source_color(source: DecodeSource, dark: bool, default: Color32) -> Color32 {
     }
 }
 
-/// Profiles shown in the native Profile menu (macOS + Windows). The menu is
-/// leaked so it lives for the app's lifetime; Linux uses the in-window menu.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+/// UI labels are independent of the stable lowercase storage and menu IDs.
+fn profile_label(profile: DecodeProfile) -> &'static str {
+    match profile {
+        DecodeProfile::Wsjtx => "WSJT-X",
+        DecodeProfile::Jtdx => "JTDX",
+        DecodeProfile::Hybrid => "Hybrid",
+        DecodeProfile::Dx => "DX",
+    }
+}
+
+/// Profile names stay the same in both interface languages.
 const MENU_PROFILES: [DecodeProfile; 4] = [
     DecodeProfile::Wsjtx,
     DecodeProfile::Jtdx,
@@ -2495,99 +2753,152 @@ fn window_hwnd(_cc: &eframe::CreationContext<'_>) -> Option<isize> {
     None
 }
 
-/// The "Profile" submenu with a checked item per profile. Shared by both menu
-/// layouts; returns the submenu plus the items for checkmark syncing.
+/// Retain the native menu and the handles needed for live labels and checkmarks.
+#[derive(Default)]
+struct NativeMenu {
+    _menu: Option<muda::Menu>,
+    settings: Option<muda::MenuItem>,
+    about: Option<muda::MenuItem>,
+    profile: Option<muda::Submenu>,
+    language: Option<muda::Submenu>,
+    quit: Option<muda::PredefinedMenuItem>,
+    profile_items: Vec<(DecodeProfile, muda::CheckMenuItem)>,
+    language_items: Vec<(Language, muda::CheckMenuItem)>,
+}
+
+impl NativeMenu {
+    fn sync(&self, profile: DecodeProfile, language: Language, locale: Locale) {
+        if let Some(item) = &self.settings {
+            item.set_text(locale.text(if cfg!(target_os = "macos") {
+                "Settings…"
+            } else {
+                "Settings"
+            }));
+        }
+        if let Some(item) = &self.about {
+            item.set_text(locale.text("About"));
+        }
+        if let Some(item) = &self.profile {
+            item.set_text(locale.text("Profile"));
+        }
+        if let Some(item) = &self.language {
+            item.set_text(locale.text("Language"));
+        }
+        if let Some(item) = &self.quit {
+            item.set_text(locale.text("Quit"));
+        }
+        for (value, item) in &self.profile_items {
+            item.set_checked(*value == profile);
+        }
+        for (value, item) in &self.language_items {
+            item.set_text(value.label(locale));
+            item.set_checked(*value == language);
+        }
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn build_profile_submenu(
+fn install_menu(
     initial: DecodeProfile,
-) -> (muda::Submenu, Vec<(DecodeProfile, muda::CheckMenuItem)>) {
-    use muda::{CheckMenuItem, Submenu};
+    language: Language,
+    locale: Locale,
+    _hwnd: Option<isize>,
+) -> NativeMenu {
+    use muda::{CheckMenuItem, Menu, MenuItem, Submenu};
+
+    #[cfg(target_os = "windows")]
+    let Some(hwnd) = _hwnd
+    else {
+        return NativeMenu::default();
+    };
+    let menu = Menu::new();
+    let settings = MenuItem::with_id(
+        "settings",
+        "Settings",
+        true,
+        if cfg!(target_os = "macos") {
+            "CmdOrCtrl+,".parse().ok()
+        } else {
+            None
+        },
+    );
+    let about = MenuItem::with_id("about", "About", true, None);
     let profile_menu = Submenu::new("Profile", true);
-    let mut items = Vec::new();
+    let mut profile_items = Vec::new();
     for profile in MENU_PROFILES {
         let item = CheckMenuItem::with_id(
             format!("profile:{}", profile.as_str()),
-            profile.as_str(),
+            profile_label(profile),
             true,
             profile == initial,
             None,
         );
         let _ = profile_menu.append(&item);
-        items.push((profile, item));
+        profile_items.push((profile, item));
     }
-    (profile_menu, items)
-}
-
-/// macOS layout: an app menu ("ft8.rs" → About / Settings… / Quit) plus Profile.
-#[cfg(target_os = "macos")]
-fn install_menu(
-    initial: DecodeProfile,
-    _hwnd: Option<isize>,
-) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
-    use muda::accelerator::Accelerator;
-    use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-
-    let menu = Menu::new();
-    let app_menu = Submenu::new("ft8.rs", true);
-    let about = MenuItem::with_id("about", "About", true, None);
-    let settings = MenuItem::with_id(
-        "settings",
-        "Settings…",
-        true,
-        "CmdOrCtrl+,".parse::<Accelerator>().ok(),
-    );
-    let _ = app_menu.append_items(&[
-        &about,
-        &PredefinedMenuItem::separator(),
-        &settings,
-        &PredefinedMenuItem::separator(),
-        &PredefinedMenuItem::quit(Some("Quit")),
-    ]);
-    let _ = menu.append(&app_menu);
-
-    let (profile_menu, items) = build_profile_submenu(initial);
-    let _ = menu.append(&profile_menu);
-
-    menu.init_for_nsapp();
-    std::mem::forget(menu);
-    items
-}
-
-/// Windows layout: three top-level items side by side — Settings, Profile, About
-/// (Windows has no app menu concept; Quit is the title-bar close button).
-#[cfg(target_os = "windows")]
-fn install_menu(
-    initial: DecodeProfile,
-    hwnd: Option<isize>,
-) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
-    use muda::{Menu, MenuItem};
-
-    let Some(hwnd) = hwnd else {
-        return Vec::new();
+    let language_menu = Submenu::new("Language", true);
+    let mut language_items = Vec::new();
+    for value in Language::ALL {
+        let item = CheckMenuItem::with_id(
+            format!("language:{}", value.as_str()),
+            value.label(locale),
+            true,
+            value == language,
+            None,
+        );
+        let _ = language_menu.append(&item);
+        language_items.push((value, item));
+    }
+    #[cfg(target_os = "macos")]
+    let quit = Some(muda::PredefinedMenuItem::quit(Some("Quit")));
+    #[cfg(not(target_os = "macos"))]
+    let quit = None;
+    let native = NativeMenu {
+        quit,
+        _menu: Some(menu.clone()),
+        settings: Some(settings.clone()),
+        about: Some(about.clone()),
+        profile: Some(profile_menu.clone()),
+        language: Some(language_menu.clone()),
+        profile_items,
+        language_items,
     };
-    let menu = Menu::new();
-    let settings = MenuItem::with_id("settings", "Settings", true, None);
-    let about = MenuItem::with_id("about", "About", true, None);
-    let (profile_menu, items) = build_profile_submenu(initial);
-    let _ = menu.append(&settings);
-    let _ = menu.append(&profile_menu);
-    let _ = menu.append(&about);
+    #[cfg(target_os = "macos")]
+    {
+        use muda::PredefinedMenuItem;
+        let app_menu = Submenu::new("ft8.rs", true);
+        let quit = native.quit.as_ref().expect("macOS menu has a Quit item");
+        let _ = app_menu.append_items(&[
+            &about,
+            &PredefinedMenuItem::separator(),
+            &settings,
+            &PredefinedMenuItem::separator(),
+            quit,
+        ]);
+        let _ = menu.append_items(&[&app_menu, &profile_menu, &language_menu]);
+    }
+    #[cfg(target_os = "windows")]
+    let _ = menu.append_items(&[&settings, &profile_menu, &language_menu, &about]);
 
-    // SAFETY: `hwnd` is the live main-window handle from eframe; muda subclasses
-    // it to host the menu bar and forward WM_COMMAND to our MenuEvent handler.
+    native.sync(initial, language, locale);
+    #[cfg(target_os = "macos")]
+    menu.init_for_nsapp();
+    // SAFETY: hwnd is the live main-window handle supplied by eframe.
+    #[cfg(target_os = "windows")]
     unsafe {
         let _ = menu.init_for_hwnd(hwnd);
     }
-    std::mem::forget(menu);
-    items
+    native
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn install_menu(
     _initial: DecodeProfile,
+    _language: Language,
+    _locale: Locale,
     _hwnd: Option<isize>,
-) -> Vec<(DecodeProfile, muda::CheckMenuItem)> {
-    Vec::new()
+) -> NativeMenu {
+    NativeMenu::default()
 }
 
 /// Apply the custom style for the given OS theme. Colors come from egui's
@@ -2647,6 +2958,9 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
     v.window_corner_radius = CornerRadius::same(4);
     v.menu_corner_radius = CornerRadius::same(4);
 
+    // Glyph rasterization is anti-aliased by egui. Keep hinting explicitly on
+    // in both themes; per-font CJK tweaks choose sharper horizontal grid fitting.
+    v.text_options.font_hinting = true;
     style.visuals = v;
     style.spacing.item_spacing = egui::vec2(10.0, 8.0);
     style.spacing.button_padding = egui::vec2(14.0, 8.0);
@@ -2666,91 +2980,6 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
 
     // eframe 0.35: Context::set_style is gone; set the same style for all themes.
     ctx.all_styles_mut(move |s| *s = style.clone());
-}
-
-/// Install a single monospace font (Monaco-like) as the primary face for BOTH
-/// families so the whole UI is uniformly monospaced, then append a CJK font as
-/// fallback for the Chinese labels. Falls back to egui's defaults if a candidate
-/// is missing (e.g. headless CI).
-fn install_fonts(ctx: &egui::Context) {
-    const MONO: &[&str] = &[
-        "/System/Library/Fonts/Monaco.ttf",
-        "/System/Library/Fonts/Menlo.ttc",
-        "/System/Library/Fonts/SFNSMono.ttf",
-        "C:/Windows/Fonts/consola.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    ];
-    const CJK: &[&str] = &[
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/Library/Fonts/Arial Unicode.ttf",
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/simsun.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    ];
-    let read_first = |paths: &[&str]| paths.iter().find_map(|path| std::fs::read(path).ok());
-
-    let mut fonts = egui::FontDefinitions::default();
-
-    if let Some(bytes) = read_first(MONO) {
-        // Compute the centering tweak from the bytes before they move into FontData.
-        let data = egui::FontData::from_owned(bytes.clone()).tweak(center_tweak(&bytes));
-        fonts
-            .font_data
-            .insert("mono".to_string(), std::sync::Arc::new(data));
-        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts
-                .families
-                .entry(family)
-                .or_default()
-                .insert(0, "mono".to_string());
-        }
-    }
-    if let Some(bytes) = read_first(CJK) {
-        let data = egui::FontData::from_owned(bytes.clone()).tweak(center_tweak(&bytes));
-        fonts
-            .font_data
-            .insert("cjk".to_string(), std::sync::Arc::new(data));
-        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts
-                .families
-                .entry(family)
-                .or_default()
-                .push("cjk".to_string());
-        }
-    }
-    ctx.set_fonts(fonts);
-}
-
-/// Vertical-centering tweak for a font face. egui sizes each text row from the
-/// primary font's `ascent - descent + line_gap` and draws the baseline at
-/// `ascent` from the row top, so the line gap becomes dead space at the *bottom*
-/// of the row and the ink sits high — text looks shifted up (notably Consolas on
-/// Windows; Monaco/macOS has ~no line gap, so this is a no-op there). We read the
-/// gap from the font and push glyphs down half of it, centering the ink in the
-/// row box without changing the row height. Returns the default tweak if the font
-/// can't be parsed (keeps startup robust).
-fn center_tweak(bytes: &[u8]) -> egui::FontTweak {
-    use ab_glyph::Font as _;
-    // A small constant downward bias: centering the typographic block leaves text
-    // looking a hair high (ascenders/descenders are rarely all used), so nudge it
-    // down ~1px for optical centering. Applies to every face and platform.
-    let mut tweak = egui::FontTweak {
-        y_offset: 1.0,
-        ..Default::default()
-    };
-    // index 0 handles both single faces (.ttf/.otf) and the first face of a
-    // collection (.ttc), e.g. Menlo / PingFang / YaHei.
-    if let Ok(font) = ab_glyph::FontRef::try_from_slice_and_index(bytes, 0) {
-        if let Some(upem) = font.units_per_em() {
-            if upem > 0.0 {
-                let gap_fraction = font.line_gap_unscaled() / upem;
-                tweak.y_offset_factor = gap_fraction / 2.0;
-            }
-        }
-    }
-    tweak
 }
 
 #[cfg(test)]
@@ -3575,57 +3804,62 @@ mod tests {
 
     #[test]
     fn standard_form_reflows_after_window_width_changes() {
-        let ctx = egui::Context::default();
-        apply_style(&ctx, egui::Theme::Light);
-        let mut value = String::new();
-        let mut widths = Vec::new();
-        for width in [360.0, 240.0, 640.0, 280.0] {
-            let mut fields = [egui::Rect::NOTHING; 2];
-            for _ in 0..4 {
-                let _ = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(width, 400.0),
-                        )),
-                        ..Default::default()
-                    },
-                    |ui| {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                        settings_form(ui, |ui| {
-                            setting_row(ui, "My Callsign", |ui| {
-                                fields[0] = callsign_field(ui, &mut value, f32::INFINITY).rect;
-                                false
+        for locale in [Locale::English, Locale::Chinese] {
+            let ctx = egui::Context::default();
+            install_fonts(&ctx);
+            apply_style(&ctx, egui::Theme::Light);
+            let mut value = String::new();
+            let mut widths = Vec::new();
+            for width in [360.0, 240.0, 640.0, 280.0] {
+                let mut fields = [egui::Rect::NOTHING; 2];
+                for _ in 0..4 {
+                    let _ = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 400.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                            settings_form(ui, |ui| {
+                                setting_row(ui, locale.text("My Callsign"), |ui| {
+                                    fields[0] = callsign_field(ui, &mut value, f32::INFINITY).rect;
+                                    false
+                                });
+                                setting_row(ui, locale.text("Input device"), |ui| {
+                                    fields[1] = egui::ComboBox::from_id_salt("test_device")
+                                        .width(ui.available_width())
+                                        .truncate()
+                                        .selected_text(
+                                            "DAX RX 1 (a deliberately long endpoint name)",
+                                        )
+                                        .show_ui(ui, |_| {})
+                                        .response
+                                        .rect;
+                                    false
+                                });
                             });
-                            setting_row(ui, "Input device", |ui| {
-                                fields[1] = egui::ComboBox::from_id_salt("test_device")
-                                    .width(ui.available_width())
-                                    .truncate()
-                                    .selected_text("DAX RX 1 (a deliberately long endpoint name)")
-                                    .show_ui(ui, |_| {})
-                                    .response
-                                    .rect;
-                                false
-                            });
-                        });
-                    },
-                );
-            }
-            for field in fields {
+                        },
+                    );
+                }
+                for field in fields {
+                    assert!(
+                        field.right() <= width + 1.0,
+                        "control overflow at {width}: {field:?}"
+                    );
+                    assert!(field.width() > 30.0);
+                }
+                assert!((fields[1].left() - fields[0].left()).abs() < 1.0);
                 assert!(
-                    field.right() <= width + 1.0,
-                    "control overflow at {width}: {field:?}"
+                    fields[1].top() - fields[0].top() < 50.0,
+                    "labels must stay on one line"
                 );
-                assert!(field.width() > 30.0);
+                widths.push(fields[0].width());
             }
-            assert!((fields[1].left() - fields[0].left()).abs() < 1.0);
-            assert!(
-                fields[1].top() - fields[0].top() < 50.0,
-                "labels must stay on one line"
-            );
-            widths.push(fields[0].width());
+            assert!(widths[1] < widths[0] && widths[2] > widths[0] && widths[3] < widths[2]);
         }
-        assert!(widths[1] < widths[0] && widths[2] > widths[0] && widths[3] < widths[2]);
     }
 
     #[test]
@@ -3664,7 +3898,12 @@ mod tests {
                     |ui| {
                         settings_form(ui, |ui| {
                             setting_row(ui, "Input device", |ui| {
-                                response = Some(input_device_combo(ui, &mut selected, &devices));
+                                response = Some(input_device_combo(
+                                    ui,
+                                    &mut selected,
+                                    &devices,
+                                    Locale::English,
+                                ));
                                 false
                             });
                         });
@@ -3743,7 +3982,12 @@ mod tests {
                 },
                 |ui| {
                     ui.allocate_ui(egui::vec2(140.0, 30.0), |ui| {
-                        response = Some(input_device_combo(ui, &mut selected, &devices));
+                        response = Some(input_device_combo(
+                            ui,
+                            &mut selected,
+                            &devices,
+                            Locale::English,
+                        ));
                     });
                 },
             );

@@ -18,7 +18,10 @@ pub const COPYRIGHT: &str = "Copyright (C) 2026 Tao Xu (BG5ATV)";
 pub const LICENSE: &str = "GPL-3.0";
 
 /// Project homepage.
-pub const HOMEPAGE: &str = "https://github.com/tallcode/ft8rs";
+pub const HOMEPAGE: &str = "https://ft8.rs";
+
+/// Public source repository.
+pub const SOURCE_REPOSITORY: &str = "https://github.com/tallcode/ft8rs";
 
 /// The standard GPL "interactive program" short notice (no warranty plus the
 /// redistribution terms), shown by the CLI subcommand and the About dialog.
@@ -96,7 +99,9 @@ pub fn notice(version: &str) -> String {
     out.push_str(&format!(
         "License:  {LICENSE}  (see LICENSE, or {LICENSE_URL})\n"
     ));
-    out.push_str(&format!("Homepage: {HOMEPAGE}\n\n"));
+    out.push_str(&format!(
+        "Homepage: {HOMEPAGE}\nSource:   {SOURCE_REPOSITORY}\n\n"
+    ));
     out.push_str(WARRANTY_NOTICE);
     out.push('\n');
 

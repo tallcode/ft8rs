@@ -2,12 +2,16 @@
 
 mod app;
 mod diagnostics;
+mod fonts;
+mod i18n;
+mod single_instance;
 mod wsjtx_udp;
 
 use app::Ft8rsApp;
 use eframe::egui;
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// The app logo, embedded so it works without an external file (used both for the
 /// OS window/dock/taskbar icon and the About dialog).
@@ -29,6 +33,16 @@ fn main() -> eframe::Result<()> {
     if ft8rs_engine::run_decode_worker_if_requested() {
         return Ok(());
     }
+    // Private decode workers branch above this guard. Competing GUI launches
+    // exit before opening windows, audio, settings storage or diagnostic logs.
+    let primary = match single_instance::acquire() {
+        Ok(single_instance::Startup::Primary(primary)) => primary,
+        Ok(single_instance::Startup::Secondary) => return Ok(()),
+        Err(error) => {
+            diagnostics::report_failure(&error.to_string(), None);
+            return Err(eframe::Error::AppCreation(Box::new(error)));
+        }
+    };
     let log_path = diagnostics::init();
     let renderer = match std::env::var("FT8RS_RENDERER").as_deref() {
         Ok("glow") => eframe::Renderer::Glow,
@@ -44,7 +58,9 @@ fn main() -> eframe::Result<()> {
         std::env::consts::OS,
         std::env::consts::ARCH,
     );
-    let result = run_with_fallback(renderer, run_gui);
+    let result = run_with_fallback(renderer, |renderer, started| {
+        run_gui(renderer, started, Arc::clone(&primary.activation))
+    });
     if let Err(error) = &result {
         diagnostics::report_failure(&error.to_string(), log_path.as_deref());
     } else {
@@ -70,7 +86,11 @@ fn run_with_fallback(
     result
 }
 
-fn run_gui(renderer: eframe::Renderer, app_creation_started: Rc<Cell<bool>>) -> eframe::Result<()> {
+fn run_gui(
+    renderer: eframe::Renderer,
+    app_creation_started: Rc<Cell<bool>>,
+    activation: Arc<single_instance::Activation>,
+) -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([820.0, 760.0])
         .with_min_inner_size([480.0, 440.0])
@@ -81,6 +101,8 @@ fn run_gui(renderer: eframe::Renderer, app_creation_started: Rc<Cell<bool>>) -> 
     let mut options = eframe::NativeOptions {
         viewport,
         renderer,
+        // Font selection is validated by fonts::install; do not add unchecked OS fallbacks.
+        system_font_fallback: false,
         ..Default::default()
     };
     if renderer == eframe::Renderer::Wgpu {
@@ -97,7 +119,7 @@ fn run_gui(renderer: eframe::Renderer, app_creation_started: Rc<Cell<bool>>) -> 
         Box::new(move |cc| {
             log::info!("Graphics initialized; creating application");
             app_creation_started.set(true);
-            let app = Ft8rsApp::new(cc);
+            let app = Ft8rsApp::new(cc, Arc::clone(&activation));
             log::info!("Application initialized");
             Ok(Box::new(app))
         }),

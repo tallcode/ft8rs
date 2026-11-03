@@ -42,6 +42,20 @@ tests; changing the database can change decoded results.
 4. Press the play button to monitor; press stop to finish. Capture is aligned
    to UTC 15-second FT8 slots, and decoded messages appear as they arrive.
 
+The interface defaults to **Automatic (System)**: Chinese for a Chinese system
+language, English otherwise. Switch instantly through **Language** in the menu
+or **Settings → General → Language**; the choice is saved. Menus, settings and
+the bottom controls are translated; WSJT-X standard decode columns/messages
+and the contents of About retain their original text. Latin and Chinese system
+fonts are selected separately by family name through Fontique, which handles
+platform discovery and font matching. Each OS has two named Chinese sans-serif
+candidates followed by the system sans-serif fallback. Serif faces identified by
+OpenType metadata are rejected, and glyphs are validated before use. If no Chinese
+font works, the GUI shows English with a notice. No additional fonts are bundled.
+
+The GUI runs one instance per user; launching it again restores the existing
+window. Private decode worker processes remain independent.
+
 The GUI monitors live audio; use the CLI for WAV files. Settings changes can be
 applied while listening. Audio diagnostics show the actual opened format,
 input/channel peaks and capture timing. **Compare** can merge an external

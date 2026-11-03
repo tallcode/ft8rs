@@ -1532,9 +1532,9 @@ dependencies = [
 name = "ft8rs-gui"
 version = "0.0.0"
 dependencies = [
- "ab_glyph",
  "eframe",
  "egui_extras",
+ "fontique",
  "ft8rs-build",
  "ft8rs-core",
  "ft8rs-engine",
@@ -1543,6 +1543,8 @@ dependencies = [
  "log",
  "muda",
  "raw-window-handle",
+ "sys-locale",
+ "ttf-parser",
  "winresource",
 ]
 
