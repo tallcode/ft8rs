@@ -12,7 +12,7 @@ trap 'rm -rf "$CHECK_DIR"' EXIT
 cd "$ROOT"
 python3 "$ROOT/scripts/decoder-references.py" verify \
     --data "${FT8RS_DECODER_DATA_DIR:-$ROOT/crates/ft8rs-core/tests/decoder/data}"
-cargo test --profile "$PROFILE" -p ft8rs-core --lib --tests --no-run \
+cargo test --profile "$PROFILE" -p ft8rs --lib --tests --no-run \
     --message-format=json > "$CHECK_DIR/build.jsonl"
 python3 - "$ROOT" "$CHECK_DIR" "$INCLUDE_IGNORED" "$PROFILE" <<'PYTHON'
 import hashlib

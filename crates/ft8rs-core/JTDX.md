@@ -259,7 +259,7 @@ adding stricter ad hoc filters, changing decoder constants, or sacrificing
 weak-signal recovery. Revisit the full port only at the user's request.
 
 For source checks with a local reference checkout, run
-`FT8RS_REQUIRE_JTDX_SOURCE=1 cargo test --release -p ft8rs-core --test jtdx_source_audit_test`.
+`FT8RS_REQUIRE_JTDX_SOURCE=1 cargo test --release -p ft8rs --test jtdx_source_audit_test`.
 Use `FT8RS_JTDX_SOURCE_DIR` to explicitly select its repository root. The audit
 checks both protocol tables and the caller-side filter-gate provenance.
 

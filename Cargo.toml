@@ -35,7 +35,7 @@ codegen-units = 256
 # math dependencies are optimized so decoding keeps up with the 15 s slots
 # without a full release build. opt-level only affects speed, not IEEE float
 # semantics, so decode results match release.
-[profile.dev.package.ft8rs-core]
+[profile.dev.package.ft8rs]
 opt-level = 3
 
 [profile.dev.package."*"]

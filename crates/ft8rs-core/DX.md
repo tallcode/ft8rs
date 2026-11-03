@@ -118,7 +118,7 @@ three-way target-preservation, known-waveform recovery and incomplete-context
 checks. To run only the additional known-waveform gates:
 
 ```sh
-cargo test --profile fast -p ft8rs-core --lib decode::dx::waveform_tests:: -- --ignored --test-threads=1
+cargo test --profile fast -p ft8rs --lib decode::dx::waveform_tests:: -- --ignored --test-threads=1
 ```
 
 These gates generate deterministic signals through the existing encoder. The

@@ -356,7 +356,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --profile fast -- -D warnings
 scripts/test-decoders.sh fast
 scripts/test-decoders.sh release --include-ignored
-FT8RS_REQUIRE_WSJTX_SOURCE=1 cargo test --release -p ft8rs-core --test wsjtx_source_audit_test
+FT8RS_REQUIRE_WSJTX_SOURCE=1 cargo test --release -p ft8rs --test wsjtx_source_audit_test
 ```
 
 The source audit discovers a sibling `wsjtx` checkout from the crate/workspace
@@ -378,6 +378,6 @@ crate/module lint allowances; an obsolete local expectation should itself warn.
 For FFTW alignment:
 
 ```bash
-cargo test --release -p ft8rs-core --features fftw test_stream_decode_short_audio
-cargo test --release -p ft8rs-core --features fftw test_stream_decode_long_audio
+cargo test --release -p ft8rs --features fftw test_stream_decode_short_audio
+cargo test --release -p ft8rs --features fftw test_stream_decode_long_audio
 ```

@@ -15,7 +15,7 @@ sys-locale = "0.3.2"
 ttf-parser = "0.25.1"
 # Reuse the same OS font discovery component used by egui_system_font_provider.
 fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
-ft8rs-core = { path = "../ft8rs-core" }
+ft8rs = { version = "0.1.0", path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
 eframe = { version = "0.37.0", features = ["persistence", "glow"] }
 egui_extras = { version = "0.37.0", default-features = false, features = ["svg"] }
@@ -39,4 +39,4 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [features]
 default = []
-fftw = ["ft8rs-core/fftw", "ft8rs-engine/fftw"]
+fftw = ["ft8rs/fftw", "ft8rs-engine/fftw"]

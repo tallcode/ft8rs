@@ -33,6 +33,61 @@ including Hybrid and DX. Builds and release packages supply the repository's
 runtime copy. The separate `ALLCALL7.TXT.2022` is used for calibrated regression
 tests; changing the database can change decoded results.
 
+## Rust library: audio to messages
+
+The `ft8rs` package provides the library named `ft8rs`. Add it with
+`ft8rs = "0.1"` in your Cargo dependencies. The public
+`ft8rs::wsjtx` facade decodes one complete UTC-aligned FT8 slot at a time using
+the existing WSJT-X session, including its cross-slot hash/AP memory:
+
+```rust
+use ft8rs::wsjtx::{Audio, Config, Decoder, SlotTimestamp};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut decoder = Decoder::new(Config::default())?;
+    // Supply 15 seconds of mono f32 PCM, starting at this UTC slot boundary.
+    let samples = vec![0.0_f32; 15 * 48_000];
+    let messages = decoder.decode(
+        SlotTimestamp::parse("261103_120000")?,
+        Audio::mono_f32(&samples, 48_000),
+    )?;
+    for message in messages {
+        println!("{} {} dB {} Hz {}", message.slot, message.snr_db,
+                 message.frequency_hz, message.text);
+    }
+    Ok(())
+}
+```
+
+For local development, use
+`ft8rs = { path = "/path/to/ft8rs/crates/ft8rs-core" }`.
+Run decoder applications with an optimized build, for example `cargo run --release`.
+
+Audio is borrowed, finite mono `f32` PCM with nominal full scale `-1..=1`.
+Rates from 12 kHz through 192 kHz are converted through the existing audio input
+path; 12 kHz input is used directly. Each buffer must contain exactly 15 seconds;
+invalid lengths, rates, timestamps and non-finite samples return typed errors
+before changing session state. Reuse the decoder for consecutive slots,
+including silent ones, and call `reset()` before unrelated recordings or band
+changes. Decoding is synchronous: invoke it on a worker thread, outside a
+real-time audio callback. The facade has no WAV or soundcard API, needs no
+CallDB, and does not select JTDX/Hybrid/DX or change native decode algorithms.
+The library remains GPL-3.0-only; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+For prompt delivery, use `decode_with_callback` on a worker thread. It sends
+the early native-stage batch before subtraction/final decoding, followed by the
+new final-stage rows (including native AP). Empty stages produce no callback;
+return from the method signals completion. There are at most two batches per
+slot; native passes themselves do not expose finer callbacks. Keep callbacks
+short, for example by handing each owned batch to a channel:
+
+```rust
+decoder.decode_with_callback(slot, audio, |batch| {
+    let _ = sender.send(batch);
+})?;
+// All decoding work for this slot is now complete.
+```
+
 ## Graphical live monitor
 
 1. Open **Settings → Audio**, select the receiver's audio input and channel.

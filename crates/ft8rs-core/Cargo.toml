@@ -1,13 +1,34 @@
 [package]
-name = "ft8rs-core"
-version = "0.0.0"
+name = "ft8rs"
+version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "FT8 streaming decoder core: decode/stream/file-input, UI-independent"
+repository = "https://github.com/tallcode/ft8rs"
+homepage = "https://ft8.rs"
+documentation = "https://docs.rs/ft8rs"
+readme = "README.md"
+keywords = ["ft8", "wsjtx", "jtdx", "ham-radio", "decoder"]
+categories = ["science", "multimedia::audio"]
+# Keep the registry package small while retaining all library sources and the
+# fixtures needed by its unit tests. Full audio regressions live in Git.
+include = [
+    "Cargo.toml",
+    "build.rs",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "src/**/*.rs",
+    "src/**/README.md",
+    "tests/decoder/*.rs",
+    "tests/decoder/data/ft8/protocol/**",
+    "tests/decoder/data/ft8/calls/**",
+    "tests/decoder/data/ft8/waveforms/**",
+    "tests/decoder/data/ft8/provenance/**",
+]
 
-# Lib name is `ft8rs` (not `ft8rs_core`) so the decode core keeps the same import
-# path (`use ft8rs::...`) as before the workspace split — the baseline tests and
-# mirrored lib_wsjtx/lib_jtdx sources move in unchanged.
+# The source directory remains crates/ft8rs-core; both the published package and
+# the library are named ft8rs, preserving the existing use ft8rs::... imports.
 [lib]
 name = "ft8rs"
 path = "src/lib.rs"

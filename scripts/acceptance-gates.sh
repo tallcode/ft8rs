@@ -16,7 +16,7 @@ if [ ! -f "$CALIBRATED" ]; then
 fi
 
 cd "$ROOT"
-cargo test --release -p ft8rs-core --test stream_decode_test --no-run \
+cargo test --release -p ft8rs --test stream_decode_test --no-run \
     --message-format=json > "$CHECK_DIR/build.jsonl"
 python3 - "$CHECK_DIR/build.jsonl" "$CHECK_DIR/stream_decode_test" <<'PYTHON'
 import json

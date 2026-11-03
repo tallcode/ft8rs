@@ -12,7 +12,7 @@ the applicable local checks and optimized tests. Then commit and push `main`.
 
 | Package | Responsibility | Output |
 |---|---|---|
-| `ft8rs-core` | Native FT8 mirrors, stream sessions, WAV input and orchestration | Rust library named `ft8rs` |
+| `ft8rs` (`crates/ft8rs-core`) | Native FT8 mirrors, stream sessions, WAV input and orchestration | Rust library named `ft8rs` |
 | `ft8rs-engine` | Capture, UTC slot staging, decode actor, reconfiguration and UDP | Library shared by the frontends |
 | `ft8rs-cli` | File/monitor commands and console output | `ft8rs` |
 | `ft8rs-gui` | egui live monitor, settings and external UDP comparison | `ft8rs-gui` |
@@ -91,8 +91,8 @@ optional; the binary cannot switch at runtime:
 
 ```sh
 cargo build --release -p ft8rs-cli --features fftw
-cargo test --release -p ft8rs-core --features fftw test_stream_decode_short_audio
-cargo test --release -p ft8rs-core --features fftw test_stream_decode_long_audio
+cargo test --release -p ft8rs --features fftw test_stream_decode_short_audio
+cargo test --release -p ft8rs --features fftw test_stream_decode_long_audio
 ```
 
 The runtime FFTW feature links double-precision `fftw3_threads` and `fftw3`.
@@ -295,8 +295,8 @@ core runner's private calibration setup. Hold that database fixed for comparison
 Optional source audits require local original checkouts:
 
 ```sh
-FT8RS_REQUIRE_WSJTX_SOURCE=1 cargo test --release -p ft8rs-core --test wsjtx_source_audit_test
-FT8RS_REQUIRE_JTDX_SOURCE=1 cargo test --release -p ft8rs-core --test jtdx_source_audit_test
+FT8RS_REQUIRE_WSJTX_SOURCE=1 cargo test --release -p ft8rs --test wsjtx_source_audit_test
+FT8RS_REQUIRE_JTDX_SOURCE=1 cargo test --release -p ft8rs --test jtdx_source_audit_test
 ```
 
 Set `FT8RS_WSJTX_SOURCE_DIR` / `FT8RS_JTDX_SOURCE_DIR` to select explicit roots.

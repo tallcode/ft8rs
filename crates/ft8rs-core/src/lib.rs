@@ -3,6 +3,7 @@ pub mod decode;
 pub mod input;
 pub mod stream;
 pub(crate) mod util;
+pub mod wsjtx;
 
 // Test-only adapters can exercise private native routines without widening the
 // public API or modifying the mirrored decoder source trees.

@@ -1491,6 +1491,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ft8rs"
+version = "0.1.0"
+dependencies = [
+ "hound",
+ "num-bigint",
+ "rustfft",
+ "serde",
+]
+
+[[package]]
 name = "ft8rs-build"
 version = "0.0.0"
 dependencies = [
@@ -1502,19 +1512,9 @@ name = "ft8rs-cli"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "ft8rs",
  "ft8rs-build",
- "ft8rs-core",
  "ft8rs-engine",
-]
-
-[[package]]
-name = "ft8rs-core"
-version = "0.0.0"
-dependencies = [
- "hound",
- "num-bigint",
- "rustfft",
- "serde",
 ]
 
 [[package]]
@@ -1522,7 +1522,7 @@ name = "ft8rs-engine"
 version = "0.0.0"
 dependencies = [
  "cpal",
- "ft8rs-core",
+ "ft8rs",
  "log",
  "ron",
  "serde",
@@ -1535,8 +1535,8 @@ dependencies = [
  "eframe",
  "egui_extras",
  "fontique",
+ "ft8rs",
  "ft8rs-build",
- "ft8rs-core",
  "ft8rs-engine",
  "ico",
  "image",

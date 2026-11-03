@@ -11,7 +11,7 @@ CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ft8rs-retention.XXXXXX")"
 trap 'rm -rf "$CHECK_DIR"' EXIT
 cd "$ROOT"
 python3 scripts/decoder-references.py verify --data "$DATA_ROOT" --fixtures-only
-cargo build --profile "$PROFILE" -p ft8rs-core --example decoder_retention_probe \
+cargo build --profile "$PROFILE" -p ft8rs --example decoder_retention_probe \
     --message-format=json > "$CHECK_DIR/build.jsonl"
 python3 - "$ROOT" "$CHECK_DIR" "$DATA_ROOT" "$REPORT_ROOT" "$PROFILE" <<'PYTHON'
 import hashlib

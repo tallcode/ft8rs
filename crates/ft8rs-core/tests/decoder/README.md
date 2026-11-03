@@ -25,9 +25,9 @@ The engine's long actor test is separate; see
 Narrow checks can use Cargo with the normal CallDB lookup:
 
 ```sh
-cargo test --profile fast -p ft8rs-core --lib decoder_protocol_tests -- --test-threads=1
-cargo test --profile fast -p ft8rs-core --lib original_test28_calls_and_integer_boundaries -- --test-threads=1
-cargo test --profile fast -p ft8rs-core --test decoder_test -- --test-threads=1 --nocapture
+cargo test --profile fast -p ft8rs --lib decoder_protocol_tests -- --test-threads=1
+cargo test --profile fast -p ft8rs --lib original_test28_calls_and_integer_boundaries -- --test-threads=1
+cargo test --profile fast -p ft8rs --test decoder_test -- --test-threads=1 --nocapture
 ```
 
 The `test28` checks live inside private native modules, so they are not selected

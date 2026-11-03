@@ -12,7 +12,7 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
-ft8rs-core = { path = "../ft8rs-core" }
+ft8rs = { version = "0.1.0", path = "../ft8rs-core" }
 ft8rs-engine = { path = "../ft8rs-engine" }
 clap = { version = "4.6.7", features = ["derive"] }
 
@@ -21,4 +21,4 @@ ft8rs-build = { path = "../ft8rs-build" }
 
 [features]
 default = []
-fftw = ["ft8rs-core/fftw", "ft8rs-engine/fftw"]
+fftw = ["ft8rs/fftw", "ft8rs-engine/fftw"]

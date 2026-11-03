@@ -9,9 +9,9 @@ description = "ft8rs live runtime: soundcard capture + UDP reporting"
 serde = { version = "1.0.229", features = ["derive"] }
 ron = "0.12.3"
 log = "0.4.35"
-ft8rs-core = { path = "../ft8rs-core" }
+ft8rs = { version = "0.1.0", path = "../ft8rs-core" }
 cpal = "0.18.2"
 
 [features]
 default = []
-fftw = ["ft8rs-core/fftw"]
+fftw = ["ft8rs/fftw"]
