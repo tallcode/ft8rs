@@ -1104,6 +1104,7 @@ impl Ft8rsApp {
         let mut close = false;
         let viewport_id = egui::ViewportId::from_hash_of("settings");
         let min_height = settings_min_height(ctx, locale);
+        let sidebar_width = settings_sidebar_width(ctx);
         // A resizable OS window (own viewport) with a native title bar. The tabs
         // live in a left SidePanel whose edge separator spans the full height.
         ctx.show_viewport_immediate(
@@ -1120,10 +1121,8 @@ impl Ft8rsApp {
             |vctx, _class| {
                 self.settings_focus.update(vctx, Instant::now());
                 egui::Panel::left("settings_tabs")
-                    .resizable(true)
-                    .default_size(150.0)
-                    .min_size(112.0)
-                    .max_size(200.0)
+                    .resizable(false)
+                    .exact_size(sidebar_width)
                     .frame(
                         egui::Frame::side_top_panel(&vctx.global_style())
                             .inner_margin(egui::Margin::symmetric(12, 14)),
@@ -2017,6 +2016,32 @@ fn monitor_button(
         .inner
     })
     .inner
+}
+
+/// One fixed sidebar width for both languages, including label/button/panel
+/// padding. Exact panel sizing also overrides a width saved by older versions.
+fn settings_sidebar_width(ctx: &egui::Context) -> f32 {
+    let style = ctx.global_style();
+    let font = egui::TextStyle::Button.resolve(&style);
+    let label_width = ctx.fonts_mut(|fonts| {
+        [Locale::English, Locale::Chinese]
+            .into_iter()
+            .flat_map(|locale| {
+                SETTINGS_TABS
+                    .iter()
+                    .map(move |(_, label)| locale.text(label))
+            })
+            .map(|label| {
+                fonts
+                    .layout_no_wrap(label.to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            })
+            .fold(0.0f32, f32::max)
+    });
+    (label_width + 2.0 * style.spacing.button_padding.x + 24.0 + 4.0)
+        .ceil()
+        .max(150.0)
 }
 
 /// Reserve enough client height for every navigation row at the current font metrics.
