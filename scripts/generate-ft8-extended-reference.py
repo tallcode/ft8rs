@@ -66,7 +66,9 @@ def main():
         parser.error('choose a candidate directory outside accepted data')
     # Reuse the existing accepted protocol/waveform corpus byte-for-byte.
     # Adding channel/boundary cases never forces base-data regeneration.
-    for name in ['protocol', 'audio', 'waveforms', 'provenance']:
+    for name in ['protocol', 'audio', 'waveforms', 'provenance', 'upstream', 'upstream-retention']:
+        if name in ['upstream', 'upstream-retention'] and not (base/'ft8'/name).exists():
+            continue  # Older native snapshots predate the supplemental layer.
         target = output/'ft8'/name
         if not target.exists():
             shutil.copytree(base/'ft8'/name, target)
@@ -86,13 +88,20 @@ def main():
     sources = [lib/'crc.f90', lib/'packjt.f90', protocol/'packjt77.f90',
                lib/'fmtmsg.f90', lib/'grid2deg.f90', lib/'deg2grid.f90', lib/'chkcall.f90',
                ft8/'encode174_91.f90']
+    if args.decoder == 'wsjtx' and (protocol/'packjt77_schema.f90').exists():
+        sources[2:2] = [protocol/'packjt77_schema.f90', protocol/'packjt77_grammar.f90']
+        sources.append(protocol/'decoder_codec_context.f90')
     if args.decoder == 'jtdx':
         sources += [lib/'ft8_mod1.f90', lib/'genft8.f90']
     else:
         sources += [ft8/'genft8.f90']
-    sources += [lib/'timer_module.f90',
-                lib/('gen_ft8wave.f90' if args.decoder == 'jtdx' else 'ft8/gen_ft8wave.f90'),
-                lib/('gfsk_pulse.f90' if args.decoder == 'jtdx' else 'ft2/gfsk_pulse.f90'),
+    sources += [lib/'timer_module.f90']
+    if args.decoder == 'wsjtx' and (ft8/'ft8_waveform.f90').exists():
+        sources.append(ft8/'ft8_waveform.f90')
+    pulse = lib/'gfsk_pulse.f90'
+    if not pulse.exists():
+        pulse = lib/'ft2/gfsk_pulse.f90'
+    sources += [lib/('gen_ft8wave.f90' if args.decoder == 'jtdx' else 'ft8/gen_ft8wave.f90'), pulse,
                 lib/'fftw3mod.f90', lib/'four2a.f90',
                 lib/('watterson.f90' if args.decoder == 'jtdx' else 'ft8/watterson.f90')]
     # degrade_snr is a WSJT-X utility. Emit the common real-recording corpus

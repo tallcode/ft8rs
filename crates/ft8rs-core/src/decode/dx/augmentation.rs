@@ -276,6 +276,14 @@ mod tests {
     use crate::decode::{genft8::get_ft8_tones_from_77bits, packjt77::pack77};
 
     fn tagged(message: &str, freq: f64) -> StreamDecodedWithProvenance {
+        let bits = pack77(message);
+        // Shape-policy tests also construct deliberately malformed text.
+        // Current native packing rejects it; it has no valid tone payload.
+        let itone = if bits.len() == 77 {
+            get_ft8_tones_from_77bits(&bits)
+        } else {
+            [0; 79]
+        };
         StreamDecodedWithProvenance {
             decode: StreamDecodedMessage {
                 freq,
@@ -283,7 +291,7 @@ mod tests {
                 snr: -5.0,
                 msg: message.into(),
                 sync: 3.0,
-                itone: get_ft8_tones_from_77bits(&pack77(message)),
+                itone,
             },
             provenance: StreamDecodeProvenance::Regular,
         }

@@ -17,7 +17,18 @@ fn upstream_waveforms_cover_message_types_offsets_noise_and_channel_damage() {
             let fields: Vec<_> = line.split('\t').collect();
             assert_eq!(fields.len(), 8);
             let id = fields[0];
-            let samples = audio(data::root().join(format!("ft8/audio/{}", fields[1])));
+            // Legacy native files remain protocol provenance. Active RR73
+            // sensitivity checks use the current native 32403 waveform for
+            // every adapter; do not repeat it under the second source label.
+            if id == "rr73" && source == "jtdx" {
+                continue;
+            }
+            let path = if id == "rr73" {
+                data::root().join("ft8/waveforms/rr73-current.wav")
+            } else {
+                data::root().join(format!("ft8/audio/{}", fields[1]))
+            };
+            let samples = audio(path);
             let message = fields[2];
             let frequency: f64 = fields[3].parse().unwrap();
             let dt: f64 = fields[4].parse().unwrap();
@@ -403,7 +414,7 @@ fn historical_recordings_preserve_required_rows_and_export_per_message_snapshots
             }
             let required = match (adapter.name, long) {
                 ("wsjtx", false) => Some(21),
-                ("wsjtx", true) => Some(434),
+                ("wsjtx", true) => Some(429),
                 ("jtdx", false) => Some(20),
                 ("jtdx", true) => Some(453),
                 ("hybrid", true) => Some(476),

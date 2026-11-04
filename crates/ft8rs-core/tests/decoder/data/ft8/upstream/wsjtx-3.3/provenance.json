@@ -1,0 +1,72 @@
+{
+  "revision": "d89fe30ca1dfd3c38def8f17228f09f042829f95",
+  "compiler": "GNU Fortran (GCC) 14.2.0",
+  "flags": [
+    "-O2",
+    "-cpp",
+    "-ffree-line-length-none",
+    "-fallow-argument-mismatch",
+    "-fwrapv",
+    "-I",
+    "/Volumes/ZHITAI/Workspace/ft8rs/target/wsjtx-upstream-20261104/lib",
+    "-I",
+    "/Volumes/ZHITAI/Workspace/ft8rs/target/wsjtx-upstream-20261104/lib/ft8"
+  ],
+  "sources": {
+    "lib/crc.f90": "e9c12e0cec0c511440200b158760e80410ddacc499c7a9a71091394af232f9fe",
+    "lib/packjt.f90": "ec83904457fe79f99cbb8d9cfd471209a861f1e4cda35259ecdeedac2f745b32",
+    "lib/77bit/packjt77_schema.f90": "fd95d99b6eb1440b9bbb0949ded84f365cdadd398acc27f81da7f42bed549a1e",
+    "lib/77bit/packjt77_grammar.f90": "0acb3f2ae372037ceda38e87cdec3890d00999f48cfee70eaf3d95380adc36b4",
+    "lib/77bit/packjt77.f90": "d8400237ce48a3053873b2085225ee11dda902c6eb8c068c8b7b401a61dd1a87",
+    "lib/77bit/decoder_codec_context.f90": "4a66d14506e3d913c661a49f86ac28ea29c8907152e1586358b95329902e4050",
+    "lib/fmtmsg.f90": "599f97baf74e09dd16e54b2609d0e49e54288b6d0e77a26da39b58152f91fbf9",
+    "lib/grid2deg.f90": "59c2c0a210be924b84f6d0578ba42b3dfaf393694d199fc643f5aab4337d1ee7",
+    "lib/deg2grid.f90": "e7ef6cc0ae8782659e503347b29123c8c4748a3358a4cde70997f080de9e555d",
+    "lib/chkcall.f90": "3ffeb7bc24779eec02799835ffba8e36ee55960a9df12f72b72d6fc5cf5043ca",
+    "lib/ft8/encode174_91.f90": "01093195c276c154c5cd8a4006fc342f99d6eff557c6024750101d411bc0a824",
+    "lib/ft8/genft8.f90": "3802ec106932c71956b7da174b44769a15f60bc7a1ead86d2a147088e1338c19",
+    "lib/stdcall_suffix.f90": "5bc37c41c4c79ebc8267ba2db8391bcd1bd5b547af84068d073006edd933adc9",
+    "lib/crc14.cpp": "0066a88d9920bb27d2a4925eee7c581338d5375a30eb943dc890f99bb69715e7",
+    "lib/ft8/ft8_a7.f90": "8d5b3b0991b6fed9b334dbca076fbd37b56829351d80a42236fa7b97411590c6",
+    "lib/qra/q65/q65_set_list.f90": "c66bd62a68709bb056bee7cbce4e0def4353a7da6d652bc628d0fee91bafe7dc",
+    "lib/ft8/ldpc_174_91_c_generator.f90": "b061e4428fd89c9d2df3ea7026f03430141c6df36baaf341dc7b84b9f5573bfd"
+  },
+  "decoder_sources": {
+    "lib/ft8_decode.f90": "36dda5d4611ca82b8751403518849d4599dd77f799d0018e6de836e2d658712a",
+    "lib/four2a.f90": "1014d8c10f0d9e6be06629ab2ce4fa058c862d06943e195922998f638364a4a7",
+    "lib/ft8/ft8_a8d.f90": "71dd210187ec87b7ba3c2e219cebbdc5694ced787546cba48c986c1da05d8351",
+    "lib/ft8/ft8apset.f90": "d4237e3965220ac78edc2871a7a9a753a026e86f6bcf8b2c13d7e331ef4105e0",
+    "lib/ft8/ft8b.f90": "6b31835def7373c581072213851a162b5884953edf2c97ac19905daa8393ac2a",
+    "lib/ft8/sync8.f90": "439803ce7a193e3cf9b6a542056e9880c7bfbd4167413484d9877d8b047f52cf",
+    "lib/ft8/sync8d.f90": "db3eb065bc2480f23806421314b24b43267a424c4f4bb8fc80d9e6b0f40039fa",
+    "lib/ft8/ft8_downsample.f90": "5843c705a2ab919b5c9681963db89dbf6d8d024eb4966439d03a625b1efc26b2",
+    "lib/ft8/subtractft8.f90": "4f1b46a65d64c4c95910df817cfb88f0d8724cf04cd081082b95ac9f751bf53e",
+    "lib/ft8/decode174_91.f90": "05821c64e20200691908504a27392dfcc1070bd163af17f82143793b3fb912db",
+    "lib/ft8/bpdecode174_91.f90": "fe6dc02e36d0e1e15df8aacb117c170d1da5d505b76add50439fa0d714ae943b",
+    "lib/ft8/osd174_91.f90": "3bc4270d864aa9ae6977fc95d66a093dbe7dd1ecbb208a11619a59762eb6fb5b",
+    "lib/ft8/gen_ft8wave.f90": "5fb59230d59fa7ce990a563d35e68ff1fca0a9ac67727fa078f93a4c1b12edbf",
+    "lib/ft8/ft8_waveform.f90": "15df21669dde6955932a333d300e1e8c2e29739979746a984e73b9725ba932d8"
+  },
+  "a7_message_source_sha256": "60c761f7d29a8fd539ed9312a178af9a8c110513957ec8e80ccd5f390e872ade",
+  "getmsg_extracted_sha256": "abcceb9f421f01c3984f764761d08a4f62f40720f2301b53893c35578cfbd043",
+  "stdcall_extracted_sha256": "828f4e8bd70e6394e50933b58bedbd068ddf4607db2056d60e15a71101203dfd",
+  "driver_sha256": "840b233208ef184d3a5de8c52f3ae3609bc6c32324e2f19b8daf6cd145255394",
+  "generator_sha256": "aea2d42142abb960ae4036c38951800be30a3f1b115d5da100e529d1364e8753",
+  "files": {
+    "a7.tsv": "2cf470f8471dad6ebef93b8d2e22b37a607d4707c1d2fc24bf757aad74d2c7a3",
+    "protocol.tsv": "8b0795a758a53294c6f16af46e4ef99d6fdcd79b60717a02226281bff7799f12",
+    "a8.tsv": "58ed67bd68ca47121eac9574ff731a5f0f8a8f6dea2f746380a976f9af085985",
+    "legacy-receive.tsv": "38bfc8152624b7c263d43711c9557a5ddbc319dfa855fd4d44ac2a049c4d9b88"
+  },
+  "legacy_protocol_sha256": "9c09ec65770803229014a6b6fba997ec87b635a707e7990d6127baff7fd3325c",
+  "boost_crc_sha256": "2ebfd4db9071ae94003eadf8c80cf57f33bc0d744836f43b9c66d2074e6b639e",
+  "boost_config_sha256": "373206390d20aa5bb9e2628eb08543399d73b853af7bfc5f1d2bd9a00bc07593",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "macos_deployment_target": "11.0",
+  "cxx": "Apple clang version 21.0.0 (clang-2100.4.1.1)",
+  "static_runtimes": {
+    "libgfortran.a": "68b0d04ab9090179e3fd118a76db7b8bbf0cf0c0a9ed8b8dcb7471ebe25c24e5",
+    "libquadmath.a": "d8b2898ec1664b02e2b05b8df0342c1d9278ffd95d4c5eabc9aa14fd2abbbc49",
+    "libgcc.a": "5b574ef8715bef8aa61e0553e161f6c5582f469b7e9537f104b7717c17a9a24c"
+  }
+}

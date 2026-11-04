@@ -24,6 +24,12 @@ def rows(path):
 
 
 def verify(root, require_retention=True):
+    for path in sorted((root / 'ft8/upstream').glob('*/provenance.json')):
+        meta = json.loads(path.read_text())
+        for name, expected in meta['files'].items():
+            assert digest(path.parent / name) == expected, f'corrupt upstream reference {name}'
+        assert digest(root / 'ft8/protocol/wsjtx.tsv') == meta['legacy_protocol_sha256']
+        print(f'current wsjtx reference: revision={meta["revision"]} verified')
     backends = sorted((root / 'ft8/provenance').glob('*.json'))
     assert backends, f'no provenance in {root}'
     for path in backends:
@@ -89,6 +95,58 @@ def verify(root, require_retention=True):
                 assert sum(row[:2] == case[:2] for row in required) == int(case[2])
             assert {row[1]:row[7] for row in recordings} == meta['native_fixture_hashes']
             print(f'retention: {len(cases)} calibrated cases, {len(required)} required message rows verified')
+    current_audio = root / 'ft8/waveforms/rr73-current.json'
+    if current_audio.exists():
+        meta = json.loads(current_audio.read_text())
+        native = json.loads((root / 'ft8/upstream/wsjtx-3.3/provenance.json').read_text())
+        assert meta['revision'] == native['revision']
+        assert meta['rr73_field'] == int(meta['bits77'][59:74], 2) == 32403
+        assert digest(current_audio.with_suffix('.wav')) == meta['waveform_sha256']
+        with wave.open(str(current_audio.with_suffix('.wav'))) as wav:
+            assert (wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getnframes()) == (1, 2, 12000, 180000)
+        print('Current native RR73 AWGN waveform: 32403 verified')
+    for stem, field in [('dx-current-payloads', 32403)]:
+        dx_meta = root / f'ft8/waveforms/{stem}.provenance.json'
+        if not dx_meta.exists():
+            continue
+        dx = json.loads(dx_meta.read_text())
+        payloads = dx_meta.with_name(stem + '.tsv')
+        assert digest(payloads) == dx['payload_sha256']
+        fixed = rows(payloads)
+        assert len(fixed) == dx['cases'] == 11
+        assert len({r[0] for r in fixed}) == 11
+        for message, bits, tones in fixed:
+            assert len(bits) == 77 and set(bits) <= {'0', '1'}
+            assert len(tones) == 79 and set(tones) <= set('01234567')
+            if message == 'K1JT BG5ATV RR73':
+                assert int(bits[59:74], 2) == field == dx['rr73_field']
+        if field == 32403:
+            native = json.loads((root / 'ft8/upstream/wsjtx-3.3/provenance.json').read_text())
+            assert dx['revision'] == native['revision']
+            assert all(native['sources'][name] == sha for name, sha in dx['sources'].items())
+        print(f'DX waveform inputs: {stem}, 11 native payloads verified, RR73={field}')
+    policy_path = root / 'ft8/upstream-retention/policy.json'
+    if policy_path.exists():
+        policy = json.loads(policy_path.read_text())
+        native = json.loads((root / 'ft8/upstream/wsjtx-3.3/provenance.json').read_text())
+        assert policy['revision'] == native['revision'], 'retention exceptions need review for this upstream revision'
+        for name, expected_hash in policy['files'].items():
+            assert digest(policy_path.parent / name) == expected_hash, f'corrupt retention policy {name}'
+        exceptions = rows(policy_path.parent / 'exceptions.tsv')
+        assert len(exceptions) == policy['observations'] == 10
+        assert len({tuple(r) for r in exceptions}) == len(exceptions)
+        assert len({r[4] for r in exceptions}) == policy['unique_messages'] == 5
+        recordings = {r[1]: r[7] for r in rows(root / 'ft8/degraded/recordings.tsv')}
+        required = rows(root / 'ft8/degraded/retention.tsv') if require_retention else None
+        for adapter, recording, recording_hash, slot, message, reason in exceptions:
+            assert adapter in ['wsjtx', 'hybrid', 'hybrid-exp']
+            assert recording_hash == recordings[recording]
+            assert reason in ['legacy_rr73_32373', 'a7_qu1rk_runner_up']
+            base_adapter = 'hybrid' if adapter == 'hybrid-exp' else adapter
+            if required is not None:
+                assert any(r[:4] == [base_adapter, recording, slot, message] for r in required), 'exception is not a frozen required identity'
+        assert sum(r[0] != 'hybrid-exp' for r in exceptions) == policy['calibrated_observations'] == 8
+        print('upstream retention: 5 approved identities, 8 calibrated + 2 supplemental observations; all other rows remain mandatory')
     return backends
 
 
@@ -105,6 +163,9 @@ def main():
     status.add_argument('--data', type=Path, default=DEFAULT)
     status.add_argument('--decoder', choices=['wsjtx', 'jtdx'], required=True)
     status.add_argument('--source', type=Path, required=True)
+    upstream = sub.add_parser('audit-upstream', help='Verify the pinned current WSJT-X source layer')
+    upstream.add_argument('--data', type=Path, default=DEFAULT)
+    upstream.add_argument('--source', type=Path, required=True)
     runs = sub.add_parser('compare-runs', help='Fail if any previously decoded message is lost')
     runs.add_argument('--before', type=Path, required=True)
     runs.add_argument('--after', type=Path, required=True)
@@ -162,6 +223,21 @@ def main():
             total_lost += len(lost)
         if total_lost:
             raise SystemExit(1)
+    elif args.command == 'audit-upstream':
+        verify(args.data)
+        meta = json.loads((args.data / 'ft8/upstream/wsjtx-3.3/provenance.json').read_text())
+        sources = {**meta['sources'], **meta['decoder_sources']}
+        current_audio = args.data / 'ft8/waveforms/rr73-current.json'
+        if current_audio.exists():
+            extra = json.loads(current_audio.read_text())
+            for name, expected in extra['sources'].items():
+                assert name not in sources or sources[name] == expected
+                sources[name] = expected
+        changed = [name for name, expected in sources.items()
+                   if not (args.source / name).is_file() or digest(args.source / name) != expected]
+        if changed:
+            raise SystemExit('Pinned WSJT-X sources differ:\n' + '\n'.join(changed))
+        print(f'Pinned current WSJT-X sources match {meta["revision"]}: {len(sources)} files')
     else:
         meta = json.loads((args.data / f'ft8/provenance/{args.decoder}.json').read_text())
         revision = subprocess.check_output(['git', '-C', args.source, 'rev-parse', 'HEAD'], text=True).strip()

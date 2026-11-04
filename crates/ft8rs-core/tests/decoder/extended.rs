@@ -198,6 +198,36 @@ pub fn measurements(long: bool) -> Vec<Retention> {
     result
 }
 
+// User-approved exact observations, separate from the unchanged retention oracle.
+// The runner verifies fixture hashes before installing this context. A direct
+// ad-hoc invocation without that private CallDB context receives no exemptions.
+#[cfg(test)]
+fn approved_upstream_loss(result: &Retention, slot: usize, message: &str) -> bool {
+    if std::env::var("FT8RS_RETENTION_CALLDB_SHA256").as_deref()
+        != Ok("e647033c0ed4ef2d7c3c56839cfbd819f224805bcd7e0689ac656a0e8b22b298")
+        || !matches!(
+            std::env::var("FT8RS_RETENTION_BUILD_PROFILE").as_deref(),
+            Ok("fast" | "release")
+        )
+    {
+        return false;
+    }
+    let recordings = table("ft8/degraded/recordings.tsv");
+    let Some(recording) = recordings.iter().find(|r| r[1] == result.variant) else {
+        return false;
+    };
+    table("ft8/upstream-retention/exceptions.tsv")
+        .iter()
+        .any(|r| {
+            r.len() == 6
+                && r[0] == result.adapter
+                && r[1] == result.variant
+                && r[2] == recording[7]
+                && r[3] == slot.to_string()
+                && r[4] == message
+        })
+}
+
 #[cfg(test)]
 fn assert_retained(long: bool) {
     let expected = table("ft8/degraded/retention.tsv");
@@ -242,6 +272,11 @@ fn assert_retained(long: bool) {
             });
             if let Some((index, _)) = matched {
                 used[index] = true;
+            } else if approved_upstream_loss(&result, slot, &row[3]) {
+                eprintln!(
+                    "EXPECTED UPSTREAM LOSS: {} {} slot {slot}: {}",
+                    result.adapter, result.variant, row[3]
+                );
             } else {
                 errors.push(format!(
                     "{} {} slot {slot}: lost {}",

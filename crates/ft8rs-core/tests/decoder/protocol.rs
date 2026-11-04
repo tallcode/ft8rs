@@ -1,6 +1,7 @@
 //! FT8 golden vectors and channel-code experiments shared by native backends.
 mod data;
 mod protocol_adapters;
+mod upstream;
 use protocol_adapters::{Backend, BACKENDS};
 
 struct Vector {
@@ -65,11 +66,17 @@ fn upstream_message_bits_crc_parity_tones_and_receive_unpack() {
         );
         for vector in vectors {
             let label = format!("{backend:?}: {}", vector.input);
-            if backend.pack(&vector.input) != vector.bits {
+            if backend.pack(&vector.input)
+                != upstream::current_pack(backend, &vector.input, &vector.bits)
+            {
                 errors.push(format!("{label}: pack77"));
             }
-            let expected = vector.receive_valid.then_some(vector.decoded.as_str());
-            if backend.unpack(&vector.bits, &calls).as_deref() != expected {
+            let expected = upstream::current_receive(
+                backend,
+                &vector.bits,
+                vector.receive_valid.then_some(vector.decoded.as_str()),
+            );
+            if backend.unpack(&vector.bits, &calls) != expected {
                 errors.push(format!(
                     "{label}: unpack expected {:?}, got {:?}",
                     expected,

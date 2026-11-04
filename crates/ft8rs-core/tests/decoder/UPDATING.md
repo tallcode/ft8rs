@@ -4,6 +4,71 @@ This is an explicit maintenance operation. Daily tests reuse stored files and do
 not invoke these generators. Commands run from the repository root.
 The accepted corpus is `crates/ft8rs-core/tests/decoder/data`.
 
+## Current WSJT-X upstream codec and template layer
+
+The preserved 3.0 corpus remains the historical native wire oracle. The separate
+`ft8/upstream/wsjtx-3.3` layer is active for current strict/compatibility packing
+and receive rendering. It also contains 2,466 A8 messages and 1,236 A7 messages
+across six contexts each. A7 message construction is extracted verbatim from the
+native loop, including its CQ sentinel tails.
+
+```sh
+python3 scripts/generate-wsjtx-upstream-reference.py \
+  --source /path/to/pinned/wsjtx \
+  --fc /path/to/gfortran --boost-include /path/to/boost \
+  --runtime-dir /path/to/static/runtime \
+  --output /tmp/wsjtx-3.3-native-candidate
+python3 scripts/decoder-references.py audit-upstream --source /path/to/pinned/wsjtx
+```
+
+The runtime directory holds `libgfortran.a`, `libquadmath.a` and `libgcc.a`.
+Review the five generated files and their provenance. Existing old wire CRC,
+codewords, tones and waveforms are not regenerated to match new source packing.
+
+The user-approved `ft8/upstream-retention/` policy is a separate Rust regression
+exception list, not native reference output. It names five diagnosed identities
+in ten exact observations (eight calibration rows plus two Hybrid-exp checks).
+It preserves the frozen `retention.tsv`, records missing exceptions explicitly,
+and leaves every other identity mandatory. The runner verifies input hashes and
+binds the policy to its private 2022 CallDB and `fast`/`release` context. Direct
+ad-hoc test runs without this context receive no exemption. A new upstream
+revision requires policy review; do not expand this list to unrelated messages.
+The wsjtx+ compatibility target retains these five messages as required gains.
+
+The current real-recording CSV removes only W from those five exact long-recording
+rows (four old RR73 plus the diagnosed CQ), keeping all other fields and J/H/He.
+Raw W requirements therefore number 429. `retention.json` retains the original
+calibration CSV hashes and its frozen 1,458 rows; these are historical provenance,
+not a request to regenerate the baseline after a label edit. Its separate ten
+exact allowances still apply, including the supplemental Hybrid-exp CQ cases.
+
+## Current RR73 sensitivity inputs
+
+DX regressions use frozen `waveforms/dx-current-payloads.tsv`, independently
+captured from the pinned native `genft8`. Its RR73 field is 32403. The old
+comparison-only DX corpus and optional WAV-export hook have been removed after
+diagnosis; the compatibility conclusions live in the single wsjtx+ README.
+
+```sh
+python3 scripts/generate-dx-fixture-payloads.py \
+  --source /path/to/pinned/wsjtx \
+  --fc /path/to/gfortran --boost-include /path/to/boost \
+  --runtime-dir /path/to/static/runtime --output /tmp/dx-current-candidate
+```
+
+All adapters also use `waveforms/rr73-current.wav` for the active RR73 AWGN
+case. `rr73-current.json` records the native bits/tones, source and toolchain
+hashes, frequency 2852 Hz, DT 0.3 s, nominal -14 dB and seed 2026102803.
+Reproduce it with `generate-ft8-reference.py` against the same current pin,
+then take only the staged `audio/wsjtx_rr73.wav` and its corresponding native
+provenance. The generator supports the current waveform module and root-level
+`gfsk_pulse.f90`. The historical base corpus stays unchanged as a native wire
+compatibility oracle; its two old RR73 audio entries no longer drive the active
+sensitivity test. Other historical signals and real WAVs are not regenerated.
+
+On macOS, set `MACOSX_DEPLOYMENT_TARGET` to a version supported by the native
+compiler if required. Cargo tests use stored fixtures and need no Fortran tools.
+
 ## Decide what changed
 
 ```sh
@@ -84,10 +149,10 @@ a complete candidate for the current full test suite.
 
 ## 2. Generate the extension candidate
 
-Use a different, fresh output directory. The extension tool copies only the
-selected base's `protocol`, `audio`, `waveforms` and `provenance` directories
-byte-for-byte. It does not rerun the base generator. Generate both sources into
-the same candidate root:
+Use a different, fresh output directory. The extension tool copies the selected
+base's `protocol`, `audio`, `waveforms` and `provenance` directories byte-for-byte,
+and preserves its optional `upstream` and `upstream-retention` layers when present. It does
+not rerun the base generator. Generate both sources into the same candidate root:
 
 ```sh
 python3 scripts/generate-ft8-extended-reference.py \

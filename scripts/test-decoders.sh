@@ -29,6 +29,13 @@ core = root / 'crates/ft8rs-core'
 # Never replace a live or target-directory database to run them.
 database = core / 'ALLCALL7.TXT.2022'
 shutil.copy2(database, work / 'ALLCALL7.TXT')
+os.environ['FT8RS_RETENTION_CALLDB_SHA256'] = hashlib.sha256(database.read_bytes()).hexdigest()
+os.environ['FT8RS_RETENTION_BUILD_PROFILE'] = sys.argv[4]
+policy_file = core / 'tests/decoder/data/ft8/upstream-retention/policy.json'
+if policy_file.exists():
+    policy = json.loads(policy_file.read_text())
+    assert policy['calldb_sha256'] == os.environ['FT8RS_RETENTION_CALLDB_SHA256']
+    assert sys.argv[4] in policy['profiles']
 print(f'CallDB: {database.name} sha256={hashlib.sha256(database.read_bytes()).hexdigest()}', flush=True)
 if os.environ.get('FT8RS_DECODER_REPORT_DIR'):
     report = Path(os.environ['FT8RS_DECODER_REPORT_DIR'])

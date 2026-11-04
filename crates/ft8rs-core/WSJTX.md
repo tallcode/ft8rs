@@ -12,6 +12,97 @@ rules, and known maintenance constraints for that profile.
 Other profiles have separate technical reports and must not add design notes to
 this file.
 
+## Current upstream alignment
+
+The classic receive-code alignment target is WSJT-X `v3.3.0-beta5`, commit
+`d89fe30ca1dfd3c38def8f17228f09f042829f95`. The official `release/3.3` branch
+and beta5 tag were rechecked on 2026-11-04 and still point to this commit;
+`master` remains at `967c85a6`. The sibling checkout is unchanged. Verification
+uses the independent checkout `target/wsjtx-upstream-20261104`.
+
+This profile mirrors the classic FT8 receiver. Upstream's `ft8var` coarse-cache,
+FFT32 pruning and multithreaded residual transactions remain a separate engine;
+this update does not silently substitute that engine or claim its speedup.
+
+The current update includes:
+
+- `015b4894`: suffix-aware A8 hypotheses for standard `/R` and `/P` calls,
+  retaining former nonstandard-call candidates in their original order.
+- `25a626af`: A8 templates, private reusable scratch, bounded overlap loops,
+  raw/smoothed spectra, reduced copies, deterministic ties and bounded waveform
+  phase wrapping on the applicable classic path.
+- `8a0bddd9`: direct construction of the shifted subtraction filter. Rust's
+  existing heap/session ownership already covers the native stack-storage fixes.
+- `2e272882`: A7 zero-distance protection.
+- `2c1b22b6`: RR73 AP tail matches acknowledgment 32403. Standard source packing
+  prioritizes that acknowledgment over grid value 32373; receive unpack can
+  still render both wire forms as RR73.
+- `50f6cc83`, `fad848ef`: grammar-first strict encoding, native genft8 free-text
+  compatibility, staged hash effects, contest bounds and current Field Day /
+  telemetry rendering. AP setup uses strict encoding. Type 3 wire acceptance
+  follows the native receiver even where source grammar is stricter.
+- A7 sentinel construction now follows the native loop: construct the base,
+  then append its RRR/RR73/73/report tail. The former Rust early return omitted
+  those tails. No special sentinel rejection or legacy RR73 recovery is added.
+
+WSPR and transmit-only controls remain outside this receive-only scope.
+
+### Approved historical-recording differences
+
+The user superseded the earlier decision to defer codec/AP migration: keep the
+original decoder synchronized with upstream, and handle compatibility in wsjtx+.
+The independently diagnosed losses are accepted only for the exact observations
+in `tests/decoder/data/ft8/upstream-retention/exceptions.tsv`:
+
+- WSJT-X, +1 dB long recording: `YO3GOD OY1DZ RR73` (slot 3),
+  `I3EVK VE7ON RR73` (slot 8), `PD4I RL6LS RR73` and
+  `RJ3DC OE9GWV RR73` (slot 13).
+- WSJT-X, Hybrid and Hybrid-exp, +1 / +3 dB long recordings:
+  `CQ OH8CMS KP24` (slot 11).
+
+That is five distinct messages and ten profile/recording observations: eight
+frozen calibration rows and two supplemental Hybrid-exp checks. Exceptions are
+bound to recording SHA-256, profile, slot, complete message, the 2022 private
+CallDB, optimized build context and this pinned upstream revision. Every absence
+is logged as `EXPECTED UPSTREAM LOSS`; all other identities remain mandatory.
+Original-audio snapshots have no loss exemption. Five exact long-recording CSV
+rows now omit W (four old RR73 and the diagnosed CQ); all other fields and
+J/H/He markers are preserved, so the current W requirement is 429 rows.
+The historical retention corpus
+is unchanged; this policy is separate and is not a native truth oracle.
+
+The original 3.0 protocol, channel and audio data are preserved. The independent
+native `ft8/upstream/wsjtx-3.3/` layer supplies active current packing/rendering
+expectations, all 411 A8 messages for six contexts, and all 206 A7 messages for
+six contexts. Earlier native codewords, CRC, tones and waveforms remain checked
+as historical wire inputs. A7 source construction is extracted verbatim, with
+its source-section hash recorded alongside driver/generator/toolchain hashes.
+
+Native Type 3 wire acceptance adds the unconfirmed
+`CQ 001 IZ7MMG 549 2025` on original-audio slot 3. This is recorded separately
+and is not claimed as a known-truth sensitivity gain or hidden by a custom filter.
+
+The evidence and future compatibility work belong in
+[src/decode/lib_wsjtx_plus/README.md](src/decode/lib_wsjtx_plus/README.md).
+
+Active RR73 sensitivity fixtures use native acknowledgment 32403, including
+the standalone AWGN case. Source checks cover 36 pinned codec, template,
+receiver and waveform files. The consolidated wsjtx+ report records synthetic
+coverage and compatibility diagnoses. The plus directory remains documentation
+only, without a compiled decoder or public entry point.
+
+Reproduction and pin audit:
+
+```sh
+python3 scripts/decoder-references.py audit-upstream --source target/wsjtx-upstream-20261104
+FT8RS_WSJTX_SOURCE_DIR="$PWD/target/wsjtx-upstream-20261104" \
+  FT8RS_REQUIRE_WSJTX_SOURCE=1 scripts/test-decoders.sh release --include-ignored
+```
+
+See `tests/decoder/UPDATING.md` for native reference generation. The test runner
+verifies fixture hashes and installs the private CallDB/build context before
+using the explicit exception policy.
+
 For user controls and builds, see [usage](../../docs/USAGE.md) and
 [development](../../docs/DEVELOPMENT.md). Shared calibration conditions and the
 latest dated local result are maintained in [validation](../../docs/VALIDATION.md).
@@ -260,7 +351,9 @@ decode landed within 3 Hz of `nfqso`, and no a7 AP decode contains `hiscall`.
 
 Source-shape details to preserve:
 
-- message enumeration uses `getmsg(1..206,mycall,dxcall,dxgrid)`;
+- message enumeration uses `getmsg(1..206,mycall,dxcall,dxgrid)` normally;
+  a standard `/R` or `/P` DX call additionally retains candidate 207, or
+  candidates 207–411 when MyCall is also suffix-aware standard;
 - generated waveform uses `gen_ft8wave(itone,NN,32,2.0,200.0,0.0,...)`;
 - lag search is `-200..200` in steps of `4`, then `lagpk-8..lagpk+8` in
   steps of `1`;
@@ -290,7 +383,9 @@ Receive-side families that should remain covered:
 Important gates:
 
 - `i3=0,n3=6` is out of scope and rejected;
-- Type 3 callsign fields must validate through WSJT-X `chkcall`-style rules;
+- Type 3 source grammar and wire acceptance are distinct; current receive
+  special c28 tokens follow the native reference, including CQ/DE forms;
+  accepted wire syntax alone does not establish a true on-air message;
 - hash unpack uses the shared stream `HashCallBook`, not a per-slot book;
 - diff matching treats resolved hash display forms such as `<RK4FF>` and
   `RK4FF` as equivalent, while unresolved `<...>` remains distinct.
@@ -331,8 +426,9 @@ Keep these in mind during future audits:
 - AP parity must use `jseq=mod(nutc/5,2)`, not a blind toggle.
 - `packjt77::is_stdcall()` and AP `chkcall` need WSJT-X call-area position
   semantics.
-- Type 3 false positives should be fixed with WSJT-X-style callsign validation,
-  not by disabling contest messages.
+- Type 3 source grammar and wire acceptance are different boundaries. Preserve
+  pinned native receive behavior; do not insert ad-hoc callsign filters or call
+  unconfirmed output a sensitivity gain. Independent wire references cover it.
 - Current WSJT-X FT8 uses `5+2*nappasses`, `lapcqonly=>7`, and AP `*1.1`.
   Older `*1.01` notes belong to other/commented paths.
 

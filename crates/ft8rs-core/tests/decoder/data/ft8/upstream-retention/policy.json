@@ -1,0 +1,19 @@
+{
+  "kind": "User-approved upstream alignment exceptions; not a native truth oracle",
+  "revision": "d89fe30ca1dfd3c38def8f17228f09f042829f95",
+  "decision_date": "2026-11-04",
+  "calldb_sha256": "e647033c0ed4ef2d7c3c56839cfbd819f224805bcd7e0689ac656a0e8b22b298",
+  "profiles": [
+    "fast",
+    "release"
+  ],
+  "unique_messages": 5,
+  "observations": 10,
+  "calibrated_observations": 8,
+  "supplemental_hybrid_exp_observations": 2,
+  "files": {
+    "exceptions.tsv": "18ce8585af67cc742e76b1edb1cf4d4433a8741d69cd21b55e427673ccdf0e14"
+  },
+  "diagnosis": "crates/ft8rs-core/src/decode/lib_wsjtx_plus/README.md",
+  "policy": "Only these exact recording hashes, profiles, slots and complete messages may be absent. Continue reporting each exemption; all other identities remain mandatory. The original corpus is unchanged."
+}

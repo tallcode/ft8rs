@@ -13,7 +13,7 @@ session. Native baseline tests have SWL/AGC off and no user QSO context.
 
 | Profile | Short recording `210703_133430` | Long recording `230208_140300` |
 |---|---:|---:|
-| WSJT-X (`W`) | 21/21 target rows, every target required | 434/434 target rows |
+| WSJT-X (`W`) | 21/21 target rows, every target required | 429/429 target rows |
 | JTDX (`J`) | 20/20 target rows | 453/453 target rows, fixed one partition |
 | Hybrid (`H`) | 21/21 target rows | 476/476 target rows |
 | Hybrid + experiment (`He`) | 21/21 target rows | 479/479 target rows |
@@ -208,6 +208,84 @@ Local logs and generated site fixtures are under `target/hygiene-checks/`;
 earlier data-path timing evidence is in the ignored
 `experiments/performance/2026-11-03-ui-implementation/` archive. Those timing
 probes exclude native-window and GPU latency and are not i5-9600T measurements.
+
+## WSJT-X upstream alignment and cleanup — 2026-11-04
+
+The active classic-receiver pin is `v3.3.0-beta5`,
+`d89fe30ca1dfd3c38def8f17228f09f042829f95`. Official GitHub release refs were
+queried again: release/3.3 and beta5 still point to this commit. The independent
+source checkout is clean; sibling ../wsjtx remains unchanged at 967c85a6.
+The separate ft8var engine was not ported.
+
+Current independent native coverage includes 68 source messages, 56 receive
+payloads, 2,466 A8 and 1,236 A7 candidates. The source audit now covers 36 files,
+including the current native waveform generation used for RR73. The original
+JTDX and Hybrid production sources match HEAD. DX production orchestration
+also matches HEAD; only its tests adapt frozen current input, exact identities
+and malformed-text fixtures to the current encoder. Cleanup adds no decoder
+algorithm or performance change.
+
+All real WAVs are byte-identical. Five exact long-recording CSV observations
+now omit W: old RR73 at slots 3,8,13,13 and CQ OH8CMS KP24 at slot11. The CQ
+has a separately diagnosed current-codec sentinel effect, not an RR73 grid
+cause. Other fields and J/H/He markers are unchanged. The current raw W target
+requirement is 429 rather than 434. This label edit does not filter outputs.
+The frozen 1,458-row degraded-retention corpus and its exact ten-observation
+upstream policy remain unchanged; 1,450 non-exempt calibrated requirements and
+all other supplemental requirements remain mandatory.
+
+Active synthetic RR73 sensitivity inputs all use 32403. DX uses eleven native
+frozen payload/tone rows. The general audio test substitutes the current native
+RR73 AWGN waveform for both historical RR73 source entries, runs it once over
+every adapter, and verifies no wrong content. Historical base protocol vectors
+and audio provenance remain as compatibility data. Temporary legacy-only DX
+fixtures, diagnostic print/export hooks and duplicate reports were removed.
+
+| Current-native DX scenario | Exact retained target slots |
+|---|---|
+| Seed 2026102801, complete pair, pumping off/on | 0,2,4,6,8 in each case |
+| Seed 2026102809, complete pair, pumping off/on | 0,2,4,6 in each case |
+| Seed 2026102809, no operator | 0,2,4 |
+| Seed 2026102879, target absent, known grid | None |
+
+Under the requested old-decoder/old-input versus new-decoder/new-input comparison,
+these cases retain 22 versus 21 message observations: one lost RR73 and zero
+additions. Its direct failure is ordinary BP/OSD CRC failure in the fixed noise,
+not an active old RR73 template. Old A8 waveform compatibility, real RR73 and
+CQ causes, full FEC evidence and the development stages are consolidated into
+[the single wsjtx+ plan/report](../crates/ft8rs-core/src/decode/lib_wsjtx_plus/README.md).
+CPU SIMD remains stage 2; MKL/GPU remain the final stage. There is no plus DSP.
+
+Before cleanup, the full serial release suite passed 232 tests, including all
+12 normally ignored gates; the other workspace passed 106 tests with two existing engine
+long gates ignored. All 1,934 pre-migration raw observations were retained;
+W/H/He each added the same unconfirmed Type3 CQ, with three tiny SNR deltas each
+(max 0.000219345 dB), no frequency/DT changes and seven byte-identical snapshots.
+Unconfirmed additions were not counted as true gain.
+
+Cleanup does not change original receiver code, real audio, configuration,
+CallDB, degraded requirements or the precise allowance logic. The earlier full
+long-noise matrix remains applicable; only its CSV-based diagnostic classification
+labels change. Final targeted release checks rerun the core units, both DX
+synthetic gates, all active native audio scenarios, real-recording snapshots,
+the CSV-sensitive WSJT-X long gate and source audits. Original-audio before/after
+snapshots are compared byte-for-byte; the intentional CSV hash change is recorded
+separately from unchanged audio and decoder configuration.
+
+Final targeted release checks: 198 passed, zero failures. All ten raw snapshots
+are byte-identical before/after cleanup, retaining all 1,937 current observations;
+the only input-condition hash change is the intentional CSV annotation edit.
+The other workspace passed 106 optimized tests (two existing engine long gates
+remained ignored). All-target workspace Clippy with `-D warnings`, formatting,
+fixture/source-pin verification, maintenance-script syntax and local links pass.
+The pre-commit check after synchronizing remote main passed 292 optimized
+workspace library/binary tests; four existing manual gates remained ignored.
+Evidence and current logs are retained
+under `target/decoder-validation/2026-11-04-cleanup/`. The compact
+`compatibility-evidence.json` preserves the diagnostic summaries, original source
+identities, native truth, offline FEC inputs/results and prior validation history.
+Temporary instrumented crates, probes, raw buffers, executables, WAV exports and
+tool downloads are removed; the formal native reference source checkout remains.
 
 ## Limits and follow-up validation
 

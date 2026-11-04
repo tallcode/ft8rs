@@ -54,16 +54,13 @@ fn lpf_data() -> &'static LpfData {
             sumw += *window_value;
         }
 
-        let mut cw_re = vec![0.0f64; NFFT];
-        for j in 0..=NFILT {
-            cw_re[j] = window[j] / sumw;
-        }
-
-        // Fortran: cw=cshift(cw,NFILT/2+1) before the forward FFT.
-        let shift = HALF_FILT + 1;
+        // Upstream 8a0bddd9: construct the shifted filter in place instead
+        // of copying and shifting a full NFFT buffer. Fortran's 1-based
+        // modulo(j-1,NFFT)+1 maps to the zero-based index below.
         let mut shifted_re = vec![0.0f64; NFFT];
-        for i in 0..NFFT {
-            shifted_re[i] = cw_re[(i + shift) % NFFT];
+        for (i, &value) in window.iter().enumerate() {
+            let j = i as isize - HALF_FILT as isize;
+            shifted_re[(j - 1).rem_euclid(NFFT as isize) as usize] = value / sumw;
         }
         let mut shifted_im = vec![0.0f64; NFFT];
         four2a_c2c(&mut shifted_re, &mut shifted_im, -1);

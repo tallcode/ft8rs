@@ -74,13 +74,22 @@ def main():
     files = [lib / 'crc.f90', lib / 'packjt.f90', protocol / 'packjt77.f90',
              lib / 'fmtmsg.f90', lib / 'grid2deg.f90', lib / 'deg2grid.f90', lib / 'chkcall.f90',
              ft8 / 'encode174_91.f90']
+    if args.decoder == 'wsjtx' and (protocol / 'packjt77_schema.f90').exists():
+        # Upstream 3.3 splits the native codec into schema, grammar and an
+        # owned context. Compile unchanged sources in dependency order.
+        files[2:2] = [protocol / 'packjt77_schema.f90', protocol / 'packjt77_grammar.f90']
+        files.append(protocol / 'decoder_codec_context.f90')
     if args.decoder == 'jtdx':
         files += [lib / 'ft8_mod1.f90', lib / 'genft8.f90']
     else:
         files += [ft8 / 'genft8.f90']
-    files += [lib / 'timer_module.f90',
-              lib / ('gen_ft8wave.f90' if args.decoder == 'jtdx' else 'ft8/gen_ft8wave.f90'),
-              lib / ('gfsk_pulse.f90' if args.decoder == 'jtdx' else 'ft2/gfsk_pulse.f90')]
+    files += [lib / 'timer_module.f90']
+    if args.decoder == 'wsjtx' and (ft8 / 'ft8_waveform.f90').exists():
+        files.append(ft8 / 'ft8_waveform.f90')
+    pulse = lib / 'gfsk_pulse.f90'
+    if not pulse.exists():
+        pulse = lib / 'ft2/gfsk_pulse.f90'
+    files += [lib / ('gen_ft8wave.f90' if args.decoder == 'jtdx' else 'ft8/gen_ft8wave.f90'), pulse]
     with tempfile.TemporaryDirectory(prefix='ft8rs-reference-') as tmp:
         work = Path(tmp)
         (work / 'calls.txt').write_text('\n'.join(calls) + '\n')

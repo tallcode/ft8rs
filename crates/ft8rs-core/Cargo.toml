@@ -25,6 +25,8 @@ include = [
     "tests/decoder/data/ft8/calls/**",
     "tests/decoder/data/ft8/waveforms/**",
     "tests/decoder/data/ft8/provenance/**",
+    "tests/decoder/data/ft8/upstream/**",
+    "tests/decoder/data/ft8/upstream-retention/**",
 ]
 
 # The source directory remains crates/ft8rs-core; both the published package and

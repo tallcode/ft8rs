@@ -5,7 +5,7 @@ use ft8rs::stream::{
     StreamDecodeSession,
 };
 const SHORT_TARGET_COUNT: usize = 21;
-const LONG_TARGET_ACCEPTED_FLOOR: usize = 434;
+const LONG_TARGET_ACCEPTED_FLOOR: usize = 429;
 const JTDX_SHORT_TARGET_ACCEPTED_FLOOR: usize = 20;
 const JTDX_LONG_TARGET_ACCEPTED_FLOOR: usize = 453;
 const JTDX_LONG_ONE_PARTITION_TARGET_COUNT: usize = 453;

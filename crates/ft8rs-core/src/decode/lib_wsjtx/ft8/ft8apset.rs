@@ -4,7 +4,7 @@
 //! - `wsjtx/lib/ft8/ft8apset.f90`
 
 use super::Ft8ApSet;
-use crate::decode::packjt77::{is_stdcall, pack77, unpack77, HashCallBook, C38};
+use crate::decode::packjt77::{is_stdcall, pack77_strict, unpack77, HashCallBook, C38};
 
 pub(super) const MCQ: [i8; 29] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
@@ -23,7 +23,8 @@ pub(super) const MCQWW: [i8; 29] = [
 ];
 pub(super) const MRRR: [i8; 19] = [0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1];
 pub(super) const M73: [i8; 19] = [0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1];
-pub(super) const MRR73: [i8; 19] = [0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1];
+// WSJT-X 2c1b22b6: acknowledgment 32403, not the legacy RR73 grid 32373.
+pub(super) const MRR73: [i8; 19] = [0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1];
 
 pub(super) fn ft8_ap_set(mycall: Option<&str>, hiscall: Option<&str>, ncontest: usize) -> Ft8ApSet {
     let mut apsym = [0i8; 58];
@@ -58,10 +59,9 @@ pub(super) fn ft8_ap_set(mycall: Option<&str>, hiscall: Option<&str>, ncontest: 
     } else {
         format!("<{}> {} RRR", mycall, hiscall_for_pack)
     };
-    let bits = pack77(&msg);
-    if bits.len() != 77 {
+    let Some(bits) = pack77_strict(&msg) else {
         return Ft8ApSet { apsym, aph10 };
-    }
+    };
 
     let i3 = ((bits[74] as usize) << 2) | ((bits[75] as usize) << 1) | bits[76] as usize;
     // Fortran pack77/save_hash_call and unpack77 share a callsign table.
@@ -113,6 +113,16 @@ fn ihashcall_bits(call: &str, m: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::ft8_ap_set;
+
+    #[test]
+    fn rr73_ap_tail_matches_current_native_acknowledgment() {
+        let bits = crate::decode::packjt77::pack77_strict("K1ABC W9XYZ RR73").unwrap();
+        assert_eq!(&bits[58..], &super::MRR73.map(|b| b as u8));
+        assert_eq!(
+            &bits[59..74],
+            &[1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1]
+        );
+    }
 
     #[test]
     fn compound_mycall_keeps_ap_enabled_after_hash_round_trip() {

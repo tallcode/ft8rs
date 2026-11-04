@@ -53,45 +53,106 @@ const CMULT: [&str; 171] = [
     "X97", "X98", "X99",
 ];
 
-/// Pack a message into 77 bits.
+/// Pack a message at the native `genft8` compatibility boundary. Structured
+/// messages use the upstream grammar; eligible free text retains its explicit
+/// 13-character fallback. Decoder template probes use `pack77_strict`.
 pub fn pack77(msg: &str) -> Vec<u8> {
+    let msg = normalized_source(msg);
+    if let Some(bits) = pack77_strict(&msg) {
+        return bits;
+    }
+    let payload: String = msg.chars().take(13).collect();
+    if payload.is_empty() || !payload.bytes().all(|c| FT_ALPH.contains(&c)) {
+        return Vec::new();
+    }
+    pack_free_text(&payload)
+}
+
+fn normalized_source(msg: &str) -> String {
+    msg.chars()
+        .take(37)
+        .map(|c| {
+            if c == '\0' {
+                ' '
+            } else {
+                c.to_ascii_uppercase()
+            }
+        })
+        .collect::<String>()
+        .split(' ')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn pack77_strict(msg: &str) -> Option<Vec<u8>> {
+    let msg = normalized_source(msg);
+    if !msg.is_ascii() || msg.is_empty() {
+        return None;
+    }
+    let bits = pack77_candidate(&msg)?;
+    // Native pack77_05 accepts a hexadecimal telemetry value directly;
+    // its fixed-width 18-digit display may add leading zeroes.
+    if bits[74..] == [0, 0, 0] && bits[71..74] == [1, 0, 1] {
+        return Some(bits);
+    }
+    // Upstream's neutral round-trip gate compares source tokens, allowing
+    // auto-hashed compound calls to acquire brackets. No live hash effects.
+    let book = HashCallBook::new();
+    for token in msg.split(' ') {
+        book.save(token.trim_matches(['<', '>']));
+    }
+    let decoded = unpack77(&bits, Some(&book))?;
+    let source_tokens: Vec<_> = msg.split(' ').collect();
+    let decoded_tokens: Vec<_> = decoded.split(' ').collect();
+    if source_tokens.len() != decoded_tokens.len() || decoded.len() > 37 {
+        return None;
+    }
+    source_tokens
+        .iter()
+        .zip(decoded_tokens)
+        .all(|(a, b)| *a == b || format!("<{a}>") == b)
+        .then_some(bits)
+}
+
+fn pack77_candidate(msg: &str) -> Option<Vec<u8>> {
     let parts = split77(msg);
     if parts.is_empty() {
-        panic!("Empty message");
+        return None;
     }
 
     if let Some(bits) = try_pack_type01(&parts) {
-        return bits;
+        return Some(bits);
     }
 
     if let Some(bits) = try_pack_type03_04(&parts) {
-        return bits;
+        return Some(bits);
     }
 
     if let Some(bits) = try_pack_type05_telemetry(&parts) {
-        return bits;
+        return Some(bits);
     }
 
     // Try Type 1/2: standard message
     if let Some(bits) = try_pack_type1(&parts) {
-        return bits;
+        return Some(bits);
     }
 
     if let Some(bits) = try_pack_type3(&parts) {
-        return bits;
+        return Some(bits);
     }
 
     // Try Type 4: one hash call
     if let Some(bits) = try_pack_type4(&parts) {
-        return bits;
+        return Some(bits);
     }
 
     if let Some(bits) = try_pack_type5(&parts) {
-        return bits;
+        return Some(bits);
     }
 
     // Default: Type 0.0 free text
-    pack_free_text(msg)
+    (msg.len() <= 13 && msg.bytes().all(|c| FT_ALPH.contains(&c))).then(|| pack_free_text(msg))
 }
 
 fn split77(msg: &str) -> Vec<String> {
@@ -102,7 +163,7 @@ fn split77(msg: &str) -> Vec<String> {
         .map(String::from)
         .collect();
 
-    if parts.len() >= 3 && parts[0] == "CQ" && chkcall(&parts[2]).is_some() {
+    if parts.len() >= 3 && parts[0] == "CQ" && valid_cq_modifier(&parts[1]) {
         let mut merged = vec![format!("CQ_{}", parts[1])];
         merged.extend_from_slice(&parts[2..]);
         return merged;
@@ -110,71 +171,9 @@ fn split77(msg: &str) -> Vec<String> {
     parts
 }
 
-fn chkcall(token: &str) -> Option<String> {
-    let w = token.trim().to_ascii_uppercase();
-    if w.is_empty()
-        || w.len() > 11
-        || w.contains('.')
-        || w.contains('+')
-        || w.contains('-')
-        || w.contains('?')
-    {
-        return None;
-    }
-    if w.len() > 6 && !w.contains('/') {
-        return None;
-    }
-
-    let base = if let Some(i0) = w.find('/') {
-        let left = &w[..i0];
-        let right = &w[i0 + 1..];
-        if left.len().max(right.len()) > 6 || left.is_empty() || right.is_empty() {
-            return None;
-        }
-        if left.len() <= right.len() {
-            right
-        } else {
-            left
-        }
-    } else {
-        w.as_str()
-    };
-
-    let bytes = base.as_bytes();
-    let nbc = bytes.len();
-    if !(3..=6).contains(&nbc) {
-        return None;
-    }
-    if !bytes[0].is_ascii_uppercase() && !bytes[1].is_ascii_uppercase() {
-        return None;
-    }
-    if bytes[0] == b'Q' && !base.starts_with("QU1RK") {
-        return None;
-    }
-
-    let mut digit_pos = None;
-    if bytes[1].is_ascii_digit() {
-        digit_pos = Some(1usize);
-    }
-    if bytes[2].is_ascii_digit() {
-        digit_pos = Some(2usize);
-    }
-    let digit_pos = digit_pos?;
-    if digit_pos + 1 == nbc {
-        return None;
-    }
-    if !bytes[digit_pos + 1..]
-        .iter()
-        .all(|b| b.is_ascii_uppercase())
-    {
-        return None;
-    }
-    let suffix_len = nbc - digit_pos - 1;
-    if !(1..=3).contains(&suffix_len) {
-        return None;
-    }
-
-    Some(base.to_string())
+fn valid_cq_modifier(token: &str) -> bool {
+    (token.len() == 3 && token.bytes().all(|b| b.is_ascii_digit()))
+        || ((1..=4).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_uppercase()))
 }
 
 #[derive(Debug, Clone)]
@@ -235,8 +234,13 @@ fn parse_callsign(raw: &str) -> CallsignParse {
     }
 
     let first_two_have_letter = chars.iter().take(2).any(|c| c.is_ascii_uppercase());
-    let q_prefix_ok = chars.first() != Some(&'Q') || call.starts_with("QU1RK");
-    let standard = (1..=2).contains(&iarea)
+    let q_prefix_ok = chars.first() != Some(&'Q');
+    let standard = (3..=6).contains(&call.len())
+        && call.bytes().all(|b| b.is_ascii_alphanumeric())
+        && chars[iarea as usize + 1..]
+            .iter()
+            .all(|c| c.is_ascii_uppercase())
+        && (1..=2).contains(&iarea)
         && first_two_have_letter
         && q_prefix_ok
         && nplet >= 1
@@ -539,7 +543,11 @@ fn append_bits(bits: &mut Vec<u8>, val: usize, width: usize) {
 
 fn clean_hash_call(token: &str) -> Option<String> {
     let t = token.trim();
-    if t.starts_with('<') && t.ends_with('>') && t.len() > 2 {
+    if t.starts_with('<')
+        && t.ends_with('>')
+        && (5..=13).contains(&t.len())
+        && !t[1..t.len() - 1].contains(['<', '>'])
+    {
         Some(t[1..t.len() - 1].to_string())
     } else {
         None
@@ -547,7 +555,10 @@ fn clean_hash_call(token: &str) -> Option<String> {
 }
 
 fn parse_report_i32(token: &str) -> Option<i32> {
-    token.parse::<i32>().ok()
+    let b = token.as_bytes();
+    (b.len() == 3 && matches!(b[0], b'+' | b'-') && b[1..].iter().all(u8::is_ascii_digit))
+        .then(|| token.parse::<i32>().ok())
+        .flatten()
 }
 
 fn grid6_24(grid: &str) -> Option<usize> {
@@ -578,13 +589,15 @@ fn try_pack_type01(parts: &[String]) -> Option<Vec<u8>> {
     }
     let hash_call = clean_hash_call(&parts[3])?;
     let report = parse_report_i32(&parts[4])?;
-    let p1 = parse_callsign(&parts[0]);
-    let p2 = parse_callsign(&parts[2]);
-    if !p1.is_standard || !p2.is_standard {
+    if !valid_c28_source(&parts[0])
+        || !valid_c28_source(&parts[2])
+        || !(-30..=32).contains(&report)
+        || (report + 30) % 2 != 0
+    {
         return None;
     }
 
-    let n5 = ((report + 30) / 2).clamp(0, 31) as usize;
+    let n5 = ((report + 30) / 2) as usize;
     let mut bits = Vec::with_capacity(77);
     append_bits(&mut bits, pack28(&parts[0]), 28);
     append_bits(&mut bits, pack28(&parts[2]), 28);
@@ -599,9 +612,7 @@ fn try_pack_type03_04(parts: &[String]) -> Option<Vec<u8>> {
     if parts.len() < 4 || parts.len() > 5 {
         return None;
     }
-    let p1 = parse_callsign(&parts[0]);
-    let p2 = parse_callsign(&parts[1]);
-    if !p1.is_standard || !p2.is_standard {
+    if !valid_c28_source(&parts[0]) || !valid_c28_source(&parts[1]) {
         return None;
     }
     if parts.len() == 5 && parts[2] != "R" {
@@ -610,7 +621,7 @@ fn try_pack_type03_04(parts: &[String]) -> Option<Vec<u8>> {
     let section = parts.last()?;
     let isec = CSEC.iter().position(|sec| sec == section)? + 1;
     let tx_class = &parts[parts.len() - 2];
-    if tx_class.len() < 2 {
+    if !(2..=3).contains(&tx_class.len()) || tx_class.starts_with('0') {
         return None;
     }
     let (ntx_text, class_text) = tx_class.split_at(tx_class.len() - 1);
@@ -691,7 +702,11 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
     if !ok1 || !ok2 {
         return None;
     }
-    if parts.len() == 2 && w2.contains('/') {
+    if (w1.ends_with("/R") && w2.ends_with("/P")) || (w1.ends_with("/P") && w2.ends_with("/R")) {
+        return None;
+    }
+    let cq = w1 == "CQ" || w1.starts_with("CQ_");
+    if cq && w2.starts_with('<') {
         return None;
     }
 
@@ -704,6 +719,10 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
 
     let (igrid4, ir) = if parts.len() == 2 {
         (MAXGRID4 + 1, 0)
+    } else if parts.len() == 4 && (!is_grid4(&last_upper) || cq) {
+        return None;
+    } else if !cq && last_upper == "RR73" {
+        (MAXGRID4 + 3, 0)
     } else if is_grid4(&last_upper) {
         let ir = if parts.len() == 4 && parts[2] == "R" {
             1
@@ -711,6 +730,8 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
             0
         };
         (pack_grid4(&last_upper), ir)
+    } else if cq {
+        return None;
     } else if last_upper == "RRR" {
         (MAXGRID4 + 2, 0)
     } else if last_upper == "RR73" {
@@ -719,18 +740,15 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
         (MAXGRID4 + 4, 0)
     } else if last_upper.starts_with("R+") || last_upper.starts_with("R-") {
         let rest = &last_upper[1..];
-        if let Ok(irpt) = rest.parse::<i32>() {
-            let irpt = if (-50..=-31).contains(&irpt) {
-                irpt + 101
-            } else {
-                irpt
-            };
-            (MAXGRID4 + (irpt + 35) as usize, 1)
+        let irpt = parse_report_i32(rest).filter(|r| (-50..=50).contains(r))?;
+        let irpt = if (-50..=-31).contains(&irpt) {
+            irpt + 101
         } else {
-            return None;
-        }
+            irpt
+        };
+        (MAXGRID4 + (irpt + 35) as usize, 1)
     } else if last_upper.starts_with('+') || last_upper.starts_with('-') {
-        let irpt = last_upper.parse::<i32>().ok()?;
+        let irpt = parse_report_i32(&last_upper).filter(|r| (-50..=50).contains(r))?;
         let irpt = if (-50..=-31).contains(&irpt) {
             irpt + 101
         } else {
@@ -756,10 +774,11 @@ fn try_pack_type1(parts: &[String]) -> Option<Vec<u8>> {
 }
 
 fn parse_callsign1(w: &str) -> (String, bool, usize) {
-    if w == "CQ" || w == "DE" || w == "QRZ" || w.starts_with("CQ_") {
+    if w == "CQ" || w == "DE" || w == "QRZ" || w.strip_prefix("CQ_").is_some_and(valid_cq_modifier)
+    {
         return (w.into(), true, 0);
     }
-    if w.starts_with('<') && w.ends_with('>') {
+    if clean_hash_call(w).is_some() {
         return (w.into(), true, 0);
     }
     let p = parse_callsign(w);
@@ -772,7 +791,7 @@ fn parse_callsign1(w: &str) -> (String, bool, usize) {
 }
 
 fn parse_callsign2(w: &str) -> (String, bool, usize) {
-    if w.starts_with('<') && w.ends_with('>') {
+    if clean_hash_call(w).is_some() {
         return (w.into(), true, 0);
     }
     let p = parse_callsign(w);
@@ -793,31 +812,33 @@ fn try_pack_type4(parts: &[String]) -> Option<Vec<u8>> {
     let w2 = &parts[1];
     let w3 = parts.get(2);
 
+    let valid_c11 = |w: &str| (1..=11).contains(&w.len()) && w.bytes().all(|b| C38.contains(&b));
     let parsed_w1 = parse_callsign(w1);
     let parsed_w2 = parse_callsign(w2);
 
-    if parsed_w1.is_standard
-        && parsed_w2.is_standard
-        && !w1.starts_with('<')
-        && !w2.starts_with('<')
-    {
+    let standard1 = parsed_w1.is_standard && parsed_w1.suffix.is_none();
+    let standard2 = parsed_w2.is_standard && parsed_w2.suffix.is_none();
+    if standard1 && standard2 && !w1.starts_with('<') && !w2.starts_with('<') {
         return None;
     }
 
     let (n12, c11, iflip, icq) = if w1 == "CQ" {
-        if w2.len() <= 4 {
+        if w2.len() <= 4 || parts.len() != 2 || !valid_c11(w2) || standard2 {
             return None;
         }
         (ihashcall12(w2), w2.clone(), 0, 1)
-    } else if w1.starts_with('<') && w1.ends_with('>') {
+    } else if clean_hash_call(w1).is_some() && valid_c11(w2) && !standard2 {
         let inner = &w1[1..w1.len() - 1];
         (ihashcall12(inner), w2.clone(), 0, 0)
-    } else if w2.starts_with('<') && w2.ends_with('>') {
+    } else if clean_hash_call(w2).is_some() && valid_c11(w1) && !standard1 {
         let inner = &w2[1..w2.len() - 1];
         (ihashcall12(inner), w1.clone(), 1, 0)
     } else {
         return None;
     };
+    if w3.is_some_and(|s| !matches!(s.as_str(), "RRR" | "RR73" | "73")) {
+        return None;
+    }
 
     let n58 = encode_c11(&c11);
     let nrpt = decode_rpt(w3.map(|s| s.as_str()));
@@ -871,7 +892,7 @@ fn try_pack_type3(parts: &[String]) -> Option<Vec<u8>> {
     }
     let call1 = &parts[itu];
     let call2 = &parts[itu + 1];
-    if !parse_callsign(call1).is_standard || !parse_callsign(call2).is_standard {
+    if !valid_c28_source(call1) || !valid_c28_source(call2) {
         return None;
     }
 
@@ -900,6 +921,9 @@ fn try_pack_type3(parts: &[String]) -> Option<Vec<u8>> {
     };
 
     let ir = usize::from(parts.get(itu + 2).map(|s| s.as_str()) == Some("R"));
+    if parts.len() != itu + 4 + ir || (mult.is_none() && last.len() != 4) {
+        return None;
+    }
     let mut bits = Vec::with_capacity(77);
     append_bits(&mut bits, itu, 1);
     append_bits(&mut bits, pack28(call1), 28);
@@ -911,6 +935,21 @@ fn try_pack_type3(parts: &[String]) -> Option<Vec<u8>> {
     Some(bits)
 }
 
+fn valid_c28_source(call: &str) -> bool {
+    if !(3..=13).contains(&call.len())
+        || !call.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'/')
+    {
+        return false;
+    }
+    if !call.contains('/') {
+        return callok(call);
+    }
+    let mut parts = call.split('/');
+    !parts.next().unwrap().is_empty()
+        && parts.next().is_some_and(|p| !p.is_empty())
+        && parts.next().is_none()
+}
+
 fn try_pack_type5(parts: &[String]) -> Option<Vec<u8>> {
     if parts.len() < 4 || parts.len() > 5 {
         return None;
@@ -918,7 +957,10 @@ fn try_pack_type5(parts: &[String]) -> Option<Vec<u8>> {
     let call1 = clean_hash_call(&parts[0])?;
     let call2 = clean_hash_call(&parts[1])?;
     let exchange = parts[parts.len() - 2].parse::<usize>().ok()?;
-    if !(520001..=594095).contains(&exchange) {
+    if parts[parts.len() - 2].len() != 6
+        || !(520001..=592047).contains(&exchange)
+        || (parts.len() == 5 && parts[2] != "R")
+    {
         return None;
     }
     let grid6 = parts.last()?;
@@ -928,7 +970,10 @@ fn try_pack_type5(parts: &[String]) -> Option<Vec<u8>> {
     if irpt > 7 {
         return None;
     }
-    let iserial = (exchange % 10000).min(2047);
+    let iserial = exchange % 10000;
+    if !(1..=2047).contains(&iserial) {
+        return None;
+    }
 
     let mut bits = Vec::with_capacity(77);
     append_bits(&mut bits, ihashcall(&call1, 12), 12);
@@ -1034,6 +1079,18 @@ pub fn is_stdcall(callsign: &str) -> bool {
     nplet >= 1 && npdig < iarea && nslet <= 3
 }
 
+/// Upstream `stdcall_suffix`: A8 treats a standard call ending in /R or /P
+/// as standard, while the original `stdcall` remains unchanged for AP setup.
+pub(crate) fn is_stdcall_suffix(callsign: &str) -> bool {
+    let call = callsign.trim();
+    let base = call.strip_suffix("/R").or_else(|| call.strip_suffix("/P"));
+    is_stdcall(if call.len() > 3 {
+        base.unwrap_or(call)
+    } else {
+        call
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_stdcall;
@@ -1063,8 +1120,8 @@ mod tests {
     }
 
     #[test]
-    fn two_word_type1_rejects_second_call_slash_like_wsjtx() {
-        assert!(super::try_pack_type1(&["K1ABC".into(), "W9XYZ/R".into()]).is_none());
+    fn two_word_type1_accepts_suffix_like_current_wsjtx_grammar() {
+        assert!(super::try_pack_type1(&["K1ABC".into(), "W9XYZ/R".into()]).is_some());
     }
 
     #[test]
@@ -1095,7 +1152,7 @@ mod tests {
     fn type05_telemetry_round_trips() {
         let bits = super::pack77("0123456789ABCDEF01");
         let msg = crate::decode::packjt77::unpack77(&bits, None).unwrap();
-        assert_eq!(msg, "123456789ABCDEF01");
+        assert_eq!(msg, "0123456789ABCDEF01");
     }
 
     #[test]
@@ -1173,7 +1230,7 @@ fn callok(call: &str) -> bool {
     let w = call.trim();
     let bytes = w.as_bytes();
     let n = bytes.len();
-    if n < 3 || bytes.first() == Some(&b'Q') {
+    if !(3..=6).contains(&n) || bytes.first() == Some(&b'Q') {
         return false;
     }
 
@@ -1185,7 +1242,9 @@ fn callok(call: &str) -> bool {
     }
 
     let pfx = &bytes[..i0];
-    if !pfx.iter().any(|b| b.is_ascii_alphabetic()) {
+    if !pfx.iter().all(|b| b.is_ascii_alphanumeric())
+        || !pfx.iter().any(|b| b.is_ascii_alphabetic())
+    {
         return false;
     }
 
@@ -1379,7 +1438,15 @@ fn lookup_hash22(context: UnpackContext<'_>, n22: usize) -> String {
 }
 
 fn format_signed_2(value: i32) -> String {
-    format!("{value:+03}")
+    // Native format(i3.2) fills all three columns for values >=100.
+    // Such wire values can occur even though the source grammar limits SNR.
+    if (100..=999).contains(&value) {
+        value.to_string()
+    } else if (-99..=99).contains(&value) {
+        format!("{value:+03}")
+    } else {
+        "***".into()
+    }
 }
 
 fn unpack_text77(bits71: &[u8]) -> String {
@@ -1428,6 +1495,26 @@ pub fn unpack77(bits77: &[u8], book: Option<&HashCallBook>) -> Option<String> {
 }
 
 pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Option<String> {
+    if bits77.len() != 77 || bits77.iter().any(|&b| b > 1) {
+        return None;
+    }
+    let mut staged_calls = Vec::new();
+    let decoded = unpack77_core(bits77, context, &mut staged_calls)?;
+    // Upstream 50f6cc83 stages hash effects until the entire payload is
+    // accepted. A rejected CQ/report or malformed contest frame learns no call.
+    if let Some(book) = context.book {
+        for call in staged_calls {
+            book.save(&call);
+        }
+    }
+    Some(decoded)
+}
+
+fn unpack77_core(
+    bits77: &[u8],
+    context: UnpackContext<'_>,
+    staged_calls: &mut Vec<String>,
+) -> Option<String> {
     let n3 = bits_to_uint(bits77, 71, 3);
     let i3 = bits_to_uint(bits77, 74, 3);
 
@@ -1476,8 +1563,6 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
         let exchange = format!("{ntx}{class}");
         let msg = if ir == 0 {
             format!("{call1} {call2} {exchange} {sec}")
-        } else if ntx < 10 {
-            format!("{call1} {call2} R{exchange} {sec}")
         } else {
             format!("{call1} {call2} R {exchange} {sec}")
         };
@@ -1489,7 +1574,7 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
         let n2 = bits_to_uint(bits77, 23, 24);
         let n3tel = bits_to_uint(bits77, 47, 24);
         let msg = format!("{n1:06X}{n2:06X}{n3tel:06X}");
-        return finish_message(msg.trim_start_matches('0').to_string());
+        return finish_message(msg);
     }
 
     if i3 == 0 && n3 == 6 {
@@ -1538,10 +1623,8 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
             if ipb == 1 && i3 == 2 && c2.len() >= 3 {
                 c2.push_str("/P");
             }
-            if let Some(book) = context.book {
-                if c2.len() >= 3 {
-                    book.save(&c2);
-                }
+            if c2.len() >= 3 {
+                staged_calls.push(c2.clone());
             }
         }
 
@@ -1571,12 +1654,11 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
                     if isnr > 50 {
                         isnr -= 101;
                     }
-                    let sign = if isnr >= 0 { '+' } else { '-' };
-                    let abs_str = format!("{:02}", isnr.abs());
+                    let report = format_signed_2(isnr);
                     if ir == 0 {
-                        finish_message(format!("{} {} {}{}", c1, c2, sign, abs_str))
+                        finish_message(format!("{} {} {}", c1, c2, report))
                     } else {
-                        finish_message(format!("{} {} R{}{}", c1, c2, sign, abs_str))
+                        finish_message(format!("{} {} R{}", c1, c2, report))
                     }
                 }
                 _ => None,
@@ -1592,9 +1674,6 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
 
         let call1 = unpack28(n28a, context)?;
         let call2 = unpack28(n28b, context)?;
-        if !is_rtty_call_token(&call1) || !is_rtty_call_token(&call2) {
-            return None;
-        }
         let report = format!("5{}9", irpt + 2);
 
         let mut imult = 0usize;
@@ -1615,7 +1694,10 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
 
         let prefix = if itu == 1 { "TU; " } else { "" };
         let r = if ir == 1 { " R" } else { "" };
-        finish_message(format!("{prefix}{call1} {call2}{r} {report} {exchange}"))
+        let rendered = format!("{prefix}{call1} {call2}{r} {report} {exchange}");
+        (rendered.len() <= 37)
+            .then(|| finish_message(rendered))
+            .flatten()
     } else if i3 == 4 {
         let n12 = bits_to_uint(bits77, 0, 12);
         let mut n58: u64 = 0;
@@ -1647,9 +1729,7 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
         };
 
         let (call1, call2) = if iflip == 0 {
-            if let Some(book) = context.book {
-                book.save(&c11);
-            }
+            staged_calls.push(c11.clone());
             if let Some(mycall) = context.mycall_clean() {
                 if let Some(hiscall) = context.hiscall_clean() {
                     if c11 == hiscall && ihashcall(&mycall, 12) == n12 {
@@ -1683,7 +1763,7 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
         let irpt = bits_to_uint(bits77, 35, 3);
         let iserial = bits_to_uint(bits77, 38, 11);
         let igrid6 = bits_to_uint(bits77, 49, 25);
-        if igrid6 > 18_662_399 {
+        if igrid6 > 18_662_399 || iserial == 0 {
             return None;
         }
         let mut call1 = lookup_hash12(context, n12);
@@ -1708,11 +1788,6 @@ pub fn unpack77_with_context(bits77: &[u8], context: UnpackContext<'_>) -> Optio
 fn is_cq_head(call: &str) -> bool {
     let c = call.trim_end();
     c == "CQ" || c.starts_with("CQ ")
-}
-
-fn is_rtty_call_token(call: &str) -> bool {
-    let c = call.trim();
-    !(c == "DE" || c == "QRZ" || is_cq_head(c))
 }
 
 #[cfg(test)]
@@ -1767,19 +1842,30 @@ mod unpack_tests {
 
     #[test]
     fn cq_r_grid_is_rejected_like_wsjtx() {
-        let bits = pack77("CQ K1ABC R FN42");
+        // The current source encoder rejects this grammar. Construct the
+        // invalid wire payload so the receive-side gate remains exercised.
+        let mut bits = pack77("CQ K1ABC FN42");
+        bits[58] = 1;
         assert!(unpack77(&bits, None).is_none());
     }
 
     #[test]
     fn cq_ack_report_is_rejected_like_wsjtx() {
-        let bits = pack77("CQ K1ABC RRR");
+        let mut bits = pack77("CQ K1ABC FN42");
+        let value = super::MAXGRID4 + 2;
+        for i in 0..15 {
+            bits[59 + i] = ((value >> (14 - i)) & 1) as u8;
+        }
         assert!(unpack77(&bits, None).is_none());
     }
 
     #[test]
     fn cq_unresolved_hash_is_rejected_like_wsjtx() {
-        let bits = pack77("CQ <NOHASH>");
+        let mut bits = pack77("CQ K1ABC FN42");
+        let value = super::N_TOKENS + ihashcall("NOHASH", 22);
+        for i in 0..28 {
+            bits[29 + i] = ((value >> (27 - i)) & 1) as u8;
+        }
         assert!(unpack77(&bits, None).is_none());
     }
 
@@ -1860,7 +1946,7 @@ mod unpack_tests {
         append_bits(&mut bits, 0xCDEF01, 24);
         append_bits(&mut bits, 5, 3);
         append_bits(&mut bits, 0, 3);
-        assert_eq!(unpack77(&bits, None).unwrap(), "123456789ABCDEF01");
+        assert_eq!(unpack77(&bits, None).unwrap(), "0123456789ABCDEF01");
     }
 
     #[test]
@@ -1877,7 +1963,7 @@ mod unpack_tests {
     }
 
     #[test]
-    fn rejects_type_3_rtty_cq_token_in_callsign_slot() {
+    fn type_3_rtty_special_token_matches_current_native_wire_decoder() {
         let mut bits = Vec::new();
         append_bits(&mut bits, 0, 1);
         append_bits(&mut bits, pack28("CQ_001"), 28);
@@ -1888,7 +1974,10 @@ mod unpack_tests {
         append_bits(&mut bits, 3, 3);
 
         assert_eq!(bits.len(), 77);
-        assert!(unpack77(&bits, None).is_none());
+        assert_eq!(
+            unpack77(&bits, None).as_deref(),
+            Some("CQ 001 IZ7MMG 559 2025")
+        );
     }
 
     #[test]

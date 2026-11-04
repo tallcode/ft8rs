@@ -1,0 +1,39 @@
+{
+  "kind": "Frozen current native DX synthetic waveform inputs",
+  "rr73_field": 32403,
+  "revision": "d89fe30ca1dfd3c38def8f17228f09f042829f95",
+  "sources": {
+    "lib/crc.f90": "e9c12e0cec0c511440200b158760e80410ddacc499c7a9a71091394af232f9fe",
+    "lib/packjt.f90": "ec83904457fe79f99cbb8d9cfd471209a861f1e4cda35259ecdeedac2f745b32",
+    "lib/77bit/packjt77_schema.f90": "fd95d99b6eb1440b9bbb0949ded84f365cdadd398acc27f81da7f42bed549a1e",
+    "lib/77bit/packjt77_grammar.f90": "0acb3f2ae372037ceda38e87cdec3890d00999f48cfee70eaf3d95380adc36b4",
+    "lib/77bit/packjt77.f90": "d8400237ce48a3053873b2085225ee11dda902c6eb8c068c8b7b401a61dd1a87",
+    "lib/77bit/decoder_codec_context.f90": "4a66d14506e3d913c661a49f86ac28ea29c8907152e1586358b95329902e4050",
+    "lib/stdcall_suffix.f90": "5bc37c41c4c79ebc8267ba2db8391bcd1bd5b547af84068d073006edd933adc9",
+    "lib/fmtmsg.f90": "599f97baf74e09dd16e54b2609d0e49e54288b6d0e77a26da39b58152f91fbf9",
+    "lib/grid2deg.f90": "59c2c0a210be924b84f6d0578ba42b3dfaf393694d199fc643f5aab4337d1ee7",
+    "lib/deg2grid.f90": "e7ef6cc0ae8782659e503347b29123c8c4748a3358a4cde70997f080de9e555d",
+    "lib/chkcall.f90": "3ffeb7bc24779eec02799835ffba8e36ee55960a9df12f72b72d6fc5cf5043ca",
+    "lib/ft8/encode174_91.f90": "01093195c276c154c5cd8a4006fc342f99d6eff557c6024750101d411bc0a824",
+    "lib/ft8/genft8.f90": "3802ec106932c71956b7da174b44769a15f60bc7a1ead86d2a147088e1338c19",
+    "lib/qra/q65/q65_set_list.f90": "c66bd62a68709bb056bee7cbce4e0def4353a7da6d652bc628d0fee91bafe7dc",
+    "lib/crc14.cpp": "0066a88d9920bb27d2a4925eee7c581338d5375a30eb943dc890f99bb69715e7",
+    "lib/ft8/ldpc_174_91_c_generator.f90": "b061e4428fd89c9d2df3ea7026f03430141c6df36baaf341dc7b84b9f5573bfd"
+  },
+  "compiler": "GNU Fortran (GCC) 14.2.0",
+  "flags": [
+    "-O2",
+    "-cpp",
+    "-ffree-line-length-none",
+    "-fallow-argument-mismatch",
+    "-fwrapv",
+    "-I",
+    "/Volumes/ZHITAI/Workspace/ft8rs/target/wsjtx-upstream-20261104/lib",
+    "-I",
+    "/Volumes/ZHITAI/Workspace/ft8rs/target/wsjtx-upstream-20261104/lib/ft8"
+  ],
+  "driver_sha256": "2bcdf0c564047b27c03636ed29822517030c76134eacb839cbcb7f07b95cdc6b",
+  "generator_sha256": "8a5cd41c0c3a7e9b9b57ce54c530ce424bcbefa3b987062e5715f65a94dc3716",
+  "payload_sha256": "0b7a6b91ebe73e40dd7320ff03c60de2e6d96c7eb69276aa8b864a5e4bc50c22",
+  "cases": 11
+}

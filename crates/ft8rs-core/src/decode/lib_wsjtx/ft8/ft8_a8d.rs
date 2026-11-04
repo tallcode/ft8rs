@@ -5,7 +5,7 @@
 
 use super::{ft8_downsample_from_cx, nint_wsjtx_real, twkfreq1, NFFT1_LONG, NFFT2, NN, NSPS};
 use crate::decode::genft8::get_ft8_tones_from_77bits;
-use crate::decode::packjt77::{is_stdcall, pack77};
+use crate::decode::packjt77::{is_stdcall_suffix, pack77};
 use crate::util::{four2a_c2c, four2a_r2c};
 use std::sync::OnceLock;
 
@@ -106,18 +106,44 @@ pub(crate) fn ft8_a8d(
     let mut msgbest = String::new();
     let mut itone_best = [0i32; 79];
 
-    for imsg in 1..=NMSGS {
-        let msg = getmsg(imsg, mycall, dxcall, dxgrid);
-        if msg.trim().is_empty() {
-            continue;
+    // WSJT-X 015b4894: retain both the suffix-aware standard hypotheses
+    // and the former nonstandard-call hypotheses, in that order.
+    let suffix_dx = is_stdcall_suffix(dxcall)
+        && (dxcall.trim().ends_with("/R") || dxcall.trim().ends_with("/P"));
+    let nrun = if suffix_dx {
+        if is_stdcall_suffix(mycall) {
+            411
+        } else {
+            207
         }
-        let msgbits = pack77(&msg);
-        if msgbits.len() != 77 {
-            continue;
-        }
-        let itone = get_ft8_tones_from_77bits(&msgbits);
-        let (cwave_re, cwave_im) = gen_ft8wave_a8(&itone);
+    } else {
+        NMSGS
+    };
+    // Upstream 25a626af prepares templates before the lag search and keeps
+    // worker scratch private. The classic caller uses one worker.
+    let hypotheses: Vec<_> = (1..=nrun)
+        .filter_map(|imsg| {
+            let msg = getmsg(imsg, mycall, dxcall, dxgrid);
+            if msg.trim().is_empty() {
+                return None;
+            }
+            let msgbits = pack77(&msg);
+            if msgbits.len() != 77 {
+                return None;
+            }
+            let itone = get_ft8_tones_from_77bits(&msgbits);
+            let (cwave_re, cwave_im) = gen_ft8wave_a8(&itone);
+            Some((msg, itone, cwave_re, cwave_im))
+        })
+        .collect();
+    if hypotheses.is_empty() {
+        return;
+    }
+    let mut cd0_re = vec![0.0f64; NFFT];
+    let mut cd0_im = vec![0.0f64; NFFT];
+    let mut raw_spectrum = vec![0.0f32; NFFT + 1];
 
+    for (msg, itone, cwave_re, cwave_im) in hypotheses {
         let mut spk = 0.0f32;
         let mut fpk = 0.0f32;
         let mut tpk = 0.0f32;
@@ -134,19 +160,19 @@ pub(crate) fn ft8_a8d(
             }
             let mut lag = lag1;
             while lag <= lag2 {
-                let mut cd0_re = vec![0.0f64; NFFT];
-                let mut cd0_im = vec![0.0f64; NFFT];
-                for i in 0..NWAVE {
-                    let j = i as isize + lag + 100;
-                    if j >= 0 && j <= (NWAVE - 1) as isize {
-                        let j = j as usize;
-                        let d_re = cd_re[j] as f32;
-                        let d_im = cd_im[j] as f32;
-                        let w_re = cwave_re[i];
-                        let w_im = cwave_im[i];
-                        cd0_re[i] = (d_re * w_re + d_im * w_im) as f64;
-                        cd0_im[i] = (d_im * w_re - d_re * w_im) as f64;
-                    }
+                cd0_re.fill(0.0);
+                cd0_im.fill(0.0);
+                let offset = lag + 100;
+                let first = (-offset).max(0) as usize;
+                let end = (NWAVE as isize - offset).min(NWAVE as isize).max(0) as usize;
+                for i in first..end {
+                    let j = (i as isize + offset) as usize;
+                    let d_re = cd_re[j] as f32;
+                    let d_im = cd_im[j] as f32;
+                    let w_re = cwave_re[i];
+                    let w_im = cwave_im[i];
+                    cd0_re[i] = (d_re * w_re + d_im * w_im) as f64;
+                    cd0_im[i] = (d_im * w_re - d_re * w_im) as f64;
                 }
 
                 four2a_c2c(&mut cd0_re, &mut cd0_im, -1);
@@ -158,22 +184,32 @@ pub(crate) fn ft8_a8d(
                     }
                     let re = cd0_re[i] as f32;
                     let im = cd0_im[i] as f32;
-                    s[s_index(j)] = fac * (re * re + im * im);
+                    raw_spectrum[s_index(j)] = fac * (re * re + im * im);
                 }
 
-                smo121(&mut s);
-
-                let mut smax = 0.0f32;
-                for j in -NH..=NH {
-                    let sj = s[s_index(j)];
-                    smax = smax.max(sj);
-                    if sj > spk {
-                        spk = sj;
-                        fpk = j as f32 * df + f1;
-                        lagpk = lag;
-                        tpk = lag as f32 * dt;
-                        s0.copy_from_slice(&s);
+                s[0] = raw_spectrum[0];
+                s[NFFT] = raw_spectrum[NFFT];
+                // Upstream uses an integer OR reduction so smoothing lanes
+                // can vectorize without an early-exit dependency.
+                let mut peak_mask = u32::from(s[0] > spk || s[NFFT] > spk);
+                for i in 1..NFFT {
+                    s[i] =
+                        0.5 * raw_spectrum[i] + 0.25 * (raw_spectrum[i - 1] + raw_spectrum[i + 1]);
+                    peak_mask |= u32::from(s[i] > spk);
+                }
+                // Preserve ascending-bin and earliest-hypothesis ties. Copy
+                // a winning spectrum once per lag, not once per new peak bin.
+                if peak_mask != 0 {
+                    for j in -NH..=NH {
+                        let sj = s[s_index(j)];
+                        if sj > spk {
+                            spk = sj;
+                            fpk = j as f32 * df + f1;
+                            lagpk = lag;
+                            tpk = lag as f32 * dt;
+                        }
                     }
+                    s0.copy_from_slice(&s);
                 }
 
                 lag += lagstep;
@@ -313,8 +349,31 @@ fn getmsg(i: usize, mycall: &str, hiscall: &str, hisgrid: &str) -> String {
     let mycall = mycall.trim();
     let hiscall = hiscall.trim();
     let hisgrid = hisgrid.trim();
-    let my_std = is_stdcall(mycall);
-    let his_std = is_stdcall(hiscall);
+    let my_std = is_stdcall_suffix(mycall);
+    let his_std = is_stdcall_suffix(hiscall);
+    if i >= 207 {
+        if !his_std || !(hiscall.ends_with("/R") || hiscall.ends_with("/P")) {
+            return String::new();
+        }
+        return match i {
+            207 => format!("CQ {hiscall}"),
+            208..=211 if my_std => {
+                let tail = ["", " RRR", " RR73", " 73"][i - 208];
+                format!("<{mycall}> {hiscall}{tail}")
+            }
+            212..=411 if my_std => {
+                let j = i - 205;
+                let snr = -50 + (j as isize - 7) / 2;
+                if snr.abs() > 30 {
+                    String::new()
+                } else {
+                    let roger = if j & 1 == 0 { "R" } else { "" };
+                    format!("{mycall} <{hiscall}> {roger}{snr:+03}")
+                }
+            }
+            _ => String::new(),
+        };
+    }
 
     let mut isnr = 0isize;
     let mut msg = format!("{mycall} {hiscall}");
@@ -417,7 +476,14 @@ fn gen_ft8wave_a8(itone: &[i32; 79]) -> (Vec<f32>, Vec<f32>) {
         let idx = (phi * NTAB as f32 / twopi) as usize;
         cwave_re[k] = ctab[idx].0;
         cwave_im[k] = ctab[idx].1;
-        phi = (phi + phase_step).rem_euclid(twopi);
+        // Upstream emit_ft8_waveform: these finite nonnegative increments
+        // are below half a turn, so at most one wrap is needed.
+        let phase_sum = phi + phase_step;
+        phi = if phase_sum >= twopi {
+            phase_sum - twopi
+        } else {
+            phase_sum
+        };
     }
 
     let nramp = nint_wsjtx_real(NSPS_A8 as f32 / 8.0) as usize;
@@ -483,15 +549,6 @@ fn erf_approx(x: f32) -> f32 {
     sign * y
 }
 
-fn smo121(x: &mut [f32]) {
-    let mut x0 = x[0];
-    for i in 1..x.len() - 1 {
-        let x1 = x[i];
-        x[i] = 0.5 * x[i] + 0.25 * (x0 + x[i + 1]);
-        x0 = x1;
-    }
-}
-
 fn s_index(j: isize) -> usize {
     (j + NH) as usize
 }
@@ -523,6 +580,30 @@ fn maxloc0(values: &[f32; 8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::getmsg;
+
+    #[test]
+    fn a8_hypotheses_match_all_current_native_suffix_and_legacy_candidates() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/decoder/data/ft8/upstream/wsjtx-3.3/a8.tsv"),
+        )
+        .unwrap();
+        let mut count = 0;
+        for line in source.lines().filter(|line| !line.starts_with('#')) {
+            let row: Vec<_> = line.split('\t').collect();
+            assert_eq!(row.len(), 5);
+            let index = row[3].parse().unwrap();
+            assert_eq!(
+                getmsg(index, row[0], row[1], row[2]),
+                row[4],
+                "{} {} {index}",
+                row[0],
+                row[1]
+            );
+            count += 1;
+        }
+        assert_eq!(count, 2466);
+    }
 
     #[test]
     fn a8_getmsg_matches_wsjtx_shapes() {

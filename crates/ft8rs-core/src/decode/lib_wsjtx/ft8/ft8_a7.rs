@@ -366,7 +366,8 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     };
 
     // Validation
-    if dmin > 100.0 || dmin2 / dmin < 1.3 {
+    // Upstream 2e272882: avoid division by zero for an exact match.
+    if dmin > 100.0 || dmin2 / (dmin + 1.0e-6) < 1.3 {
         return None;
     }
     if msgbest.starts_with("CQ ") && std_2 && grid4.trim().is_empty() {
@@ -408,11 +409,13 @@ fn build_ap_message(
     // imsg=6: call_1 call_2 grid4
     // imsg>=7: SNR reports
 
-    let base = format!("{} {}", call_1.trim(), call_2.trim());
-
-    if is_cq_call_1(call_1) && i != 5 {
-        return format!("QU1RK {}", call_2.trim());
-    }
+    // Upstream constructs the sentinel base first, then appends the same
+    // RRR/RR73/73/report tail as for other candidates.
+    let base = if is_cq_call_1(call_1) && i != 5 {
+        format!("QU1RK {}", call_2.trim())
+    } else {
+        format!("{} {}", call_1.trim(), call_2.trim())
+    };
 
     let msg = if !std_1 {
         if i == 1 || i >= 6 {
@@ -581,9 +584,36 @@ mod tests {
     }
 
     #[test]
+    fn a7_templates_match_current_native_source() {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/decoder/data/ft8/upstream/wsjtx-3.3/a7.tsv"
+        ));
+        let mut count = 0;
+        for line in source.lines().filter(|line| !line.starts_with('#')) {
+            let row: Vec<_> = line.split('\t').collect();
+            assert_eq!(row.len(), 5);
+            let i = row[3].parse().unwrap();
+            let actual = build_ap_message(
+                row[0],
+                row[1],
+                row[2],
+                super::is_stdcall(row[0]) || super::is_cq_call_1(row[0]),
+                super::is_stdcall(row[1]),
+                i,
+            );
+            assert_eq!(actual, row[4], "{line}");
+            count += 1;
+        }
+        assert_eq!(count, 1236);
+    }
+
+    #[test]
     fn ap_message_compact_cq_call_matches_fortran_padded_cq() {
         let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 1);
         assert_eq!(msg, "QU1RK D1DX");
+        let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 2);
+        assert_eq!(msg, "QU1RK D1DX RRR");
         let msg = build_ap_message("CQ", "D1DX", "KN87", true, true, 5);
         assert_eq!(msg, "CQ D1DX KN87");
     }
