@@ -47,7 +47,7 @@ struct FileArgs {
     decode: DecodeArgs,
 
     /// Timestamp for the first decoded slot, e.g. 230208_140300 or 140300.
-    /// If omitted, ft8rs tries to infer it from the file name.
+    /// If omitted, ft8.rs tries to infer it from the file name.
     #[arg(
         short = 's',
         long,

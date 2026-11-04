@@ -3,7 +3,7 @@ name = "ft8rs-engine"
 version = "0.0.0"
 edition = "2021"
 license = "GPL-3.0-only"
-description = "ft8rs live runtime: soundcard capture + UDP reporting"
+description = "ft8.rs live runtime: soundcard capture + UDP reporting"
 
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }

@@ -139,7 +139,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.metadata.outputs.release_tag }}
-          name: ft8rs ${{ steps.metadata.outputs.release_tag }}
+          name: ft8.rs ${{ steps.metadata.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
           prerelease: ${{ steps.metadata.outputs.prerelease == 'true' }}
           make_latest: ${{ steps.metadata.outputs.prerelease == 'true' && 'false' || 'true' }}

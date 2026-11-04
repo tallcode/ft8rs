@@ -1,13 +1,14 @@
-# ft8rs
+# ft8.rs and ft8rs
 
 [![crates.io](https://img.shields.io/crates/v/ft8rs.svg)](https://crates.io/crates/ft8rs)
 [![docs.rs](https://docs.rs/ft8rs/badge.svg)](https://docs.rs/ft8rs/latest/ft8rs/)
 
-`ft8rs` is a receive-only FT8 decoder written in Rust, with a graphical live
-monitor, a command-line interface and a UI-independent decode core. It supports
+This repository contains two products: **ft8rs**, a Rust FT8 decoding library,
+and **ft8.rs**, a receive-only FT8 application built on it. The application has
+a graphical live monitor and the `ft8rs-cli` command-line companion. It supports
 live soundcard input, timestamped WAV recordings and optional UDP decode reports.
 
-Four profiles are available: **WSJT-X**, **JTDX**, **Hybrid** and **DX**. The
+The application offers four profiles: **WSJT-X**, **JTDX**, **Hybrid** and **DX**. The
 default build uses RustFFT with the native 3840-point synchronization FFT and
 has no FFTW runtime dependency. The product supports FT8 reception only.
 
@@ -15,6 +16,10 @@ has no FFTW runtime dependency. The product supports FT8 reception only.
 
 Run commands from the repository root with a stable Rust toolchain. The GUI
 executable is `ft8rs`; terminal commands use `ft8rs-cli`.
+The library's product and package name is **ft8rs**. The application's product
+name is **ft8.rs**; its executable names, paths and machine identifiers use
+`ft8rs` where a dot would be unsuitable or ambiguous. See the
+[naming rules](docs/DEVELOPMENT.md#product-names) for documentation conventions.
 
 ```sh
 # Graphical live monitor
@@ -37,7 +42,7 @@ including Hybrid and DX. Builds and release packages supply the repository's
 runtime copy. The separate `ALLCALL7.TXT.2022` is used for calibrated regression
 tests; changing the database can change decoded results.
 
-## Rust library: audio to messages
+## ft8rs library: audio to messages
 
 See the [WSJT-X library overview](crates/ft8rs-core/README.md) and
 [API reference](https://docs.rs/ft8rs/latest/ft8rs/wsjtx/) for the core library.
@@ -94,7 +99,7 @@ decoder.decode_with_callback(slot, audio, |batch| {
 // All decoding work for this slot is now complete.
 ```
 
-## Graphical live monitor
+## ft8.rs graphical live monitor
 
 1. Open **Settings → Audio**, select the receiver's audio input and channel.
 2. Choose a profile in **Settings → Decode** or the **Profile** menu.
@@ -120,7 +125,7 @@ window. Private decode worker processes remain independent.
 The GUI monitors live audio; use the CLI for WAV files. Settings changes can be
 applied while listening. Audio diagnostics show the actual opened format,
 input/channel peaks and capture timing. **Compare** can merge an external
-WSJT-X UDP feed into the display; **Output** sends ft8rs decode reports.
+WSJT-X UDP feed into the display; **Output** sends ft8.rs decode reports.
 
 [GUI, audio setup and comparison guide →](docs/USAGE.md)
 

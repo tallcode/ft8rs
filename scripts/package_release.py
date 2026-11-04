@@ -95,7 +95,7 @@ def readme_text(info):
             "libraries and permission to access your audio input.\n"
         )
     return (
-        f"ft8rs {info['version']} ({info['channel']})\n\n"
+        f"ft8.rs {info['version']} ({info['channel']})\n\n"
         "A receive-only FT8 audio monitor.\n\n"
         + start
         + "\nCOMMAND-LINE USE\n"

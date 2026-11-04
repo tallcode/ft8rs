@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="ft8rs 基于 WSJT-X 和 JTDX，以 Rust 重新实现 FT8 解码，并加入了自研的实验性解码功能。">
-    <title>ft8rs — FT8 解码器的 Rust 实现</title>
+    <meta name="description" content="ft8.rs 基于 WSJT-X 和 JTDX，以 Rust 重新实现 FT8 解码，并加入了自研的实验性解码功能。">
+    <title>ft8.rs — FT8 解码器的 Rust 实现</title>
     <link rel="stylesheet" href="${asset_prefix}style.css?v=$style_version">
     <link rel="alternate" hreflang="zh" href="${language_prefix}zh/">
     <link rel="alternate" hreflang="en" href="${language_prefix}en/">
   </head>
   <body>
     <header>
-      <h1>ft8rs</h1>
+      <h1>ft8.rs</h1>
       <p>FT8 解码器的 Rust 实现</p>
       <nav aria-label="页面导航">
         <a href="#download">下载</a>
@@ -24,9 +24,10 @@
     <main>
       <section aria-labelledby="about">
         <h2 id="about">这是什么</h2>
-        <p>ft8rs 是一款基于 WSJT-X 和 JTDX 的 FT8 解码软件，以 Rust 重新实现，并加入了自研的实验性解码功能。</p>
-        <p>它只接收，不带发射功能。你可以用它收听频段活动，也可以针对一个呼号持续监听。软件提供 WSJT-X、JTDX、Hybrid 和 DX 四种解码模式。</p>
-        <p>如果你同时使用 WSJT-X，还可以通过 Compare 在同一张消息列表中对照两个软件的接收结果。</p>
+        <p>ft8.rs 是一款基于 WSJT-X 和 JTDX 的 FT8 解码软件，以 Rust 重新实现，并加入了自研的实验性解码功能。</p>
+        <p>开发者可使用独立的 Rust FT8 解码库 <a href="https://docs.rs/ft8rs/latest/ft8rs/"><code>ft8rs</code></a>；ft8.rs 应用基于该库构建。</p>
+        <p>它只接收，不带发射功能。你可以用它收听频段活动，也可以针对一个呼号持续监听。软件提供 WSJT-X、JTDX、Hybrid 和 DX 四种解码方案。</p>
+        <p>如果你同时使用 WSJT-X，还可以通过“对比”功能在同一张消息列表中对照两个软件的接收结果。</p>
         <p>FT8 是业余无线电中用于弱信号通信的一种数字模式。它以 15 秒为一个收发时隙，通过简短、结构化的消息交换呼号、网格位置、信号报告和通联确认，适合在信号较弱时进行基本信息交流。它不是语音模式，也不是用来长篇聊天的。更多背景可阅读 <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">WSJT-X 官方用户指南</a>。</p>
       </section>
 
@@ -49,64 +50,63 @@
 
       <section aria-labelledby="usage">
         <h2 id="usage">开始使用</h2>
-        <p>以下步骤适用于 Windows 图形界面。</p>
+        <p>以下步骤适用于 Windows 图形界面，菜单和设置项名称以中文版为准。可在 <strong>设置 → 通用 → 语言</strong> 中选择 <strong>中文</strong>；英文界面对应 <strong>Settings → General → Language</strong>。</p>
         <ol>
           <li><strong>连接音频。</strong>将电台或 SDR 调到要收听的 FT8 频率，通过声卡、USB 音频或虚拟音频线把接收音频送入电脑。保持电脑系统时间准确。</li>
           <li><strong>打开软件。</strong>完整解压下载的 ZIP 文件，运行 <code>ft8rs.exe</code>。</li>
-          <li><strong>选择输入。</strong>在 <strong>Settings → Audio</strong> 中选择接收机对应的输入设备和声道，确认有音频电平。如果只有一侧声道有信号，就选择对应的 Left 或 Right。</li>
-          <li><strong>选择模式。</strong>初次使用可以保留默认的 WSJT-X。在 <strong>Settings → Decode</strong> 中可以切换其他模式。</li>
-          <li><strong>开始收听。</strong>点击主窗口的播放按钮。软件按 15 秒一轮接收 FT8，完成一轮接收后会陆续显示消息；点击停止按钮结束收听。</li>
+          <li><strong>选择输入。</strong>在 <strong>设置 → 音频</strong> 中选择接收机对应的<strong>输入设备</strong>和<strong>声道</strong>，确认<strong>输入电平</strong>有变化。如果只有一侧声道有信号，就选择对应的 <strong>左声道</strong> 或 <strong>右声道</strong>。</li>
+          <li><strong>选择解码方案。</strong>初次使用可以保留默认的 WSJT-X。在 <strong>设置 → 解码 → 解码方案</strong> 中可以切换其他方案。</li>
+          <li><strong>开始收听。</strong>点击主窗口的播放按钮（<strong>开始监听</strong>）。软件按 15 秒一轮接收 FT8，完成一轮接收后会陆续显示消息；点击停止按钮（<strong>停止监听</strong>）结束收听。</li>
         </ol>
-        <h3 id="station">什么时候填写自己的呼号</h3>
-        <p>普通频段收听可以留空，没有自己的呼号也能使用。在 <strong>Settings → Station</strong> 中，<strong>My Callsign</strong> 填写自己的呼号，<strong>My Grid</strong> 填写自己的网格位置；它们与主窗口中目标电台的 <strong>Callsign / Grid</strong> 是分开的。</p>
-        <p>填写正确的 My Callsign，可以为解码器提供已知呼号线索，辅助部分弱信号和压缩呼号的识别；消息列表也会突出显示自己的呼号。这不是所有信号都会更容易解码的增益开关。</p>
-        <p>这些字段只提供接收和解码上下文。填写呼号不会启用发射功能，ft8rs 始终只接收。</p>
+        <h3 id="station">我的呼号与网格</h3>
+        <p>普通频段收听可以留空，没有自己的呼号也能使用。在 <strong>设置 → 电台</strong> 中，<strong>我的呼号</strong> 填写自己的呼号，<strong>我的网格</strong> 填写自己的网格位置；它们与主窗口中目标电台的 <strong>呼号</strong>和<strong>网格</strong> 是分开的。</p>
+        <p>正确填写<strong>我的呼号</strong>，有助于解码包含你呼号的部分弱信号消息，以及还原消息中以哈希形式编码的该呼号。对于不包含该呼号的消息，这项设置不提供直接的解码帮助。消息列表也会突出显示你的呼号。</p>
+        <p>填写呼号不会启用发射功能，ft8.rs 始终只接收。</p>
 
-        <h3 id="modes">怎样选择解码模式</h3>
-        <p>在 <strong>Settings → Decode → Profile</strong> 中选择模式，也可以使用 <strong>Profile</strong> 菜单。</p>
+        <h3 id="modes">解码方案</h3>
+        <p>在 <strong>设置 → 解码 → 解码方案</strong> 中选择方案，也可以使用 <strong>解码方案</strong> 菜单。</p>
         <dl>
           <dt>WSJT-X</dt>
-          <dd>默认模式，使用 WSJT-X 的 FT8 解码方式，适合开始收听和一般频段监听。</dd>
+          <dd>默认方案，使用 WSJT-X 的 FT8 解码方式，适合开始收听和一般频段监听。</dd>
           <dt>JTDX</dt>
-          <dd>使用 JTDX 的 FT8 解码方式。同一段音频可能与 WSJT-X 解出不同的消息，可尝试对照，也可以调整 SWL 和 Deep decode 选项。</dd>
+          <dd>使用 JTDX 的 FT8 解码方式。同一段音频可能与 WSJT-X 解出不同的消息，可尝试对照，也可以调整 <strong>SWL</strong> 和<strong>深度解码</strong>选项。</dd>
           <dt>Hybrid</dt>
-          <dd>同时运行 WSJT-X 和两路 JTDX 解码，再合并结果、去除重复消息。两路 JTDX 分别使用原始音频和自动增益调整后的音频。适合希望综合不同解码方式的用户，会使用更多计算资源；还可以开启下方的 SIC 和实验解码功能尝试补充结果。</dd>
+          <dd>同时运行 WSJT-X 和两路 JTDX 解码，再合并结果、去除重复消息。两路 JTDX 分别使用原始音频和自动增益调整后的音频。适合希望综合不同解码方式的用户，会使用更多计算资源；还可以开启下方的<strong>交叉抵消</strong>和<strong>实验解码器</strong>尝试补充结果。</dd>
           <dt>DX</dt>
-          <dd>针对一个目标呼号持续监听，显示与目标有关的消息。先在主窗口的 <strong>Callsign</strong> 中填入目标呼号，再开始收听；双击已解码的消息也可以选中目标并设置接收音频频率。自己的呼号可留空；如果同时提供有效且不同的本站呼号和目标呼号，还可启用额外的呼号对上下文恢复。DX 会自行管理 SWL 和深度搜索，不需要再调整它们的通用开关。</dd>
+          <dd>针对一个目标呼号持续监听，显示与目标有关的消息。先在主窗口的 <strong>呼号</strong> 中填入目标呼号，再开始收听；双击已解码的消息也可以选中目标并设置接收音频频率。自己的呼号可留空；如果同时提供有效且不同的本站呼号和目标呼号，还可启用额外的呼号对上下文恢复。DX 会自行管理 SWL 和深度搜索，不需要再调整它们的通用开关。</dd>
         </dl>
 
         <h3 id="hybrid">Hybrid 的解码选项</h3>
-        <p>选择 Hybrid 后，在 <strong>Settings → Decode</strong> 中可以调整以下选项。可以先保留默认设置，再逐项开启，观察同一音频输入下的结果和电脑负载。</p>
+        <p>选择 Hybrid 后，在 <strong>设置 → 解码</strong> 中可以调整以下选项。可以先保留默认设置，再逐项开启，观察同一音频输入下的结果和电脑负载。</p>
         <dl>
-          <dt>Cross cancellation（SIC，交叉抵消）</dt>
+          <dt>交叉抵消（SIC）</dt>
           <dd>默认开启。利用已经解出的信号，在音频副本中将它抵消后再搜索，尝试找出被重叠信号遮住的消息。由这一步补充的消息在行末标为 <code>sic</code>。关闭后，WSJT-X 和两路 JTDX 的基础解码仍然保留。</dd>
           <dt>SWL（收听搜索）</dt>
           <dd>默认关闭。启用 JTDX 面向收听的搜索方式，在 Hybrid 中同时作用于两路 JTDX。它会改变搜索过程，可能增加耗时；开启后的结果不一定包含关闭时的所有消息。</dd>
-          <dt>Deep decode（深度搜索）</dt>
+          <dt>深度解码</dt>
           <dd>默认关闭。启用 JTDX 围绕所选接收音频频率的进一步搜索，适合关注某个信号时尝试。可以双击消息设置目标和频率；额外搜索可能增加处理时间。</dd>
-          <dt>Experimental decoder（实验解码，exp）</dt>
-          <dd>默认关闭，仅在 Hybrid 中可用。开启后加入 ft8rs 自研的补充解码，尝试恢复稳定弱信号，以及受单音干扰或其他 FT8 信号遮挡的消息。新增结果在行末标为 <code>exp</code>，基础结果仍先显示。它会增加计算量，补充结果可能晚几秒出现；本轮解码的后台处理可能持续约 10 秒或更久。它不能覆盖所有衰落、漂移或干扰情况，也不保证每一轮都增加消息。</dd>
+          <dt>实验解码器（exp）</dt>
+          <dd>默认关闭，仅在 Hybrid 中可用。开启后加入 ft8.rs 自研的补充解码，尝试恢复稳定弱信号，以及受单音干扰或其他 FT8 信号遮挡的消息。新增结果在行末标为 <code>exp</code>，基础结果仍先显示。它会增加计算量，补充结果可能晚几秒出现；本轮解码的后台处理可能持续约 10 秒或更久。它不能覆盖所有衰落、漂移或干扰情况，也不保证每一轮都增加消息。</dd>
         </dl>
         <p><code>sic</code>、<code>exp</code> 等后缀表示消息的解码来源，不是消息正文，也不是“已确认正确”的标记。重要呼号或罕见信号，仍需结合后续时隙和实际接收情况核对。</p>
 
-        <h3 id="compare">Compare：与 WSJT-X 对照</h3>
-        <p>Compare 接收 WSJT-X 发来的实时解码消息，与 ft8rs 的本地结果合并显示。你可以直观看到哪些消息只有一个软件收到，哪些消息两者都收到。</p>
+        <h3 id="compare">对比：与 WSJT-X 对照</h3>
+        <p>“对比”功能接收 WSJT-X 发来的实时解码消息，与 ft8.rs 的本地结果合并显示。你可以直观看到哪些消息只有一个软件收到，哪些消息两者都收到。</p>
         <ol>
-          <li><strong>使用相同的接收音频。</strong>让 ft8rs 和 WSJT-X 监听同一接收机、同一频率和同一音频声道，并同时开始接收。</li>
-          <li><strong>检查 ft8rs 的接收设置。</strong>在 <strong>Settings → Compare</strong> 中勾选 <strong>Listen to WSJT-X (UDP)</strong>。首次使用默认已开启，Host 为 <code>127.0.0.1</code>，Port 为 <code>2237</code>。</li>
-          <li><strong>设置 WSJT-X 的 UDP 输出。</strong>将 WSJT-X 的 UDP 报告发送地址设为 <code>127.0.0.1</code>、端口设为 <code>2237</code>。这里假设两个软件在同一台电脑上；如果端口已被其他软件占用，两边一起改用一个空闲端口。</li>
-          <li><strong>等待新的接收时隙。</strong>消息列表会按来源显示不同颜色，图例可在 Compare 设置页查看：仅 WSJT-X、仅 ft8rs、两者都有。它对照的是新收到的实时消息，不会导入 WSJT-X 的历史列表。</li>
+          <li><strong>使用相同的接收音频。</strong>让 ft8.rs 和 WSJT-X 监听同一接收机、同一频率和同一音频声道，并同时开始接收。</li>
+          <li><strong>检查 ft8.rs 的接收设置。</strong>在 <strong>设置 → 对比</strong> 中勾选 <strong>监听 WSJT-X（UDP）</strong>。首次使用默认已开启，<strong>主机</strong>为 <code>127.0.0.1</code>，<strong>端口</strong>为 <code>2237</code>。</li>
+          <li><strong>设置 WSJT-X 的 UDP 输出。</strong>将 WSJT-X 的 UDP 报告发送地址设为 <code>127.0.0.1</code>、端口设为 <code>2237</code>。这里假设两个软件在同一台电脑上；端口被占用时，两边改用同一空闲端口。</li>
+          <li><strong>等待新的接收时隙。</strong>消息列表会按来源显示不同颜色，图例可在<strong>对比</strong>设置页查看：仅 WSJT-X、仅 ft8.rs、两者均解出。它对照的是新收到的实时消息，不会导入 WSJT-X 的历史列表。</li>
         </ol>
-        <p><strong>Match ± Hz</strong> 是频率匹配容差，默认为 ±7 Hz。同一时隙、消息内容匹配、DT 差不超过 0.3 秒且音频频率差在容差内时，会合并为“两者都有”，SNR 数值不必完全相同。调整容差只影响之后收到的消息。</p>
-        <p>如果监听地址或端口不可用，软件会显示错误并关闭对比监听。修正设置或释放端口后，再次开启 <strong>Listen to WSJT-X (UDP)</strong>。</p>
-        <p>Compare 只用于显示对照，不会把 WSJT-X 的消息送回 ft8rs 帮助解码，颜色也不代表消息一定正确。<strong>Settings → Output</strong> 则是把 ft8rs 的结果发送给其他软件，默认端口为 <code>2238</code>，与这里的接收设置是两个功能。</p>
+        <p><strong>匹配容差（± Hz）</strong>用于匹配两个软件收到的消息，允许的音频频率差默认为 ±7 Hz。</p>
+        <p><strong>对比</strong>用于合并显示 WSJT-X 与 ft8.rs 的接收结果；<strong>设置 → 输出</strong>中的<strong>UDP 上报</strong>用于将本地结果发送给其他软件。</p>
 
         <h3 id="sensitivity">灵敏度对比</h3>
         <h4>人工数据测试（合成音频）</h4>
         <p>我们生成了 144 组包含已知目标消息的 FT8 音频，专门测试稳定弱信号和几种干扰条件。在这组测试中，开启实验解码的 Hybrid 解出了 102 组目标；原有 Hybrid 为 50 组。</p>
         <figure class="sensitivity-chart">
           <img src="${asset_prefix}synthetic.svg" width="680" height="296" alt="144 组测试中，WSJT-X 解出 39 组、JTDX 解出 30 组、Hybrid 解出 50 组、Hybrid 加实验解码解出 102 组。">
-          <figcaption>图中是解出的已知目标数，满分为 144。WSJT-X 和 JTDX 指 ft8rs 内重新实现的解码路径，并非另行运行的原版程序。</figcaption>
+          <figcaption>图中是解出的已知目标数，满分为 144。WSJT-X 和 JTDX 指 ft8.rs 内重新实现的解码路径，并非另行运行的原版程序。</figcaption>
         </figure>
         <p>测试音频由 FT8 消息波形（参照 WSJT-X 的 <code>gen_ft8wave.f90</code> 实现生成）与人工生成的噪声、持续单音或重叠信号混合而成；每条路径都处理同一份 15 秒音频，并按预先知道的消息、频率和时间核对结果。另外 48 组没有目标消息的控制音频用于检查误解码，未计入图表。</p>
         <p>这是一组有意挑选的实验条件。日常接收中，弱信号往往会同时受到变化的衰落、漂移和干扰影响，很少有这样稳定、可控的信号。因此，图中的提升不能推算为实际使用时的解码率，也不保证每一轮都能多收到消息。</p>
@@ -129,9 +129,6 @@
           </table>
         </div>
         <p class="comparison-note">本次两条误码都已出现在单独的 JTDX 模式中，Hybrid 和 Hybrid + exp 没有增加新的误码。回放使用固定的 2022 年版呼号库，JTDX 固定为 1 个分区；重复显示的消息仍按行计数。这些数字不能推算日常接收的正确率。</p>
-
-        <h3>没有收到消息？</h3>
-        <p>先检查接收频率、电脑时间和音频输入。在 <strong>Settings → Audio</strong> 查看电平，确认选中的是接收机音频，且输入没有过载。如果电平一直没有变化，请检查设备、声道和系统的音频输入权限。</p>
 
         <h3>Linux 命令行</h3>
         <p>在解压目录打开终端，先列出输入设备，再用对应的设备编号开始收听：</p>

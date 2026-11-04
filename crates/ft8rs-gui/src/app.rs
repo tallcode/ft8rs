@@ -1,4 +1,4 @@
-//! ft8rs GUI — egui front-end over the live engine.
+//! ft8.rs GUI — egui front-end over the live engine.
 //!
 //! Monitor-only (file decode stays in the CLI). The four hot fields
 //! (mycall/hiscall/hisgrid/nfqso) + Monitor button sit at the bottom; everything
@@ -301,13 +301,13 @@ impl Ft8rsApp {
         }
     }
 
-    /// Window title: `ft8rs - {MyCallsign} - {Profile}` (callsign omitted when
+    /// Window title: `ft8.rs - {MyCallsign} - {Profile}` (callsign omitted when
     /// unset). Pushed to the OS only when it changes.
     fn sync_title(&mut self, ctx: &egui::Context) {
         let profile = profile_label(self.profile);
         let title = match norm(&self.mycall) {
-            Some(call) => format!("ft8rs - {call} - {profile}"),
-            None => format!("ft8rs - {profile}"),
+            Some(call) => format!("ft8.rs - {call} - {profile}"),
+            None => format!("ft8.rs - {profile}"),
         };
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -1466,7 +1466,7 @@ impl Ft8rsApp {
                 let default = ui.visuals().text_color();
                 for (source, label) in [
                     (DecodeSource::External, tr("only WSJT-X")),
-                    (DecodeSource::Local, tr("only ft8rs")),
+                    (DecodeSource::Local, tr("only ft8.rs")),
                     (DecodeSource::Both, tr("both decoders")),
                 ] {
                     let color = source_color(source, dark, default);
@@ -1584,7 +1584,7 @@ impl Ft8rsApp {
         ctx.show_viewport_immediate(
             viewport_id,
             egui::ViewportBuilder::default()
-                .with_title(self.locale.text("About ft8rs"))
+                .with_title(self.locale.text("About ft8.rs"))
                 .with_inner_size([440.0, 500.0])
                 .with_resizable(false)
                 .with_minimize_button(false)
@@ -1759,7 +1759,7 @@ impl Ft8rsApp {
                     .show(vctx, |ui| {
                         ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
                         ui.label(
-                            RichText::new("ft8rs's FT8 decoder is based on WSJT-X:")
+                            RichText::new("ft8.rs's FT8 decoder is based on WSJT-X:")
                                 .weak()
                                 .size(11.0),
                         );

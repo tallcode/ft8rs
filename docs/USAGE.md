@@ -1,7 +1,8 @@
-# Using ft8rs
+# Using ft8.rs
 
-ft8rs receives and decodes FT8. The GUI is a live soundcard monitor; the CLI
-supports both live monitoring and WAV files. Build and launch instructions are
+ft8.rs is a receive-only FT8 application built on the ft8rs Rust decoding
+library. The GUI is a live soundcard monitor; its `ft8rs-cli` companion supports
+both live monitoring and WAV files. Build and launch instructions are
 in the [README](../README.md) and [development guide](DEVELOPMENT.md).
 
 ## GUI workflow
@@ -59,7 +60,7 @@ The live input path prefers 48 kHz capture and converts samples to the core's
 | Mix / `mix` | Average all capture channels |
 
 Mono is the default. Mixing a source present on only one side can reduce its
-amplitude by 6 dB; opposite-phase channels can cancel. Older ft8rs versions
+amplitude by 6 dB; opposite-phase channels can cancel. Older ft8.rs versions
 averaged the input for Mono, so recheck the selected channel when comparing an
 older recording or setup.
 
@@ -89,8 +90,11 @@ Time-only `HHMMSS` input wraps at midnight without attaching a date.
 
 The [README profile table](../README.md#decode-profiles) gives the four modes.
 The defaults are WSJT-X, a 200–3000 Hz decode band, and no operator/target context.
-Callsign and grid context can assist AP/hash decoding; RX is an audio offset in
-Hz, not the radio's RF dial frequency. Both CLI and GUI require finite bounds
+Callsign and grid context can assist AP/hash decoding. My Callsign supplies
+known-call hints for messages containing your own callsign, including resolving
+hashed representations of that call; it provides no direct decoding assistance
+for messages that do not contain it. RX is an audio offset in Hz, not the
+radio's RF dial frequency. Both CLI and GUI require finite bounds
 with `0 ≤ Low < High ≤ 5000 Hz`. RX must be finite and in 0–5000 Hz; zero or an
 RX outside the selected decode band disables QSO focus.
 
@@ -329,5 +333,5 @@ claim that an external UDP result itself arrived on time.
 WSJT-X's `Network/MessageClient.cpp` suppresses only consecutively identical
 serialized packets; changed SNR/DT/annotation fields are different packets, and
 multicast can send on multiple interfaces. `widgets/mainwindow.cpp::replayDecodes`
-uses `New=false`, which the ft8rs listener excludes. Repeated `New=true` observations
+uses `New=false`, which the ft8.rs listener excludes. Repeated `New=true` observations
 still require display deduplication.

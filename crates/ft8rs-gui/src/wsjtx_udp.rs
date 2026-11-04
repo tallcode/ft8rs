@@ -223,7 +223,7 @@ fn parse_decode(buf: &[u8]) -> Option<ExternalDecode> {
     }
     let freq = p.u32()?;
     // WSJT-X/JTDX postDecode forwards the decoded-line mode symbol (`~` for
-    // FT8), whereas ft8rs and some other senders use the full mode name.
+    // FT8), whereas ft8.rs and some other senders use the full mode name.
     if !matches!(p.string()?.as_str(), "~" | "FT8") {
         return None;
     }

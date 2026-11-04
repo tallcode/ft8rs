@@ -3,7 +3,8 @@
 [![crates.io](https://img.shields.io/crates/v/ft8rs.svg)](https://crates.io/crates/ft8rs)
 [![docs.rs](https://docs.rs/ft8rs/badge.svg)](https://docs.rs/ft8rs/latest/ft8rs/)
 
-`ft8rs::wsjtx` provides stateful WSJT-X FT8 decoding from mono PCM audio.
+ft8rs is a Rust FT8 decoding library used by the ft8.rs application.
+Its `ft8rs::wsjtx` facade provides stateful WSJT-X FT8 decoding from mono PCM audio.
 This unofficial Rust port preserves the existing
 WSJT-X session, decode stages, native calculations and cross-slot memory.
 Only FT8 reception is supported by this facade.

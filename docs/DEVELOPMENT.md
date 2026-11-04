@@ -8,6 +8,22 @@ This repository integrates directly into `main` without pull requests. Before
 committing or merging, synchronize remote `main`, resolve conflicts and complete
 the applicable local checks and optimized tests. Then commit and push `main`.
 
+## Product names
+
+This repository maintains two products with distinct names:
+
+| Product | Audience and scope | Naming in documentation |
+|---|---|---|
+| **ft8rs** | Rust FT8 decoding library for developers | Use `ft8rs` in the library README, crates.io overview, API reference and library implementation notes. |
+| **ft8.rs** | Receive-only FT8 application for end users | Use `ft8.rs` on the homepage, in the GUI, in application guides and in application release titles. |
+
+The ft8.rs application uses the ft8rs library. Its CLI is a companion tool named
+`ft8rs-cli`, rather than a third product. Application executable names, package
+names, paths and machine identifiers use `ft8rs` where a dot would be unsuitable
+or ambiguous: `ft8rs.exe`, `ft8rs-cli`, `ft8rs.app` and the UDP client ID `ft8rs`.
+When both products appear together, say "the ft8rs library" and "the ft8.rs
+application" to distinguish them. Library and application versions are independent.
+
 ## Workspace
 
 | Package | Responsibility | Output |

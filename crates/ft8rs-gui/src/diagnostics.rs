@@ -94,7 +94,7 @@ pub fn report_failure(error: &str, log_path: Option<&Path>) {
     let location = log_path
         .map(|p| format!("Details: {}", p.display()))
         .unwrap_or_else(|| "Could not create a diagnostic log.".to_string());
-    let message = format!("ft8rs could not continue.\n\n{error}\n\n{location}");
+    let message = format!("ft8.rs could not continue.\n\n{error}\n\n{location}");
     eprintln!("{message}");
     #[cfg(windows)]
     show_error_dialog(&message);
@@ -112,7 +112,7 @@ fn show_error_dialog(message: &str) {
         ) -> i32;
     }
     let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
-    let caption: Vec<u16> = "ft8rs startup error"
+    let caption: Vec<u16> = "ft8.rs startup error"
         .encode_utf16()
         .chain(Some(0))
         .collect();

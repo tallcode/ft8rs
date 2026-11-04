@@ -1,11 +1,11 @@
-//! Program identity, copyright, license, and third-party attribution.
+//! ft8.rs application identity, copyright, license, and third-party attribution.
 //!
 //! This is the single source of truth shared by the CLI (`ft8rs-cli license`) and
 //! the GUI About dialog, so the credits never drift between front-ends. The
 //! per-binary version string is injected separately (`env!("FT8RS_VERSION")`),
 //! since it lives in each binary crate, not here.
 
-/// Human-facing program name.
+/// Human-facing application name; the decoding library is named `ft8rs`.
 pub const NAME: &str = "ft8.rs";
 
 /// One-line description.

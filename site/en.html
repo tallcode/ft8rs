@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="ft8rs reimplements FT8 decoding from WSJT-X and JTDX in Rust, with additional experimental decoding features.">
-    <title>ft8rs — A Rust implementation of an FT8 decoder</title>
+    <meta name="description" content="ft8.rs reimplements FT8 decoding from WSJT-X and JTDX in Rust, with additional experimental decoding features.">
+    <title>ft8.rs — A Rust implementation of an FT8 decoder</title>
     <link rel="stylesheet" href="${asset_prefix}style.css?v=$style_version">
     <link rel="alternate" hreflang="zh" href="${language_prefix}zh/">
     <link rel="alternate" hreflang="en" href="${language_prefix}en/">
   </head>
   <body>
     <header>
-      <h1>ft8rs</h1>
+      <h1>ft8.rs</h1>
       <p>A Rust implementation of an FT8 decoder</p>
       <nav aria-label="Page navigation">
         <a href="#download">Download</a>
@@ -24,7 +24,8 @@
     <main>
       <section aria-labelledby="about">
         <h2 id="about">About</h2>
-        <p>ft8rs is an FT8 decoder based on WSJT-X and JTDX, reimplemented in Rust with additional experimental decoding features developed for this project.</p>
+        <p>ft8.rs is an FT8 decoder based on WSJT-X and JTDX, reimplemented in Rust with additional experimental decoding features developed for this project.</p>
+        <p>For developers, <a href="https://docs.rs/ft8rs/latest/ft8rs/"><code>ft8rs</code></a> is the Rust FT8 decoding library used by the ft8.rs application.</p>
         <p>It is receive-only, with no transmit function. Listen to activity across the band or follow a particular callsign. Four decoding modes are available: WSJT-X, JTDX, Hybrid and DX.</p>
         <p>If you also use WSJT-X, Compare lets you view both programs' reception results in one message list.</p>
         <p>FT8 is an amateur-radio digital mode for weak-signal communication. It uses 15-second transmit/receive slots and short, structured messages to exchange callsigns, grid locators, signal reports and contact acknowledgements. It is intended for basic exchanges rather than voice or long conversations. See the <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">official WSJT-X User Guide</a> for background.</p>
@@ -57,12 +58,12 @@
           <li><strong>Choose a mode.</strong> Start with the default WSJT-X mode. You can try other modes in <strong>Settings → Decode</strong>.</li>
           <li><strong>Start listening.</strong> Click the play button in the main window. FT8 reception follows 15-second slots; decoded messages appear as they become available after each slot. Click stop to finish.</li>
         </ol>
-        <h3 id="station">When to enter your own callsign</h3>
-        <p>Leave it blank for general band listening; you can use ft8rs without having a callsign. In <strong>Settings → Station</strong>, <strong>My Callsign</strong> is your own callsign and <strong>My Grid</strong> is your grid locator. They are separate from the target station's <strong>Callsign / Grid</strong> in the main window.</p>
-        <p>Entering the correct My Callsign supplies known-call context that can help decode some weak signals and resolve compressed callsigns. Your callsign is also highlighted in the message list. It is not a general sensitivity boost for all signals.</p>
-        <p>These fields supply reception and decoding context only. Entering a callsign does not enable transmission; ft8rs remains receive-only.</p>
+        <h3 id="station">My callsign and grid</h3>
+        <p>Leave it blank for general band listening; you can use ft8.rs without having a callsign. In <strong>Settings → Station</strong>, <strong>My Callsign</strong> is your own callsign and <strong>My Grid</strong> is your grid locator. They are separate from the target station's <strong>Callsign / Grid</strong> in the main window.</p>
+        <p>Entering the correct My Callsign can help decode some weak messages containing your callsign and resolve hashed representations of that callsign. It provides no direct decoding assistance for messages that do not contain your callsign. Your callsign is also highlighted in the message list.</p>
+        <p>Entering a callsign does not enable transmission; ft8.rs remains receive-only.</p>
 
-        <h3 id="modes">Choosing a decoding mode</h3>
+        <h3 id="modes">Decoding modes</h3>
         <p>Select a mode in <strong>Settings → Decode → Profile</strong> or use the <strong>Profile</strong> menu.</p>
         <dl>
           <dt>WSJT-X</dt>
@@ -85,28 +86,27 @@
           <dt>Deep decode</dt>
           <dd>Off by default. Enables further JTDX searches around the selected receive audio frequency. Try it when following a particular signal; double-click a message to set the target and frequency. The extra searches may take longer.</dd>
           <dt>Experimental decoder (exp)</dt>
-          <dd>Off by default and available only in Hybrid. Adds ft8rs's own supplementary decoder to attempt recovery of stable weak signals and messages affected by single-tone interference or overlapping FT8 signals. Additional results carry <code>exp</code> at the end of the row, while baseline results are displayed first. It uses more computing resources, and supplementary messages may appear several seconds later; background work for the slot may continue for around 10 seconds or longer. It does not cover every fading, drift or interference condition, and may add no messages in a given slot.</dd>
+          <dd>Off by default and available only in Hybrid. Adds ft8.rs's own supplementary decoder to attempt recovery of stable weak signals and messages affected by single-tone interference or overlapping FT8 signals. Additional results carry <code>exp</code> at the end of the row, while baseline results are displayed first. It uses more computing resources, and supplementary messages may appear several seconds later; background work for the slot may continue for around 10 seconds or longer. It does not cover every fading, drift or interference condition, and may add no messages in a given slot.</dd>
         </dl>
         <p>Suffixes such as <code>sic</code> and <code>exp</code> identify how a message was decoded. They are separate from the message text and do not certify that it is correct. Cross-check important callsigns or rare signals against later slots and the received audio.</p>
 
         <h3 id="compare">Compare with WSJT-X</h3>
-        <p>Compare receives live decoded messages from WSJT-X and merges them with ft8rs's local results. It shows which messages were received by one program and which were received by both.</p>
+        <p>Compare receives live decoded messages from WSJT-X and merges them with ft8.rs's local results. It shows which messages were received by one program and which were received by both.</p>
         <ol>
-          <li><strong>Use the same receive audio.</strong> Set ft8rs and WSJT-X to listen to the same receiver, frequency and audio channel, and start reception in both.</li>
-          <li><strong>Check ft8rs's listener.</strong> In <strong>Settings → Compare</strong>, enable <strong>Listen to WSJT-X (UDP)</strong>. It is enabled by default on first use, with Host <code>127.0.0.1</code> and Port <code>2237</code>.</li>
-          <li><strong>Set WSJT-X's UDP output.</strong> Send WSJT-X's UDP reports to <code>127.0.0.1</code>, port <code>2237</code>. This assumes both programs run on the same computer. If another program already uses that port, choose a free port and change it in both programs.</li>
-          <li><strong>Wait for new receive slots.</strong> The message list uses source colors, with a legend in Compare settings: only WSJT-X, only ft8rs, or both decoders. Comparison uses new live reports; it does not import WSJT-X's message history.</li>
+          <li><strong>Use the same receive audio.</strong> Set ft8.rs and WSJT-X to listen to the same receiver, frequency and audio channel, and start reception in both.</li>
+          <li><strong>Check ft8.rs's listener.</strong> In <strong>Settings → Compare</strong>, enable <strong>Listen to WSJT-X (UDP)</strong>. It is enabled by default on first use, with Host <code>127.0.0.1</code> and Port <code>2237</code>.</li>
+          <li><strong>Set WSJT-X's UDP output.</strong> Send WSJT-X's UDP reports to <code>127.0.0.1</code>, port <code>2237</code>. This assumes both programs run on the same computer. If the port is in use, select the same free port in both programs.</li>
+          <li><strong>Wait for new receive slots.</strong> The message list uses source colors, with a legend in Compare settings: only WSJT-X, only ft8.rs, or both decoders. Comparison uses new live reports; it does not import WSJT-X's message history.</li>
         </ol>
-        <p><strong>Match ± Hz</strong> is the frequency matching tolerance, initially ±7 Hz. Messages are merged as “both” when their slot and message content match, their DT values differ by at most 0.3 seconds and their audio frequencies are within this tolerance. SNR does not have to be identical. Changes to the tolerance affect subsequently received messages.</p>
-        <p>If the listening address or port is unavailable, the app shows an error and disables comparison. Correct the settings or free the port, then enable <strong>Listen to WSJT-X (UDP)</strong> again.</p>
-        <p>Compare only changes the display; WSJT-X messages do not feed back into ft8rs decoding, and source colors do not prove a message is correct. <strong>Settings → Output</strong> is a separate function that sends ft8rs results to other programs, using port <code>2238</code> by default.</p>
+        <p><strong>Match ± Hz</strong> sets the allowed audio-frequency difference when matching messages received by the two programs. The default is ±7 Hz.</p>
+        <p><strong>Compare</strong> combines reception results from WSJT-X and ft8.rs in one display. To send local results to other programs, enable <strong>UDP reports</strong> in <strong>Settings → Output</strong>.</p>
 
         <h3 id="sensitivity">Sensitivity comparison</h3>
         <h4>Synthetic data test</h4>
         <p>We generated 144 FT8 recordings with known target messages to test stable weak signals and selected interference conditions. In this set, Hybrid with experimental decoding recovered 102 targets; standard Hybrid recovered 50.</p>
         <figure class="sensitivity-chart">
           <img src="${asset_prefix}synthetic.svg" width="680" height="296" alt="Of 144 test cases, WSJT-X recovered 39 targets, JTDX 30, Hybrid 50, and Hybrid with experimental decoding 102.">
-          <figcaption>The chart shows known targets recovered out of 144. WSJT-X and JTDX refer to their reimplemented paths inside ft8rs, not separately run original applications.</figcaption>
+          <figcaption>The chart shows known targets recovered out of 144. WSJT-X and JTDX refer to their reimplemented paths inside ft8.rs, not separately run original applications.</figcaption>
         </figure>
         <p>Each recording combines a generated FT8 waveform (produced by an implementation based on WSJT-X's <code>gen_ft8wave.f90</code>) with synthetic noise, a continuous tone, or overlapping signals. Every path processes the same 15-second audio, and results are checked against the known message, frequency and timing. Another 48 recordings without target messages were used to check for false decodes; they are excluded from the chart.</p>
         <p>These conditions were deliberately chosen for the experiment. In everyday reception, weak signals often face changing fading, drift and interference; they are rarely this stable or controlled. The increase shown here cannot be used to predict real-world decode rates, and it does not mean every receive slot will yield more messages.</p>
@@ -129,9 +129,6 @@
           </table>
         </div>
         <p class="comparison-note">Both false decodes in this test also appear in the standalone JTDX mode; Hybrid and Hybrid + exp add no further false decodes. The replay uses the fixed 2022 callsign database and one JTDX partition; repeated displays remain separate rows. These results do not predict everyday reception accuracy.</p>
-
-        <h3>No messages?</h3>
-        <p>Check the receive frequency, computer clock and audio input first. In <strong>Settings → Audio</strong>, check that the receiver's audio is selected and the level is not overloaded. If the level never changes, check the device, channel and your system's audio input permissions.</p>
 
         <h3>Linux command line</h3>
         <p>Open a terminal in the extracted directory. List the input devices, then start listening with the appropriate device number:</p>

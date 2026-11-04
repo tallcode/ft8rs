@@ -99,13 +99,12 @@ ol {
 
 .sensitivity-chart {
   margin: 1.25rem 0 2rem;
-  overflow-x: auto;
 }
 
 .sensitivity-chart img {
   display: block;
   width: 100%;
-  min-width: 35rem;
+  max-width: 100%;
   height: auto;
 }
 

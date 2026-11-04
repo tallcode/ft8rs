@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build a macOS .app bundle for the ft8rs GUI.
+# Build a macOS .app bundle for the ft8.rs GUI.
 #
 # macOS release packaging runs locally (hosted-runner queue times keep macOS
 # disabled in CI). This assembles dist/ft8rs.app from a release build of
@@ -16,6 +16,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+DISPLAY_NAME="ft8.rs"
 APP_NAME="ft8rs"
 BIN_NAME="ft8rs"
 BUNDLE_ID="io.github.tallcode.ft8rs"
@@ -65,9 +66,9 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>${APP_NAME}</string>
+    <string>${DISPLAY_NAME}</string>
     <key>CFBundleDisplayName</key>
-    <string>${APP_NAME}</string>
+    <string>${DISPLAY_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleExecutable</key>
@@ -85,7 +86,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>ft8rs captures audio from your selected input device to decode FT8 signals.</string>
+    <string>ft8.rs captures audio from your selected input device to decode FT8 signals.</string>
 </dict>
 </plist>
 PLIST

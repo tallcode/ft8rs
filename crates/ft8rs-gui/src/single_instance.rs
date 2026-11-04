@@ -76,8 +76,8 @@ impl Drop for PrimaryInstance {
 }
 
 pub fn acquire() -> io::Result<Startup> {
-    let directory = eframe::storage_dir("ft8rs")
-        .ok_or_else(|| io::Error::other("Cannot locate the ft8rs user data directory"))?;
+    let directory = eframe::storage_dir(crate::APP_ID)
+        .ok_or_else(|| io::Error::other("Cannot locate the ft8.rs user data directory"))?;
     acquire_in(&directory)
 }
 
@@ -95,7 +95,7 @@ fn acquire_in(directory: &Path) -> io::Result<Startup> {
             // The other process may still be publishing its endpoint. Retry the
             // activation handshake, but never start another GUI if it times out.
             if !notify_existing(directory)? {
-                eprintln!("ft8rs is already running; window activation timed out.");
+                eprintln!("ft8.rs is already running; window activation timed out.");
             }
             return Ok(Startup::Secondary);
         }

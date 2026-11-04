@@ -122,6 +122,7 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertEqual(files[prefix + "ALLCALL7.TXT"], database.read_bytes())
                 readme = files[prefix + "README.txt"].decode("utf-8")
                 self.assertTrue(readme.isascii())
+                self.assertTrue(readme.startswith(f"ft8.rs {info['version']} "))
                 self.assertIn(info["version"], readme)
                 self.assertIn(info["commit"], readme)
                 self.assertIn("--start-time 261103_120000", readme)

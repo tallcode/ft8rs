@@ -1,16 +1,20 @@
 # Documentation
 
+This repository contains **ft8rs**, the Rust FT8 decoding library, and
+**ft8.rs**, the receive-only application built on it. The CLI is the application's
+command-line companion, invoked as `ft8rs-cli`.
+
 Start with the [project README](../README.md) for library installation, building
-the applications and choosing a decoder profile. Commands in these documents
+the application and choosing a decoder profile. Commands in these documents
 run from the repository root unless a section says otherwise.
 
-## Use and maintain ft8rs
+## Use and maintain ft8rs and ft8.rs
 
 | Document | Contents |
 |---|---|
-| [Library guide](../crates/ft8rs-core/README.md) | Cargo installation, PCM input, stateful decoding and batch callbacks |
+| [ft8rs library guide](../crates/ft8rs-core/README.md) | Cargo installation, PCM input, stateful decoding and batch callbacks |
 | [API reference](https://docs.rs/ft8rs/latest/ft8rs/wsjtx/) | Public WSJT-X decoder types, configuration and error contracts |
-| [Usage](USAGE.md) | GUI controls, soundcard/channel setup, CLI reference, UDP and troubleshooting |
+| [ft8.rs usage](USAGE.md) | GUI controls, soundcard/channel setup, CLI reference, UDP and troubleshooting |
 | [Development](DEVELOPMENT.md) | Workspace, optimized builds, FFTW, packaging, local checks and integration rules |
 | [Validation](VALIDATION.md) | Reproducible recording baselines, CallDB/configuration, evidence limits and latest local run |
 | [Decoder tests](../crates/ft8rs-core/tests/decoder/README.md) | Shared adapters, fixed corpus, test coverage and result comparison |

@@ -45,6 +45,8 @@ fn embed_windows_icon() {
 
     let mut res = winresource::WindowsResource::new();
     res.set_icon(out.to_str().unwrap());
+    res.set("ProductName", "ft8.rs");
+    res.set("FileDescription", "ft8.rs FT8 decoder");
     if let Err(err) = res.compile() {
         println!("cargo:warning=failed to embed Windows icon: {err}");
     }
