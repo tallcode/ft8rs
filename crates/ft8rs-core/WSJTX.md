@@ -88,8 +88,9 @@ The evidence and future compatibility work belong in
 Active RR73 sensitivity fixtures use native acknowledgment 32403, including
 the standalone AWGN case. Source checks cover 36 pinned codec, template,
 receiver and waveform files. The consolidated wsjtx+ report records synthetic
-coverage and compatibility diagnoses. The plus directory remains documentation
-only, without a compiled decoder or public entry point.
+coverage and compatibility diagnoses. Independent plus development now uses a
+test-only harness and remains outside this original profile; see its separate
+report linked above.
 
 Reproduction and pin audit:
 
@@ -138,12 +139,13 @@ Release tests protect the active alignment baseline.
 | Fixture | Active target |
 |---|---:|
 | `tests/ft8/210703_133430.wav` | `21/21` WSJT-X target rows; every target row is required |
-| `tests/ft8/230208_140300.wav` | `434/434` WSJT-X target rows |
+| `tests/ft8/230208_140300.wav` | `429/429` WSJT-X target rows |
 
 CSV `Extra` is a pipe-separated list of decoder memberships: `W` (WSJT-X),
 `J` (JTDX), `H` (Hybrid), `He` (Hybrid + experimental decoding). A blank value
 means the reviewed reference message was absent from the fixed replay. The
-long fixture has 434 `W` rows. The historical degraded-recording requirements
+long fixture has 429 `W` rows after the five explicitly approved annotation
+changes described above. The historical degraded-recording requirements
 are frozen separately in `tests/decoder/data/ft8/degraded/retention.tsv`.
 
 The short test's old `19` acceptance floor was inherited from the early

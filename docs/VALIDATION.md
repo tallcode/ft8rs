@@ -254,7 +254,9 @@ additions. Its direct failure is ordinary BP/OSD CRC failure in the fixed noise,
 not an active old RR73 template. Old A8 waveform compatibility, real RR73 and
 CQ causes, full FEC evidence and the development stages are consolidated into
 [the single wsjtx+ plan/report](../crates/ft8rs-core/src/decode/lib_wsjtx_plus/README.md).
-CPU SIMD remains stage 2; MKL/GPU remain the final stage. There is no plus DSP.
+At that alignment checkpoint the plus directory contained documentation only.
+CPU SIMD belongs to stage 2; MKL/GPU remain the final stage. Subsequent plus
+development is recorded separately below.
 
 Before cleanup, the full serial release suite passed 232 tests, including all
 12 normally ignored gates; the other workspace passed 106 tests with two existing engine
@@ -286,6 +288,37 @@ under `target/decoder-validation/2026-11-04-cleanup/`. The compact
 identities, native truth, offline FEC inputs/results and prior validation history.
 Temporary instrumented crates, probes, raw buffers, executables, WAV exports and
 tool downloads are removed; the formal native reference source checkout remains.
+
+## 2026-11-04: first wsjtx+ implementation stage
+
+The independent, test-only plus receiver now has a paired original/reference/
+optimized replay. The production WSJT-X/JTDX, Hybrid/DX, shared math and real
+fixtures remain unchanged. The single [plus plan/report](../crates/ft8rs-core/src/decode/lib_wsjtx_plus/README.md)
+contains the implementation, CPU measurements and compatibility backlog; it
+remains the authoritative detailed report.
+
+Three initial release rounds cover 26 cases / 80 slots / 941 observations per
+round with bit-identical messages, metadata, tones and callback order. Median
+corpus work drops from 86.593 to 53.760 seconds. A final build after adding the
+optional FFTW R2C delegation repeats all three modes: 86.255 versus 54.799
+seconds, again retaining all 941 observations, including cross-build comparison.
+The two binaries' timings are reported separately. Both are serial staged
+compute measurements; callback boundary offsets are an offline queueing model.
+They do not establish live GUI latency, x86 performance or a sensitivity gain.
+
+The final complete local release suite passes 274 tests, including all 13 manual
+gates. The other workspace passes 106 optimized unit tests with two existing
+engine gates ignored. Default all-target workspace Clippy passes with warnings
+denied. Optional FFTW all-target type checking passes; strict feature Clippy
+reports the unchanged shared FFTW file's pre-existing documentation lint.
+Allowing only that lint on the command line leaves all other warnings denied
+and passes. No original/shared file is changed to fix that baseline lint, and
+FFTW runtime/performance is not claimed.
+
+Formal evidence: `target/decoder-validation/wsjtx-plus-phase1-release-final/`
+and `target/decoder-validation/wsjtx-plus-phase1-final-recheck/`. Temporary probes
+are removed after retaining compact exploration summaries. Source and fixture
+protection plus final check identities are recorded in `final-audit.json`.
 
 ## Limits and follow-up validation
 
