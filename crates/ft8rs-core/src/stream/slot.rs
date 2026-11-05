@@ -107,7 +107,10 @@ where
     let per_slot = SAMPLE_RATE as usize * SLOT_SECONDS;
     for (slot, samples) in samples_12k.chunks(per_slot).enumerate() {
         let timestamp = start_time.add_seconds((slot * SLOT_SECONDS) as i64);
-        let count = if matches!(profile, DecodeProfile::Hybrid | DecodeProfile::Dx) {
+        let count = if matches!(
+            profile,
+            DecodeProfile::WsjtxPlus | DecodeProfile::Hybrid | DecodeProfile::Dx
+        ) {
             decoder.decode_slot_streaming_with_provenance_at(&timestamp, samples, |row| {
                 on_decode(timestamp.clone(), row)
             })?

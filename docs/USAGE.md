@@ -14,7 +14,7 @@ window with seven pages:
 |---|---|
 | Station | My Callsign and My Grid |
 | Audio | Input device, channel, actual opened format, recent peaks and per-slot capture timing |
-| Decode | Profile, Hybrid cross cancellation, SWL and focused deep decoding |
+| Decode | Profile, WSJT-X+ compatibility recovery, Hybrid cross cancellation, SWL and focused deep decoding |
 | Frequency | Lower and upper audio-frequency bounds |
 | Output | Outgoing UDP decode reports, host and port |
 | Compare | Incoming WSJT-X UDP feed and frequency matching tolerance |
@@ -88,7 +88,7 @@ Time-only `HHMMSS` input wraps at midnight without attaching a date.
 
 ## Profiles and context
 
-The [README profile table](../README.md#decode-profiles) gives the four modes.
+The [README profile table](../README.md#decode-profiles) lists the available modes.
 The defaults are WSJT-X, a 200–3000 Hz decode band, and no operator/target context.
 Callsign and grid context can assist AP/hash decoding. My Callsign supplies
 known-call hints for messages containing your own callsign, including resolving
@@ -97,6 +97,11 @@ for messages that do not contain it. RX is an audio offset in Hz, not the
 radio's RF dial frequency. Both CLI and GUI require finite bounds
 with `0 ≤ Low < High ≤ 5000 Hz`. RX must be finite and in 0–5000 Hz; zero or an
 RX outside the selected decode band disables QSO focus.
+
+Choose **WSJT-X+** under **Settings → Decode → Profile** to use the optimized
+receiver. **Compatibility recovery** searches for legacy RR73 and CQ after the
+base decode and is enabled by default. Use `--profile wsjtx-plus` on the CLI and
+add `--no-wsjtx-plus-compatibility` to run its base decode alone.
 
 Hybrid always has three baseline paths: WSJT-X, JTDX/noAGC and JTDX/AGC.
 **Cross cancellation** is enabled by default and can be disabled without removing
@@ -184,7 +189,8 @@ The file command writes console results; UDP output options are monitor-only.
 | `--channel` | | Monitor | `mono` (default), `left`, `right`, `mix` |
 | `--slots` | `-S` | Monitor | Slot limit; omitted keeps listening |
 | `--start-time` | `-s` | File | First slot timestamp |
-| `--profile` | | Both | `wsjtx` (default), `jtdx`, `hybrid`, `dx` |
+| `--profile` | | Both | `wsjtx` (default), `wsjtx-plus`, `jtdx`, `hybrid`, `dx` |
+| `--no-wsjtx-plus-compatibility` | | Both | Disable legacy RR73/CQ recovery for `wsjtx-plus` |
 | `--low` / `--high` | `-L` / `-H` | Both | Audio decode bounds, default 200 / 3000 Hz |
 | `--rx-frequency` | `-f` | Both | Focused receive/QSO audio offset in Hz |
 | `--my-call` / `--my-grid` | `-c` / `-G` | Both | Operator context |

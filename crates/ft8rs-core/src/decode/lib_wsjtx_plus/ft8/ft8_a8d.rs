@@ -5,6 +5,7 @@
 
 use super::{ft8_downsample_from_cx, nint_wsjtx_real, twkfreq1, NFFT1_LONG, NFFT2, NN, NSPS};
 use crate::decode::genft8::get_ft8_tones_from_77bits;
+use crate::decode::lib_wsjtx_plus::compatibility::legacy_rr73;
 use crate::decode::lib_wsjtx_plus::fft::{four2a_c2c, four2a_r2c};
 use crate::decode::packjt77::{is_stdcall_suffix, pack77};
 use std::sync::OnceLock;
@@ -33,6 +34,7 @@ pub(crate) fn ft8_a8d_result(
     dxcall: &str,
     dxgrid: &str,
     f1a: f64,
+    compatibility: bool,
 ) -> Option<Ft8A8dResult> {
     let mut xdt = 0.0f64;
     let mut fbest = 0.0f64;
@@ -46,6 +48,7 @@ pub(crate) fn ft8_a8d_result(
         dxcall,
         dxgrid,
         f1a,
+        compatibility,
         &mut xdt,
         &mut fbest,
         &mut xsnr,
@@ -73,6 +76,7 @@ pub(crate) fn ft8_a8d(
     dxcall: &str,
     dxgrid: &str,
     f1a: f64,
+    compatibility: bool,
     xdt: &mut f64,
     fbest_out: &mut f64,
     xsnr_out: &mut f64,
@@ -108,6 +112,7 @@ pub(crate) fn ft8_a8d(
     let mut fbest = 0.0f32;
     let mut msgbest = String::new();
     let mut itone_best = [0i32; 79];
+    let mut best_is_legacy = false;
 
     // WSJT-X 015b4894: retain both the suffix-aware standard hypotheses
     // and the former nonstandard-call hypotheses, in that order.
@@ -134,10 +139,19 @@ pub(crate) fn ft8_a8d(
             if msgbits.len() != 77 {
                 return None;
             }
-            let itone = get_ft8_tones_from_77bits(&msgbits);
-            let (cwave_re, cwave_im) = gen_ft8wave_a8(&itone);
-            Some((msg, itone, cwave_re, cwave_im))
+            let make = |msg, bits: &[u8], legacy| {
+                let itone = get_ft8_tones_from_77bits(bits);
+                let (cwave_re, cwave_im) = gen_ft8wave_a8(&itone);
+                (msg, itone, cwave_re, cwave_im, legacy)
+            };
+            let legacy = if compatibility && msg.ends_with(" RR73") {
+                legacy_rr73(&msgbits).map(|bits| make(msg.clone(), &bits, true))
+            } else {
+                None
+            };
+            Some((make(msg, &msgbits, false), legacy))
         })
+        .flat_map(|(current, legacy)| std::iter::once(current).chain(legacy))
         .collect();
     if hypotheses.is_empty() {
         return;
@@ -146,7 +160,7 @@ pub(crate) fn ft8_a8d(
     let mut cd0_im = vec![0.0f64; NFFT];
     let mut raw_spectrum = vec![0.0f32; NFFT + 1];
 
-    for (msg, itone, cwave_re, cwave_im) in hypotheses {
+    for (msg, itone, cwave_re, cwave_im, is_legacy) in hypotheses {
         let mut spk = 0.0f32;
         let mut fpk = 0.0f32;
         let mut tpk = 0.0f32;
@@ -225,10 +239,14 @@ pub(crate) fn ft8_a8d(
             tbest = tpk;
             msgbest = msg;
             itone_best = itone;
+            best_is_legacy = is_legacy;
             s1.copy_from_slice(&s0);
         }
     }
 
+    if compatibility && !best_is_legacy {
+        return;
+    }
     let mut a = [0.0f64; 5];
     a[0] = (f1 - fbest) as f64;
     if a[0].abs() > 5.0 {

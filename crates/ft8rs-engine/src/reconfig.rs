@@ -80,6 +80,7 @@ impl ReconfigOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigField {
     Profile,
+    WsjtxPlusCompatibility,
     MyCall,
     MyGrid,
     HisCall,
@@ -105,6 +106,11 @@ pub fn config_diff(old: &StreamDecodeConfig, new: &StreamDecodeConfig) -> BTreeS
         }
     };
     note(old.profile != new.profile, ConfigField::Profile);
+    note(
+        (old.profile == DecodeProfile::WsjtxPlus || new.profile == DecodeProfile::WsjtxPlus)
+            && old.wsjtx_plus_compatibility != new.wsjtx_plus_compatibility,
+        ConfigField::WsjtxPlusCompatibility,
+    );
     note(old.mycall != new.mycall, ConfigField::MyCall);
     note(old.mygrid != new.mygrid, ConfigField::MyGrid);
     note(old.hiscall != new.hiscall, ConfigField::HisCall);
@@ -217,6 +223,20 @@ mod tests {
     fn no_change_is_noop() {
         let s = base();
         assert!(plan_reconfig(&s, &s).is_noop());
+    }
+
+    #[test]
+    fn wsjtx_plus_compatibility_applies_at_slot_boundary() {
+        let mut old = base();
+        old.config.profile = DecodeProfile::WsjtxPlus;
+        let mut new = old.clone();
+        new.config.wsjtx_plus_compatibility = false;
+        let plan = plan_reconfig(&old, &new);
+        assert!(plan.rebuild_session);
+        assert!(!plan.restart_capture);
+        old.config.profile = DecodeProfile::Wsjtx;
+        new.config.profile = DecodeProfile::Wsjtx;
+        assert!(plan_reconfig(&old, &new).is_noop());
     }
 
     #[test]

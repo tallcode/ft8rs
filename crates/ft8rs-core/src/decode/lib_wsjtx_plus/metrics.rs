@@ -26,6 +26,7 @@ thread_local! {
     static METRICS: RefCell<Option<Metrics>> = const { RefCell::new(None) };
 }
 
+#[cfg(test)]
 pub(super) fn begin() {
     METRICS.with_borrow_mut(|m| {
         assert!(m.is_none(), "nested metrics collection");
@@ -33,6 +34,7 @@ pub(super) fn begin() {
     });
 }
 
+#[cfg(test)]
 pub(super) fn finish() -> Metrics {
     METRICS.with_borrow_mut(|m| m.take().expect("metrics not started"))
 }

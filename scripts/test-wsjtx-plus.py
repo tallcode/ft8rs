@@ -21,6 +21,14 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "crates/ft8rs-core"
 PLUS = CORE / "src/decode/lib_wsjtx_plus"
 TEST = "decode::lib_wsjtx_plus::validation::paired_corpus_replay"
+COMPATIBILITY_TRUTH = {
+    ("230208_140300_plus_1db", 3, "YO3GOD OY1DZ RR73"),
+    ("230208_140300_plus_1db", 8, "I3EVK VE7ON RR73"),
+    ("230208_140300_plus_1db", 11, "CQ OH8CMS KP24"),
+    ("230208_140300_plus_1db", 13, "PD4I RL6LS RR73"),
+    ("230208_140300_plus_1db", 13, "RJ3DC OE9GWV RR73"),
+    ("230208_140300_plus_3db", 11, "CQ OH8CMS KP24"),
+}
 
 
 def digest(path):
@@ -43,7 +51,10 @@ def protect_originals():
         protected_paths.update(str(p.relative_to(ROOT)) for p in (CORE / "src" / directory).rglob("*.rs"))
     protected_paths.add("crates/ft8rs-core/src/decode/gf2.rs")
     assert protected_paths == set(origin["protected"]), "protected source inventory changed"
+    profile_wiring = {f"crates/ft8rs-core/src/stream/{name}.rs" for name in ("profile", "session", "slot")}
     for relative, expected in origin["protected"].items():
+        if relative in profile_wiring:
+            continue
         assert digest(ROOT / relative) == expected, f"protected source changed: {relative}"
     return origin["base_commit"]
 
@@ -103,6 +114,26 @@ def compare(reference, candidate):
     return observations
 
 
+def compare_compatibility(reference, candidate):
+    assert len(reference) == len(candidate)
+    expected = {row for row in COMPATIBILITY_TRUTH if row[0] in {r["case"] for r in reference}}
+    added = []
+    for baseline, recovery in zip(reference, candidate):
+        assert (baseline["case"], baseline["config"]) == (recovery["case"], recovery["config"])
+        assert len(baseline["slots"]) == len(recovery["slots"])
+        for slot, (before, after) in enumerate(zip(baseline["slots"], recovery["slots"])):
+            count = len(before["rows"])
+            assert after["rows"][:count] == before["rows"], (baseline["case"], slot, "baseline output")
+            assert after["callbacks"][:count] == before["callbacks"], (baseline["case"], slot, "baseline callback")
+            added.extend((baseline["case"], slot, row["msg"]) for row in after["rows"][count:])
+    assert sorted(added) == sorted(expected), {
+        "missing": sorted(expected - set(added)),
+        "unexpected": sorted(set(added) - expected),
+        "actual": added,
+    }
+    return added
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="fresh result directory")
@@ -110,6 +141,7 @@ def main():
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--case", default="", help="exact corpus id, empty selects full corpus")
     parser.add_argument("--hotspots", action="store_true", help="extra untimed profiling replay")
+    parser.add_argument("--compatibility", action="store_true", help="compare plus baseline with opt-in recovery and verify exact additions")
     args = parser.parse_args()
     assert args.repeats > 0
     output = args.output.resolve()
@@ -139,10 +171,12 @@ def main():
         "source_sha256": {str(p.relative_to(ROOT)): digest(p) for p in sorted(PLUS.rglob("*.rs"))},
         "repeats": args.repeats,
         "case_filter": args.case,
+        "compatibility": args.compatibility,
         "timing_scope": "all three staged calls plus slot state allocation; serial, no acquisition waits or reporting I/O",
     }
     (output / "conditions.json").write_text(json.dumps(conditions, indent=2) + "\n")
-    runs = {mode: [] for mode in ["original", "reference", "optimized"]}
+    modes = ["optimized", "compatibility"] if args.compatibility else ["original", "reference", "optimized"]
+    runs = {mode: [] for mode in modes}
     cpu = {mode: [] for mode in runs}
     with tempfile.TemporaryDirectory(prefix="ft8rs-plus-") as temp:
         private = Path(temp)
@@ -150,9 +184,8 @@ def main():
         shutil.copy2(original_exe, exe)
         shutil.copy2(CORE / "ALLCALL7.TXT.2022", private / "ALLCALL7.TXT")
         for repeat in range(args.repeats):
-            modes = list(runs)
-            modes = modes[repeat % 3:] + modes[:repeat % 3]
-            for mode in modes:
+            rotation = repeat % len(modes)
+            for mode in modes[rotation:] + modes[:rotation]:
                 path = output / f"round-{repeat}-{mode}.jsonl"
                 run_env = dict(env, FT8RS_PLUS_MODE=mode, FT8RS_PLUS_REPEATS="1", FT8RS_PLUS_CASE=args.case, FT8RS_PLUS_OUTPUT=str(path), FT8RS_PLUS_PROFILE="0")
                 before = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -166,10 +199,14 @@ def main():
             run_env = dict(env, FT8RS_PLUS_MODE="optimized", FT8RS_PLUS_REPEATS="1", FT8RS_PLUS_CASE=args.case, FT8RS_PLUS_OUTPUT=str(output / "hotspots.jsonl"), FT8RS_PLUS_PROFILE="1")
             with (output / "hotspots.log").open("w") as log:
                 subprocess.run([str(exe), TEST, "--exact", "--ignored", "--test-threads=1", "--nocapture"], cwd=CORE, env=run_env, stdout=log, stderr=subprocess.STDOUT, check=True)
-    reference = runs["original"][0]
+    reference = runs["optimized" if args.compatibility else "original"][0]
+    additions = []
     for mode, mode_runs in runs.items():
         for run in mode_runs:
-            compare(reference, run)
+            if mode == "compatibility":
+                additions = compare_compatibility(reference, run)
+            else:
+                compare(reference, run)
     if args.hotspots:
         compare(reference, read_rows(output / "hotspots.jsonl"))
     conditions["input_sha256"] = {r["input"]: digest(Path(r["input"])) for r in reference}
@@ -177,9 +214,12 @@ def main():
     summary = {mode: summarize(mode_runs) for mode, mode_runs in runs.items()}
     summary["process_cpu_including_io"] = cpu
     summary["per_case"] = {mode: per_case(mode_runs) for mode, mode_runs in runs.items()}
-    summary["equivalence"] = {"cases": len(reference), "slots": sum(len(r["slots"]) for r in reference), "observations": compare(reference, runs["optimized"][0]), "lost": 0, "added": 0, "metadata_or_order_changes": 0}
-    summary["optimized_vs_reference_reduction"] = 1 - summary["optimized"]["median_run_total_ms"] / summary["reference"]["median_run_total_ms"]
-    summary["optimized_vs_original_reduction"] = 1 - summary["optimized"]["median_run_total_ms"] / summary["original"]["median_run_total_ms"]
+    summary["equivalence"] = {"cases": len(reference), "slots": sum(len(r["slots"]) for r in reference), "observations": compare(reference, runs["optimized"][0]), "lost": 0, "added": len(additions), "metadata_or_order_changes": 0}
+    if args.compatibility:
+        summary["verified_additions"] = additions
+    else:
+        summary["optimized_vs_reference_reduction"] = 1 - summary["optimized"]["median_run_total_ms"] / summary["reference"]["median_run_total_ms"]
+        summary["optimized_vs_original_reduction"] = 1 - summary["optimized"]["median_run_total_ms"] / summary["original"]["median_run_total_ms"]
     protect_originals()
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))

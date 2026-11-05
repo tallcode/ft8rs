@@ -8,7 +8,7 @@ and **ft8.rs**, a receive-only FT8 application built on it. The application has
 a graphical live monitor and the `ft8rs-cli` command-line companion. It supports
 live soundcard input, timestamped WAV recordings and optional UDP decode reports.
 
-The application offers four profiles: **WSJT-X**, **JTDX**, **Hybrid** and **DX**. The
+The application offers **WSJT-X**, **WSJT-X+**, **JTDX**, **Hybrid** and **DX**. The
 default build uses RustFFT with the native 3840-point synchronization FFT and
 has no FFTW runtime dependency. The product supports FT8 reception only.
 
@@ -165,6 +165,7 @@ averaging can attenuate single-sided audio or cancel opposite-phase channels.
 | Profile | Behavior | Main controls |
 |---|---|---|
 | `wsjtx` | Default WSJT-X-aligned FT8 path, with staged early/final decoding | Optional call/grid and receive-frequency context |
+| `wsjtx-plus` | Optimized WSJT-X+ receiver with staged decoding and optional legacy RR73/CQ recovery | Compatibility recovery is enabled by default when selecting this profile |
 | `jtdx` | Independent JTDX FT8 path | Optional SWL and focused `nagain` search |
 | `hybrid` | Independent WSJT-X, JTDX/noAGC and JTDX/AGC sessions, plus bounded cross cancellation | SWL controls both JTDX paths; cancellation can be disabled |
 | `dx` | Target-related output from three-way observations and isolated target recovery | Target call required; a valid full call pair enables additional context recovery |

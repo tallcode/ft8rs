@@ -36,6 +36,7 @@ replay, separated by `|`:
 | Marker | Interpretation |
 |---|---|
 | `W` | WSJT-X |
+| `Wp` | WSJT-X+ with compatibility recovery enabled |
 | `J` | JTDX |
 | `H` | Hybrid |
 | `He` | Hybrid with experimental decoding enabled |
@@ -48,6 +49,9 @@ target-related messages under its configured target/context. The degraded
 retention corpus keeps its exact required rows in `retention.tsv`; its diagnostic
 classification uses the current CSV. Raw output counts can include unlabelled
 rows and must not be confused with target coverage.
+
+WSJT-X+ requires all 21 short and 434 long `Wp` rows by slot and message.
+The staged profile retention gate is `test_wsjtx_plus_preserves_wp_recording_baseline`.
 
 The known pure JTDX long miss remains:
 

@@ -171,6 +171,74 @@ fn is_ignored_jtdx_baseline_marker(value: &str) -> bool {
     !value.split('|').any(|mode| mode.trim() == "J")
 }
 
+#[test]
+#[ignore = "serial optimized WSJT-X+ recording retention gate"]
+fn test_wsjtx_plus_preserves_wp_recording_baseline() {
+    assert_release_mode();
+    for (file, nfa, expected_count) in [("210703_133430", 100.0, 21), ("230208_140300", 200.0, 434)]
+    {
+        let baseline = parse_baseline_with(&format!("tests/ft8/{file}.csv"), |extra| {
+            !extra.split('|').any(|mode| mode.trim() == "Wp")
+        });
+        let mut expected: std::collections::BTreeSet<_> = baseline
+            .into_iter()
+            .filter(|row| !row.ignored)
+            .map(|row| (row.seg, row.norm_msg))
+            .collect();
+        assert_eq!(expected.len(), expected_count);
+
+        let samples = samples_12k_from_wav(&format!("tests/ft8/{file}.wav"));
+        let start = SlotTimestamp::parse(file).unwrap();
+        let mut decoder = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+            profile: DecodeProfile::WsjtxPlus,
+            nfa,
+            ..Default::default()
+        });
+        for (slot, audio) in samples.chunks(180_000).enumerate() {
+            let timestamp = start.add_seconds(slot as i64 * 15);
+            let mut emitted = std::collections::HashSet::new();
+            let mut emit = |row: &ft8rs::stream::session::StreamDecodedWithProvenance| {
+                let msg = norm(&row.decode.msg);
+                assert!(
+                    emitted.insert(msg.clone()),
+                    "duplicate callback at {timestamp:?}: {msg}"
+                );
+                expected.remove(&(slot, msg));
+                Ok(())
+            };
+            let mut state = decoder.start_slot();
+            let early = decoder
+                .decode_slot_nzhsym41_streaming_with_provenance(
+                    &timestamp,
+                    &mut state,
+                    &audio[..audio.len().min(41 * 3456)],
+                    &mut emit,
+                )
+                .unwrap();
+            decoder.subtract_slot_nzhsym47(&mut state, &audio[..audio.len().min(47 * 3456)]);
+            let count = decoder
+                .decode_slot_nzhsym50_streaming_with_provenance(
+                    &timestamp,
+                    state,
+                    early,
+                    &audio[..audio.len().min(50 * 3456)],
+                    &mut emit,
+                )
+                .unwrap();
+            assert_eq!(
+                emitted.len(),
+                count,
+                "slot completion count for {timestamp:?}"
+            );
+        }
+        assert!(
+            expected.is_empty(),
+            "missing Wp rows for {file}: {expected:?}"
+        );
+        eprintln!("WSJT-X+ {file}: all {expected_count} Wp rows retained");
+    }
+}
+
 fn assert_release_mode() {
     #[cfg(debug_assertions)]
     panic!("stream decode acceptance tests must be run with --release");

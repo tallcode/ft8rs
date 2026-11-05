@@ -12,8 +12,6 @@ pub mod gf2;
 pub mod hybrid;
 pub mod lib_jtdx;
 
-// Independent plus development harness; no public profile or production route.
-#[cfg(test)]
 pub(crate) mod lib_wsjtx_plus;
 
 #[path = "lib_wsjtx/ft8/bpdecode174_91.rs"]

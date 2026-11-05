@@ -42,10 +42,13 @@ enum Runner {
 }
 
 impl Runner {
-    fn new(mode: &str, config: StreamDecodeConfig) -> Self {
+    fn new(mode: &str, mut config: StreamDecodeConfig) -> Self {
         match mode {
             "original" => Self::Original(StreamDecodeSession::new(config)),
-            "reference" | "optimized" => Self::Plus(session::StreamDecodeSession::new(config)),
+            "reference" | "optimized" | "compatibility" => {
+                config.wsjtx_plus_compatibility = mode == "compatibility";
+                Self::Plus(session::StreamDecodeSession::new(config))
+            }
             _ => panic!("unknown plus validation mode: {mode}"),
         }
     }
@@ -316,4 +319,188 @@ fn session_hash_state_is_independent() {
     assert!(first.export_regular_hash_calls().is_empty());
     assert!(second.export_regular_hash_calls().is_empty());
     // The session's own tests additionally exercise per-parity AP ownership.
+}
+
+#[test]
+fn legacy_a8_recovers_the_grid_waveform() {
+    // Use the saved native transmit codewords, independent of the decoder's
+    // legacy template conversion.
+    let fixture = rr73_checkpoints();
+    let noise = {
+        let mut state = 2026102801u64 + 6 * 10007;
+        let mut uniform = || {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            (((state.wrapping_mul(2685821657736338717) >> 11) as f64) + 0.5) / (1u64 << 53) as f64
+        };
+        (0..90000)
+            .flat_map(|_| {
+                let r = (-2.0 * uniform().ln()).sqrt();
+                let angle = std::f64::consts::TAU * uniform();
+                [r * angle.cos(), r * angle.sin()]
+            })
+            .collect::<Vec<_>>()
+    };
+    let a8 = |audio: &[f64], compatibility| {
+        super::ft8_decode::ft8_a8d_result(audio, "K1JT", "BG5ATV", "PM00", 1000.0, compatibility)
+    };
+    for label in ["legacy-ideal", "current-ideal"] {
+        let checkpoint = fixture.iter().find(|row| row.label == label).unwrap();
+        let tones = crate::decode::genft8::get_ft8_tones_from_codeword(&checkpoint.native_codeword);
+        let (re, im) = crate::decode::gen_ft8wave::gen_ft8wave(&tones, 1000.6);
+        let power = re.iter().map(|v| v * v).sum::<f64>() / re.len() as f64;
+        let amplitude = ((2500.0 / 6000.0) * 10f64.powf(-22.0 / 10.0) / power).sqrt();
+        let mut audio = noise.clone();
+        for (i, (&re, &im)) in re.iter().zip(&im).enumerate() {
+            audio[7200 + i] += amplitude * (re * 1.43f64.cos() - im * 1.43f64.sin());
+        }
+        for sample in &mut audio[48000..96000] {
+            *sample *= 0.18;
+        }
+        for sample in &mut audio {
+            *sample = f64::from((*sample * 0.05) as f32);
+        }
+        let baseline = a8(&audio, false);
+        let compatible = a8(&audio, true);
+        let result = if label == "legacy-ideal" {
+            assert!(baseline.is_none());
+            compatible.unwrap()
+        } else {
+            assert!(compatible.is_none());
+            baseline.unwrap()
+        };
+        assert_eq!(result.msg, "K1JT BG5ATV RR73");
+        assert_eq!(result.itone, tones);
+    }
+    assert!(a8(&noise, true).is_none());
+}
+
+#[derive(serde::Deserialize)]
+struct FecCheckpoint {
+    label: String,
+    llr_bits: Vec<u32>,
+    native_codeword: Vec<u8>,
+    apmask: Vec<i8>,
+}
+
+fn rr73_checkpoints() -> Vec<FecCheckpoint> {
+    #[derive(serde::Deserialize)]
+    struct Fixture {
+        schema: u8,
+        cases: Vec<FecCheckpoint>,
+    }
+    let fixture: Fixture = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/decoder/data/ft8/waveforms/plus-rr73-fec-checkpoints.json"
+    )))
+    .unwrap();
+    assert_eq!(fixture.schema, 1);
+    assert_eq!(fixture.cases.len(), 4);
+    fixture.cases
+}
+
+#[test]
+fn replay_rr73_fec_checkpoints() {
+    for checkpoint in rr73_checkpoints() {
+        let llr: Vec<_> = checkpoint
+            .llr_bits
+            .into_iter()
+            .map(f32::from_bits)
+            .collect();
+        assert_eq!(llr.len(), 174);
+        assert_eq!(checkpoint.native_codeword.len(), llr.len());
+        assert_eq!(checkpoint.apmask, [0; 174]);
+        let channel: Vec<_> = llr.iter().copied().map(f64::from).collect();
+        let base = super::decode174_91::decode174_91(&channel, &checkpoint.apmask, 3);
+        if checkpoint.label.ends_with("-ideal") {
+            assert_eq!(base.unwrap().cw, checkpoint.native_codeword);
+            continue;
+        }
+        let hard_errors = llr
+            .iter()
+            .zip(&checkpoint.native_codeword)
+            .filter(|&(soft, &bit)| u8::from(*soft >= 0.0) != bit)
+            .count();
+        assert_eq!(
+            hard_errors,
+            if checkpoint.label == "current-observed" {
+                38
+            } else {
+                23
+            }
+        );
+        let describe = |result: Option<crate::decode::decode174_91::DecodeResult>| {
+            result.map(|result| {
+                let errors = result
+                    .cw
+                    .iter()
+                    .zip(&checkpoint.native_codeword)
+                    .filter(|(actual, expected)| actual != expected)
+                    .count();
+                (
+                    errors,
+                    crate::decode::packjt77::unpack77(&result.message91[..77], None),
+                )
+            })
+        };
+        let baseline = describe(base);
+        if checkpoint.label == "current-observed" {
+            assert_eq!(baseline, None);
+        } else {
+            assert_eq!(baseline, Some((0, Some("K1JT BG5ATV RR73".into()))));
+        }
+        eprintln!("{}: plus baseline {baseline:?}", checkpoint.label);
+        for depth in [2, 3, 4] {
+            let decoded = super::osd174_91::osd_decode174_91(&llr, &checkpoint.apmask, depth);
+            eprintln!(
+                "{}: channel OSD depth {depth}: {:?}",
+                checkpoint.label,
+                describe(decoded)
+            );
+        }
+        if checkpoint.label == "current-observed" {
+            let bp = super::bpdecode174_91::bp_decode174_91_with_posteriors(
+                &channel,
+                &checkpoint.apmask,
+                30,
+                3,
+                3,
+                false,
+            );
+            for (i, posterior) in bp.zsave.iter().enumerate() {
+                let decoded = super::osd174_91::osd_decode174_91(posterior, &checkpoint.apmask, 4);
+                eprintln!(
+                    "current-observed: BP snapshot {}, OSD depth 4: {:?}",
+                    i + 1,
+                    describe(decoded)
+                );
+            }
+            // A small Chase probe chooses positions using channel reliability
+            // alone. The native codeword is consulted only after decoding.
+            let mut reliability: Vec<_> = (0..llr.len()).collect();
+            reliability.sort_by(|&a, &b| llr[a].abs().total_cmp(&llr[b].abs()));
+            let least = &reliability[..8];
+            let mut trials = 0;
+            let mut results = Vec::new();
+            for (i, &first) in least.iter().enumerate() {
+                for &second in &least[i..] {
+                    let mut perturbed = channel.clone();
+                    perturbed[first] = -perturbed[first];
+                    if second != first {
+                        perturbed[second] = -perturbed[second];
+                    }
+                    trials += 1;
+                    if let Some(result) = describe(super::decode174_91::decode174_91(
+                        &perturbed,
+                        &checkpoint.apmask,
+                        3,
+                    )) {
+                        results.push(result);
+                    }
+                }
+            }
+            eprintln!("current-observed: {trials} Chase trials, CRC-valid results: {results:?}");
+        }
+    }
 }

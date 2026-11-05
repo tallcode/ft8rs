@@ -113,6 +113,7 @@ pub struct Ft8rsApp {
     swl: bool,
     hybrid_sic: bool,
     hybrid_experiment: bool,
+    wsjtx_plus_compatibility: bool,
     nagain: bool,
     nfa: String,
     nfb: String,
@@ -251,6 +252,7 @@ impl Ft8rsApp {
             swl: load_bool("swl", false),
             hybrid_sic: load_bool("hybrid_sic", true),
             hybrid_experiment: load_bool("hybrid_experiment", false),
+            wsjtx_plus_compatibility: load_bool("wsjtx_plus_compatibility", true),
             nagain: load_bool("nagain", false),
             nfa: load("nfa", "200"),
             nfb: load("nfb", "3000"),
@@ -336,6 +338,7 @@ impl Ft8rsApp {
             swl: self.swl,
             hybrid_sic: self.hybrid_sic,
             hybrid_experiment: self.hybrid_experiment,
+            wsjtx_plus_compatibility: self.wsjtx_plus_compatibility,
             nagain: self.nagain,
             filter: self.filter,
             hide_dupes: self.hide_dupes,
@@ -1354,12 +1357,7 @@ impl Ft8rsApp {
                             .truncate()
                             .selected_text(profile_label(self.profile))
                             .show_ui(ui, |ui| {
-                                for profile in [
-                                    DecodeProfile::Wsjtx,
-                                    DecodeProfile::Jtdx,
-                                    DecodeProfile::Hybrid,
-                                    DecodeProfile::Dx,
-                                ] {
+                                for profile in MENU_PROFILES {
                                     ui.selectable_value(
                                         &mut self.profile,
                                         profile,
@@ -1369,6 +1367,17 @@ impl Ft8rsApp {
                             });
                         self.profile != before
                     });
+                    if self.profile == DecodeProfile::WsjtxPlus {
+                        commit |= setting_row(ui, tr("Compatibility recovery"), |ui| {
+                            ui.add(egui::Checkbox::without_text(
+                                &mut self.wsjtx_plus_compatibility,
+                            ))
+                            .on_hover_text(tr(
+                                "Search for legacy RR73 and CQ after the base decode.",
+                            ))
+                            .changed()
+                        });
+                    }
                     if self.profile == DecodeProfile::Hybrid {
                         commit |= setting_row(ui, tr("Cross cancellation"), |ui| {
                             ui.add(egui::Checkbox::without_text(&mut self.hybrid_sic))
@@ -1794,6 +1803,10 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("swl", bs(self.swl));
         storage.set_string("hybrid_sic", bs(self.hybrid_sic));
         storage.set_string("hybrid_experiment", bs(self.hybrid_experiment));
+        storage.set_string(
+            "wsjtx_plus_compatibility",
+            bs(self.wsjtx_plus_compatibility),
+        );
         storage.set_string("nagain", bs(self.nagain));
         storage.set_string("nfa", self.nfa.clone());
         storage.set_string("nfb", self.nfb.clone());
@@ -2782,6 +2795,7 @@ fn source_color(source: DecodeSource, dark: bool, default: Color32) -> Color32 {
 fn profile_label(profile: DecodeProfile) -> &'static str {
     match profile {
         DecodeProfile::Wsjtx => "WSJT-X",
+        DecodeProfile::WsjtxPlus => "WSJT-X+",
         DecodeProfile::Jtdx => "JTDX",
         DecodeProfile::Hybrid => "Hybrid",
         DecodeProfile::Dx => "DX",
@@ -2789,8 +2803,9 @@ fn profile_label(profile: DecodeProfile) -> &'static str {
 }
 
 /// Profile names stay the same in both interface languages.
-const MENU_PROFILES: [DecodeProfile; 4] = [
+const MENU_PROFILES: [DecodeProfile; 5] = [
     DecodeProfile::Wsjtx,
+    DecodeProfile::WsjtxPlus,
     DecodeProfile::Jtdx,
     DecodeProfile::Hybrid,
     DecodeProfile::Dx,

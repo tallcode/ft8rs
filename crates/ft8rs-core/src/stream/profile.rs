@@ -1,20 +1,18 @@
 use crate::decode::dx::{DxSnapshot, DxStreamDecodeSession};
 use crate::decode::hybrid::HybridStreamDecodeSession;
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
+use crate::decode::lib_wsjtx_plus::session::{
+    StreamDecodeSession as WsjtxPlusSession, StreamSlotDecodeState as WsjtxPlusSlotState,
+};
 use crate::stream::session::{
     DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage,
     StreamDecodedWithProvenance, StreamSlotDecodeState,
 };
 use crate::stream::time::SlotTimestamp;
 
-/// Per-slot state for the staged (monitor) decode path. Only hybrid carries
-/// WSJT-X early-decode state; the other profiles decode in one shot at
-/// `nzhsym=50` and need no cross-stage state.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Keep the staged-state API and avoid adding an allocation per decoded slot"
-)]
+/// Per-slot state for profiles using this wrapper's progressive monitor stages.
 pub enum ProfileSlotState {
+    WsjtxPlus(WsjtxPlusSlotState),
     Hybrid(StreamSlotDecodeState),
     Stateless,
 }
@@ -22,6 +20,7 @@ pub enum ProfileSlotState {
 #[allow(clippy::large_enum_variant)]
 pub enum ProfileStreamDecodeSession {
     Wsjtx(StreamDecodeSession),
+    WsjtxPlus(WsjtxPlusSession),
     Jtdx(JtdxStreamDecodeSession),
     Hybrid(HybridStreamDecodeSession),
     Dx(DxStreamDecodeSession),
@@ -33,6 +32,7 @@ impl ProfileStreamDecodeSession {
             DecodeProfile::Wsjtx => {
                 Self::Wsjtx(StreamDecodeSession::new(config.clone_for_profile_wsjt_x()))
             }
+            DecodeProfile::WsjtxPlus => Self::WsjtxPlus(WsjtxPlusSession::new(config)),
             DecodeProfile::Jtdx => Self::Jtdx(crate::stream::session::seeded_jtdx_session(
                 config.clone_for_profile_jtdx(),
             )),
@@ -48,6 +48,7 @@ impl ProfileStreamDecodeSession {
     pub fn import_hash_calls(&mut self, calls: &[String]) {
         match self {
             Self::Wsjtx(session) => session.import_hash_calls(calls),
+            Self::WsjtxPlus(session) => session.import_hash_calls(calls),
             Self::Jtdx(session) => session.import_hash_calls(calls),
             Self::Hybrid(_) | Self::Dx(_) => {}
         }
@@ -58,6 +59,7 @@ impl ProfileStreamDecodeSession {
     pub fn export_hash_calls(&self) -> Vec<String> {
         match self {
             Self::Wsjtx(session) => session.export_regular_hash_calls(),
+            Self::WsjtxPlus(session) => session.export_regular_hash_calls(),
             Self::Jtdx(session) => session.export_regular_hash_calls(),
             Self::Hybrid(_) | Self::Dx(_) => Vec::new(),
         }
@@ -122,6 +124,9 @@ impl ProfileStreamDecodeSession {
                 }
                 Ok(rows.len())
             }
+            Self::WsjtxPlus(session) => session
+                .decode_slot_streaming_tagged_at(timestamp, samples, on_decode)
+                .map(|rows| rows.len()),
             Self::Hybrid(session) => {
                 let mut count = 0usize;
                 session.decode_slot_streaming_tagged_at(timestamp, samples, |row| {
@@ -152,22 +157,19 @@ impl ProfileStreamDecodeSession {
 
     // ── Staged (monitor) decode ─────────────────────────────────────────────
     //
-    // Monitor mode feeds partial-slot stages so the WSJT-X pass can emit early
-    // decodes before the slot boundary. Only hybrid has early sub-results; jtdx
-    // and dx are stateless no-ops at nzhsym=41/47 and run their full decode at
-    // nzhsym=50 (identical to the one-shot path). wsjtx uses its own staged
-    // session directly in the engine, not this wrapper.
+    // WSJT-X+ and Hybrid use progressive stages here. JTDX and DX run at
+    // nzhsym=50. The original WSJT-X monitor uses its own staged session.
 
     /// Begin a staged slot; returns the per-stage state.
     pub fn start_slot(&mut self) -> ProfileSlotState {
         match self {
+            Self::WsjtxPlus(session) => ProfileSlotState::WsjtxPlus(session.start_slot_decode()),
             Self::Hybrid(session) => ProfileSlotState::Hybrid(session.start_slot()),
             _ => ProfileSlotState::Stateless,
         }
     }
 
-    /// `nzhsym=41` early decode. Hybrid streams early WSJT-X rows and returns the
-    /// count emitted; the other profiles have no early sub-results (returns 0).
+    /// `nzhsym=41` streams early rows for progressive profiles.
     pub fn decode_slot_nzhsym41_streaming_with_provenance<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -179,6 +181,9 @@ impl ProfileStreamDecodeSession {
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
         match (self, state) {
+            (Self::WsjtxPlus(session), ProfileSlotState::WsjtxPlus(state)) => {
+                session.decode_slot_nzhsym41_tagged(timestamp, state, samples, on_decode)
+            }
             (Self::Hybrid(session), ProfileSlotState::Hybrid(state)) => {
                 session.decode_slot_nzhsym41_tagged(timestamp, state, samples, &mut on_decode)
             }
@@ -186,17 +191,20 @@ impl ProfileStreamDecodeSession {
         }
     }
 
-    /// `nzhsym=47`: WSJT-X subtract stage (hybrid only; no-op otherwise).
+    /// `nzhsym=47` subtracts the early results for progressive profiles.
     pub fn subtract_slot_nzhsym47(&mut self, state: &mut ProfileSlotState, samples: &[f32]) {
-        if let (Self::Hybrid(session), ProfileSlotState::Hybrid(state)) = (self, state) {
-            session.subtract_slot_nzhsym47(state, samples);
+        match (self, state) {
+            (Self::WsjtxPlus(session), ProfileSlotState::WsjtxPlus(state)) => {
+                session.subtract_slot_nzhsym47(state, samples);
+            }
+            (Self::Hybrid(session), ProfileSlotState::Hybrid(state)) => {
+                session.subtract_slot_nzhsym47(state, samples);
+            }
+            _ => {}
         }
     }
 
-    /// `nzhsym=50` final decode. Hybrid finishes the WSJT-X pass (streaming only
-    /// the rows not already emitted at `nzhsym=41`) plus JTDX and merge; the
-    /// other profiles run their full slot decode here (unchanged). Returns the
-    /// total row count.
+    /// `nzhsym=50` emits the remaining results and returns the total slot count.
     pub fn decode_slot_nzhsym50_streaming_with_provenance<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -209,6 +217,14 @@ impl ProfileStreamDecodeSession {
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
         match self {
+            Self::WsjtxPlus(session) => {
+                let ProfileSlotState::WsjtxPlus(state) = state else {
+                    return Err("wsjtx-plus nzhsym=50 without slot state".to_string());
+                };
+                session
+                    .decode_slot_nzhsym50_tagged(state, samples, on_decode)
+                    .map(|rows| rows.len())
+            }
             Self::Hybrid(session) => {
                 let ProfileSlotState::Hybrid(state) = state else {
                     return Err("hybrid nzhsym=50 without hybrid slot state".to_string());
@@ -238,6 +254,9 @@ impl ProfileStreamDecodeSession {
     {
         match self {
             Self::Wsjtx(decoder) => decoder.decode_slot_streaming_at(timestamp, samples, on_decode),
+            Self::WsjtxPlus(decoder) => {
+                decoder.decode_slot_streaming_at(timestamp, samples, on_decode)
+            }
             Self::Jtdx(decoder) => decoder.decode_slot_streaming_at(timestamp, samples, on_decode),
             Self::Hybrid(decoder) => {
                 decoder.decode_slot_streaming_at(timestamp, samples, on_decode)

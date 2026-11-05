@@ -41,6 +41,7 @@ pub(crate) fn seeded_jtdx_session(
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DecodeProfile {
     Wsjtx,
+    WsjtxPlus,
     Jtdx,
     Hybrid,
     Dx,
@@ -50,6 +51,7 @@ impl DecodeProfile {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Wsjtx => "wsjtx",
+            Self::WsjtxPlus => "wsjtx-plus",
             Self::Jtdx => "jtdx",
             Self::Hybrid => "hybrid",
             Self::Dx => "dx",
@@ -59,11 +61,12 @@ impl DecodeProfile {
     pub fn parse(value: &str) -> Result<Self, String> {
         match value.trim().to_ascii_lowercase().as_str() {
             "wsjtx" => Ok(Self::Wsjtx),
+            "wsjtx-plus" | "wsjt-x+" => Ok(Self::WsjtxPlus),
             "jtdx" => Ok(Self::Jtdx),
             "hybrid" => Ok(Self::Hybrid),
             "dx" => Ok(Self::Dx),
             _ => Err(format!(
-                "unknown profile '{value}'; expected one of: wsjtx, jtdx, hybrid, dx"
+                "unknown profile '{value}'; expected one of: wsjtx, wsjtx-plus, jtdx, hybrid, dx"
             )),
         }
     }
@@ -166,6 +169,9 @@ impl A7SaveEntry {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StreamDecodeConfig {
     pub profile: DecodeProfile,
+    /// Search for legacy RR73 and CQ in WSJT-X+ after the base decode.
+    #[serde(default = "default_wsjtx_plus_compatibility")]
+    pub wsjtx_plus_compatibility: bool,
     pub nfa: f64,
     pub nfb: f64,
     pub syncmin: Option<f64>,
@@ -217,6 +223,7 @@ impl Default for StreamDecodeConfig {
     fn default() -> Self {
         Self {
             profile: DecodeProfile::Wsjtx,
+            wsjtx_plus_compatibility: default_wsjtx_plus_compatibility(),
             nfa: 200.0,
             nfb: 3000.0,
             syncmin: None,
@@ -258,6 +265,10 @@ impl Default for StreamDecodeConfig {
             hisgrid: None,
         }
     }
+}
+
+fn default_wsjtx_plus_compatibility() -> bool {
+    true
 }
 
 impl StreamDecodeConfig {

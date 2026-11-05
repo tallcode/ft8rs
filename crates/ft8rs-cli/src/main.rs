@@ -59,7 +59,7 @@ struct FileArgs {
 
 #[derive(Args, Clone, Debug)]
 struct DecodeArgs {
-    /// Decode profile: wsjtx, jtdx, hybrid, or dx.
+    /// Decode profile: wsjtx, wsjtx-plus, jtdx, hybrid, or dx.
     #[arg(long, default_value = "wsjtx", help_heading = "Decode")]
     profile: String,
 
@@ -113,6 +113,9 @@ struct DecodeArgs {
     /// Enable the experimental weak-signal/interference branch (Hybrid only).
     #[arg(long, help_heading = "Decode")]
     hybrid_experiment: bool,
+    /// Disable WSJT-X+ recovery for legacy RR73 and CQ.
+    #[arg(long, help_heading = "Decode")]
+    no_wsjtx_plus_compatibility: bool,
 }
 
 #[derive(Args)]
@@ -241,6 +244,10 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
         return Err("--hybrid-experiment requires --profile hybrid".to_string());
     }
     config.hybrid_experiment = args.hybrid_experiment;
+    if args.no_wsjtx_plus_compatibility && config.profile != DecodeProfile::WsjtxPlus {
+        return Err("--no-wsjtx-plus-compatibility requires --profile wsjtx-plus".to_string());
+    }
+    config.wsjtx_plus_compatibility = !args.no_wsjtx_plus_compatibility;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
         return Err("--profile dx requires --his-call CALL".to_string());
     }

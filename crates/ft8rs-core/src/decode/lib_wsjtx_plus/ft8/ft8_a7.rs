@@ -17,6 +17,7 @@
 
 use crate::decode::encode174_91::encode174_91;
 use crate::decode::genft8::get_ft8_tones_from_codeword;
+use crate::decode::lib_wsjtx_plus::compatibility::legacy_rr73;
 use crate::decode::lib_wsjtx_plus::ft8_decode::{
     build_costas_sync_templates, extract_symbol_spectrum, ft8_downsample_from_cx, normalize_bmet,
     sync8d, sync8d_twk, twkfreq1, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TWO_PI,
@@ -81,9 +82,19 @@ pub fn ft8_a7d(
     xbase: f64,
 ) -> Option<ApDecodeResult> {
     let downsample_cache = ApDownsampleCache::new(dd0);
-    ft8_a7d_with_downsample_cache(&downsample_cache, call_1, call_2, grid4, xdt, f1, xbase)
+    ft8_a7d_with_downsample_cache(
+        &downsample_cache,
+        call_1,
+        call_2,
+        grid4,
+        xdt,
+        f1,
+        xbase,
+        false,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ft8_a7d_with_downsample_cache(
     downsample_cache: &ApDownsampleCache,
     call_1: &str,
@@ -92,6 +103,7 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     xdt: f64,
     f1: f64,
     xbase: f64,
+    compatibility: bool,
 ) -> Option<ApDecodeResult> {
     let _span = crate::decode::lib_wsjtx_plus::metrics::Span::new(
         crate::decode::lib_wsjtx_plus::metrics::Kind::A7,
@@ -298,9 +310,14 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     let mut pbest = 0.0f64;
     let mut dmm = [1e30f64; 207]; // 1-indexed
     let mut best_imsg = 1; // track which imsg gave dmin
+    let mut best_is_legacy = false;
+    let cq_seed = is_cq_call_1(call_1);
 
     for (imsg, dmm_value) in dmm.iter_mut().enumerate().skip(1) {
         let msg = build_ap_message(call_1, call_2, grid4, std_1, std_2, imsg);
+        if compatibility && cq_seed && msg.starts_with("QU1RK ") {
+            continue;
+        }
 
         let msg77 = pack77(&msg);
         if msg77.len() != 77 {
@@ -314,46 +331,58 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
             continue;
         }
 
-        let cw = encode174_91(&msg77);
-        if cw.len() != 174 {
-            continue;
-        }
+        let legacy = if compatibility && imsg == 3 && std_1 && std_2 && !cq_seed {
+            legacy_rr73(&msg77)
+        } else {
+            None
+        };
+        // Both wire values render the same message. Their minimum distance
+        // competes once in the runner-up test.
+        for (candidate, is_legacy) in
+            std::iter::once((msg77, false)).chain(legacy.into_iter().map(|bits| (bits, true)))
+        {
+            let cw = encode174_91(&candidate);
+            if cw.len() != 174 {
+                continue;
+            }
 
-        let itone = get_ft8_tones_from_codeword(&cw);
+            let itone = get_ft8_tones_from_codeword(&cw);
 
-        // Signal power
-        let mut pow = 0.0f64;
-        for i in 0..NN {
-            let t = itone[i] as usize;
-            pow += s8[t][i + 1] * s8[t][i + 1];
-        }
+            // Signal power
+            let mut pow = 0.0f64;
+            for i in 0..NN {
+                let t = itone[i] as usize;
+                pow += s8[t][i + 1] * s8[t][i + 1];
+            }
 
-        // Hamming distance
-        let da = hamming_dist(&cw, &llra);
-        let db = hamming_dist(&cw, &llrb);
-        let dc = hamming_dist(&cw, &llrc);
-        let dd_val = hamming_dist(&cw, &llrd);
+            // Hamming distance
+            let da = hamming_dist(&cw, &llra);
+            let db = hamming_dist(&cw, &llrb);
+            let dc = hamming_dist(&cw, &llrc);
+            let dd_val = hamming_dist(&cw, &llrd);
 
-        let dm = da.min(db).min(dc).min(dd_val);
-        *dmm_value = dm;
+            let dm = da.min(db).min(dc).min(dd_val);
+            *dmm_value = dmm_value.min(dm);
 
-        if dm < dmin {
-            dmin = dm;
-            // Use the unpacked message (WSJT-X genft8 returns msgsent, not the raw msg)
-            msgbest = msgsent.clone().unwrap_or(msg);
-            pbest = pow;
-            best_imsg = imsg;
+            if dm < dmin {
+                dmin = dm;
+                // Use the unpacked message (WSJT-X genft8 returns msgsent, not the raw msg)
+                msgbest = msgsent.clone().unwrap_or_else(|| msg.clone());
+                pbest = pow;
+                best_imsg = imsg;
+                best_is_legacy = is_legacy;
 
-            let best_llr = if dm == da {
-                &llra
-            } else if dm == db {
-                &llrb
-            } else if dm == dc {
-                &llrc
-            } else {
-                &llrd
-            };
-            nharderrors = count_hard_errors(&cw, best_llr) as i32;
+                let best_llr = if dm == da {
+                    &llra
+                } else if dm == db {
+                    &llrb
+                } else if dm == dc {
+                    &llrc
+                } else {
+                    &llrd
+                };
+                nharderrors = count_hard_errors(&cw, best_llr) as i32;
+            }
         }
     }
 
@@ -385,6 +414,11 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
         return None;
     }
     if msgbest.starts_with("QU1RK ") {
+        return None;
+    }
+    if compatibility
+        && !(best_is_legacy || (cq_seed && best_imsg == 5 && msgbest.starts_with("CQ ")))
+    {
         return None;
     }
 

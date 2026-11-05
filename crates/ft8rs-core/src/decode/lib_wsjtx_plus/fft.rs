@@ -167,6 +167,7 @@ pub(super) fn mode() -> Mode {
     MODE.with(|m| m.get())
 }
 
+#[cfg(test)]
 pub(super) fn with_mode<T>(mode: Mode, f: impl FnOnce() -> T) -> T {
     struct Restore(Mode);
     impl Drop for Restore {
