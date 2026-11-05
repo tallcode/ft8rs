@@ -12,38 +12,27 @@ use super::{
 };
 use crate::decode::genft8::get_ft8_tones_from_codeword;
 use crate::decode::lib_wsjtx_plus::decode174_91::{decode174_91, DecodeResult, N_LDPC};
-use crate::decode::lib_wsjtx_plus::fft::four2a_c2c;
+use crate::decode::lib_wsjtx_plus::fft::SymbolFft;
 use crate::decode::packjt77::{unpack77_with_context, UnpackContext};
 use crate::HashCallBook;
+use rustfft::num_complex::Complex;
 
 const COSTAS: [u8; 7] = [3, 1, 4, 0, 6, 5, 2];
 const GRAY_MAP: [u8; 8] = [0, 1, 3, 2, 5, 6, 4, 7];
 
 /// Shared WSJT-X-shaped 32-sample symbol FFT from `ft8b.f90`.
-pub(crate) fn extract_symbol_spectrum(
+pub(in crate::decode::lib_wsjtx_plus) fn extract_symbol_spectrum(
+    fft: &mut SymbolFft,
     cd0_re: &[f64],
     cd0_im: &[f64],
-    i1: isize,
-    symb_re: &mut [f64],
-    symb_im: &mut [f64],
-) {
-    debug_assert!(symb_re.len() >= COSTAS_SYMBOL_LEN);
-    debug_assert!(symb_im.len() >= COSTAS_SYMBOL_LEN);
-
-    symb_re[..COSTAS_SYMBOL_LEN].fill(0.0);
-    symb_im[..COSTAS_SYMBOL_LEN].fill(0.0);
-
-    if i1 >= 0 && (i1 + COSTAS_SYMBOL_LEN as isize - 1) < NP2 as isize {
-        let i1 = i1 as usize;
-        symb_re[..COSTAS_SYMBOL_LEN].copy_from_slice(&cd0_re[i1..i1 + COSTAS_SYMBOL_LEN]);
-        symb_im[..COSTAS_SYMBOL_LEN].copy_from_slice(&cd0_im[i1..i1 + COSTAS_SYMBOL_LEN]);
+    start: isize,
+) -> [Complex<f64>; 8] {
+    // The A7/ordinary decoder treats an incomplete window as all zero.
+    if start >= 0 && (start as usize) <= NP2 - COSTAS_SYMBOL_LEN {
+        fft.tones(cd0_re, cd0_im, start)
+    } else {
+        fft.tones(&[], &[], 0)
     }
-
-    four2a_c2c(
-        &mut symb_re[..COSTAS_SYMBOL_LEN],
-        &mut symb_im[..COSTAS_SYMBOL_LEN],
-        -1,
-    );
 }
 
 #[expect(
@@ -233,19 +222,14 @@ fn refine_time_offset(
 fn extract_soft_symbols(ibest: isize, workspace: &mut DecodeWorkspace) {
     let cd0_re = &workspace.cd0_re;
     let cd0_im = &workspace.cd0_im;
+    let mut fft = SymbolFft::new();
     for k in 0..NN {
         let i1 = ibest + (k as isize) * (COSTAS_SYMBOL_LEN as isize);
-        extract_symbol_spectrum(
-            cd0_re,
-            cd0_im,
-            i1,
-            &mut workspace.symb_re,
-            &mut workspace.symb_im,
-        );
-        for tone in 0..8 {
+        let bins = extract_symbol_spectrum(&mut fft, cd0_re, cd0_im, i1);
+        for (tone, bin) in bins.iter().enumerate() {
             let idx = tone * NN + k;
-            let csymb_re = workspace.symb_re[tone] as f32;
-            let csymb_im = workspace.symb_im[tone] as f32;
+            let csymb_re = bin.re as f32;
+            let csymb_im = bin.im as f32;
 
             // WSJT-X ft8b.f90:
             //   cs(0:7,k)=csymb(1:8)/1e3

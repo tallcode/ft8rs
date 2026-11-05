@@ -6,7 +6,7 @@
 use super::SAMPLE_RATE;
 use super::{get_spectrum_baseline, nint_wsjtx_f32, Candidate, COSTAS_BLOCKS, NHSYM, NSPS, NSTEP};
 use crate::decode::indexx::indexx_ascending;
-use crate::decode::lib_wsjtx_plus::fft::{four2a_r2c, sync8_fft_size};
+use crate::decode::lib_wsjtx_plus::fft::{four2a_r2c_packed, sync8_fft_size};
 
 const COSTAS: [u8; 7] = [3, 1, 4, 0, 6, 5, 2];
 
@@ -102,7 +102,7 @@ pub(super) fn sync8(
             for i in ia..end {
                 x_re[i - ia] = fac * dd[i];
             }
-            four2a_r2c(x_re, x_im);
+            four2a_r2c_packed(x_re, x_im);
             let row_offset = j;
             for i in 0..half_size {
                 let val = x_re[i] * x_re[i] + x_im[i] * x_im[i];

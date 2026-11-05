@@ -38,7 +38,7 @@ pub(crate) use self::ft8_params::{
 use self::ft8apset::ft8_ap_set;
 use self::ft8apset::{M73, MCQ, MCQFD, MCQRU, MCQTEST, MCQWW, MRR73, MRRR};
 use self::ft8b::ft8b;
-pub(crate) use self::ft8b::{extract_symbol_spectrum, normalize_bmet};
+pub(super) use self::ft8b::{extract_symbol_spectrum, normalize_bmet};
 use self::get_spectrum_baseline::get_spectrum_baseline;
 use self::sync8::sync8;
 pub(crate) use self::sync8d::{
@@ -146,8 +146,6 @@ pub(super) struct DecodeWorkspace {
     pub(super) s8: Vec<f64>,
     pub(super) cs_re: Vec<f64>,
     pub(super) cs_im: Vec<f64>,
-    pub(super) symb_re: Vec<f64>,
-    pub(super) symb_im: Vec<f64>,
     pub(super) s2: Vec<f64>,
     pub(super) bmeta: Vec<f64>,
     pub(super) bmetb: Vec<f64>,
@@ -168,8 +166,6 @@ pub(super) fn create_decode_workspace() -> DecodeWorkspace {
         s8: vec![0.0; 8 * NN],
         cs_re: vec![0.0; 8 * NN],
         cs_im: vec![0.0; 8 * NN],
-        symb_re: vec![0.0; COSTAS_SYMBOL_LEN],
-        symb_im: vec![0.0; COSTAS_SYMBOL_LEN],
         s2: vec![0.0; 1 << 9],
         bmeta: vec![0.0; N_LDPC],
         bmetb: vec![0.0; N_LDPC],

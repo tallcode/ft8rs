@@ -18,6 +18,7 @@
 use crate::decode::encode174_91::encode174_91;
 use crate::decode::genft8::get_ft8_tones_from_codeword;
 use crate::decode::lib_wsjtx_plus::compatibility::legacy_rr73;
+use crate::decode::lib_wsjtx_plus::fft::SymbolFft;
 use crate::decode::lib_wsjtx_plus::ft8_decode::{
     build_costas_sync_templates, extract_symbol_spectrum, ft8_downsample_from_cx, normalize_bmet,
     sync8d, sync8d_twk, twkfreq1, DT2, FS2, NFFT1_LONG, NFFT2, NN, NP2, TWO_PI,
@@ -92,6 +93,7 @@ pub fn ft8_a7d(
         xbase,
         false,
     )
+    .0
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -103,8 +105,8 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     xdt: f64,
     f1: f64,
     xbase: f64,
-    compatibility: bool,
-) -> Option<ApDecodeResult> {
+    keep_recovery: bool,
+) -> (Option<ApDecodeResult>, Option<A7Recovery>) {
     let _span = crate::decode::lib_wsjtx_plus::metrics::Span::new(
         crate::decode::lib_wsjtx_plus::metrics::Kind::A7,
     );
@@ -178,14 +180,13 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     let mut cs_im = [[0.0f64; 80]; 8];
     let mut s8 = [[0.0f64; 80]; 8];
 
-    let mut symb_re = [0.0f64; 32];
-    let mut symb_im = [0.0f64; 32];
+    let mut fft = SymbolFft::new();
     for k in 1..=NN {
         let i1 = ibest + (k as isize - 1) * 32;
-        extract_symbol_spectrum(&cd0_re, &cd0_im, i1, &mut symb_re, &mut symb_im);
-        for tone in 0..8 {
-            let csymb_re = symb_re[tone] as f32;
-            let csymb_im = symb_im[tone] as f32;
+        let bins = extract_symbol_spectrum(&mut fft, &cd0_re, &cd0_im, i1);
+        for (tone, bin) in bins.iter().enumerate() {
+            let csymb_re = bin.re as f32;
+            let csymb_im = bin.im as f32;
 
             // WSJT-X ft8_a7.f90:
             //   cs(0:7,k)=csymb(1:8)/1e3
@@ -298,137 +299,227 @@ pub(crate) fn ft8_a7d_with_downsample_cache(
     normalize_bmet(&mut bmetd);
 
     let scalefac = 2.83f32;
-    let llra: [f64; 174] = core::array::from_fn(|i| (scalefac * bmeta[i] as f32) as f64);
-    let llrb: [f64; 174] = core::array::from_fn(|i| (scalefac * bmetb[i] as f32) as f64);
-    let llrc: [f64; 174] = core::array::from_fn(|i| (scalefac * bmetc[i] as f32) as f64);
-    let llrd: [f64; 174] = core::array::from_fn(|i| (scalefac * bmetd[i] as f32) as f64);
+    let llrs = [bmeta, bmetb, bmetc, bmetd]
+        .map(|metrics| metrics.map(|metric| (scalefac * metric as f32) as f64));
 
-    // ── Brute-force 206 message variants ──
-    let mut dmin = 1e30f64;
-    let mut nharderrors: i32 = -1;
-    let mut msgbest = String::new();
-    let mut pbest = 0.0f64;
-    let mut dmm = [1e30f64; 207]; // 1-indexed
-    let mut best_imsg = 1; // track which imsg gave dmin
-    let mut best_is_legacy = false;
+    // Only the old RR73 (variant 3) or the CQ (variant 5) can be emitted
+    // by recovery. Retain its strongest eligible rival from the base scan.
     let cq_seed = is_cq_call_1(call_1);
+    let recovery_index = if cq_seed { 5 } else { 3 };
+    let mut rival = (1e30f64, usize::MAX);
+    let mut target = None;
+    let mut best = None::<A7Match>;
+    let mut dmm = [1e30f64; 207]; // 1-indexed
 
     for (imsg, dmm_value) in dmm.iter_mut().enumerate().skip(1) {
         let msg = build_ap_message(call_1, call_2, grid4, std_1, std_2, imsg);
-        if compatibility && cq_seed && msg.starts_with("QU1RK ") {
-            continue;
-        }
-
         let msg77 = pack77(&msg);
         if msg77.len() != 77 {
             continue;
         }
 
-        // WSJT-X genft8 does: pack77 → unpack77 → msgsent (normalized form)
-        // We must use msgsent as msgbest, not raw msg
-        let msgsent = crate::decode::packjt77::unpack77(&msg77, None);
-        if msgsent.is_none() {
+        // WSJT-X genft8 returns the normalized, unpacked message.
+        let Some(msgsent) = crate::decode::packjt77::unpack77(&msg77, None) else {
+            continue;
+        };
+        let cw = encode174_91(&msg77);
+        if cw.len() != 174 {
             continue;
         }
 
-        let legacy = if compatibility && imsg == 3 && std_1 && std_2 && !cq_seed {
-            legacy_rr73(&msg77)
-        } else {
-            None
-        };
-        // Both wire values render the same message. Their minimum distance
-        // competes once in the runner-up test.
-        for (candidate, is_legacy) in
-            std::iter::once((msg77, false)).chain(legacy.into_iter().map(|bits| (bits, true)))
+        let power = a7_power(&cw, &s8);
+        let (distance, llr) = a7_distance(&cw, &llrs);
+        *dmm_value = dmm_value.min(distance);
+
+        let new_best = distance < best.as_ref().map_or(1e30, |best| best.distance);
+        let cq_target = keep_recovery && cq_seed && imsg == recovery_index;
+        if new_best || cq_target {
+            let candidate = A7Match {
+                msg: msgsent.clone(),
+                distance,
+                power,
+                nharderrors: count_hard_errors(&cw, llr) as i32,
+                imsg,
+            };
+            if cq_target {
+                target = Some(A7Target::Cq(candidate.clone()));
+            }
+            if new_best {
+                best = Some(candidate);
+            }
+        }
+
+        if keep_recovery {
+            if imsg != recovery_index {
+                if !(cq_seed && msg.starts_with("QU1RK ")) && distance < rival.0 {
+                    rival = (distance, imsg);
+                }
+            } else if !cq_seed {
+                target = Some(A7Target::Legacy {
+                    msg: msgsent,
+                    current_bits: msg77,
+                    current_distance: *dmm_value,
+                });
+            }
+        }
+    }
+
+    let result = best.and_then(|best| {
+        let mut second = 1e30f64;
+        for (imsg, &distance) in dmm.iter().enumerate().skip(1) {
+            if imsg != best.imsg && distance < second {
+                second = distance;
+            }
+        }
+        if best.msg.starts_with("CQ ") && std_2 && grid4.trim().is_empty() {
+            return None;
+        }
+        best.finish(second, f1_refined, xdt_refined, xbase)
+    });
+
+    let recovery = if result.is_none() {
+        target.map(|target| A7Recovery {
+            target,
+            rival,
+            freq: f1_refined,
+            dt: xdt_refined,
+            xbase,
+            legacy_observation: (!cq_seed).then(|| Box::new(A7Observation { llrs, s8 })),
+        })
+    } else {
+        None
+    };
+    (result, recovery)
+}
+
+fn a7_distance<'a>(cw: &[u8], llrs: &'a [[f64; 174]; 4]) -> (f64, &'a [f64; 174]) {
+    let [da, db, dc, dd] = llrs.each_ref().map(|llr| hamming_dist(cw, llr));
+    let distance = da.min(db).min(dc).min(dd);
+    let index = if distance == da {
+        0
+    } else if distance == db {
+        1
+    } else if distance == dc {
+        2
+    } else {
+        3
+    };
+    (distance, &llrs[index])
+}
+
+fn a7_power(cw: &[u8], s8: &[[f64; 80]; 8]) -> f64 {
+    let itone = get_ft8_tones_from_codeword(cw);
+    let mut power = 0.0f64;
+    for i in 0..NN {
+        let t = itone[i] as usize;
+        power += s8[t][i + 1] * s8[t][i + 1];
+    }
+    power
+}
+
+#[derive(Clone)]
+struct A7Match {
+    msg: String,
+    distance: f64,
+    power: f64,
+    nharderrors: i32,
+    imsg: usize,
+}
+
+impl A7Match {
+    fn finish(self, second: f64, freq: f64, dt: f64, xbase: f64) -> Option<ApDecodeResult> {
+        // Upstream 2e272882: avoid division by zero for an exact match.
+        if self.distance > 100.0
+            || second / (self.distance + 1.0e-6) < 1.3
+            || self.msg.starts_with("QU1RK ")
         {
-            let cw = encode174_91(&candidate);
-            if cw.len() != 174 {
-                continue;
-            }
-
-            let itone = get_ft8_tones_from_codeword(&cw);
-
-            // Signal power
-            let mut pow = 0.0f64;
-            for i in 0..NN {
-                let t = itone[i] as usize;
-                pow += s8[t][i + 1] * s8[t][i + 1];
-            }
-
-            // Hamming distance
-            let da = hamming_dist(&cw, &llra);
-            let db = hamming_dist(&cw, &llrb);
-            let dc = hamming_dist(&cw, &llrc);
-            let dd_val = hamming_dist(&cw, &llrd);
-
-            let dm = da.min(db).min(dc).min(dd_val);
-            *dmm_value = dmm_value.min(dm);
-
-            if dm < dmin {
-                dmin = dm;
-                // Use the unpacked message (WSJT-X genft8 returns msgsent, not the raw msg)
-                msgbest = msgsent.clone().unwrap_or_else(|| msg.clone());
-                pbest = pow;
-                best_imsg = imsg;
-                best_is_legacy = is_legacy;
-
-                let best_llr = if dm == da {
-                    &llra
-                } else if dm == db {
-                    &llrb
-                } else if dm == dc {
-                    &llrc
-                } else {
-                    &llrd
-                };
-                nharderrors = count_hard_errors(&cw, best_llr) as i32;
-            }
+            return None;
         }
-    }
 
-    // Second minimum (exclude the best match) — matching WSJT-X exactly
-    let mut dmin2 = 1e30f64;
-    for (imsg, dmm_value) in dmm.iter().enumerate().skip(1) {
-        if imsg != best_imsg && *dmm_value < dmin2 {
-            dmin2 = *dmm_value;
-        }
-    }
-
-    // SNR — WSJT-X ft8_a7.f90: xsnr = max(-25, db(pbest/xbase/3e6 - 1) - 27).
-    // AP decode s8 has WSJT-X scale (no /1000), so 3e6 divisor is correct.
-    let xsnr = {
-        let arg = pbest / xbase / 3e6 - 1.0;
-        if arg > 0.0 {
+        // AP decode s8 has WSJT-X scale (no /1000).
+        let arg = self.power / xbase / 3e6 - 1.0;
+        let snr = if arg > 0.0 {
             (-25.0f64).max(10.0 * arg.log10() - 27.0)
         } else {
             -25.0
+        };
+        Some(ApDecodeResult {
+            msg: self.msg,
+            freq,
+            dt,
+            snr,
+            nharderrors: self.nharderrors,
+        })
+    }
+}
+
+enum A7Target {
+    Cq(A7Match),
+    Legacy {
+        msg: String,
+        current_bits: Vec<u8>,
+        current_distance: f64,
+    },
+}
+
+struct A7Observation {
+    llrs: [[f64; 174]; 4],
+    s8: [[f64; 80]; 8],
+}
+
+pub(crate) struct A7Recovery {
+    target: A7Target,
+    rival: (f64, usize),
+    freq: f64,
+    dt: f64,
+    xbase: f64,
+    legacy_observation: Option<Box<A7Observation>>,
+}
+
+impl A7Recovery {
+    pub(crate) fn recover(self) -> Option<ApDecodeResult> {
+        let _span = crate::decode::lib_wsjtx_plus::metrics::Span::new(
+            crate::decode::lib_wsjtx_plus::metrics::Kind::A7,
+        );
+        let candidate = match self.target {
+            A7Target::Cq(candidate) => {
+                if !candidate.msg.starts_with("CQ ") {
+                    return None;
+                }
+                candidate
+            }
+            A7Target::Legacy {
+                msg,
+                current_bits,
+                current_distance,
+            } => {
+                let observation = self.legacy_observation?;
+                let cw = encode174_91(&legacy_rr73(&current_bits)?);
+                if cw.len() != 174 {
+                    return None;
+                }
+                let (distance, llr) = a7_distance(&cw, &observation.llrs);
+                // The current wire value comes first within the same message.
+                // It competes for the winner, but never counts as runner-up.
+                if distance >= current_distance {
+                    return None;
+                }
+                A7Match {
+                    msg,
+                    distance,
+                    power: a7_power(&cw, &observation.s8),
+                    nharderrors: count_hard_errors(&cw, llr) as i32,
+                    imsg: 3,
+                }
+            }
+        };
+        // Both scans use strict improvement in variant order.
+        if (candidate.distance, candidate.imsg) < self.rival {
+            candidate.finish(self.rival.0, self.freq, self.dt, self.xbase)
+        } else {
+            None
         }
-    };
-
-    // Validation
-    // Upstream 2e272882: avoid division by zero for an exact match.
-    if dmin > 100.0 || dmin2 / (dmin + 1.0e-6) < 1.3 {
-        return None;
     }
-    if msgbest.starts_with("CQ ") && std_2 && grid4.trim().is_empty() {
-        return None;
-    }
-    if msgbest.starts_with("QU1RK ") {
-        return None;
-    }
-    if compatibility
-        && !(best_is_legacy || (cq_seed && best_imsg == 5 && msgbest.starts_with("CQ ")))
-    {
-        return None;
-    }
-
-    Some(ApDecodeResult {
-        msg: msgbest,
-        freq: f1_refined,
-        dt: xdt_refined,
-        snr: xsnr,
-        nharderrors,
-    })
 }
 
 fn ap_wsjtx_cabs(re: f32, im: f32) -> f32 {

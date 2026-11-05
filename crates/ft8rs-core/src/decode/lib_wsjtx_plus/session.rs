@@ -5,7 +5,7 @@ use crate::stream::session::{
 use std::collections::HashSet;
 
 use crate::decode::lib_wsjtx_plus::ft8_a7::{
-    ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache,
+    ft8_a7d_with_downsample_cache, A7Recovery, ApDecodeResult, ApDownsampleCache,
 };
 use crate::decode::lib_wsjtx_plus::ft8_decode::{
     decode_f64_with_sbase, decode_f64_with_sbase_and_residual, ft8_a8d_result, DecodeOptions,
@@ -349,30 +349,37 @@ impl StreamDecodeSession {
         let mut missed = Vec::new();
         if let Some(cache) = &cache {
             for entry in &ap_candidates {
-                let result =
-                    decode_a7_from_saved_entry_with_adapter_retries(cache, entry, &sbase, false);
+                let (result, recovery) = decode_a7_from_saved_entry_with_adapter_retries(
+                    cache,
+                    entry,
+                    &sbase,
+                    self.params.wsjtx_plus_compatibility,
+                );
                 if let Some(r) = result {
                     let norm_r = normal(&r.msg);
                     if !ap_results.iter().any(|a| normal(&a.msg) == norm_r) {
                         ap_results.push(r);
                     }
-                } else if self.params.wsjtx_plus_compatibility {
-                    missed.push(entry);
+                } else if !recovery.is_empty() {
+                    missed.push(recovery);
                 }
             }
         }
         let a8_allowed = self.wsjtx_a8_allowed(&state.early_results, &full_results, &ap_results);
-        let a8_result = if a8_allowed {
+        let (a8_result, a8_recovery) = if a8_allowed {
+            let mycall = self.params.mycall.as_deref().unwrap_or("");
+            let hiscall = self.params.hiscall.as_deref().unwrap_or("");
+            let standard = crate::decode::packjt77::is_stdcall_suffix;
             ft8_a8d_result(
                 &full_residual,
-                self.params.mycall.as_deref().unwrap_or(""),
-                self.params.hiscall.as_deref().unwrap_or(""),
+                mycall,
+                hiscall,
                 self.params.hisgrid.as_deref().unwrap_or(""),
                 self.params.nfqso,
-                false,
+                self.params.wsjtx_plus_compatibility && standard(mycall) && standard(hiscall),
             )
         } else {
-            None
+            (None, None)
         };
 
         for d in &full_results {
@@ -440,13 +447,8 @@ impl StreamDecodeSession {
 
         // Supplementary outputs are emitted after the baseline callbacks and
         // never saved into the hash book, A7 memory, or subtraction input.
-        if let Some(cache) = &cache {
-            for entry in missed {
-                let Some(r) =
-                    decode_a7_from_saved_entry_with_adapter_retries(cache, entry, &sbase, true)
-                else {
-                    continue;
-                };
+        for attempts in missed {
+            if let Some(r) = attempts.into_iter().find_map(A7Recovery::recover) {
                 push_compatibility_decode(
                     state,
                     StreamDecodedMessage {
@@ -461,34 +463,19 @@ impl StreamDecodeSession {
                 )?;
             }
         }
-        if self.params.wsjtx_plus_compatibility && a8_allowed && a8_result.is_none() {
-            let mycall = self.params.mycall.as_deref().unwrap_or("");
-            let hiscall = self.params.hiscall.as_deref().unwrap_or("");
-            if crate::decode::packjt77::is_stdcall_suffix(mycall)
-                && crate::decode::packjt77::is_stdcall_suffix(hiscall)
-            {
-                if let Some(r) = ft8_a8d_result(
-                    &full_residual,
-                    mycall,
-                    hiscall,
-                    self.params.hisgrid.as_deref().unwrap_or(""),
-                    self.params.nfqso,
-                    true,
-                ) {
-                    push_compatibility_decode(
-                        state,
-                        StreamDecodedMessage {
-                            freq: r.freq,
-                            dt: r.dt,
-                            snr: r.snr,
-                            msg: r.msg,
-                            sync: 10.0,
-                            itone: r.itone,
-                        },
-                        &mut on_decode,
-                    )?;
-                }
-            }
+        if let Some(r) = a8_recovery.and_then(|recovery| recovery.recover()) {
+            push_compatibility_decode(
+                state,
+                StreamDecodedMessage {
+                    freq: r.freq,
+                    dt: r.dt,
+                    snr: r.snr,
+                    msg: r.msg,
+                    sync: 10.0,
+                    itone: r.itone,
+                },
+                &mut on_decode,
+            )?;
         }
         Ok(std::mem::take(&mut state.merged))
     }
@@ -578,22 +565,22 @@ fn decode_a7_from_saved_entry_with_adapter_retries(
     entry: &A7SaveEntry,
     sbase: &[f64],
     compatibility: bool,
-) -> Option<ApDecodeResult> {
-    let fields = entry.decode_fields()?;
-    if compatibility {
-        let standard = crate::decode::packjt77::is_stdcall;
-        let eligible = standard(&fields.call_2)
-            && (standard(&fields.call_1) || (fields.call_1 == "CQ" && is_grid4(&fields.grid4)));
-        if !eligible {
-            return None;
-        }
-    }
+) -> (Option<ApDecodeResult>, Vec<A7Recovery>) {
+    let Some(fields) = entry.decode_fields() else {
+        return (None, Vec::new());
+    };
+    let standard = crate::decode::packjt77::is_stdcall;
+    let keep_recovery = compatibility
+        && standard(&fields.call_2)
+        && (standard(&fields.call_1) || (fields.call_1 == "CQ" && is_grid4(&fields.grid4)));
+
     let xbase = a7_xbase(entry.f0, sbase);
     // Stream-adapter retry guard. The decoder core ft8_a7d already performs
     // its internal ifr=-5..5 frequency peak. These seed offsets compensate
     // saved-entry frequency quantization at the adapter boundary.
+    let mut missed = Vec::new();
     for offset in [0.0, 0.5, -0.5] {
-        if let Some(result) = ft8_a7d_with_downsample_cache(
+        let (result, recovery) = ft8_a7d_with_downsample_cache(
             downsample_cache,
             &fields.call_1,
             &fields.call_2,
@@ -601,12 +588,14 @@ fn decode_a7_from_saved_entry_with_adapter_retries(
             entry.dt0,
             entry.f0 + offset,
             xbase,
-            compatibility,
-        ) {
-            return Some(result);
+            keep_recovery,
+        );
+        if result.is_some() {
+            return (result, Vec::new());
         }
+        missed.extend(recovery);
     }
-    None
+    (None, missed)
 }
 
 fn fill_dd0_from_samples(samples: &[f32], out: &mut [f64]) {

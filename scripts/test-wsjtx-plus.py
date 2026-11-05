@@ -14,6 +14,7 @@ import platform
 import resource
 import shutil
 import statistics
+import struct
 import subprocess
 import tempfile
 
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "crates/ft8rs-core"
 PLUS = CORE / "src/decode/lib_wsjtx_plus"
 TEST = "decode::lib_wsjtx_plus::validation::paired_corpus_replay"
+PACKED_SYNC_ABS_TOLERANCE = 1e-9
 COMPATIBILITY_TRUTH = {
     ("230208_140300_plus_1db", 3, "YO3GOD OY1DZ RR73"),
     ("230208_140300_plus_1db", 8, "I3EVK VE7ON RR73"),
@@ -101,15 +103,34 @@ def per_case(runs):
     return result
 
 
-def compare(reference, candidate):
+def same_rows(reference, candidate, sync_atol):
+    if reference == candidate:
+        return True
+    if not sync_atol or len(reference) != len(candidate):
+        return False
+    for expected, actual in zip(reference, candidate):
+        if expected == actual:
+            continue
+        if dict(actual, sync=expected["sync"]) != expected:
+            return False
+        expected_sync, actual_sync = [
+            struct.unpack(">d", row["sync"].to_bytes(8, "big"))[0]
+            for row in (expected, actual)
+        ]
+        if not math.isclose(expected_sync, actual_sync, abs_tol=sync_atol, rel_tol=0):
+            return False
+    return True
+
+
+def compare(reference, candidate, *, sync_atol=0):
     assert len(reference) == len(candidate)
     observations = 0
     for a, b in zip(reference, candidate):
         assert (a["case"], a["config"]) == (b["case"], b["config"])
         assert len(a["slots"]) == len(b["slots"])
         for slot, (x, y) in enumerate(zip(a["slots"], b["slots"])):
-            assert x["rows"] == y["rows"], f"result bits differ: {a['case']} slot={slot}"
-            assert x["callbacks"] == y["callbacks"], f"callback bits differ: {a['case']} slot={slot}"
+            assert same_rows(x["rows"], y["rows"], sync_atol), f"results differ: {a['case']} slot={slot}"
+            assert same_rows(x["callbacks"], y["callbacks"], sync_atol), f"callbacks differ: {a['case']} slot={slot}"
             observations += len(x["rows"])
     return observations
 
@@ -205,19 +226,29 @@ def main():
         for run in mode_runs:
             if mode == "compatibility":
                 additions = compare_compatibility(reference, run)
+            elif mode == "optimized" and not args.compatibility:
+                compare(mode_runs[0], run)
+                compare(reference, run, sync_atol=PACKED_SYNC_ABS_TOLERANCE)
             else:
                 compare(reference, run)
     if args.hotspots:
-        compare(reference, read_rows(output / "hotspots.jsonl"))
+        compare(runs["optimized"][0], read_rows(output / "hotspots.jsonl"))
     conditions["input_sha256"] = {r["input"]: digest(Path(r["input"])) for r in reference}
     (output / "conditions.json").write_text(json.dumps(conditions, indent=2) + "\n")
     summary = {mode: summarize(mode_runs) for mode, mode_runs in runs.items()}
     summary["process_cpu_including_io"] = cpu
     summary["per_case"] = {mode: per_case(mode_runs) for mode, mode_runs in runs.items()}
-    summary["equivalence"] = {"cases": len(reference), "slots": sum(len(r["slots"]) for r in reference), "observations": compare(reference, runs["optimized"][0]), "lost": 0, "added": len(additions), "metadata_or_order_changes": 0}
+    summary["equivalence"] = {"cases": len(reference), "slots": sum(len(r["slots"]) for r in reference), "observations": compare(reference, runs["optimized"][0], sync_atol=0 if args.compatibility else PACKED_SYNC_ABS_TOLERANCE), "lost": 0, "added": len(additions), "metadata_or_order_changes": 0}
     if args.compatibility:
         summary["verified_additions"] = additions
     else:
+        summary["equivalence"]["sync_absolute_tolerance"] = PACKED_SYNC_ABS_TOLERANCE
+        summary["equivalence"]["sync_rounding_rows"] = sum(
+            before["sync"] != after["sync"]
+            for old_case, new_case in zip(reference, runs["optimized"][0])
+            for old_slot, new_slot in zip(old_case["slots"], new_case["slots"])
+            for before, after in zip(old_slot["rows"], new_slot["rows"])
+        )
         summary["optimized_vs_reference_reduction"] = 1 - summary["optimized"]["median_run_total_ms"] / summary["reference"]["median_run_total_ms"]
         summary["optimized_vs_original_reduction"] = 1 - summary["optimized"]["median_run_total_ms"] / summary["original"]["median_run_total_ms"]
     protect_originals()

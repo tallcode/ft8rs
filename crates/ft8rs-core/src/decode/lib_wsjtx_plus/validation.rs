@@ -26,6 +26,23 @@ impl From<&StreamDecodedMessage> for Row {
     }
 }
 
+fn assert_packed_sync_equivalence(expected: &[Row], actual: &[Row], case: &str) {
+    assert_eq!(expected.len(), actual.len(), "{case}");
+    for (expected, actual) in expected.iter().zip(actual) {
+        assert_eq!(expected.msg, actual.msg, "{case}");
+        assert_eq!(expected.freq, actual.freq, "{case} {}", actual.msg);
+        assert_eq!(expected.dt, actual.dt, "{case} {}", actual.msg);
+        assert_eq!(expected.snr, actual.snr, "{case} {}", actual.msg);
+        assert_eq!(expected.tones, actual.tones, "{case} {}", actual.msg);
+        let sync_delta = (f64::from_bits(expected.sync) - f64::from_bits(actual.sync)).abs();
+        assert!(
+            expected.sync == actual.sync || sync_delta <= 1.0e-9,
+            "{case} {} sync delta={sync_delta}",
+            actual.msg
+        );
+    }
+}
+
 #[derive(serde::Serialize)]
 struct Slot {
     rows: Vec<Row>,
@@ -236,8 +253,13 @@ fn paired_corpus_replay() {
                     Runner::new("optimized", case.config.clone())
                         .decode(&case.timestamp, &wav.samples)
                 });
-                assert_eq!(old.rows, new.rows, "{} {mode:?}", case.id);
-                assert_eq!(old.callbacks, new.callbacks, "{} {mode:?}", case.id);
+                if mode == fft::Mode::Optimized && !cfg!(feature = "fftw") {
+                    assert_packed_sync_equivalence(&old.rows, &new.rows, &case.id);
+                    assert_packed_sync_equivalence(&old.callbacks, &new.callbacks, &case.id);
+                } else {
+                    assert_eq!(old.rows, new.rows, "{} {mode:?}", case.id);
+                    assert_eq!(old.callbacks, new.callbacks, "{} {mode:?}", case.id);
+                }
             }
         }
         return;
@@ -342,8 +364,10 @@ fn legacy_a8_recovers_the_grid_waveform() {
             })
             .collect::<Vec<_>>()
     };
-    let a8 = |audio: &[f64], compatibility| {
-        super::ft8_decode::ft8_a8d_result(audio, "K1JT", "BG5ATV", "PM00", 1000.0, compatibility)
+    let a8 = |audio: &[f64]| {
+        let (baseline, recovery) =
+            super::ft8_decode::ft8_a8d_result(audio, "K1JT", "BG5ATV", "PM00", 1000.0, true);
+        (baseline, recovery.and_then(|recovery| recovery.recover()))
     };
     for label in ["legacy-ideal", "current-ideal"] {
         let checkpoint = fixture.iter().find(|row| row.label == label).unwrap();
@@ -361,8 +385,7 @@ fn legacy_a8_recovers_the_grid_waveform() {
         for sample in &mut audio {
             *sample = f64::from((*sample * 0.05) as f32);
         }
-        let baseline = a8(&audio, false);
-        let compatible = a8(&audio, true);
+        let (baseline, compatible) = a8(&audio);
         let result = if label == "legacy-ideal" {
             assert!(baseline.is_none());
             compatible.unwrap()
@@ -373,7 +396,7 @@ fn legacy_a8_recovers_the_grid_waveform() {
         assert_eq!(result.msg, "K1JT BG5ATV RR73");
         assert_eq!(result.itone, tones);
     }
-    assert!(a8(&noise, true).is_none());
+    assert!(a8(&noise).1.is_none());
 }
 
 #[derive(serde::Deserialize)]

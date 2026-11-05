@@ -39,6 +39,10 @@ pub(super) fn finish() -> Metrics {
     METRICS.with_borrow_mut(|m| m.take().expect("metrics not started"))
 }
 
+pub(super) fn active() -> bool {
+    METRICS.with_borrow(Option::is_some)
+}
+
 pub(super) struct Span(Kind, Option<Instant>);
 
 impl Span {
