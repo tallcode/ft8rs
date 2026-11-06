@@ -4,7 +4,7 @@
 //! - `wsjtx/lib/ft8_decode.f90`
 
 use crate::decode::decode174_91::N_LDPC;
-use crate::decode::lib_wsjtx_plus::fft::four2a_r2c;
+use crate::decode::lib_wsjtx_plus::fft::four2a_r2c_packed;
 use crate::HashCallBook;
 
 #[path = "ft8/baseline.rs"]
@@ -38,6 +38,9 @@ pub(crate) use self::ft8_params::{
 use self::ft8apset::ft8_ap_set;
 use self::ft8apset::{M73, MCQ, MCQFD, MCQRU, MCQTEST, MCQWW, MRR73, MRRR};
 use self::ft8b::ft8b;
+#[cfg(test)]
+pub(super) use self::ft8b::measure_audio;
+pub(super) use self::ft8b::recover_rr73;
 pub(super) use self::ft8b::{extract_symbol_spectrum, normalize_bmet};
 use self::get_spectrum_baseline::get_spectrum_baseline;
 use self::sync8::sync8;
@@ -317,7 +320,7 @@ fn decode_from_f64(
         cx_im.fill(0.0);
 
         cx_re[..residual.len()].copy_from_slice(&residual);
-        four2a_r2c(&mut cx_re, &mut cx_im);
+        four2a_r2c_packed(&mut cx_re, &mut cx_im);
 
         let (ifa, ifb) = if nagain {
             (nfqso - 20.0, nfqso + 20.0)

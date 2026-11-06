@@ -163,7 +163,11 @@ def main():
     parser.add_argument("--case", default="", help="exact corpus id, empty selects full corpus")
     parser.add_argument("--hotspots", action="store_true", help="extra untimed profiling replay")
     parser.add_argument("--compatibility", action="store_true", help="compare plus baseline with opt-in recovery and verify exact additions")
+    parser.add_argument("--original-control", action="store_true", help="also run original WSJT-X in the compatibility comparison")
+    parser.add_argument("--without-fine-rr73", action="store_true", help="disable fine RR73 only in the test replay")
     args = parser.parse_args()
+    if (args.original_control or args.without_fine_rr73) and not args.compatibility:
+        parser.error("--original-control and --without-fine-rr73 require --compatibility")
     assert args.repeats > 0
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -193,10 +197,14 @@ def main():
         "repeats": args.repeats,
         "case_filter": args.case,
         "compatibility": args.compatibility,
+        "fine_rr73": args.compatibility and not args.without_fine_rr73,
+        "original_control": args.original_control,
         "timing_scope": "all three staged calls plus slot state allocation; serial, no acquisition waits or reporting I/O",
     }
     (output / "conditions.json").write_text(json.dumps(conditions, indent=2) + "\n")
     modes = ["optimized", "compatibility"] if args.compatibility else ["original", "reference", "optimized"]
+    if args.original_control:
+        modes.insert(0, "original")
     runs = {mode: [] for mode in modes}
     cpu = {mode: [] for mode in runs}
     with tempfile.TemporaryDirectory(prefix="ft8rs-plus-") as temp:
@@ -208,7 +216,15 @@ def main():
             rotation = repeat % len(modes)
             for mode in modes[rotation:] + modes[:rotation]:
                 path = output / f"round-{repeat}-{mode}.jsonl"
-                run_env = dict(env, FT8RS_PLUS_MODE=mode, FT8RS_PLUS_REPEATS="1", FT8RS_PLUS_CASE=args.case, FT8RS_PLUS_OUTPUT=str(path), FT8RS_PLUS_PROFILE="0")
+                run_env = dict(
+                    env,
+                    FT8RS_PLUS_MODE=mode,
+                    FT8RS_PLUS_REPEATS="1",
+                    FT8RS_PLUS_CASE=args.case,
+                    FT8RS_PLUS_OUTPUT=str(path),
+                    FT8RS_PLUS_PROFILE="0",
+                    FT8RS_PLUS_FINE_RR73="0" if args.without_fine_rr73 else "1",
+                )
                 before = resource.getrusage(resource.RUSAGE_CHILDREN)
                 with (output / f"round-{repeat}-{mode}.log").open("w") as log:
                     subprocess.run([str(exe), TEST, "--exact", "--ignored", "--test-threads=1", "--nocapture"], cwd=CORE, env=run_env, stdout=log, stderr=subprocess.STDOUT, check=True)
@@ -226,6 +242,9 @@ def main():
         for run in mode_runs:
             if mode == "compatibility":
                 additions = compare_compatibility(reference, run)
+            elif mode == "original" and args.original_control:
+                compare(mode_runs[0], run)
+                compare(reference, run, sync_atol=PACKED_SYNC_ABS_TOLERANCE)
             elif mode == "optimized" and not args.compatibility:
                 compare(mode_runs[0], run)
                 compare(reference, run, sync_atol=PACKED_SYNC_ABS_TOLERANCE)

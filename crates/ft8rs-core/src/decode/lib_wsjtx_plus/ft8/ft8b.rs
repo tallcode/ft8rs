@@ -153,9 +153,11 @@ pub(super) fn ft8b(
     })
 }
 
-#[cfg(test)]
 #[path = "rr73_metrics.rs"]
 mod rr73_metrics;
+#[cfg(test)]
+pub(in crate::decode::lib_wsjtx_plus) use rr73_metrics::measure_audio;
+pub(in crate::decode::lib_wsjtx_plus) use rr73_metrics::recover_rr73;
 
 fn spectrum_noise_power(sbase: &[f64], frequency: f64) -> Option<f64> {
     let df_sync = SAMPLE_RATE as f64 / NFFT1 as f64;

@@ -387,7 +387,7 @@ fn symbol_fft_matches_split_transform_at_window_edges() {
 
 #[test]
 fn packed_real_fft_preserves_scale_and_positive_frequency_layout() {
-    for n in [2, 32, sync8_fft_size()] {
+    for n in [2, 32, sync8_fft_size(), super::ft8_decode::NFFT1_LONG] {
         let signal: Vec<_> = (0..n)
             .map(|i| 2.0 + (0.13 * i as f64).sin() + if i % 2 == 0 { 0.5 } else { -0.5 })
             .collect();

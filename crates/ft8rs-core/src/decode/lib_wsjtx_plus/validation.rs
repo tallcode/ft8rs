@@ -270,6 +270,9 @@ fn paired_corpus_replay() {
         .unwrap();
     assert!(repeats > 0);
     let profile = std::env::var("FT8RS_PLUS_PROFILE").is_ok_and(|v| v == "1");
+    rr73_replay::set_fine_recovery(
+        mode == "compatibility" && !std::env::var("FT8RS_PLUS_FINE_RR73").is_ok_and(|v| v == "0"),
+    );
     assert!(
         !profile || mode != "original",
         "profiling is private to plus"

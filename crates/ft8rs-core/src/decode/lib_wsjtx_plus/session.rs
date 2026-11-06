@@ -324,6 +324,8 @@ impl StreamDecodeSession {
         full_options.initial_messages = state.early_results.iter().map(|d| d.msg.clone()).collect();
         let (full_results, sbase, full_residual) =
             decode_f64_with_sbase_and_residual(&state.work, full_options);
+        #[cfg(test)]
+        super::validation::rr73_replay::record_terminal_residual(&full_residual);
 
         // Build current a7 table entries before AP. Current entries suppress
         // previous entries already accounted for by a regular decode in this
@@ -477,7 +479,49 @@ impl StreamDecodeSession {
                 &mut on_decode,
             )?;
         }
+        if let Some(target) = self.fine_rr73_target() {
+            let already_received = state.merged.iter().any(|row| {
+                row.msg.ends_with(" RR73")
+                    && row
+                        .msg
+                        .split_whitespace()
+                        .nth(1)
+                        .is_some_and(|sender| sender.eq_ignore_ascii_case(target))
+            });
+            if !already_received {
+                if let Some(row) = super::ft8_decode::recover_rr73(
+                    &full_residual,
+                    self.params.nfqso,
+                    self.params.nfa..=self.params.nfb,
+                    target,
+                    || {},
+                ) {
+                    push_compatibility_decode(state, row, &mut on_decode)?;
+                }
+            }
+        }
         Ok(std::mem::take(&mut state.merged))
+    }
+
+    fn fine_rr73_target(&self) -> Option<&str> {
+        #[cfg(test)]
+        if !super::validation::rr73_replay::fine_recovery_enabled() {
+            return None;
+        }
+        let has_operator = self
+            .params
+            .mycall
+            .as_deref()
+            .is_some_and(|call| !call.trim().is_empty());
+        if !self.params.wsjtx_plus_compatibility
+            || has_operator
+            || self.params.ncontest != 0
+            || !self.params.lft8apon
+            || self.params.nagain
+        {
+            return None;
+        }
+        self.params.hiscall.as_deref().map(str::trim)
     }
 
     fn wsjtx_a8_allowed(
