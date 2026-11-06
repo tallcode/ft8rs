@@ -221,12 +221,9 @@ fn replay_legacy_dx_focus() {
             let (lower_edge, _) = decode(lower_edge, true, &audio);
             assert!(lower_edge.iter().any(|row| row.0.msg == "CQ W9XYZ EN50"));
             assert!(lower_edge.iter().all(|row| !row.0.msg.contains("G4AAA")));
-            assert!(
-                lower_edge
-                    .iter()
-                    .any(|row| row.0.msg == TARGET
-                        && row.1 == StreamDecodeProvenance::ContextRecovery)
-            );
+            assert!(lower_edge.iter().any(
+                |row| row.0.msg == TARGET && row.1 == StreamDecodeProvenance::PlusCompatibility
+            ));
 
             let (base, _) = decode(wide.clone(), false, &audio);
             assert!(base.iter().any(|row| row.0.msg == "CQ W9XYZ EN50"));
@@ -237,7 +234,7 @@ fn replay_legacy_dx_focus() {
             }
             let (recovery, provenance, callback) = &compatible[base.len()];
             assert_eq!(recovery.msg, TARGET);
-            assert_eq!(*provenance, StreamDecodeProvenance::ContextRecovery);
+            assert_eq!(*provenance, StreamDecodeProvenance::PlusCompatibility);
             let legacy_tones = frozen_tones(TARGET, true);
             assert_eq!(recovery.tones, legacy_tones);
             eprintln!(
@@ -249,7 +246,7 @@ fn replay_legacy_dx_focus() {
             let (negative, _) = decode(wide, true, &without_target);
             assert!(negative
                 .iter()
-                .all(|row| row.1 != StreamDecodeProvenance::ContextRecovery
+                .all(|row| row.1 != StreamDecodeProvenance::PlusCompatibility
                     && !row.0.msg.contains("BG5ATV")));
         }
         for row in dx.decode_slot_at(&timestamp, &audio) {
@@ -555,7 +552,7 @@ fn replay_fine_rr73_prototype() {
             let (row, provenance, callback) = replayed.last().unwrap();
             assert_eq!(row.msg, TARGET);
             assert_eq!(row.tones, frozen_tones(TARGET, false));
-            assert_eq!(*provenance, StreamDecodeProvenance::ContextRecovery);
+            assert_eq!(*provenance, StreamDecodeProvenance::PlusCompatibility);
             eprintln!(
                 "fine RR73 {} Hz DT {}, callback {:?}, slot {:?} -> {:?}",
                 f64::from_bits(row.freq),
@@ -725,7 +722,7 @@ fn fine_rr73_held_out_positives() {
         if let Some((row, provenance, callback)) = new.get(old.len()) {
             assert_eq!(row.msg, TARGET, "held-out seed {i}");
             assert_eq!(row.tones, tones);
-            assert_eq!(*provenance, StreamDecodeProvenance::ContextRecovery);
+            assert_eq!(*provenance, StreamDecodeProvenance::PlusCompatibility);
             added_hits += 1;
             max_recovery_callback = max_recovery_callback.max(*callback);
         }
@@ -820,7 +817,7 @@ fn fine_rr73_long_truth_recordings() {
             positives += usize::from(positive);
             base_hits += usize::from(positive && old.iter().any(|row| row.0.msg == expected));
             for (row, provenance, callback) in &new[old.len()..] {
-                assert_eq!(*provenance, StreamDecodeProvenance::ContextRecovery);
+                assert_eq!(*provenance, StreamDecodeProvenance::PlusCompatibility);
                 max_callback = max_callback.max(*callback);
                 if positive && row.msg == expected && row.tones == tones {
                     added_hits += 1;
@@ -908,7 +905,7 @@ fn fine_rr73_real_background_truth() {
             counts[1] += usize::from(signal_present);
             counts[2] += usize::from(signal_present && old.iter().any(|row| row.0.msg == TARGET));
             for (row, source, callback) in &new[old.len()..] {
-                assert_eq!(*source, StreamDecodeProvenance::ContextRecovery);
+                assert_eq!(*source, StreamDecodeProvenance::PlusCompatibility);
                 max_recovery_callback = max_recovery_callback.max(*callback);
                 let correct = signal_present && row.msg == TARGET && row.tones == tones;
                 counts[if correct { 3 } else { 4 }] += 1;

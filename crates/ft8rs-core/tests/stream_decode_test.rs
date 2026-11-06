@@ -193,6 +193,8 @@ fn test_wsjtx_plus_preserves_wp_recording_baseline() {
                 [
                     (5, "FO0L F4GYE JN07"),
                     (5, "PD0YL OY1DZ -15"),
+                    (5, "RJ3DC OE9GWV +06"),
+                    (6, "N1F US7UK -09"),
                     (16, "F1MLZ UA3QNA -04"),
                 ]
                 .map(|(slot, msg)| (slot, msg.to_owned())),

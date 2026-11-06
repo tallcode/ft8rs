@@ -126,6 +126,8 @@ impl Locale {
             "Port" => "端口",
             "Compatibility recovery" => "兼容恢复",
             "Search for legacy RR73 and CQ after the base decode." => "基础解码完成后补搜旧版 RR73 和 CQ。",
+            "Candidate retry" => "候选重试",
+            "Retry nearby alignments for weak or overlapping signals after the base decode." => "基础解码完成后，为弱信号或重叠信号尝试邻近的对齐点。",
             "Listen to WSJT-X (UDP)" => "监听 WSJT-X（UDP）",
             "Match ± Hz" => "匹配容差（± Hz）",
             "Merges WSJT-X decodes with the local ones to compare sensitivity." => "合并 WSJT-X 与本地解码结果以对比灵敏度。",

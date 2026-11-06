@@ -40,8 +40,8 @@ use self::ft8apset::{M73, MCQ, MCQFD, MCQRU, MCQTEST, MCQWW, MRR73, MRRR};
 #[cfg(test)]
 pub(super) use self::ft8b::measure_audio;
 pub(super) use self::ft8b::recover_rr73;
+use self::ft8b::{cross_retry::adaptive, ft8b, retry_ft8b};
 pub(super) use self::ft8b::{extract_symbol_spectrum, normalize_bmet};
-use self::ft8b::{ft8b, retry_ft8b};
 use self::get_spectrum_baseline::get_spectrum_baseline;
 use self::sync8::{sync8, sync8_with_peaks};
 pub(crate) use self::sync8d::{
@@ -99,6 +99,7 @@ pub(super) struct Candidate {
     pub(super) sync: f64,
 }
 
+#[derive(Clone)]
 pub(super) struct Ft8bResult {
     pub(super) msg: String,
     pub(super) freq: f64,
@@ -124,6 +125,7 @@ pub(super) struct TimeRefineResult {
 
 #[derive(Clone)]
 pub(super) struct Ft8bApOptions {
+    pub(super) isolate_book: bool,
     pub(super) enabled: bool,
     pub(super) cq_only: bool,
     pub(super) nqso_progress: usize,
@@ -287,6 +289,7 @@ fn decode_from_f64(
     let hiscall = options.hiscall.clone();
     let nzhsym = options.nzhsym.unwrap_or(50);
     let ap_options = Ft8bApOptions {
+        isolate_book: false,
         enabled: options.lft8apon.unwrap_or(true),
         cq_only: options.lapcqonly.unwrap_or(false),
         nqso_progress: options.nQSOProgress.unwrap_or(0).min(5),
@@ -422,42 +425,121 @@ pub(super) struct FinalRetry {
 }
 
 impl FinalRetry {
-    pub(super) fn recover<'a>(
-        mut self,
+    pub(super) fn sort_peaks(&mut self) {
+        self.peaks.sort_by(|a, b| b.sync.total_cmp(&a.sync));
+    }
+
+    pub(super) fn recover_local<'a>(
+        &'a self,
         sbase: &'a [f64],
         base: &[crate::StreamDecodedMessage],
     ) -> impl Iterator<Item = DecodedMessage> + 'a {
-        // Omit peaks already explained by a base decode at that location.
-        self.peaks.retain(|p| {
-            !base
-                .iter()
-                .any(|b| (b.freq - p.freq).abs() <= 4.0 && (b.dt - p.dt).abs() <= 0.12)
-        });
-        self.peaks.sort_by(|a, b| b.sync.total_cmp(&a.sync));
-        let mut workspace = create_decode_workspace();
-        self.peaks
-            .into_iter()
+        let candidates: Vec<_> = self
+            .peaks
+            .iter()
+            .filter(|p| !near_reported(p, base))
             .take(self.limit)
-            .filter_map(move |candidate| {
-                let r = retry_ft8b(
-                    &self.cx_re,
-                    &self.cx_im,
-                    &candidate,
-                    sbase,
-                    self.depth,
-                    &self.ap_options,
-                    &self.book,
-                    &mut workspace,
-                )?;
-                Some(DecodedMessage {
-                    freq: r.freq,
-                    dt: r.dt - 0.5,
-                    snr: r.snr,
-                    sync: candidate.sync,
-                    msg: r.msg,
-                    itone: r.itone.to_vec(),
-                })
+            .collect();
+        let mut workspace = create_decode_workspace();
+        candidates.into_iter().filter_map(move |candidate| {
+            let row = retry_ft8b(
+                &self.cx_re,
+                &self.cx_im,
+                candidate,
+                sbase,
+                self.depth,
+                &self.ap_options,
+                &self.book,
+                &mut workspace,
+            )?;
+            Some(retry_message(row, candidate.sync))
+        })
+    }
+
+    pub(super) fn recover_adaptive(
+        &self,
+        sbase: &[f64],
+        base: &[crate::StreamDecodedMessage],
+        mut emit: impl FnMut(DecodedMessage) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let candidates: Vec<_> = self
+            .peaks
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !near_reported(p, base))
+            .collect();
+        let tone_span = 7.0 * f64::from(DOWNSAMPLE_BAUD);
+        let symbol_time = 1.0 / f64::from(DOWNSAMPLE_BAUD);
+        let mut overlap: Vec<_> = candidates
+            .iter()
+            .filter_map(|&(index, p)| {
+                let score = base
+                    .iter()
+                    .filter(|r| r.itone.iter().any(|&t| t != 0))
+                    .map(|r| {
+                        let spectral = (1.0 - (r.freq - p.freq).abs() / tone_span).max(0.0);
+                        let temporal = 1.0 / (1.0 + (r.dt - p.dt).abs() / symbol_time);
+                        spectral * temporal * 10f64.powf(r.snr / 20.0)
+                    })
+                    .fold(0.0, f64::max);
+                (score > 0.0).then_some((score, (index, p)))
             })
+            .collect();
+        overlap.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut primary = candidates.into_iter();
+        let mut overlap = overlap.into_iter().map(|(_, entry)| entry);
+        let mut selected = Vec::with_capacity(self.limit);
+        let mut seen = std::collections::HashSet::new();
+        while selected.len() < self.limit {
+            let mut picked = false;
+            for from_overlap in [false, true] {
+                let unselected = |(index, _): &(usize, &Candidate)| !seen.contains(index);
+                let next = if from_overlap {
+                    overlap.find(unselected)
+                } else {
+                    primary.find(unselected)
+                };
+                if let Some((index, p)) = next {
+                    seen.insert(index);
+                    selected.push(p);
+                    picked = true;
+                }
+                if selected.len() == self.limit {
+                    break;
+                }
+            }
+            if !picked {
+                break;
+            }
+        }
+        let mut ap = self.ap_options.clone();
+        ap.isolate_book = true;
+        adaptive::run(
+            (&self.cx_re, &self.cx_im),
+            &selected,
+            sbase,
+            self.depth,
+            &ap,
+            &self.book,
+            base,
+            |row, sync| emit(retry_message(row, sync)),
+        )
+    }
+}
+
+fn near_reported(candidate: &Candidate, base: &[crate::StreamDecodedMessage]) -> bool {
+    base.iter()
+        .any(|b| (b.freq - candidate.freq).abs() <= 4.0 && (b.dt - candidate.dt).abs() <= 0.12)
+}
+
+fn retry_message(row: Ft8bResult, sync: f64) -> DecodedMessage {
+    DecodedMessage {
+        freq: row.freq,
+        dt: row.dt - 0.5,
+        snr: row.snr,
+        sync,
+        msg: row.msg,
+        itone: row.itone.to_vec(),
     }
 }
 
@@ -587,6 +669,7 @@ mod tests {
 
     fn test_ap_options() -> Ft8bApOptions {
         Ft8bApOptions {
+            isolate_book: false,
             enabled: true,
             cq_only: false,
             nqso_progress: 0,

@@ -81,6 +81,7 @@ impl ReconfigOutcome {
 pub enum ConfigField {
     Profile,
     WsjtxPlusCompatibility,
+    WsjtxPlusCandidateRetry,
     MyCall,
     MyGrid,
     HisCall,
@@ -110,6 +111,11 @@ pub fn config_diff(old: &StreamDecodeConfig, new: &StreamDecodeConfig) -> BTreeS
         (old.profile == DecodeProfile::WsjtxPlus || new.profile == DecodeProfile::WsjtxPlus)
             && old.wsjtx_plus_compatibility != new.wsjtx_plus_compatibility,
         ConfigField::WsjtxPlusCompatibility,
+    );
+    note(
+        (old.profile == DecodeProfile::WsjtxPlus || new.profile == DecodeProfile::WsjtxPlus)
+            && old.wsjtx_plus_candidate_retry != new.wsjtx_plus_candidate_retry,
+        ConfigField::WsjtxPlusCandidateRetry,
     );
     note(old.mycall != new.mycall, ConfigField::MyCall);
     note(old.mygrid != new.mygrid, ConfigField::MyGrid);
@@ -236,6 +242,24 @@ mod tests {
         assert!(!plan.restart_capture);
         old.config.profile = DecodeProfile::Wsjtx;
         new.config.profile = DecodeProfile::Wsjtx;
+        assert!(plan_reconfig(&old, &new).is_noop());
+    }
+
+    #[test]
+    fn wsjtx_plus_candidate_retry_applies_at_slot_boundary() {
+        let mut old = base();
+        old.config.profile = DecodeProfile::WsjtxPlus;
+        let mut new = old.clone();
+        new.config.wsjtx_plus_candidate_retry = false;
+        assert_eq!(
+            config_diff(&old.config, &new.config),
+            [ConfigField::WsjtxPlusCandidateRetry].into_iter().collect()
+        );
+        let plan = plan_reconfig(&old, &new);
+        assert!(plan.rebuild_session);
+        assert!(!plan.restart_capture);
+        old.config.profile = DecodeProfile::Hybrid;
+        new.config.profile = DecodeProfile::Hybrid;
         assert!(plan_reconfig(&old, &new).is_noop());
     }
 

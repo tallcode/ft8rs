@@ -114,6 +114,7 @@ pub struct Ft8rsApp {
     hybrid_sic: bool,
     hybrid_experiment: bool,
     wsjtx_plus_compatibility: bool,
+    wsjtx_plus_candidate_retry: bool,
     nagain: bool,
     nfa: String,
     nfb: String,
@@ -253,6 +254,7 @@ impl Ft8rsApp {
             hybrid_sic: load_bool("hybrid_sic", true),
             hybrid_experiment: load_bool("hybrid_experiment", false),
             wsjtx_plus_compatibility: load_bool("wsjtx_plus_compatibility", true),
+            wsjtx_plus_candidate_retry: load_bool("wsjtx_plus_candidate_retry", true),
             nagain: load_bool("nagain", false),
             nfa: load("nfa", "200"),
             nfb: load("nfb", "3000"),
@@ -339,6 +341,7 @@ impl Ft8rsApp {
             hybrid_sic: self.hybrid_sic,
             hybrid_experiment: self.hybrid_experiment,
             wsjtx_plus_compatibility: self.wsjtx_plus_compatibility,
+            wsjtx_plus_candidate_retry: self.wsjtx_plus_candidate_retry,
             nagain: self.nagain,
             filter: self.filter,
             hide_dupes: self.hide_dupes,
@@ -1377,6 +1380,15 @@ impl Ft8rsApp {
                             ))
                             .changed()
                         });
+                        commit |= setting_row(ui, tr("Candidate retry"), |ui| {
+                            ui.add(egui::Checkbox::without_text(
+                                &mut self.wsjtx_plus_candidate_retry,
+                            ))
+                            .on_hover_text(tr(
+                                "Retry nearby alignments for weak or overlapping signals after the base decode.",
+                            ))
+                            .changed()
+                        });
                     }
                     if self.profile == DecodeProfile::Hybrid {
                         commit |= setting_row(ui, tr("Cross cancellation"), |ui| {
@@ -1806,6 +1818,10 @@ impl eframe::App for Ft8rsApp {
         storage.set_string(
             "wsjtx_plus_compatibility",
             bs(self.wsjtx_plus_compatibility),
+        );
+        storage.set_string(
+            "wsjtx_plus_candidate_retry",
+            bs(self.wsjtx_plus_candidate_retry),
         );
         storage.set_string("nagain", bs(self.nagain));
         storage.set_string("nfa", self.nfa.clone());
@@ -2369,7 +2385,9 @@ fn provenance_tag(provenance: StreamDecodeProvenance) -> &'static str {
     match provenance {
         StreamDecodeProvenance::Unknown => "",
         StreamDecodeProvenance::CooperativeRecovery => "sic",
-        StreamDecodeProvenance::ContextRecovery | StreamDecodeProvenance::CandidateRetry => "p",
+        StreamDecodeProvenance::ContextRecovery => "ctx",
+        StreamDecodeProvenance::PlusCompatibility => "Pc",
+        StreamDecodeProvenance::CandidateRetry => "Pr",
         StreamDecodeProvenance::Experiment => "exp",
         StreamDecodeProvenance::A7Memory => "a7",
         StreamDecodeProvenance::ApMask => "ap",
@@ -2703,7 +2721,7 @@ fn is_annotation(token: &str) -> bool {
     token == "?"
         || matches!(
             tag,
-            "sic" | "ctx" | "exp" | "ap" | "dp" | "im" | "p" | "retry"
+            "sic" | "ctx" | "exp" | "ap" | "dp" | "im" | "p" | "Pc" | "Pr" | "retry"
         )
         || (tag.len() >= 2 && tag.starts_with('a') && tag[1..].bytes().all(|b| b.is_ascii_digit()))
 }
@@ -3388,12 +3406,20 @@ mod tests {
     #[test]
     fn compare_keeps_local_provenance_in_both_arrival_orders() {
         let message = "CQ K1ABC FN42";
-        assert_eq!(provenance_tag(StreamDecodeProvenance::CandidateRetry), "p");
-        assert_eq!(provenance_tag(StreamDecodeProvenance::ContextRecovery), "p");
+        assert_eq!(provenance_tag(StreamDecodeProvenance::CandidateRetry), "Pr");
+        assert_eq!(
+            provenance_tag(StreamDecodeProvenance::PlusCompatibility),
+            "Pc"
+        );
+        assert_eq!(
+            provenance_tag(StreamDecodeProvenance::ContextRecovery),
+            "ctx"
+        );
         for provenance in [
             StreamDecodeProvenance::Experiment,
             StreamDecodeProvenance::CooperativeRecovery,
             StreamDecodeProvenance::ContextRecovery,
+            StreamDecodeProvenance::PlusCompatibility,
             StreamDecodeProvenance::CandidateRetry,
             StreamDecodeProvenance::ApMask,
         ] {
@@ -3709,7 +3735,7 @@ mod tests {
     fn annotation_detection() {
         for t in [
             "a1", "a7", "a9", "a72", "a31", "?", "?a1", "a1?", "sic", "ctx", "exp", "ap", "dp",
-            "im", "p", "retry",
+            "im", "p", "Pc", "Pr", "retry",
         ] {
             assert!(is_annotation(t), "{t} should be an annotation");
         }

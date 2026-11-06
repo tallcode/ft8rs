@@ -32,7 +32,7 @@ impl NativeObservation<'_> {
                 // DX publishes compatibility rows from the completed result.
                 let mut rows = Vec::new();
                 session.decode_slot_streaming_tagged_at(timestamp, samples, |row| {
-                    if row.provenance != StreamDecodeProvenance::ContextRecovery {
+                    if row.provenance != StreamDecodeProvenance::PlusCompatibility {
                         emit(&row.decode)?;
                     }
                     rows.push(row.clone());

@@ -100,24 +100,27 @@ RX outside the selected decode band disables QSO focus.
 
 Choose **WSJT-X+** under **Settings → Decode → Profile** to use the optimized
 receiver. **Compatibility recovery** searches for legacy RR73 and CQ after the
-base decode and is enabled by default. Use `--profile wsjtx-plus` on the CLI and
-add `--no-wsjtx-plus-compatibility` to run its base decode alone.
+base decode. **Candidate retry** checks nearby alignments first, then spends a shared budget
+on promising time and frequency offsets for weak or overlapping signals. Both settings are enabled by default
+and can be disabled independently. Use `--profile wsjtx-plus` on the CLI with
+`--no-wsjtx-plus-compatibility` or `--no-wsjtx-plus-candidate-retry`.
 
 Hybrid runs three paths: WSJT-X+ with compatibility recovery, JTDX/noAGC and
-JTDX/AGC. Plus compatibility results use the `ctx` marker and are published after
+JTDX/AGC. Plus compatibility results use the `Pc` marker and are published after
 the baseline and cross-cancellation results.
 **Cross cancellation** is enabled by default and can be disabled without removing
 those baselines. SWL controls both JTDX paths together. The two JTDX variants are
 one algorithm family for evidence accounting.
 
 DX returns target-related messages and combines its JTDX listener with WSJT-X+
-observation and focused recovery. Plus compatibility results use `ctx`.
+observation and focused recovery. Plus compatibility results use `Pc`.
 The target call alone is sufficient to listen; a valid, distinct operator/target
 call pair enables additional context recovery. A known grid can enable list
 recovery. Derived rows supply weak hints rather than independent confirmation.
 
-GUI provenance markers include `sic` for isolated cancellation recovery, `ctx`
-for context recovery and `exp` for the opt-in Hybrid experimental receiver.
+Plus compatibility and candidate retry results carry `Pc` and `Pr` in the
+GUI and CLI. The GUI also uses `sic` for isolated cancellation recovery,
+`ctx` for DX context recovery and `exp` for the opt-in Hybrid experimental receiver.
 The native routines do not expose every AP subtype. Unknown native provenance
 has no visible tag and is retained as unknown internally.
 These markers describe how a row was obtained, not proof that the message is true.
@@ -194,6 +197,7 @@ The file command writes console results; UDP output options are monitor-only.
 | `--start-time` | `-s` | File | First slot timestamp |
 | `--profile` | | Both | `wsjtx` (default), `wsjtx-plus`, `jtdx`, `hybrid`, `dx` |
 | `--no-wsjtx-plus-compatibility` | | Both | Disable legacy RR73/CQ recovery for `wsjtx-plus` |
+| `--no-wsjtx-plus-candidate-retry` | | Both | Disable final-stage candidate retries for `wsjtx-plus` |
 | `--low` / `--high` | `-L` / `-H` | Both | Audio decode bounds, default 200 / 3000 Hz |
 | `--rx-frequency` | `-f` | Both | Focused receive/QSO audio offset in Hz |
 | `--my-call` / `--my-grid` | `-c` / `-G` | Both | Operator context |

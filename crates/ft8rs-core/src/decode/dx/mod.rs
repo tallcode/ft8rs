@@ -447,7 +447,7 @@ impl DxStreamDecodeSession {
             for group in finished_rows.iter().skip(1) {
                 for row in group
                     .iter()
-                    .filter(|row| row.provenance != StreamDecodeProvenance::ContextRecovery)
+                    .filter(|row| row.provenance != StreamDecodeProvenance::PlusCompatibility)
                 {
                     emit_target(
                         &snapshot,
@@ -465,7 +465,7 @@ impl DxStreamDecodeSession {
         for (index, group) in finished_rows.iter().skip(1).enumerate() {
             let rows: Vec<_> = group
                 .iter()
-                .filter(|row| row.provenance != StreamDecodeProvenance::ContextRecovery)
+                .filter(|row| row.provenance != StreamDecodeProvenance::PlusCompatibility)
                 .filter(|row| snapshot.should_emit_target_row(&row.decode))
                 .map(|row| row.decode.clone())
                 .collect();
@@ -488,7 +488,7 @@ impl DxStreamDecodeSession {
             {
                 for row in observed_rows[index]
                     .iter()
-                    .filter(|row| row.provenance != StreamDecodeProvenance::ContextRecovery)
+                    .filter(|row| row.provenance != StreamDecodeProvenance::PlusCompatibility)
                 {
                     if !augmentation::admissible_recovery(&row.decode) {
                         diagnostics.rejected_empty_call_rows += 1;
@@ -560,7 +560,7 @@ impl DxStreamDecodeSession {
             .skip(1)
             .flatten()
             .chain(&observed_rows[0])
-            .filter(|row| row.provenance == StreamDecodeProvenance::ContextRecovery)
+            .filter(|row| row.provenance == StreamDecodeProvenance::PlusCompatibility)
         {
             if augmentation::admissible_recovery(&row.decode) {
                 emit_target(
@@ -568,7 +568,7 @@ impl DxStreamDecodeSession {
                     &mut ledger,
                     &row.decode,
                     SignalSource::Recovery,
-                    StreamDecodeProvenance::ContextRecovery,
+                    StreamDecodeProvenance::PlusCompatibility,
                     &mut first_error,
                     &mut on_decode,
                 );

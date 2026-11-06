@@ -116,6 +116,9 @@ struct DecodeArgs {
     /// Disable WSJT-X+ recovery for legacy RR73 and CQ.
     #[arg(long, help_heading = "Decode")]
     no_wsjtx_plus_compatibility: bool,
+    /// Disable WSJT-X+ final-stage candidate retries.
+    #[arg(long, help_heading = "Decode")]
+    no_wsjtx_plus_candidate_retry: bool,
 }
 
 #[derive(Args)]
@@ -248,6 +251,10 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
         return Err("--no-wsjtx-plus-compatibility requires --profile wsjtx-plus".to_string());
     }
     config.wsjtx_plus_compatibility = !args.no_wsjtx_plus_compatibility;
+    if args.no_wsjtx_plus_candidate_retry && config.profile != DecodeProfile::WsjtxPlus {
+        return Err("--no-wsjtx-plus-candidate-retry requires --profile wsjtx-plus".to_string());
+    }
+    config.wsjtx_plus_candidate_retry = !args.no_wsjtx_plus_candidate_retry;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
         return Err("--profile dx requires --his-call CALL".to_string());
     }
@@ -412,5 +419,34 @@ mod tests {
             "25"
         ])
         .is_err());
+    }
+
+    #[test]
+    fn candidate_retry_switch_is_plus_only_and_independent() {
+        for (profile, disable, compatibility) in [
+            ("wsjtx-plus", false, true),
+            ("wsjtx-plus", true, true),
+            ("wsjtx-plus", false, false),
+            ("hybrid", true, true),
+        ] {
+            let mut argv = vec!["ft8rs-cli", "file", "input.wav", "--profile", profile];
+            if disable {
+                argv.push("--no-wsjtx-plus-candidate-retry");
+            }
+            if !compatibility {
+                argv.push("--no-wsjtx-plus-compatibility");
+            }
+            let Command::File(args) = Cli::try_parse_from(argv).unwrap().command else {
+                unreachable!()
+            };
+            let config = stream_decode_config(&args.decode);
+            if profile == "wsjtx-plus" {
+                let config = config.unwrap();
+                assert_eq!(config.wsjtx_plus_candidate_retry, !disable);
+                assert_eq!(config.wsjtx_plus_compatibility, compatibility);
+            } else {
+                assert!(config.is_err());
+            }
+        }
     }
 }

@@ -347,7 +347,7 @@ python3 scripts/test-wsjtx-plus.py target/decoder-validation/plus-compat-replay 
 
 ## 产品接入与真实录音基准
 
-解码方案菜单将 **WSJT-X+** 放在 WSJT-X 与 JTDX 之间。选中该方案时，解码设置中的「兼容恢复」默认勾选并保存到本地设置。CLI 使用 `--profile wsjtx-plus`，可加 `--no-wsjtx-plus-compatibility` 仅运行基础解码。实时接收沿用三个阶段，基础结果在兼容搜索前交付。
+解码方案菜单将 **WSJT-X+** 放在 WSJT-X 与 JTDX 之间。选中该方案时，解码设置中的「兼容恢复」和「候选重试」默认勾选，分别保存到本地设置。CLI 使用 `--profile wsjtx-plus`，可分别用 `--no-wsjtx-plus-compatibility` 和 `--no-wsjtx-plus-candidate-retry` 关闭这两项。实时接收沿用三个阶段，基础结果先于补充搜索交付。 兼容恢复显示为 `Pc`，候选重试显示为 `Pr`。候选重试先试精同步点附近，再在同一时隙内用最多 256 个纠错点搜索和复核。
 
 两份真实录音按时间槽与消息内容生成 `Wp` 标注。短录音有 21 条，长录音有 434 条。长录音的另一条未确认输出继续留作原始输出观察。回归测试 `test_wsjtx_plus_preserves_wp_recording_baseline` 通过正式分阶段入口逐条验收这些标注。
 

@@ -41,10 +41,11 @@ fn decode_line(
     row: &StreamDecodedMessage,
     provenance: StreamDecodeProvenance,
 ) -> String {
-    let suffix = if provenance == StreamDecodeProvenance::Experiment {
-        " exp"
-    } else {
-        ""
+    let suffix = match provenance {
+        StreamDecodeProvenance::Experiment => " exp",
+        StreamDecodeProvenance::PlusCompatibility => " Pc",
+        StreamDecodeProvenance::CandidateRetry => " Pr",
+        _ => "",
     };
     format!(
         "{} {:>3} {:+.1} {:>5.0} {}{}",
@@ -61,7 +62,7 @@ fn decode_line(
 mod tests {
     use super::*;
     #[test]
-    fn experiment_tag_is_a_suffix_and_never_changes_payload() {
+    fn provenance_tags_are_suffixes_and_never_change_payload() {
         let time = SlotTimestamp::parse("261029_120000").unwrap();
         let row = StreamDecodedMessage {
             freq: 1000.0,
@@ -77,6 +78,15 @@ mod tests {
             decode_line(&time, &row, StreamDecodeProvenance::Experiment),
             format!("{plain} exp")
         );
+        for (provenance, tag) in [
+            (StreamDecodeProvenance::PlusCompatibility, "Pc"),
+            (StreamDecodeProvenance::CandidateRetry, "Pr"),
+        ] {
+            assert_eq!(
+                decode_line(&time, &row, provenance),
+                format!("{plain} {tag}")
+            );
+        }
         assert_eq!(row.msg, "CQ K1ABC FN42");
     }
 }

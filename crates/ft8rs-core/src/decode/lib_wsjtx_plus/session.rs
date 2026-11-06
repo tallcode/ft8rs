@@ -324,6 +324,7 @@ impl StreamDecodeSession {
         full_options.initial_messages = state.early_results.iter().map(|d| d.msg.clone()).collect();
         let mut retry = None;
         let retry_enabled = self.params.profile == DecodeProfile::WsjtxPlus
+            && self.params.wsjtx_plus_candidate_retry
             && self.params.ndepth >= 3
             && self.params.ncontest == 0
             && !self.params.nagain
@@ -509,27 +510,15 @@ impl StreamDecodeSession {
                 }
             }
         }
-        if let Some(retry) = retry {
-            for result in retry.recover(&sbase, &state.merged) {
-                let decode = stream_decode(&result);
-                // The same payload may display a hash differently in the
-                // private retry book. Keep the baseline representative.
-                if state.merged.iter().any(|row| {
-                    row.itone == decode.itone
-                        && (row.freq - decode.freq).abs() <= 5.0
-                        && (row.dt - decode.dt).abs() <= 0.3
-                }) {
-                    continue;
-                }
-                if state.seen.insert(normal(&decode.msg)) {
-                    emit_decode(
-                        &mut state.merged,
-                        decode,
-                        StreamDecodeProvenance::CandidateRetry,
-                        &mut on_decode,
-                    )?;
-                }
+        if let Some(mut retry) = retry {
+            retry.sort_peaks();
+            for result in retry.recover_local(&sbase, &state.merged) {
+                push_candidate_retry(state, result, &mut on_decode)?;
             }
+            let base = state.merged.clone();
+            retry.recover_adaptive(&sbase, &base, |result| {
+                push_candidate_retry(state, result, &mut on_decode)
+            })?;
         }
         Ok(std::mem::take(&mut state.merged))
     }
@@ -619,6 +608,31 @@ fn jseq_from_nutc(nutc: u32) -> usize {
     ((nutc / 5) % 2) as usize
 }
 
+fn push_candidate_retry(
+    state: &mut StreamSlotDecodeState,
+    result: DecodedMessage,
+    on_decode: &mut impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+) -> Result<(), String> {
+    let decode = stream_decode(&result);
+    // The same codeword can be displayed with a different hash spelling.
+    if state.merged.iter().any(|row| {
+        row.itone == decode.itone
+            && (row.freq - decode.freq).abs() <= 5.0
+            && (row.dt - decode.dt).abs() <= 0.3
+    }) {
+        return Ok(());
+    }
+    if state.seen.insert(normal(&decode.msg)) {
+        emit_decode(
+            &mut state.merged,
+            decode,
+            StreamDecodeProvenance::CandidateRetry,
+            on_decode,
+        )?;
+    }
+    Ok(())
+}
+
 fn push_compatibility_decode(
     state: &mut StreamSlotDecodeState,
     decode: StreamDecodedMessage,
@@ -628,7 +642,7 @@ fn push_compatibility_decode(
         emit_decode(
             &mut state.merged,
             decode,
-            StreamDecodeProvenance::ContextRecovery,
+            StreamDecodeProvenance::PlusCompatibility,
             on_decode,
         )?;
     }

@@ -345,7 +345,7 @@ impl HybridStreamDecodeSession {
                 let result = guard_worker(|| {
                     let staged = state.is_some();
                     let mut collect = |row: &StreamDecodedWithProvenance| {
-                        let event = if row.provenance == StreamDecodeProvenance::ContextRecovery {
+                        let event = if row.provenance == StreamDecodeProvenance::PlusCompatibility {
                             WorkerEvent::WsjtxCompatibility(row.decode.clone())
                         } else {
                             let mut tagged = row.clone();
@@ -634,7 +634,7 @@ impl HybridStreamDecodeSession {
                     &mut ledger,
                     SignalSource::Recovery,
                     row,
-                    StreamDecodeProvenance::ContextRecovery,
+                    StreamDecodeProvenance::PlusCompatibility,
                     &mut first_error,
                     &mut on_decode,
                 );
@@ -830,9 +830,9 @@ fn provenance_from_stream(provenance: StreamDecodeProvenance) -> Provenance {
     match provenance {
         StreamDecodeProvenance::Unknown => Provenance::Unknown,
         StreamDecodeProvenance::CooperativeRecovery => Provenance::CrossCancellation,
-        StreamDecodeProvenance::ContextRecovery | StreamDecodeProvenance::CandidateRetry => {
-            Provenance::ImportedMemory
-        }
+        StreamDecodeProvenance::ContextRecovery
+        | StreamDecodeProvenance::PlusCompatibility
+        | StreamDecodeProvenance::CandidateRetry => Provenance::ImportedMemory,
         StreamDecodeProvenance::Experiment => Provenance::Experiment,
         StreamDecodeProvenance::Regular => Provenance::Regular,
         StreamDecodeProvenance::ApMask => Provenance::ApMask,

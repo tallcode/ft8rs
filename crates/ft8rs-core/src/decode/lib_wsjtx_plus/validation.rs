@@ -448,7 +448,7 @@ fn legacy_a8_recovers_the_grid_waveform() {
                 assert_eq!(row.decode.itone, tones);
                 assert_eq!(
                     row.provenance,
-                    crate::stream::session::StreamDecodeProvenance::ContextRecovery
+                    crate::stream::session::StreamDecodeProvenance::PlusCompatibility
                 );
                 assert_eq!(hybrid.last_diagnostics().recovery_tasks, 0);
                 assert!(hybrid
@@ -473,7 +473,7 @@ fn legacy_a8_recovers_the_grid_waveform() {
             assert_eq!(observed[0].decode.itone, tones);
             assert_eq!(
                 observed[0].provenance,
-                crate::stream::session::StreamDecodeProvenance::ContextRecovery
+                crate::stream::session::StreamDecodeProvenance::PlusCompatibility
             );
             assert_eq!(dx.context_snapshot(), context);
             compatible.unwrap()

@@ -170,8 +170,11 @@ impl A7SaveEntry {
 pub struct StreamDecodeConfig {
     pub profile: DecodeProfile,
     /// Search for legacy RR73 and CQ in WSJT-X+ after the base decode.
-    #[serde(default = "default_wsjtx_plus_compatibility")]
+    #[serde(default = "default_enabled")]
     pub wsjtx_plus_compatibility: bool,
+    /// Retry final-stage candidates after the base decode in standalone WSJT-X+.
+    #[serde(default = "default_enabled")]
+    pub wsjtx_plus_candidate_retry: bool,
     pub nfa: f64,
     pub nfb: f64,
     pub syncmin: Option<f64>,
@@ -223,7 +226,8 @@ impl Default for StreamDecodeConfig {
     fn default() -> Self {
         Self {
             profile: DecodeProfile::Wsjtx,
-            wsjtx_plus_compatibility: default_wsjtx_plus_compatibility(),
+            wsjtx_plus_compatibility: true,
+            wsjtx_plus_candidate_retry: true,
             nfa: 200.0,
             nfb: 3000.0,
             syncmin: None,
@@ -267,7 +271,7 @@ impl Default for StreamDecodeConfig {
     }
 }
 
-fn default_wsjtx_plus_compatibility() -> bool {
+fn default_enabled() -> bool {
     true
 }
 
@@ -341,6 +345,8 @@ pub enum StreamDecodeProvenance {
     ImportedMemory,
     /// Standalone WSJT-X+ final-stage retry, isolated from the base session.
     CandidateRetry,
+    /// Isolated Plus recovery for legacy RR73 and CQ.
+    PlusCompatibility,
 }
 
 #[derive(Clone, Debug)]
@@ -1137,6 +1143,23 @@ mod tests {
         A7SaveEntry, FixedMsg37, StreamDecodeConfig, StreamDecodeSession,
     };
     use crate::stream::time::SlotTimestamp;
+
+    #[test]
+    fn older_config_enables_candidate_retry_and_explicit_false_survives() {
+        let config = StreamDecodeConfig {
+            wsjtx_plus_candidate_retry: false,
+            ..Default::default()
+        };
+        let mut json = serde_json::to_value(config).unwrap();
+        let restored: StreamDecodeConfig = serde_json::from_value(json.clone()).unwrap();
+        assert!(!restored.wsjtx_plus_candidate_retry);
+
+        json.as_object_mut()
+            .unwrap()
+            .remove("wsjtx_plus_candidate_retry");
+        let older: StreamDecodeConfig = serde_json::from_value(json).unwrap();
+        assert!(older.wsjtx_plus_candidate_retry);
+    }
 
     #[test]
     fn jseq_matches_nutc_parity() {

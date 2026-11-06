@@ -128,6 +128,35 @@ pub(super) fn retry_ft8b(
     None
 }
 
+// Compare the two strongest tones in each data symbol. The median limits
+// the influence of individual interfered symbols in each group.
+fn data_group_confidence(s8: &[f64]) -> (usize, f64, f64) {
+    let mut confidence = [(0, 0.0); 3];
+    for (group, (start, end)) in [(0, 20), (20, 40), (40, 58)].into_iter().enumerate() {
+        let mut ratios = [0.0; 20];
+        for (index, data) in (start..end).enumerate() {
+            let symbol = if data < 29 { data + 7 } else { data + 14 };
+            let (mut strongest, mut runner_up) = (0.0f64, 0.0f64);
+            for tone in 0..8 {
+                let value = s8[tone * NN + symbol];
+                if value > strongest {
+                    runner_up = strongest;
+                    strongest = value;
+                } else {
+                    runner_up = runner_up.max(value);
+                }
+            }
+            ratios[index] = strongest / runner_up.max(1e-20);
+        }
+        let ratios = &mut ratios[..end - start];
+        let middle = ratios.len() / 2;
+        let (_, median, _) = ratios.select_nth_unstable_by(middle, f64::total_cmp);
+        confidence[group] = (group, *median);
+    }
+    confidence.sort_by(|a, b| a.1.total_cmp(&b.1));
+    (confidence[0].0, confidence[0].1, confidence[1].1)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn decode_aligned(
     f1: f64,
@@ -201,12 +230,7 @@ fn decode_metrics(
         return None;
     }
 
-    let unpack_context = UnpackContext::with_calls(
-        _book.as_ref(),
-        ap_options.mycall.as_deref(),
-        ap_options.hiscall.as_deref(),
-    );
-    let msg = unpack77_with_context(message77, unpack_context)?;
+    let msg = unpack_candidate_payload(message77, ap_options, _book)?;
     if !is_acceptable_unpacked_message(&msg, i3v, ap_options.ncontest) {
         return None;
     }
@@ -665,6 +689,29 @@ fn try_decode_passes(
     None
 }
 
+fn unpack_candidate_payload(
+    message77: &[u8],
+    ap_options: &Ft8bApOptions,
+    book: &Option<HashCallBook>,
+) -> Option<String> {
+    let unpack = |book| {
+        unpack77_with_context(
+            message77,
+            UnpackContext::with_calls(
+                book,
+                ap_options.mycall.as_deref(),
+                ap_options.hiscall.as_deref(),
+            ),
+        )
+    };
+    if ap_options.isolate_book {
+        let snapshot = book.as_ref().map(HashCallBook::clone_book);
+        unpack(snapshot.as_ref())
+    } else {
+        unpack(book.as_ref())
+    }
+}
+
 fn is_wsjtx_acceptable_codeword(
     result: &DecodeResult,
     ap_options: &Ft8bApOptions,
@@ -682,12 +729,7 @@ fn is_wsjtx_acceptable_codeword(
         return false;
     }
 
-    let unpack_context = UnpackContext::with_calls(
-        book.as_ref(),
-        ap_options.mycall.as_deref(),
-        ap_options.hiscall.as_deref(),
-    );
-    let Some(msg) = unpack77_with_context(message77, unpack_context) else {
+    let Some(msg) = unpack_candidate_payload(message77, ap_options, book) else {
         return false;
     };
     if !is_acceptable_unpacked_message(&msg, i3v, ap_options.ncontest) {
@@ -943,3 +985,6 @@ mod tests {
         assert!((original - amplified).abs() < 0.001);
     }
 }
+
+#[path = "cross_retry.rs"]
+pub(super) mod cross_retry;
