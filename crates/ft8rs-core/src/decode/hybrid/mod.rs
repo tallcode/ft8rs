@@ -830,7 +830,9 @@ fn provenance_from_stream(provenance: StreamDecodeProvenance) -> Provenance {
     match provenance {
         StreamDecodeProvenance::Unknown => Provenance::Unknown,
         StreamDecodeProvenance::CooperativeRecovery => Provenance::CrossCancellation,
-        StreamDecodeProvenance::ContextRecovery => Provenance::ImportedMemory,
+        StreamDecodeProvenance::ContextRecovery | StreamDecodeProvenance::CandidateRetry => {
+            Provenance::ImportedMemory
+        }
         StreamDecodeProvenance::Experiment => Provenance::Experiment,
         StreamDecodeProvenance::Regular => Provenance::Regular,
         StreamDecodeProvenance::ApMask => Provenance::ApMask,

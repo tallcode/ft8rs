@@ -1,5 +1,6 @@
 use ft8rs::decode::lib_jtdx::JtdxStreamDecodeSession;
 use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
+use ft8rs::stream::session::StreamDecodeProvenance;
 use ft8rs::stream::{
     DecodeProfile, ProfileStreamDecodeSession, SlotTimestamp, StreamDecodeConfig,
     StreamDecodeSession,
@@ -186,6 +187,18 @@ fn test_wsjtx_plus_preserves_wp_recording_baseline() {
             .map(|row| (row.seg, row.norm_msg))
             .collect();
         assert_eq!(expected.len(), expected_count);
+        let mut retry_targets = std::collections::BTreeSet::new();
+        if file == "230208_140300" {
+            retry_targets.extend(
+                [
+                    (5, "FO0L F4GYE JN07"),
+                    (5, "PD0YL OY1DZ -15"),
+                    (16, "F1MLZ UA3QNA -04"),
+                ]
+                .map(|(slot, msg)| (slot, msg.to_owned())),
+            );
+        }
+        let mut base_count = 0;
 
         let samples = samples_12k_from_wav(&format!("tests/ft8/{file}.wav"));
         let start = SlotTimestamp::parse(file).unwrap();
@@ -203,7 +216,12 @@ fn test_wsjtx_plus_preserves_wp_recording_baseline() {
                     emitted.insert(msg.clone()),
                     "duplicate callback at {timestamp:?}: {msg}"
                 );
-                expected.remove(&(slot, msg));
+                if row.provenance == StreamDecodeProvenance::CandidateRetry {
+                    retry_targets.remove(&(slot, msg));
+                } else {
+                    base_count += 1;
+                    expected.remove(&(slot, msg));
+                }
                 Ok(())
             };
             let mut state = decoder.start_slot();
@@ -234,6 +252,13 @@ fn test_wsjtx_plus_preserves_wp_recording_baseline() {
         assert!(
             expected.is_empty(),
             "missing Wp rows for {file}: {expected:?}"
+        );
+        if file == "230208_140300" {
+            assert_eq!(base_count, 435, "WSJT-X+ long recording base count");
+        }
+        assert!(
+            retry_targets.is_empty(),
+            "missing final-stage retries for {file}: {retry_targets:?}"
         );
         eprintln!("WSJT-X+ {file}: all {expected_count} Wp rows retained");
     }

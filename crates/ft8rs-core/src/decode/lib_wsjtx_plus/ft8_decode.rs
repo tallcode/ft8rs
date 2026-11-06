@@ -37,17 +37,19 @@ pub(crate) use self::ft8_params::{
 };
 use self::ft8apset::ft8_ap_set;
 use self::ft8apset::{M73, MCQ, MCQFD, MCQRU, MCQTEST, MCQWW, MRR73, MRRR};
-use self::ft8b::ft8b;
 #[cfg(test)]
 pub(super) use self::ft8b::measure_audio;
 pub(super) use self::ft8b::recover_rr73;
 pub(super) use self::ft8b::{extract_symbol_spectrum, normalize_bmet};
+use self::ft8b::{ft8b, retry_ft8b};
 use self::get_spectrum_baseline::get_spectrum_baseline;
-use self::sync8::sync8;
+use self::sync8::{sync8, sync8_with_peaks};
 pub(crate) use self::sync8d::{
     build_costas_sync_templates, build_frequency_shift_sync_templates, sync8d, sync8d_twk,
 };
 pub(crate) use self::twkfreq1::twkfreq1;
+
+const FINAL_RETRY_CANDIDATES: usize = 64;
 
 #[derive(Clone)]
 pub struct DecodedMessage {
@@ -195,7 +197,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, None);
     msgs
 }
 
@@ -209,7 +211,7 @@ pub fn decode_f64(samples: &[f64], options: DecodeOptions) -> Vec<DecodedMessage
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, None);
     msgs
 }
 
@@ -222,19 +224,20 @@ pub fn decode_f64_with_sbase(
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start, None);
     (msgs, sbase)
 }
 
-pub fn decode_f64_with_sbase_and_residual(
+pub(super) fn decode_f64_with_sbase_and_residual(
     samples: &[f64],
     options: DecodeOptions,
+    retry: Option<&mut Option<FinalRetry>>,
 ) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
     let t_start = std::time::Instant::now();
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    decode_from_f64(dd, options, t_dd, t_start)
+    decode_from_f64(dd, options, t_dd, t_start, retry)
 }
 
 /// Decode returning both messages and the sbase noise baseline.
@@ -254,7 +257,7 @@ pub fn decode_with_sbase(
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start, None);
     (msgs, sbase)
 }
 
@@ -263,6 +266,7 @@ fn decode_from_f64(
     options: DecodeOptions,
     _t_dd: std::time::Duration,
     _t_start: std::time::Instant,
+    mut retry: Option<&mut Option<FinalRetry>>,
 ) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
     // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
     if dd.len() > NMAX {
@@ -328,7 +332,18 @@ fn decode_from_f64(
             (nfa, nfb)
         };
 
-        let (candidates, pass_sbase) = sync8(&residual, ifa, ifb, pass_syncmin, nfqso, ncand);
+        let mut peaks = Vec::new();
+        let keep_spectrum =
+            retry.is_some() && (pass_idx == 2 || pass_idx == 1 && ndecodes_total == 0);
+        let (candidates, pass_sbase) = sync8_with_peaks(
+            &residual,
+            ifa,
+            ifb,
+            pass_syncmin,
+            nfqso,
+            ncand,
+            keep_spectrum.then_some(&mut peaks),
+        );
         sbase = pass_sbase;
 
         // WSJT-X ft8_decode.f90: pass 1 uses imetric=1, passes 2/3 use imetric=2.
@@ -375,9 +390,75 @@ fn decode_from_f64(
                 });
             }
         }
+        if keep_spectrum && (pass_idx == 2 || ndecodes_total == 0) {
+            if let Some(retry) = retry.take() {
+                let mut ap_options = ap_options.clone();
+                ap_options.enabled = false;
+                *retry = Some(FinalRetry {
+                    peaks,
+                    cx_re,
+                    cx_im,
+                    ap_options,
+                    book,
+                    depth: ndepth,
+                    limit: ncand.min(FINAL_RETRY_CANDIDATES),
+                });
+                break;
+            }
+        }
     }
 
     (decoded, sbase, residual)
+}
+
+pub(super) struct FinalRetry {
+    peaks: Vec<Candidate>,
+    cx_re: Vec<f64>,
+    cx_im: Vec<f64>,
+    ap_options: Ft8bApOptions,
+    book: Option<HashCallBook>,
+    depth: usize,
+    limit: usize,
+}
+
+impl FinalRetry {
+    pub(super) fn recover<'a>(
+        mut self,
+        sbase: &'a [f64],
+        base: &[crate::StreamDecodedMessage],
+    ) -> impl Iterator<Item = DecodedMessage> + 'a {
+        // Omit peaks already explained by a base decode at that location.
+        self.peaks.retain(|p| {
+            !base
+                .iter()
+                .any(|b| (b.freq - p.freq).abs() <= 4.0 && (b.dt - p.dt).abs() <= 0.12)
+        });
+        self.peaks.sort_by(|a, b| b.sync.total_cmp(&a.sync));
+        let mut workspace = create_decode_workspace();
+        self.peaks
+            .into_iter()
+            .take(self.limit)
+            .filter_map(move |candidate| {
+                let r = retry_ft8b(
+                    &self.cx_re,
+                    &self.cx_im,
+                    &candidate,
+                    sbase,
+                    self.depth,
+                    &self.ap_options,
+                    &self.book,
+                    &mut workspace,
+                )?;
+                Some(DecodedMessage {
+                    freq: r.freq,
+                    dt: r.dt - 0.5,
+                    snr: r.snr,
+                    sync: candidate.sync,
+                    msg: r.msg,
+                    itone: r.itone.to_vec(),
+                })
+            })
+    }
 }
 
 fn default_outer_sync_min(depth: usize) -> f64 {

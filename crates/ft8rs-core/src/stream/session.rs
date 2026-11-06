@@ -339,6 +339,8 @@ pub enum StreamDecodeProvenance {
     A8List,
     JtdxDeep,
     ImportedMemory,
+    /// Standalone WSJT-X+ final-stage retry, isolated from the base session.
+    CandidateRetry,
 }
 
 #[derive(Clone, Debug)]

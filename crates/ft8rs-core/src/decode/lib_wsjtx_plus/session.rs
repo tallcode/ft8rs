@@ -1,6 +1,6 @@
 use crate::stream::session::{
-    configured_hash_calls, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage,
-    StreamDecodedWithProvenance,
+    configured_hash_calls, DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance,
+    StreamDecodedMessage, StreamDecodedWithProvenance,
 };
 use std::collections::HashSet;
 
@@ -322,8 +322,17 @@ impl StreamDecodeSession {
 
         let mut full_options = self.ft8_decode_options(50);
         full_options.initial_messages = state.early_results.iter().map(|d| d.msg.clone()).collect();
-        let (full_results, sbase, full_residual) =
-            decode_f64_with_sbase_and_residual(&state.work, full_options);
+        let mut retry = None;
+        let retry_enabled = self.params.profile == DecodeProfile::WsjtxPlus
+            && self.params.ndepth >= 3
+            && self.params.ncontest == 0
+            && !self.params.nagain
+            && samples.len() >= 50 * NZHSYM_STRIDE;
+        let (full_results, sbase, full_residual) = decode_f64_with_sbase_and_residual(
+            &state.work,
+            full_options,
+            retry_enabled.then_some(&mut retry),
+        );
         #[cfg(test)]
         super::validation::rr73_replay::record_terminal_residual(&full_residual);
 
@@ -497,6 +506,28 @@ impl StreamDecodeSession {
                     || {},
                 ) {
                     push_compatibility_decode(state, row, &mut on_decode)?;
+                }
+            }
+        }
+        if let Some(retry) = retry {
+            for result in retry.recover(&sbase, &state.merged) {
+                let decode = stream_decode(&result);
+                // The same payload may display a hash differently in the
+                // private retry book. Keep the baseline representative.
+                if state.merged.iter().any(|row| {
+                    row.itone == decode.itone
+                        && (row.freq - decode.freq).abs() <= 5.0
+                        && (row.dt - decode.dt).abs() <= 0.3
+                }) {
+                    continue;
+                }
+                if state.seen.insert(normal(&decode.msg)) {
+                    emit_decode(
+                        &mut state.merged,
+                        decode,
+                        StreamDecodeProvenance::CandidateRetry,
+                        &mut on_decode,
+                    )?;
                 }
             }
         }
@@ -762,20 +793,24 @@ where
         return Ok(());
     }
 
+    let decode = stream_decode(d);
+    for call in collect_book(book, &decode.msg) {
+        regular_hash_calls.insert(call);
+    }
+    emit_decode(merged, decode, provenance, on_decode)
+}
+
+fn stream_decode(d: &DecodedMessage) -> StreamDecodedMessage {
     let mut itone = [0i32; 79];
     itone.copy_from_slice(&d.itone[..79]);
-    let decode = StreamDecodedMessage {
+    StreamDecodedMessage {
         freq: d.freq,
         dt: d.dt,
         snr: d.snr,
         msg: d.msg.clone(),
         sync: d.sync,
         itone,
-    };
-    for call in collect_book(book, &decode.msg) {
-        regular_hash_calls.insert(call);
     }
-    emit_decode(merged, decode, provenance, on_decode)
 }
 
 fn emit_decode(

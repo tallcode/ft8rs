@@ -66,6 +66,18 @@ pub(super) fn sync8(
     nfqso: f64,
     maxcand: usize,
 ) -> (Vec<Candidate>, Vec<f64>) {
+    sync8_with_peaks(dd, nfa, nfb, syncmin, nfqso, maxcand, None)
+}
+
+pub(super) fn sync8_with_peaks(
+    dd: &[f64],
+    nfa: f64,
+    nfb: f64,
+    syncmin: f64,
+    nfqso: f64,
+    maxcand: usize,
+    peaks: Option<&mut Vec<Candidate>>,
+) -> (Vec<Candidate>, Vec<f64>) {
     let _span = crate::decode::lib_wsjtx_plus::metrics::Span::new(
         crate::decode::lib_wsjtx_plus::metrics::Kind::Sync,
     );
@@ -226,6 +238,38 @@ pub(super) fn sync8(
         {
             let indx2 = indexx_ascending(&red2);
             let base2 = red2[indx2[npctile - 1]].max(1e-30);
+            if let Some(peaks) = peaks {
+                for (i, row) in sync2d[..iz * width].chunks_exact(width).enumerate() {
+                    for (j, &power) in row.iter().enumerate() {
+                        if !power.is_finite()
+                            || power < syncmin * base2
+                            || j > 0 && row[j - 1] >= power
+                            || j + 1 < width && row[j + 1] > power
+                        {
+                            continue;
+                        }
+                        // Keep distinct time peaks even at the same coarse
+                        // frequency. Suppress peaks on an adjacent bin of
+                        // the same signal when their times nearly coincide.
+                        if (i.saturating_sub(1)..=(i + 1).min(iz - 1))
+                            .filter(|&k| k != i)
+                            .any(|k| {
+                                let other = &sync2d[k * width..(k + 1) * width];
+                                other[j.saturating_sub(1)..=(j + 1).min(width - 1)]
+                                    .iter()
+                                    .any(|&v| v > power || v == power && k < i)
+                            })
+                        {
+                            continue;
+                        }
+                        peaks.push(Candidate {
+                            freq: (ia + i) as f64 * df,
+                            dt: (j as f64 - jz as f64 - 0.5) * tstep,
+                            sync: power / base2,
+                        });
+                    }
+                }
+            }
             for v in red2.iter_mut() {
                 *v /= base2;
             }

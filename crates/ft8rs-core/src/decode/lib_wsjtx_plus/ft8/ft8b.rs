@@ -43,7 +43,7 @@ pub(super) fn ft8b(
     _dd0: &[f64],
     cx_re: &[f64],
     cx_im: &[f64],
-    mut f1: f64,
+    f1: f64,
     xdt: f64,
     _sbase: &[f64],
     depth: usize,
@@ -57,6 +57,22 @@ pub(super) fn ft8b(
     let _span = crate::decode::lib_wsjtx_plus::metrics::Span::new(
         crate::decode::lib_wsjtx_plus::metrics::Kind::Demod,
     );
+    let (f1, ibest) = align_candidate(cx_re, cx_im, f1, xdt, workspace);
+    let nsync = prepare_metrics(ibest, depth, imetric, workspace)?;
+    #[cfg(test)]
+    rr73_metrics::capture(cx_re, cx_im, f1, ibest, imetric, workspace);
+    decode_metrics(
+        f1, ibest, _sbase, depth, nagain, ap_options, _book, workspace, nsync,
+    )
+}
+
+fn align_candidate(
+    cx_re: &[f64],
+    cx_im: &[f64],
+    mut f1: f64,
+    xdt: f64,
+    workspace: &mut DecodeWorkspace,
+) -> (f64, isize) {
     ft8_downsample(cx_re, cx_im, f1, workspace);
 
     let time0 = find_best_time_offset(&workspace.cd0_re, &workspace.cd0_im, xdt);
@@ -70,9 +86,72 @@ pub(super) fn ft8b(
         time0.ibest,
         &mut workspace.ss,
     );
-    let ibest = time1.ibest;
-    let xdt = (ibest as f64 - 1.0) * DT2;
+    (f1, time1.ibest)
+}
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn retry_ft8b(
+    cx_re: &[f64],
+    cx_im: &[f64],
+    candidate: &super::Candidate,
+    sbase: &[f64],
+    depth: usize,
+    ap_options: &Ft8bApOptions,
+    book: &Option<HashCallBook>,
+    workspace: &mut DecodeWorkspace,
+) -> Option<Ft8bResult> {
+    let (freq, center) = align_candidate(cx_re, cx_im, candidate.freq, candidate.dt, workspace);
+    let mut first: Option<(isize, Ft8bResult)> = None;
+    for time in [center, center - 1, center + 1, center - 2, center + 2] {
+        let Some(row) = decode_aligned(
+            freq, time, sbase, depth, 2, false, ap_options, book, workspace,
+        ) else {
+            continue;
+        };
+        if let Some((_, first)) = first {
+            return (row.itone == first.itone).then_some(first);
+        }
+        first = Some((time, row));
+    }
+
+    // Probe a neighboring frequency only after the time search has yielded
+    // a codeword. Another alignment must support the same payload.
+    let (time, first) = first?;
+    for frequency in [freq - 0.5, freq + 0.5] {
+        ft8_downsample(cx_re, cx_im, frequency, workspace);
+        if let Some(row) = decode_aligned(
+            frequency, time, sbase, depth, 2, false, ap_options, book, workspace,
+        ) {
+            return (row.itone == first.itone).then_some(first);
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_aligned(
+    f1: f64,
+    ibest: isize,
+    _sbase: &[f64],
+    depth: usize,
+    imetric: usize,
+    nagain: bool,
+    ap_options: &Ft8bApOptions,
+    _book: &Option<HashCallBook>,
+    workspace: &mut DecodeWorkspace,
+) -> Option<Ft8bResult> {
+    let nsync = prepare_metrics(ibest, depth, imetric, workspace)?;
+    decode_metrics(
+        f1, ibest, _sbase, depth, nagain, ap_options, _book, workspace, nsync,
+    )
+}
+
+fn prepare_metrics(
+    ibest: isize,
+    depth: usize,
+    imetric: usize,
+    workspace: &mut DecodeWorkspace,
+) -> Option<usize> {
     extract_soft_symbols(ibest, workspace);
 
     let syncmin: usize = if depth <= 2 {
@@ -88,9 +167,22 @@ pub(super) fn ft8b(
     }
 
     build_bit_metrics(workspace, imetric);
-    #[cfg(test)]
-    rr73_metrics::capture(cx_re, cx_im, f1, ibest, imetric, workspace);
+    Some(nsync)
+}
 
+#[allow(clippy::too_many_arguments)]
+fn decode_metrics(
+    f1: f64,
+    ibest: isize,
+    _sbase: &[f64],
+    depth: usize,
+    nagain: bool,
+    ap_options: &Ft8bApOptions,
+    _book: &Option<HashCallBook>,
+    workspace: &mut DecodeWorkspace,
+    nsync: usize,
+) -> Option<Ft8bResult> {
+    let xdt = (ibest as f64 - 1.0) * DT2;
     // ── xbase: noise baseline at candidate frequency (for xsnr2) ──
     // sbase is built by sync8 with NFFT1=3840 → df=3.125 Hz/bin.
     // WSJT-X ft8b.f90: xbase = 10^(0.1*(sbase[freq_bin]-40))

@@ -2369,7 +2369,7 @@ fn provenance_tag(provenance: StreamDecodeProvenance) -> &'static str {
     match provenance {
         StreamDecodeProvenance::Unknown => "",
         StreamDecodeProvenance::CooperativeRecovery => "sic",
-        StreamDecodeProvenance::ContextRecovery => "ctx",
+        StreamDecodeProvenance::ContextRecovery | StreamDecodeProvenance::CandidateRetry => "p",
         StreamDecodeProvenance::Experiment => "exp",
         StreamDecodeProvenance::A7Memory => "a7",
         StreamDecodeProvenance::ApMask => "ap",
@@ -2701,7 +2701,10 @@ fn message_body_tokens(msg: &str) -> impl Iterator<Item = &str> {
 fn is_annotation(token: &str) -> bool {
     let tag = token.trim_matches('?');
     token == "?"
-        || matches!(tag, "sic" | "ctx" | "exp" | "ap" | "dp" | "im")
+        || matches!(
+            tag,
+            "sic" | "ctx" | "exp" | "ap" | "dp" | "im" | "p" | "retry"
+        )
         || (tag.len() >= 2 && tag.starts_with('a') && tag[1..].bytes().all(|b| b.is_ascii_digit()))
 }
 
@@ -3385,10 +3388,13 @@ mod tests {
     #[test]
     fn compare_keeps_local_provenance_in_both_arrival_orders() {
         let message = "CQ K1ABC FN42";
+        assert_eq!(provenance_tag(StreamDecodeProvenance::CandidateRetry), "p");
+        assert_eq!(provenance_tag(StreamDecodeProvenance::ContextRecovery), "p");
         for provenance in [
             StreamDecodeProvenance::Experiment,
             StreamDecodeProvenance::CooperativeRecovery,
             StreamDecodeProvenance::ContextRecovery,
+            StreamDecodeProvenance::CandidateRetry,
             StreamDecodeProvenance::ApMask,
         ] {
             let local_text = format!(
@@ -3703,7 +3709,7 @@ mod tests {
     fn annotation_detection() {
         for t in [
             "a1", "a7", "a9", "a72", "a31", "?", "?a1", "a1?", "sic", "ctx", "exp", "ap", "dp",
-            "im",
+            "im", "p", "retry",
         ] {
             assert!(is_annotation(t), "{t} should be an annotation");
         }
