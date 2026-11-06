@@ -1,19 +1,19 @@
 use crate::decode::dx::{DxSnapshot, DxStreamDecodeSession};
-use crate::decode::hybrid::HybridStreamDecodeSession;
+use crate::decode::hybrid::{HybridSlotDecodeState, HybridStreamDecodeSession};
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::decode::lib_wsjtx_plus::session::{
     StreamDecodeSession as WsjtxPlusSession, StreamSlotDecodeState as WsjtxPlusSlotState,
 };
 use crate::stream::session::{
     DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedMessage,
-    StreamDecodedWithProvenance, StreamSlotDecodeState,
+    StreamDecodedWithProvenance,
 };
 use crate::stream::time::SlotTimestamp;
 
 /// Per-slot state for profiles using this wrapper's progressive monitor stages.
 pub enum ProfileSlotState {
     WsjtxPlus(WsjtxPlusSlotState),
-    Hybrid(StreamSlotDecodeState),
+    Hybrid(HybridSlotDecodeState),
     Stateless,
 }
 

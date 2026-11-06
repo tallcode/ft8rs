@@ -103,7 +103,9 @@ receiver. **Compatibility recovery** searches for legacy RR73 and CQ after the
 base decode and is enabled by default. Use `--profile wsjtx-plus` on the CLI and
 add `--no-wsjtx-plus-compatibility` to run its base decode alone.
 
-Hybrid always has three baseline paths: WSJT-X, JTDX/noAGC and JTDX/AGC.
+Hybrid runs three paths: WSJT-X+ with compatibility recovery, JTDX/noAGC and
+JTDX/AGC. Plus compatibility results use the `ctx` marker and are published after
+the baseline and cross-cancellation results.
 **Cross cancellation** is enabled by default and can be disabled without removing
 those baselines. SWL controls both JTDX paths together. The two JTDX variants are
 one algorithm family for evidence accounting.

@@ -1,10 +1,10 @@
 # Hybrid Decode
 
-`--profile hybrid` combines independent WSJT-X, JTDX/noAGC and JTDX/AGC sessions
-and one bounded round of cross cancellation. These paths are orchestration over the
-existing decoders. Hybrid also offers an opt-in private ft8rs specialist branch.
-Hybrid does not alter the native algorithms under
-`lib_wsjtx/` or `lib_jtdx/`; source-alignment corrections are reviewed separately.
+`--profile hybrid` combines independent WSJT-X+ compatibility, JTDX/noAGC and
+JTDX/AGC sessions and one bounded round of cross cancellation. The WSJT-X leg
+uses Plus compatibility recovery. Cross cancellation uses the Plus subtractor
+and re-decodes with the Plus base search when JTDX provides the seeds. Hybrid also
+offers an opt-in private ft8rs specialist branch with Plus BP/OSD.
 
 Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md).
 
@@ -40,6 +40,9 @@ revoke an old entry after a later collision is found.
 The baseline union is retained regardless of recovery success. Recovery uses a
 private copy of the original audio and a disposable native session. It cannot
 mutate the baseline decoder or feed results back into another recovery round.
+The Plus leg's compatibility results are published after baseline and SIC rows
+with the `ctx` marker. They are terminal output, isolated from the SIC seeds,
+experimental receiver inputs and passive evidence store.
 
 ## Shared components
 
@@ -75,14 +78,14 @@ verifies that sequence; missing tones are never reconstructed for subtraction.
 
 The orchestration layer checks data-symbol waveform support against the input.
 Correct-tone energy relative to the strongest alternative must reach 0.70. It
-then calls the existing subtraction function on the private input, with the
+then calls the Plus subtraction function on the private input, with the
 native `DT + 0.5 s` convention. Non-finite output or an energy increase above 1%
 rejects the subtraction. These gates control seed use; they do not change a
 native decoder's acceptance thresholds or prove signal truth.
 
-JTDX-to-WSJT-X seeds additionally require native Regular provenance. WSJT-X's
-ordinary path does not expose its internal AP subtype, so its provenance stays
-Unknown and seed admission relies on the separate waveform gate. Recovery rows
+JTDX-to-WSJT-X seeds additionally require native Regular provenance. The WSJT-X
+leg's ordinary output keeps the existing Unknown provenance, so seed admission
+relies on the separate waveform gate. Recovery rows
 are terminal outputs and cannot become new cancellation seeds.
 
 Cross cancellation remains between WSJT-X and JTDX/noAGC only. The AGC path
@@ -178,6 +181,26 @@ Preserve every previous signal under the same recording, configuration, CallDB
 and build conditions. Additions cannot compensate for losses. SWL-on and SWL-off
 change both native JTDX searches and are not guaranteed supersets of each other.
 Pure JTDX's four-partition long-recording gate remains separate from Hybrid.
+
+### Plus compatibility integration (2026-11-06)
+
+The staged 19-slot `230208_140300` replay used optimized `fast` builds and a
+private 2022 CallDB. Totals sum N41, N47 and N50 processing. Callback times use
+the modeled next-slot boundary.
+
+| Profile | Outputs before and after | Total before → after | Slowest slot before → after | Latest callback before → after |
+|---|---:|---:|---:|---:|
+| Hybrid | 479 | 53.710 → 46.769 s | 4.366 → 3.420 s | +1.701 → +1.575 s |
+| Hybrid + exp | 482 | 120.388 → 86.266 s | 6.803 → 5.019 s | +5.735 → +4.168 s |
+
+Each comparison retained every slot, message and tone sequence. The three exp
+rows and all 57,467 per-slot FEC requests matched. A known legacy RR73 waveform
+also exercised `ctx` recovery in file and monitor modes, with isolated evidence
+and SIC inputs.
+
+On the fixed +1 dB replay in file mode, enabling compatibility on the Plus leg
+retained all 293 base-mode rows and recovered the reference message
+`CQ OH8CMS KP24` at 14:05:45 UTC as `ctx`.
 
 ### Historical partition and three-path evidence (2026-10-28)
 

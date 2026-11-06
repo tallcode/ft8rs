@@ -46,6 +46,16 @@ pub(crate) fn prepare(
     low: f64,
     high: f64,
 ) -> (Vec<f32>, CancellationStats) {
+    prepare_with_subtractor(samples, seeds, low, high, subtract_ft8)
+}
+
+pub(crate) fn prepare_with_subtractor(
+    samples: &[f32],
+    seeds: &[StreamDecodedMessage],
+    low: f64,
+    high: f64,
+    subtract: fn(&mut Vec<f64>, &[i32; 79], f64, f64),
+) -> (Vec<f32>, CancellationStats) {
     let mut residual: Vec<f64> = samples.iter().map(|v| f64::from(*v)).collect();
     let mut stats = CancellationStats::default();
     let mut ordered = seeds.iter().take(MAX_SEEDS).collect::<Vec<_>>();
@@ -62,7 +72,7 @@ pub(crate) fn prepare(
         }
         let before = residual.clone();
         let energy = before.iter().map(|x| x * x).sum::<f64>();
-        subtract_ft8(&mut residual, &seed.itone, seed.freq, seed.dt + 0.5);
+        subtract(&mut residual, &seed.itone, seed.freq, seed.dt + 0.5);
         let after = residual.iter().map(|x| x * x).sum::<f64>();
         if !after.is_finite() || after > energy * 1.01 {
             residual = before;

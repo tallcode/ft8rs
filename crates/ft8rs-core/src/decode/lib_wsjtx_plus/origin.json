@@ -178,7 +178,7 @@
     "crates/ft8rs-core/src/decode/lib_jtdx/twkfreq1.rs": "6c93cc12354c451618cab82043726b6907a7c8863176ccd08ee4a922f2ccf3af",
     "crates/ft8rs-core/src/decode/hybrid/context.rs": "55d94ebe4dc9ca30b037f18df0a15b4e9bfca8cdbafd50b20a11d10307967b00",
     "crates/ft8rs-core/src/decode/hybrid/evidence.rs": "20e941ad736875e65433f59e878d20f866fefe4cd45e620f19875f6ddedff94d",
-    "crates/ft8rs-core/src/decode/hybrid/mod.rs": "61ebaa7590a919f6ddeeef060e3b29a0cf6c484e9a8d25877ced54e5b3ba7806",
+    "crates/ft8rs-core/src/decode/hybrid/mod.rs": "ae605273a34ea920eac643f107bba60008f19e50aa3410caf219afdec478a7be",
     "crates/ft8rs-core/src/decode/hybrid/report.rs": "743f0c69cb3042957490cac9afc704896f7aa1776846019ebf89dc92c6bfa0cf",
     "crates/ft8rs-core/src/decode/hybrid/shared.rs": "13851b2f1eecd1b95dced6cf78bcd685753d249376a8b896fdf89fdff5517b51",
     "crates/ft8rs-core/src/decode/dx/augmentation.rs": "d7e7e16a1667855cd9f74a01bfd53c5a1b1eedc75cb9d402f043fa2bf8d930ba",

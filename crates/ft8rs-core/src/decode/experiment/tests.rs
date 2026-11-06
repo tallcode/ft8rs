@@ -20,6 +20,32 @@ fn reference_bessel_llrs(scores: &[f64], bits: usize) -> Vec<f64> {
 }
 
 #[test]
+fn bessel_prefix_scores_preserve_scalar_accumulation() {
+    let values = [-1e16, -3.0, -0.0, 0.0, 1e-12, 1.0, 3.0, 1e16];
+    let symbols: [[C; 8]; 4] = std::array::from_fn(|symbol| {
+        std::array::from_fn(|tone| C::new(values[(tone + symbol) % 8], values[7 - tone]))
+    });
+    let mut prefixes = [C::new(0.0, 0.0); 512];
+    for width in 1..=4 {
+        let mut scores = vec![0.0; 8usize.pow(width as u32)];
+        bessel_scores(&symbols[..width], 0.625, 3.0, &mut prefixes, &mut scores);
+        for (pattern, score) in scores.into_iter().enumerate() {
+            let mut sum = C::new(0.0, 0.0);
+            for (symbol, row) in symbols[..width].iter().enumerate() {
+                let tone = GRAY[(pattern >> (3 * (width - 1 - symbol))) & 7];
+                sum += row[tone] * 1.0;
+            }
+            let expected = log_i0(2.0 * 0.625 * sum.norm() / 3.0);
+            assert_eq!(
+                score.to_bits(),
+                expected.to_bits(),
+                "width={width} pattern={pattern}"
+            );
+        }
+    }
+}
+
+#[test]
 fn bessel_marginals_preserve_every_llr_bit() {
     let mut state = 0x1234_5678_9abc_def0u64;
     let mut exps = Vec::new();

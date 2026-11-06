@@ -26,16 +26,15 @@ historical records; see [development evidence](DEVELOPMENT.md).
 ## Scope and native boundary
 
 The implementation lives in the private `decode/experiment/receiver.rs` module.
-It reuses unchanged native CRC/LDPC, message unpacking, codeword-to-tone mapping
-and GFSK synthesis. All candidate discovery, likelihoods, waveform admission,
+It reuses WSJT-X+ BP/OSD and the shared CRC, message unpacking, codeword-to-tone
+mapping and GFSK synthesis. All candidate discovery, likelihoods, waveform admission,
 line removal, channel fitting and residual search are independent ft8rs code
 derived from the preserved single-slot research harness. No mirrored native
 source, threshold, candidate order, AP scheduling or arithmetic is changed.
 
-This work introduces an explicitly authorized independent DSP branch. The native
-Hybrid paths continue to be orchestration over their original implementations;
-DX does not use the experimental receiver. It never accesses a mutable baseline
-session, AP memory, hash book or runtime CallDB. FEC uses an all-zero AP mask.
+Hybrid supplies read-only audio and baseline observations to this private DSP
+branch. Its FEC uses an all-zero AP mask. Each decode uses local state, independent
+of the baseline sessions, AP memory, hash books and runtime CallDB.
 
 ## Receive path
 
@@ -43,13 +42,13 @@ One full-band FFT supplies 28 overlapping complex subbands at 200 samples/second
 The configured search is limited to the intersection with 200–3000 Hz. Candidate
 Costas power is locally whitened. Up to 96 candidates receive four noncoherent
 local hypotheses. Up to 32 candidates can receive eight pilot-coherent hypotheses.
-FEC uses the existing BP+OSD entry with its existing argument value 2; this is not
-a claim that the argument changes the native OSD flip order.
+FEC calls the Plus BP/OSD entry with argument value 2.
 
 Initial metrics include one/three-symbol amplitude, four-symbol Bessel likelihood
-and three-symbol per-tone robust likelihood. Bessel demapping reuses identical
-exponential terms across bit partitions while retaining the original candidate
-and summation order. Pilot-coherent detection uses only
+and three-symbol per-tone robust likelihood. Bessel demapping reuses complex
+prefix sums across tone patterns and identical exponential terms across bit
+partitions. The metrics share noise and pilot statistics from each spectrum.
+The candidate and summation order are preserved. Pilot-coherent detection uses only
 fully observed sync symbols. Effective sample counts are carried through block
 metrics; missing samples do not become low-noise observations. Input lengths
 between 120000 and 180000 samples are accepted by the receiver, with shorter

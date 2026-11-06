@@ -6,6 +6,7 @@ use crate::stream::session::StreamDecodedMessage;
 #[path = "waveform.rs"]
 mod waveform;
 use rustfft::{num_complex::Complex64 as C, FftPlanner};
+use std::cell::OnceCell;
 use std::f64::consts::TAU;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -262,9 +263,36 @@ fn bessel_llrs(scores: &[f64], bits: usize, exps: &mut Vec<f64>, output: &mut [f
         *value = partition(run) - partition(0);
     }
 }
-fn metrics(s: &Spectrum, block: usize, mode: &str) -> Vec<f64> {
-    let var = variance(s);
-    let varq: [f64; 8] = std::array::from_fn(|q| {
+struct MetricStats {
+    var: f64,
+    sync_power: f64,
+    robust_power: f64,
+    varq: OnceCell<[f64; 8]>,
+}
+
+impl MetricStats {
+    fn new(s: &Spectrum) -> Self {
+        let var = variance(s);
+        let pilot_powers: Vec<f64> = [0, 36, 72]
+            .iter()
+            .flat_map(|&base| {
+                (0..7)
+                    .filter(move |&k| s.observed[base + k] == 32)
+                    .map(move |k| s[base + k][COSTAS[k]].norm_sqr())
+            })
+            .collect();
+        let sync_power = pilot_powers.iter().sum::<f64>() / (pilot_powers.len().max(1) as f64);
+        Self {
+            var,
+            sync_power,
+            robust_power: median(pilot_powers),
+            varq: OnceCell::new(),
+        }
+    }
+}
+
+fn tone_variance(s: &Spectrum, var: f64) -> [f64; 8] {
+    std::array::from_fn(|q| {
         (median(
             s.iter()
                 .enumerate()
@@ -273,50 +301,60 @@ fn metrics(s: &Spectrum, block: usize, mode: &str) -> Vec<f64> {
                 .collect(),
         ) / std::f64::consts::LN_2)
             .max(var * 0.6)
-    });
-    let pilot_powers: Vec<f64> = [0, 36, 72]
-        .iter()
-        .flat_map(|&base| {
-            (0..7)
-                .filter(move |&k| s.observed[base + k] == 32)
-                .map(move |k| s[base + k][COSTAS[k]].norm_sqr())
-        })
-        .collect();
-    let sync_power = pilot_powers.iter().sum::<f64>() / (pilot_powers.len().max(1) as f64);
-    let robust_power = median(pilot_powers);
+    })
+}
+
+fn bessel_scores(
+    symbols: &[[C; 8]],
+    amp: f64,
+    var: f64,
+    prefixes: &mut [C; 512],
+    scores: &mut [f64],
+) {
+    let (last, first) = symbols.split_last().expect("non-empty symbol block");
+    prefixes[0] = C::new(0.0, 0.0);
+    let mut parents = 1;
+    for row in first {
+        // Expand in reverse so the children cannot overwrite unread parents.
+        // Each path retains the original complex-addition order.
+        for parent in (0..parents).rev() {
+            let sum = prefixes[parent];
+            for (digit, &tone) in GRAY.iter().enumerate() {
+                prefixes[parent * 8 + digit] = sum + row[tone] * 1.0;
+            }
+        }
+        parents *= 8;
+    }
+    let (groups, _) = scores.as_chunks_mut::<8>();
+    for (parent, group) in groups.iter_mut().enumerate() {
+        for (score, &tone) in group.iter_mut().zip(&GRAY) {
+            let sum = prefixes[parent] + last[tone] * 1.0;
+            *score = log_i0(2.0 * amp * sum.norm() / var);
+        }
+    }
+}
+
+fn metrics(s: &Spectrum, stats: &MetricStats, block: usize, mode: &str) -> Vec<f64> {
+    let var = stats.var;
+    let varq = (mode == "robust").then(|| stats.varq.get_or_init(|| tone_variance(s, var)));
     let amp = (if mode == "robust" {
-        robust_power - var
+        stats.robust_power - var
     } else {
-        sync_power - var
+        stats.sync_power - var
     })
     .max(0.1 * var)
     .sqrt();
     let mut llr = vec![0.0; 174];
     let mut bessel_exps = Vec::new();
+    let mut bessel_prefixes = (mode == "bessel").then(|| [C::new(0.0, 0.0); 512]);
     for (half, base) in [7, 43].iter().enumerate() {
         let mut k = 0;
         while k < 29 {
             let b = block.min(29 - k);
             let count = 8usize.pow(b as u32);
             let mut scores = vec![0.0; count];
-            for (pattern, v) in scores.iter_mut().enumerate() {
-                let mut z = C::new(0.0, 0.0);
-                let mut invsum = 0.0;
-                for n in 0..b {
-                    let bits = (pattern >> (3 * (b - 1 - n))) & 7;
-                    let q = GRAY[bits];
-                    let weight = if mode == "robust" { 1.0 / varq[q] } else { 1.0 };
-                    z += s[base + k + n][q] * weight;
-                    invsum += weight * s.observed[base + k + n] as f64 / 32.0;
-                }
-                *v = match mode {
-                    "amp" => z.norm(),
-                    "bessel" => log_i0(2.0 * amp * z.norm() / var),
-                    "robust" => log_i0(2.0 * amp * z.norm()) - amp * amp * invsum,
-                    _ => panic!("mode"),
-                };
-            }
-            if mode == "bessel" {
+            if let Some(prefixes) = bessel_prefixes.as_mut() {
+                bessel_scores(&s[base + k..base + k + b], amp, var, prefixes, &mut scores);
                 let start = half * 87 + k * 3;
                 bessel_llrs(
                     &scores,
@@ -326,6 +364,22 @@ fn metrics(s: &Spectrum, block: usize, mode: &str) -> Vec<f64> {
                 );
                 k += b;
                 continue;
+            }
+            for (pattern, v) in scores.iter_mut().enumerate() {
+                let mut z = C::new(0.0, 0.0);
+                let mut invsum = 0.0;
+                for n in 0..b {
+                    let bits = (pattern >> (3 * (b - 1 - n))) & 7;
+                    let q = GRAY[bits];
+                    let weight = varq.map_or(1.0, |v| 1.0 / v[q]);
+                    z += s[base + k + n][q] * weight;
+                    invsum += weight * s.observed[base + k + n] as f64 / 32.0;
+                }
+                *v = match mode {
+                    "amp" => z.norm(),
+                    "robust" => log_i0(2.0 * amp * z.norm()) - amp * amp * invsum,
+                    _ => panic!("mode"),
+                };
             }
             for bit in 0..3 * b {
                 let mut a = Vec::new();
@@ -360,7 +414,7 @@ fn metrics(s: &Spectrum, block: usize, mode: &str) -> Vec<f64> {
     llr
 }
 fn decode_with_tones(llr: &[f64]) -> Option<(String, [i32; 79])> {
-    let result = crate::decode::decode174_91::decode174_91(llr, &[0; 174], 2)?;
+    let result = crate::decode::lib_wsjtx_plus::decode174_91::decode174_91(llr, &[0; 174], 2)?;
     if result.cw.iter().all(|&x| x == 0) {
         return None;
     }
@@ -655,8 +709,9 @@ fn search(audio: &[f64], low: f64, high: f64, budget: &mut Budget) -> Vec<Row> {
                 break;
             }
             let s = band.spectra(h.f, h.dt, 0.0);
+            let stats = MetricStats::new(&s);
             for (block, mode) in [(1, "amp"), (3, "amp"), (4, "bessel"), (3, "robust")] {
-                if let Some((msg, tones)) = budget.decode(&metrics(&s, block, mode)) {
+                if let Some((msg, tones)) = budget.decode(&metrics(&s, &stats, block, mode)) {
                     let row = Row {
                         msg,
                         f: h.f,

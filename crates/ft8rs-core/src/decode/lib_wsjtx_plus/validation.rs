@@ -377,20 +377,86 @@ fn legacy_a8_recovers_the_grid_waveform() {
         let tones = crate::decode::genft8::get_ft8_tones_from_codeword(&checkpoint.native_codeword);
         let (re, im) = crate::decode::gen_ft8wave::gen_ft8wave(&tones, 1000.6);
         let power = re.iter().map(|v| v * v).sum::<f64>() / re.len() as f64;
-        let amplitude = ((2500.0 / 6000.0) * 10f64.powf(-22.0 / 10.0) / power).sqrt();
-        let mut audio = noise.clone();
-        for (i, (&re, &im)) in re.iter().zip(&im).enumerate() {
-            audio[7200 + i] += amplitude * (re * 1.43f64.cos() - im * 1.43f64.sin());
-        }
-        for sample in &mut audio[48000..96000] {
-            *sample *= 0.18;
-        }
-        for sample in &mut audio {
-            *sample = f64::from((*sample * 0.05) as f32);
-        }
+        let waveform = |snr: f64| {
+            let amplitude = ((2500.0 / 6000.0) * 10f64.powf(snr / 10.0) / power).sqrt();
+            let mut audio = noise.clone();
+            for (i, (&re, &im)) in re.iter().zip(&im).enumerate() {
+                audio[7200 + i] += amplitude * (re * 1.43f64.cos() - im * 1.43f64.sin());
+            }
+            for sample in &mut audio[48000..96000] {
+                *sample *= 0.18;
+            }
+            for sample in &mut audio {
+                *sample = f64::from((*sample * 0.05) as f32);
+            }
+            audio
+        };
+        let audio = waveform(-22.0);
         let (baseline, compatible) = a8(&audio);
         let result = if label == "legacy-ideal" {
             assert!(baseline.is_none());
+
+            let config = StreamDecodeConfig {
+                profile: crate::DecodeProfile::Hybrid,
+                mycall: Some("K1JT".into()),
+                hiscall: Some("BG5ATV".into()),
+                hisgrid: Some("PM00".into()),
+                nfqso: 1000.0,
+                nfa: 900.0,
+                nfb: 1100.0,
+                ..Default::default()
+            };
+            let timestamp = SlotTimestamp::parse("261028_120000").unwrap();
+            // At this level the compatibility leg recovers the legacy codeword
+            // before any other Hybrid branch can supply that message.
+            let samples: Vec<_> = waveform(-23.5)
+                .into_iter()
+                .map(|sample| sample as f32)
+                .collect();
+            for staged in [false, true] {
+                let mut hybrid =
+                    crate::decode::hybrid::HybridStreamDecodeSession::new(StreamDecodeConfig {
+                        cooperative_realtime: staged,
+                        ..config.clone()
+                    });
+                let mut observed = Vec::new();
+                let mut emit = |row: &crate::stream::session::StreamDecodedWithProvenance| {
+                    observed.push(row.clone());
+                    Ok(())
+                };
+                if staged {
+                    let mut slot = hybrid.start_slot();
+                    hybrid
+                        .decode_slot_nzhsym41_tagged(
+                            &timestamp,
+                            &mut slot,
+                            &samples[..41 * 3456],
+                            &mut emit,
+                        )
+                        .unwrap();
+                    hybrid.subtract_slot_nzhsym47(&mut slot, &samples[..47 * 3456]);
+                    hybrid
+                        .decode_slot_nzhsym50_tagged(&timestamp, slot, &samples, &mut emit)
+                        .unwrap();
+                } else {
+                    hybrid
+                        .decode_slot_streaming_tagged_at(&timestamp, &samples, &mut emit)
+                        .unwrap();
+                }
+                let row = observed.last().expect("legacy RR73 recovery");
+                assert_eq!(row.decode.msg, "K1JT BG5ATV RR73");
+                assert_eq!(row.decode.itone, tones);
+                assert_eq!(
+                    row.provenance,
+                    crate::stream::session::StreamDecodeProvenance::ContextRecovery
+                );
+                assert_eq!(hybrid.last_diagnostics().recovery_tasks, 0);
+                assert!(hybrid
+                    .last_evidence_store()
+                    .rows()
+                    .iter()
+                    .all(|r| r.message != row.decode.msg));
+            }
             compatible.unwrap()
         } else {
             assert!(compatible.is_none());

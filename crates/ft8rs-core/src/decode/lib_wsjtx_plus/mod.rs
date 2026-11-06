@@ -12,7 +12,7 @@ pub(crate) mod subtractft8;
 #[path = "ft8/bpdecode174_91.rs"]
 mod bpdecode174_91;
 #[path = "ft8/decode174_91.rs"]
-mod decode174_91;
+pub(crate) mod decode174_91;
 
 mod compatibility;
 mod fft;

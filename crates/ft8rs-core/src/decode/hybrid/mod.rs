@@ -1,4 +1,4 @@
-//! Independent upstream sessions plus bounded, isolated cooperative recovery.
+//! Independent decoder sessions plus bounded, isolated cooperative recovery.
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -7,9 +7,12 @@ use crate::decode::cooperative::observation::{jtdx_branch_configs, NativeObserva
 use crate::decode::cooperative::recovery::{self, CancellationStats};
 use crate::decode::cooperative::{same_signal, OutputLedger, SignalSource};
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
+use crate::decode::lib_wsjtx_plus::session::{
+    StreamDecodeSession as WsjtxPlusSession, StreamSlotDecodeState as WsjtxPlusSlotState,
+};
+use crate::decode::lib_wsjtx_plus::subtractft8::subtract_ft8;
 use crate::stream::session::{
-    StreamDecodeConfig, StreamDecodeProvenance, StreamDecodeSession, StreamDecodedMessage,
-    StreamDecodedWithProvenance, StreamSlotDecodeState,
+    StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage, StreamDecodedWithProvenance,
 };
 use crate::stream::time::SlotTimestamp;
 
@@ -61,6 +64,7 @@ pub struct HybridSlotDiagnostics {
 
 enum WorkerEvent {
     Row(SignalSource, StreamDecodedMessage),
+    WsjtxCompatibility(StreamDecodedMessage),
     Done(
         SignalSource,
         Result<Vec<StreamDecodedWithProvenance>, String>,
@@ -153,8 +157,17 @@ fn baseline_snapshot(
     merge_decodes(&merge_decodes(wsjtx, jtdx), &agc)
 }
 
+/// In-progress state for the WSJT-X leg of a Hybrid slot.
+pub struct HybridSlotDecodeState(WsjtxPlusSlotState);
+
+fn wsjtx_session(config: &StreamDecodeConfig, compatibility: bool) -> WsjtxPlusSession {
+    let mut config = config.clone_for_profile_wsjt_x();
+    config.wsjtx_plus_compatibility = compatibility;
+    WsjtxPlusSession::new(config)
+}
+
 pub struct HybridStreamDecodeSession {
-    wsjtx: StreamDecodeSession,
+    wsjtx: WsjtxPlusSession,
     jtdx: JtdxStreamDecodeSession,
     jtdx_agc: JtdxStreamDecodeSession,
     config: StreamDecodeConfig,
@@ -171,7 +184,7 @@ impl HybridStreamDecodeSession {
         config.nagcc = false;
         let [no_agc, agc] = jtdx_branch_configs(&config);
         Self {
-            wsjtx: StreamDecodeSession::new(config.clone_for_profile_wsjt_x()),
+            wsjtx: wsjtx_session(&config, true),
             jtdx: crate::stream::session::seeded_jtdx_session(no_agc),
             jtdx_agc: crate::stream::session::seeded_jtdx_session(agc),
             config,
@@ -214,15 +227,15 @@ impl HybridStreamDecodeSession {
         self.early.clear();
         self.run_slot(timestamp, samples, None, on_decode)
     }
-    pub fn start_slot(&mut self) -> StreamSlotDecodeState {
+    pub fn start_slot(&mut self) -> HybridSlotDecodeState {
         // No shared calls are injected into either long-lived baseline book.
         self.early.clear();
-        self.wsjtx.start_slot_decode()
+        HybridSlotDecodeState(self.wsjtx.start_slot_decode())
     }
     pub fn decode_slot_nzhsym41<F>(
         &mut self,
         timestamp: &SlotTimestamp,
-        state: &mut StreamSlotDecodeState,
+        state: &mut HybridSlotDecodeState,
         samples: &[f32],
         mut on_decode: F,
     ) -> Result<usize, String>
@@ -234,16 +247,19 @@ impl HybridStreamDecodeSession {
     pub fn decode_slot_nzhsym41_tagged<F>(
         &mut self,
         timestamp: &SlotTimestamp,
-        state: &mut StreamSlotDecodeState,
+        state: &mut HybridSlotDecodeState,
         samples: &[f32],
         mut on_decode: F,
     ) -> Result<usize, String>
     where
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
-        self.early =
-            self.wsjtx
-                .decode_slot_nzhsym41_with_provenance_at(Some(timestamp), state, samples)?;
+        self.early.clear();
+        self.wsjtx
+            .decode_slot_nzhsym41_tagged(timestamp, &mut state.0, samples, |row| {
+                self.early.push(row.clone());
+                Ok(())
+            })?;
         for row in &mut self.early {
             if row.provenance == StreamDecodeProvenance::Regular {
                 row.provenance = StreamDecodeProvenance::Unknown;
@@ -254,13 +270,13 @@ impl HybridStreamDecodeSession {
         }
         Ok(self.early.len())
     }
-    pub fn subtract_slot_nzhsym47(&mut self, state: &mut StreamSlotDecodeState, samples: &[f32]) {
-        self.wsjtx.subtract_slot_nzhsym47(state, samples);
+    pub fn subtract_slot_nzhsym47(&mut self, state: &mut HybridSlotDecodeState, samples: &[f32]) {
+        self.wsjtx.subtract_slot_nzhsym47(&mut state.0, samples);
     }
     pub fn decode_slot_nzhsym50<F>(
         &mut self,
         timestamp: &SlotTimestamp,
-        state: StreamSlotDecodeState,
+        state: HybridSlotDecodeState,
         _early_count: usize,
         samples: &[f32],
         mut on_decode: F,
@@ -275,7 +291,7 @@ impl HybridStreamDecodeSession {
     pub fn decode_slot_nzhsym50_tagged<F>(
         &mut self,
         timestamp: &SlotTimestamp,
-        state: StreamSlotDecodeState,
+        state: HybridSlotDecodeState,
         samples: &[f32],
         on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
@@ -289,7 +305,7 @@ impl HybridStreamDecodeSession {
         &mut self,
         timestamp: &SlotTimestamp,
         samples: &[f32],
-        state: Option<StreamSlotDecodeState>,
+        state: Option<HybridSlotDecodeState>,
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
@@ -305,6 +321,7 @@ impl HybridStreamDecodeSession {
         let mut w_rows: Option<Vec<StreamDecodedWithProvenance>> = None;
         let mut j_rows: Option<Vec<StreamDecodedWithProvenance>> = None;
         let mut agc_rows = Vec::new();
+        let mut compatibility_rows = Vec::new();
         let mut agc_error = None;
         let mut agc_done = false;
         let mut pending_j = Vec::new();
@@ -319,38 +336,37 @@ impl HybridStreamDecodeSession {
         let jtdx_agc = &mut self.jtdx_agc;
         let mut baseline = None;
         let mut experiment_rows = Vec::new();
+        let mut wsjtx_rows = self.early.clone();
         thread::scope(|scope| {
             let mut experiment_rx = None;
             let (tx, rx) = mpsc::channel();
             let w_tx = tx.clone();
             scope.spawn(move || {
                 let result = guard_worker(|| {
-                    let mut emit = |row: &StreamDecodedMessage| {
-                        w_tx.send(WorkerEvent::Row(SignalSource::Wsjtx, row.clone()))
+                    let staged = state.is_some();
+                    let mut collect = |row: &StreamDecodedWithProvenance| {
+                        let event = if row.provenance == StreamDecodeProvenance::ContextRecovery {
+                            WorkerEvent::WsjtxCompatibility(row.decode.clone())
+                        } else {
+                            let mut tagged = row.clone();
+                            if staged || tagged.provenance == StreamDecodeProvenance::Regular {
+                                tagged.provenance = wsjtx_provenance(&row.decode);
+                            }
+                            wsjtx_rows.push(tagged);
+                            WorkerEvent::Row(SignalSource::Wsjtx, row.decode.clone())
+                        };
+                        w_tx.send(event)
                             .map_err(|_| "hybrid event receiver closed".to_string())
                     };
                     match state {
-                        Some(state) => wsjtx
-                            .decode_slot_nzhsym50_and_finish(state, samples, &mut emit)
-                            .map(|rows| {
-                                rows.into_iter()
-                                    .map(|decode| StreamDecodedWithProvenance {
-                                        provenance: wsjtx_provenance(&decode),
-                                        decode,
-                                    })
-                                    .collect()
-                            }),
-                        None => NativeObservation::Wsjtx(wsjtx)
-                            .decode(timestamp, samples, &mut emit)
-                            .map(|mut rows| {
-                                for row in &mut rows {
-                                    if row.provenance == StreamDecodeProvenance::Regular {
-                                        row.provenance = StreamDecodeProvenance::Unknown;
-                                    }
-                                }
-                                rows
-                            }),
-                    }
+                        Some(state) => {
+                            wsjtx.decode_slot_nzhsym50_tagged(state.0, samples, &mut collect)
+                        }
+                        None => {
+                            wsjtx.decode_slot_streaming_tagged_at(timestamp, samples, &mut collect)
+                        }
+                    }?;
+                    Ok(wsjtx_rows)
                 });
                 let _ = w_tx.send(WorkerEvent::Done(SignalSource::Wsjtx, result));
             });
@@ -379,6 +395,7 @@ impl HybridStreamDecodeSession {
             while finished < active {
                 let event = rx.recv().expect("coordinator retains an event sender");
                 match event {
+                    WorkerEvent::WsjtxCompatibility(row) => compatibility_rows.push(row),
                     WorkerEvent::Row(source, row) => {
                         if source == SignalSource::Wsjtx {
                             w_seen.push(row.clone());
@@ -523,11 +540,12 @@ impl HybridStreamDecodeSession {
                     let task_config = config.clone();
                     scope.spawn(move || {
                         let result = guard_worker(|| {
-                            let (input, stats) = recovery::prepare(
+                            let (input, stats) = recovery::prepare_with_subtractor(
                                 samples,
                                 &seeds,
                                 task_config.nfa,
                                 task_config.nfb,
+                                subtract_ft8,
                             );
                             if stats.accepted > 0 {
                                 let emit = |row: &StreamDecodedMessage| {
@@ -541,10 +559,8 @@ impl HybridStreamDecodeSession {
                                     )
                                     .decode_slot_streaming_at(timestamp, &input, emit)?;
                                 } else {
-                                    StreamDecodeSession::new(
-                                        task_config.clone_for_profile_wsjt_x(),
-                                    )
-                                    .decode_slot_streaming_at(timestamp, &input, emit)?;
+                                    wsjtx_session(&task_config, false)
+                                        .decode_slot_streaming_at(timestamp, &input, emit)?;
                                 }
                             }
                             Ok(stats)
@@ -611,8 +627,19 @@ impl HybridStreamDecodeSession {
             let baseline =
                 baseline.get_or_insert_with(|| baseline_snapshot(&w_seen, &j_seen, &agc_rows));
             diagnostics.baseline_rows = baseline.len();
-            // The native/SIC publication order is now complete. Only this gate may
-            // admit exp rows; waiting for exp cannot delay an original callback.
+            // Compatibility output remains separate from baseline evidence and
+            // follows existing representatives, even when it finishes first.
+            for row in &compatibility_rows {
+                publish(
+                    &mut ledger,
+                    SignalSource::Recovery,
+                    row,
+                    StreamDecodeProvenance::ContextRecovery,
+                    &mut first_error,
+                    &mut on_decode,
+                );
+            }
+            // Waiting for exp cannot delay baseline, SIC, or compatibility callbacks.
             if let Some(rx) = experiment_rx {
                 experiment_rows = publish_experiment(
                     rx,
