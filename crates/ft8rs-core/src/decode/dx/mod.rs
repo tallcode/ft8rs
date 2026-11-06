@@ -1,12 +1,13 @@
-//! Target-only orchestration using isolated, unchanged upstream sessions.
+//! Target-only orchestration using isolated decoder sessions.
 use crate::decode::cooperative::observation::{
     jtdx_branch_configs, NativeObservation, ObservationId,
 };
 use crate::decode::cooperative::{OutputLedger, SignalSource};
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
+use crate::decode::lib_wsjtx_plus::session::StreamDecodeSession as WsjtxPlusSession;
 use crate::stream::session::{
-    DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodeSession,
-    StreamDecodedMessage, StreamDecodedWithProvenance,
+    DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage,
+    StreamDecodedWithProvenance,
 };
 use crate::stream::time::SlotTimestamp;
 use std::sync::mpsc;
@@ -81,7 +82,7 @@ pub struct DxStreamDecodeSession {
     hash_seed_calls: Vec<String>,
     listen: JtdxStreamDecodeSession,
     cold_misses: u8,
-    observe_wsjtx: StreamDecodeSession,
+    observe_wsjtx: WsjtxPlusSession,
     observe_jtdx: JtdxStreamDecodeSession,
     complement_id: ObservationId,
     diagnostics: DxSlotDiagnostics,
@@ -93,7 +94,7 @@ impl DxStreamDecodeSession {
         let mut listen = JtdxStreamDecodeSession::new(dx_listen_config(&config));
         listen.import_hash_calls(&hash_seed_calls);
         let mut observe_wsjtx =
-            StreamDecodeSession::new(augmentation::wsjtx_observation_config(&config));
+            wsjtx_session(augmentation::wsjtx_observation_config(&config), true);
         let [no_agc, agc] = jtdx_branch_configs(&dx_listen_config(&config));
         let (complement_config, complement_id) = if config.nagcc {
             (no_agc, ObservationId::Jtdx)
@@ -270,7 +271,7 @@ impl DxStreamDecodeSession {
                 let observation_tx = tx.clone();
                 scope.spawn(move || {
                     observe_native(
-                        NativeObservation::Wsjtx(observe_wsjtx),
+                        NativeObservation::WsjtxPlus(observe_wsjtx),
                         ObservationId::Wsjtx,
                         timestamp,
                         samples,
@@ -310,11 +311,10 @@ impl DxStreamDecodeSession {
                                     .map_err(|_| "DX event receiver closed".to_string())
                             };
                             if task.wsjtx {
-                                let mut session = StreamDecodeSession::new(task.config);
+                                let mut session = wsjtx_session(task.config, true);
                                 session.import_hash_calls(hash_calls);
-                                session.decode_slot_streaming_with_provenance_at(
-                                    timestamp, samples, emit,
-                                )
+                                NativeObservation::WsjtxPlus(&mut session)
+                                    .decode(timestamp, samples, emit)
                             } else {
                                 let mut session = JtdxStreamDecodeSession::new(task.config);
                                 session.import_hash_calls(hash_calls);
@@ -408,7 +408,7 @@ impl DxStreamDecodeSession {
                     continue;
                 }
                 let mut observer = if index == 0 {
-                    NativeObservation::Wsjtx(&mut self.observe_wsjtx)
+                    NativeObservation::WsjtxPlus(&mut self.observe_wsjtx)
                 } else {
                     NativeObservation::Jtdx(&mut self.observe_jtdx)
                 };
@@ -445,7 +445,10 @@ impl DxStreamDecodeSession {
         // Commit after every task: the whole slot used one frozen snapshot.
         if !realtime {
             for group in finished_rows.iter().skip(1) {
-                for row in group {
+                for row in group
+                    .iter()
+                    .filter(|row| row.provenance != StreamDecodeProvenance::ContextRecovery)
+                {
                     emit_target(
                         &snapshot,
                         &mut ledger,
@@ -462,6 +465,7 @@ impl DxStreamDecodeSession {
         for (index, group) in finished_rows.iter().skip(1).enumerate() {
             let rows: Vec<_> = group
                 .iter()
+                .filter(|row| row.provenance != StreamDecodeProvenance::ContextRecovery)
                 .filter(|row| snapshot.should_emit_target_row(&row.decode))
                 .map(|row| row.decode.clone())
                 .collect();
@@ -482,7 +486,10 @@ impl DxStreamDecodeSession {
                 .into_iter()
                 .enumerate()
             {
-                for row in &observed_rows[index] {
+                for row in observed_rows[index]
+                    .iter()
+                    .filter(|row| row.provenance != StreamDecodeProvenance::ContextRecovery)
+                {
                     if !augmentation::admissible_recovery(&row.decode) {
                         diagnostics.rejected_empty_call_rows += 1;
                         continue;
@@ -546,6 +553,29 @@ impl DxStreamDecodeSession {
             diagnostics.rejected_empty_call_rows += outcome.rejected_empty;
             diagnostics.augmentation_errors.extend(outcome.errors);
         }
+        // Compatibility results follow the protected and SIC representatives.
+        // They never contribute to focused state or the SIC plan.
+        for row in finished_rows
+            .iter()
+            .skip(1)
+            .flatten()
+            .chain(&observed_rows[0])
+            .filter(|row| row.provenance == StreamDecodeProvenance::ContextRecovery)
+        {
+            if augmentation::admissible_recovery(&row.decode) {
+                emit_target(
+                    &snapshot,
+                    &mut ledger,
+                    &row.decode,
+                    SignalSource::Recovery,
+                    StreamDecodeProvenance::ContextRecovery,
+                    &mut first_error,
+                    &mut on_decode,
+                );
+            } else {
+                diagnostics.rejected_empty_call_rows += 1;
+            }
+        }
         diagnostics.elapsed = started.elapsed();
         self.diagnostics = diagnostics;
         if let Some(error) = first_error {
@@ -554,6 +584,11 @@ impl DxStreamDecodeSession {
             Ok(ledger.into_sorted())
         }
     }
+}
+
+fn wsjtx_session(mut config: StreamDecodeConfig, compatibility: bool) -> WsjtxPlusSession {
+    config.wsjtx_plus_compatibility = compatibility;
+    WsjtxPlusSession::new(config)
 }
 
 fn observation_source(id: ObservationId) -> SignalSource {

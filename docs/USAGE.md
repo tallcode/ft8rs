@@ -110,7 +110,8 @@ the baseline and cross-cancellation results.
 those baselines. SWL controls both JTDX paths together. The two JTDX variants are
 one algorithm family for evidence accounting.
 
-DX returns target-related messages and manages its own listener/focused recovery.
+DX returns target-related messages and combines its JTDX listener with WSJT-X+
+observation and focused recovery. Plus compatibility results use `ctx`.
 The target call alone is sufficient to listen; a valid, distinct operator/target
 call pair enables additional context recovery. A known grid can enable list
 recovery. Derived rows supply weak hints rather than independent confirmation.

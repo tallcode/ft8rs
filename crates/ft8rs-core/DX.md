@@ -1,9 +1,9 @@
 # DX Target Decode
 
-`--profile dx` listens for one known target over unchanged JTDX and WSJT-X
-sessions. `hiscall` is required. Three independent observations supplement the
-original DX tasks: the original JTDX listener, ordinary WSJT-X and a complementary
-JTDX AGC path. `mycall` is optional; a valid full call pair unlocks additional
+`--profile dx` listens for one known target using JTDX and WSJT-X+ sessions.
+`hiscall` is required. The original JTDX listener, ordinary WSJT-X+ compatibility
+search and complementary JTDX AGC path supply three independent observations.
+`mycall` is optional. A valid full call pair unlocks additional
 context recovery. Target-only listening uses ordinary search without inventing
 the missing call.
 
@@ -19,12 +19,12 @@ update the protected target context. Supplemental observations and cancellation
 never change that state. No worker reads another worker's residual or AP memory.
 
 Each selected focus receives a narrow JTDX `swl+nagain` task. When a grid is
-available it can also receive a WSJT-X/a8d task. Up to five foci are selected and
+available it can also receive a WSJT-X+ A8 task. Up to five foci are selected and
 at most four recovery executor threads run at once. The original JTDX parameter
 `jtdx_threads` selects logical frequency partitions; the current Rust session
 processes those bands serially and does not spawn one OS thread per partition.
 
-With a user call pair but no focus, DX can run one standard full-band WSJT-X
+With a user call pair but no focus, DX can run one standard full-band WSJT-X+
 context task with `nagain=false`. After two misses it rests for one slot. A known
 focus skipped by parity policy is not mistaken for an unknown-frequency target.
 Recovery sessions are private and seeded only with the user call pair.
@@ -40,8 +40,7 @@ After these observations, an unresolved target-sender focus with eligible nearby
 interference may receive one controlled WSJT-X cancellation recovery. At most two
 unresolved foci and three waveform-verified seeds are used. An addressed target
 never makes the other station's frequency a resolved target-sender focus. The
-existing 0.70 support check, original subtraction and decoder thresholds are
-unchanged. No additional JTDX residual deep search is launched.
+existing 0.70 support check gates the Plus subtractor and Plus base re-decode.
 
 Additional WSJT-X context requires a normalized, legal, distinct call pair;
 otherwise its private call pair/grid are cleared for ordinary search. Explicit
@@ -82,8 +81,10 @@ native inputs; it does not change native candidate ordering or thresholds.
 
 Only target-related rows passing the user-grid rule are emitted. A shared output
 ledger deduplicates callbacks and final rows, preserving unresolved identities.
-Monitor mode streams recovery rows immediately; file mode submits them in stable
-task order. `ctx` marks the original isolated context recovery, `sic` marks
+Monitor mode streams ordinary recovery rows immediately. File mode submits them in
+stable task order. Plus compatibility rows are published after the ordinary and
+SIC results as terminal `ctx` output, outside target-context harvesting and SIC
+planning. `ctx` also marks the original isolated context recovery. `sic` marks
 terminal cancellation recovery, and `?` preserves unknown native provenance
 instead of claiming Regular. Supplemental worker errors are recorded separately
 in `last_diagnostics()`; they do not erase successful protected results.
@@ -126,6 +127,27 @@ shared native-fixture suite independently checks native-generated waveforms,
 Watterson channels and degraded historical recordings through the DX adapter.
 DX's target filter is part of its contract; it does not need to return unrelated
 messages from the general corpus.
+
+### Plus integration replay (2026-11-06)
+
+Serial `fast` replays on Apple Silicon used the same inputs, decoder settings
+and private 2022 CallDB. Each row compares one original replay with one Plus
+compatibility replay. Callback and completion times start at full-slot decode
+entry.
+
+| Case | Outputs before and after | Total before → after | Slowest slot before → after | Latest callback before → after |
+|---|---:|---:|---:|---:|
+| `230208_140300` full call pair, file | 2 | 67.030 → 66.101 s | 4.348 → 4.235 s | 3.942 → 3.983 s |
+| `230208_140300` full call pair, monitor replay | 2 | 68.600 → 66.662 s | 4.408 → 4.284 s | 0.333 → 0.323 s |
+| `230208_140300` target only, file | 1 | 66.844 → 66.031 s | 4.287 → 4.229 s | 3.502 → 3.440 s |
+| `dx_synth_ua3qna`, file | 3 | 15.801 → 15.369 s | 4.252 → 4.162 s | 4.152 → 4.106 s |
+
+The replays preserved each target, tone sequence, callback order and slot
+context snapshot. The target-only run had one sync-score rounding difference
+of approximately 2.7×10⁻¹⁵. The WSJT-X observation leg finished 32–36% earlier
+on average. The protected JTDX listener and focused work continued to dominate
+overall completion. Raw replays and paired results are stored locally under
+`target/decoder-validation/dx-plus-ab-20261106-191038/`.
 
 ### Historical implementation evidence (2026-10-28)
 

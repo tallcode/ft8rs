@@ -6,7 +6,6 @@ use std::sync::OnceLock;
 use super::ParsedMessage;
 use crate::decode::{
     gen_ft8wave::gen_ft8wave, genft8::get_ft8_tones_from_77bits, packjt77::pack77,
-    subtractft8::subtract_ft8,
 };
 use crate::stream::session::StreamDecodedMessage;
 
@@ -38,15 +37,6 @@ pub(crate) fn eligible_shape(row: &StreamDecodedMessage, low: f64, high: f64) ->
     // missing tones or guess the payload of a display-resolved hash message.
     let bits = pack77(&row.msg);
     bits.len() == 77 && get_ft8_tones_from_77bits(&bits) == row.itone
-}
-
-pub(crate) fn prepare(
-    samples: &[f32],
-    seeds: &[StreamDecodedMessage],
-    low: f64,
-    high: f64,
-) -> (Vec<f32>, CancellationStats) {
-    prepare_with_subtractor(samples, seeds, low, high, subtract_ft8)
 }
 
 pub(crate) fn prepare_with_subtractor(

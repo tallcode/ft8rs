@@ -457,6 +457,25 @@ fn legacy_a8_recovers_the_grid_waveform() {
                     .iter()
                     .all(|r| r.message != row.decode.msg));
             }
+            let mut dx = crate::decode::dx::DxStreamDecodeSession::new(StreamDecodeConfig {
+                profile: crate::DecodeProfile::Dx,
+                ..config
+            });
+            let context = dx.context_snapshot();
+            let mut observed = Vec::new();
+            dx.decode_slot_streaming_tagged_at(&timestamp, &samples, |row| {
+                observed.push(row.clone());
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(observed.len(), 1);
+            assert_eq!(observed[0].decode.msg, "K1JT BG5ATV RR73");
+            assert_eq!(observed[0].decode.itone, tones);
+            assert_eq!(
+                observed[0].provenance,
+                crate::stream::session::StreamDecodeProvenance::ContextRecovery
+            );
+            assert_eq!(dx.context_snapshot(), context);
             compatible.unwrap()
         } else {
             assert!(compatible.is_none());

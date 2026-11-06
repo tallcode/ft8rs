@@ -181,8 +181,7 @@ pub(super) fn execute<F>(request: RecoveryRequest<'_>, mut emit: F) -> RecoveryO
 where
     F: FnMut(&StreamDecodedMessage),
 {
-    use crate::decode::cooperative::observation::NativeObservation;
-    use crate::stream::session::StreamDecodeSession;
+    use crate::decode::lib_wsjtx_plus::subtractft8::subtract_ft8;
     use std::sync::mpsc;
     let mut outcome = RecoveryOutcome::default();
     if request.plan.foci.is_empty() || request.plan.seeds.is_empty() {
@@ -192,11 +191,12 @@ where
         outcome.budget_skips = request.plan.foci.len();
         return outcome;
     }
-    let (residual, stats) = recovery::prepare(
+    let (residual, stats) = recovery::prepare_with_subtractor(
         request.samples,
         &request.plan.seeds,
         request.config.nfa,
         request.config.nfb,
+        subtract_ft8,
     );
     outcome.stats = stats;
     if outcome.stats.accepted == 0 {
@@ -223,10 +223,10 @@ where
                     let result = super::guard_worker(|| {
                         let config =
                             recovery_config(request.config, request.plan.foci[id], request.grid);
-                        let mut session = StreamDecodeSession::new(config);
+                        let mut session = super::wsjtx_session(config, false);
                         session.import_hash_calls(request.hash_calls);
-                        NativeObservation::Wsjtx(&mut session)
-                            .decode(request.timestamp, residual, |row| {
+                        session
+                            .decode_slot_streaming_at(request.timestamp, residual, |row| {
                                 tx.send(RecoveryEvent::Row(id, Box::new(row.clone())))
                                     .map_err(|_| "DX recovery event receiver closed".to_string())
                             })
