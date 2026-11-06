@@ -527,3 +527,6 @@ fn replay_rr73_fec_checkpoints() {
         }
     }
 }
+
+#[path = "rr73_replay.rs"]
+pub(super) mod rr73_replay;

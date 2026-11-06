@@ -88,6 +88,8 @@ pub(super) fn ft8b(
     }
 
     build_bit_metrics(workspace, imetric);
+    #[cfg(test)]
+    rr73_metrics::capture(cx_re, cx_im, f1, ibest, imetric, workspace);
 
     // ── xbase: noise baseline at candidate frequency (for xsnr2) ──
     // sbase is built by sync8 with NFFT1=3840 → df=3.125 Hz/bin.
@@ -150,6 +152,10 @@ pub(super) fn ft8b(
         itone,
     })
 }
+
+#[cfg(test)]
+#[path = "rr73_metrics.rs"]
+mod rr73_metrics;
 
 fn spectrum_noise_power(sbase: &[f64], frequency: f64) -> Option<f64> {
     let df_sync = SAMPLE_RATE as f64 / NFFT1 as f64;
