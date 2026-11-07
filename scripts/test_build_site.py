@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from html.parser import HTMLParser
+import hashlib
 from pathlib import Path
 import re
 import tempfile
@@ -72,6 +73,9 @@ class BuildSiteTests(unittest.TestCase):
                 self.assertIn("<strong>1.2.3</strong>", html)
                 self.assertIn(f'href="../{other}/"', html)
                 self.assertRegex(html, r'href="\.\./style\.css\?v=[0-9a-f]{8}"')
+                for chart in ("synthetic", "recording"):
+                    digest = hashlib.sha256((output / f"{chart}.svg").read_bytes()).hexdigest()[:8]
+                    self.assertIn(f'src="../{chart}.svg?v={digest}"', html)
                 self.assertNotIn("<script", html)
                 self.assertNotIn("$", html)
                 for asset in release["assets"]:

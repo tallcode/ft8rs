@@ -61,6 +61,8 @@ def release_values(release):
 def build(release, output):
     values = {key: escape(value, quote=True) for key, value in release_values(release).items()}
     values["style_version"] = hashlib.sha256((SITE / "style.css").read_bytes()).hexdigest()[:8]
+    values["synthetic_version"] = hashlib.sha256((SITE / "synthetic.svg").read_bytes()).hexdigest()[:8]
+    values["recording_version"] = hashlib.sha256((SITE / "recording.svg").read_bytes()).hexdigest()[:8]
     templates = {
         language: Template((SITE / f"{language}.html").read_text(encoding="utf-8"))
         for language in ("zh", "en")
