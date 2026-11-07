@@ -30,9 +30,9 @@ separate FIFO holds its output until all native/SIC publications complete;
 native callbacks never wait for it. Its output is appended through the
 payload-aware ledger, preserving native representatives. Tagged rows use
 `Experiment` / CLI/GUI marker `exp`; passive specialist evidence cannot create
-independent confirmation or seed native AP/hash memory. `--no-hybrid-sic`
-continues to control the original cross-decoder cancellation, not the private
-specialist's internal residual search. The specialist diagnostic is available in
+independent confirmation or seed native AP/hash memory. `StreamDecodeConfig::hybrid_sic`
+controls the cross-decoder cancellation; the specialist has its own residual
+search. The specialist diagnostic is available in
 `HybridSlotDiagnostics.experiment`. Neither its work budget nor an in-flight
 native call guarantees a hard wall-clock completion limit.
 
@@ -106,8 +106,9 @@ and waveform gates, one attempt per direction, three-seed limit and three-second
 start budget are unchanged. Diagnostics report each baseline's completion time
 (WSJT-X, noAGC, AGC) and starts skipped by that budget.
 
-Cross cancellation is enabled by default. CLI `--no-hybrid-sic` and the GUI
-Cross cancellation checkbox disable it while retaining all three baseline sessions.
+The GUI and CLI always enable cross cancellation for Hybrid. For a baseline
+comparison, set `StreamDecodeConfig::hybrid_sic` to `false` to retain all three
+baseline sessions without cross cancellation.
 Generic per-call-pair replay, AP callbook imports and SameParityA7 feedback are
 not enabled.
 

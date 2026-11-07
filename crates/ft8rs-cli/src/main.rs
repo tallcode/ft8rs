@@ -107,18 +107,9 @@ struct DecodeArgs {
     #[arg(long, help_heading = "Decode")]
     nagain: bool,
 
-    /// Disable Hybrid's bounded cross-decoder cancellation round.
-    #[arg(long, help_heading = "Decode")]
-    no_hybrid_sic: bool,
     /// Enable the experimental weak-signal/interference branch (Hybrid only).
     #[arg(long, help_heading = "Decode")]
     hybrid_experiment: bool,
-    /// Disable WSJT-X+ recovery for legacy RR73 and CQ.
-    #[arg(long, help_heading = "Decode")]
-    no_wsjtx_plus_compatibility: bool,
-    /// Disable WSJT-X+ final-stage candidate retries.
-    #[arg(long, help_heading = "Decode")]
-    no_wsjtx_plus_candidate_retry: bool,
 }
 
 #[derive(Args)]
@@ -242,27 +233,10 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
         config.jtdx_threads = usize::from(partitions);
     }
     config.nagain = args.nagain;
-    config.hybrid_sic = !args.no_hybrid_sic;
     if args.hybrid_experiment && config.profile != DecodeProfile::Hybrid {
         return Err("--hybrid-experiment requires --profile hybrid".to_string());
     }
     config.hybrid_experiment = args.hybrid_experiment;
-    let supports_plus_options =
-        config.profile == DecodeProfile::WsjtxPlus || config.hybrid_experiment;
-    if args.no_wsjtx_plus_compatibility && !supports_plus_options {
-        return Err(
-            "--no-wsjtx-plus-compatibility requires --profile wsjtx-plus or --hybrid-experiment"
-                .to_string(),
-        );
-    }
-    config.wsjtx_plus_compatibility = !args.no_wsjtx_plus_compatibility;
-    if args.no_wsjtx_plus_candidate_retry && !supports_plus_options {
-        return Err(
-            "--no-wsjtx-plus-candidate-retry requires --profile wsjtx-plus or --hybrid-experiment"
-                .to_string(),
-        );
-    }
-    config.wsjtx_plus_candidate_retry = !args.no_wsjtx_plus_candidate_retry;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
         return Err("--profile dx requires --his-call CALL".to_string());
     }
@@ -430,35 +404,44 @@ mod tests {
     }
 
     #[test]
-    fn candidate_retry_switch_is_independent_in_plus_and_experimental_hybrid() {
-        for (profile, experiment, disable, compatibility) in [
-            ("wsjtx-plus", false, false, true),
-            ("wsjtx-plus", false, true, true),
-            ("wsjtx-plus", false, false, false),
-            ("hybrid", false, true, true),
-            ("hybrid", true, true, true),
-            ("hybrid", true, false, false),
-        ] {
-            let mut argv = vec!["ft8rs-cli", "file", "input.wav", "--profile", profile];
-            if experiment {
-                argv.push("--hybrid-experiment");
-            }
-            if disable {
-                argv.push("--no-wsjtx-plus-candidate-retry");
-            }
-            if !compatibility {
-                argv.push("--no-wsjtx-plus-compatibility");
-            }
-            let Command::File(args) = Cli::try_parse_from(argv).unwrap().command else {
-                unreachable!()
-            };
-            let config = stream_decode_config(&args.decode);
-            if profile == "wsjtx-plus" || experiment {
-                let config = config.unwrap();
-                assert_eq!(config.wsjtx_plus_candidate_retry, !disable);
-                assert_eq!(config.wsjtx_plus_compatibility, compatibility);
-            } else {
-                assert!(config.is_err());
+    fn recovery_is_enabled_without_public_disable_flags() {
+        for command in ["file", "monitor"] {
+            for (profile, experiment) in
+                [("wsjtx-plus", false), ("hybrid", false), ("hybrid", true)]
+            {
+                let mut argv = vec!["ft8rs-cli", command, "--profile", profile];
+                if command == "file" {
+                    argv.push("input.wav");
+                }
+                if experiment {
+                    argv.push("--hybrid-experiment");
+                }
+                let config = match Cli::try_parse_from(&argv).unwrap().command {
+                    Command::File(args) => stream_decode_config(&args.decode),
+                    Command::Monitor(args) => stream_decode_config(&args.decode),
+                    _ => unreachable!(),
+                }
+                .unwrap();
+                if profile == "wsjtx-plus" || experiment {
+                    assert!(config.wsjtx_plus_compatibility);
+                    assert!(config.wsjtx_plus_candidate_retry);
+                }
+                if profile == "hybrid" {
+                    assert!(config.hybrid_sic);
+                    assert_eq!(config.hybrid_experiment, experiment);
+                }
+                for option in [
+                    "--no-hybrid-sic",
+                    "--no-wsjtx-plus-compatibility",
+                    "--no-wsjtx-plus-candidate-retry",
+                ] {
+                    argv.push(option);
+                    assert_eq!(
+                        Cli::try_parse_from(&argv).err().unwrap().kind(),
+                        clap::error::ErrorKind::UnknownArgument
+                    );
+                    argv.pop();
+                }
             }
         }
     }

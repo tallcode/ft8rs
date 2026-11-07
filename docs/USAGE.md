@@ -101,16 +101,15 @@ RX outside the selected decode band disables QSO focus.
 Choose **WSJT-X+** under **Settings → Decode → Profile** to use the optimized
 receiver. **Compatibility recovery** searches for legacy RR73 and CQ after the
 base decode. **Candidate retry** checks nearby alignments first, then spends a shared budget
-on promising time and frequency offsets for weak or overlapping signals. Both settings are enabled by default
-and can be disabled independently. Use `--profile wsjtx-plus` on the CLI with
-`--no-wsjtx-plus-compatibility` or `--no-wsjtx-plus-candidate-retry`.
+on promising time and frequency offsets for weak or overlapping signals. Both run
+automatically in the GUI and when using `--profile wsjtx-plus` on the CLI.
 
 Hybrid runs three paths: WSJT-X+ with compatibility recovery, JTDX/noAGC and
 JTDX/AGC. Plus compatibility results use the `Pc` marker and are published after
 the baseline and cross-cancellation results.
-**Cross cancellation** is enabled by default and can be disabled without removing
-those baselines. SWL controls both JTDX paths together. The two JTDX variants are
-one algorithm family for evidence accounting.
+**Cross cancellation** runs automatically. SWL controls both JTDX paths together.
+The two JTDX variants are one algorithm family for evidence accounting. Enable
+the experimental decoder to use the **Hybrid + exp** mode from the benchmarks.
 
 DX returns target-related messages and combines its JTDX listener with WSJT-X+
 observation and focused recovery. Plus compatibility results use `Pc`.
@@ -152,7 +151,7 @@ target/release/ft8rs-cli monitor
 
 target/release/ft8rs-cli monitor --device 0 --channel mono --slots 2
 target/release/ft8rs-cli monitor --device "VB-Cable A" --profile jtdx --swl
-target/release/ft8rs-cli monitor --device 0 --profile hybrid --no-hybrid-sic
+target/release/ft8rs-cli monitor --device 0 --profile hybrid
 
 target/release/ft8rs-cli monitor --device 0 --profile dx \
   --my-call F1MLZ --his-call UA3QNA --rx-frequency 1153
@@ -196,8 +195,6 @@ The file command writes console results; UDP output options are monitor-only.
 | `--slots` | `-S` | Monitor | Slot limit; omitted keeps listening |
 | `--start-time` | `-s` | File | First slot timestamp |
 | `--profile` | | Both | `wsjtx` (default), `wsjtx-plus`, `jtdx`, `hybrid`, `dx` |
-| `--no-wsjtx-plus-compatibility` | | Both | Disable legacy RR73/CQ recovery for `wsjtx-plus` |
-| `--no-wsjtx-plus-candidate-retry` | | Both | Disable final-stage candidate retries for `wsjtx-plus` |
 | `--low` / `--high` | `-L` / `-H` | Both | Audio decode bounds, default 200 / 3000 Hz |
 | `--rx-frequency` | `-f` | Both | Focused receive/QSO audio offset in Hz |
 | `--my-call` / `--my-grid` | `-c` / `-G` | Both | Operator context |
@@ -205,7 +202,6 @@ The file command writes console results; UDP output options are monitor-only.
 | `--swl` | | Both | JTDX SWL; both JTDX paths in Hybrid; DX manages its own policy |
 | `--jtdx-threads` | | Both | 0–24 logical partitions; default 1, zero opts into automatic selection |
 | `--nagain` | | Both | JTDX focused deep retry; DX chooses its own focused passes |
-| `--no-hybrid-sic` | | Both | Disable Hybrid cross cancellation, retain three baseline paths |
 | `--hybrid-experiment` | | Both | Opt in to the private weak-signal/interference branch; requires `--profile hybrid` |
 | `--udp` | `-u` | Monitor | Enable outgoing decode reports; default off |
 | `--udp-host` / `--udp-port` | `-o` / `-p` | Monitor | Destination, default `127.0.0.1:2238` |

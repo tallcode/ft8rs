@@ -111,10 +111,7 @@ pub struct Ft8rsApp {
     locale_checked_at: Instant,
     profile: DecodeProfile,
     swl: bool,
-    hybrid_sic: bool,
     hybrid_experiment: bool,
-    wsjtx_plus_compatibility: bool,
-    wsjtx_plus_candidate_retry: bool,
     nagain: bool,
     nfa: String,
     nfb: String,
@@ -251,10 +248,7 @@ impl Ft8rsApp {
             nfqso: load("nfqso", "0"),
             profile,
             swl: load_bool("swl", false),
-            hybrid_sic: load_bool("hybrid_sic", true),
             hybrid_experiment: load_bool("hybrid_experiment", false),
-            wsjtx_plus_compatibility: load_bool("wsjtx_plus_compatibility", true),
-            wsjtx_plus_candidate_retry: load_bool("wsjtx_plus_candidate_retry", true),
             nagain: load_bool("nagain", false),
             nfa: load("nfa", "200"),
             nfb: load("nfb", "3000"),
@@ -338,10 +332,7 @@ impl Ft8rsApp {
             hiscall: norm(&self.hiscall),
             hisgrid: norm(&self.hisgrid),
             swl: self.swl,
-            hybrid_sic: self.hybrid_sic,
             hybrid_experiment: self.hybrid_experiment,
-            wsjtx_plus_compatibility: self.wsjtx_plus_compatibility,
-            wsjtx_plus_candidate_retry: self.wsjtx_plus_candidate_retry,
             nagain: self.nagain,
             filter: self.filter,
             hide_dupes: self.hide_dupes,
@@ -1370,34 +1361,6 @@ impl Ft8rsApp {
                             });
                         self.profile != before
                     });
-                    if self.profile == DecodeProfile::WsjtxPlus
-                        || (self.profile == DecodeProfile::Hybrid && self.hybrid_experiment)
-                    {
-                        commit |= setting_row(ui, tr("Compatibility recovery"), |ui| {
-                            ui.add(egui::Checkbox::without_text(
-                                &mut self.wsjtx_plus_compatibility,
-                            ))
-                            .on_hover_text(tr(
-                                "Search for legacy RR73 and CQ after the base decode.",
-                            ))
-                            .changed()
-                        });
-                        commit |= setting_row(ui, tr("Candidate retry"), |ui| {
-                            ui.add(egui::Checkbox::without_text(
-                                &mut self.wsjtx_plus_candidate_retry,
-                            ))
-                            .on_hover_text(tr(
-                                "Retry nearby alignments for weak or overlapping signals after the base decode.",
-                            ))
-                            .changed()
-                        });
-                    }
-                    if self.profile == DecodeProfile::Hybrid {
-                        commit |= setting_row(ui, tr("Cross cancellation"), |ui| {
-                            ui.add(egui::Checkbox::without_text(&mut self.hybrid_sic))
-                                .changed()
-                        });
-                    }
                     if matches!(self.profile, DecodeProfile::Jtdx | DecodeProfile::Hybrid) {
                         commit |= setting_row(ui, "SWL", |ui| {
                             ui.add(egui::Checkbox::without_text(&mut self.swl))
@@ -1815,16 +1778,7 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("mygrid", self.mygrid.clone());
         storage.set_string("profile", self.profile.as_str().to_string());
         storage.set_string("swl", bs(self.swl));
-        storage.set_string("hybrid_sic", bs(self.hybrid_sic));
         storage.set_string("hybrid_experiment", bs(self.hybrid_experiment));
-        storage.set_string(
-            "wsjtx_plus_compatibility",
-            bs(self.wsjtx_plus_compatibility),
-        );
-        storage.set_string(
-            "wsjtx_plus_candidate_retry",
-            bs(self.wsjtx_plus_candidate_retry),
-        );
         storage.set_string("nagain", bs(self.nagain));
         storage.set_string("nfa", self.nfa.clone());
         storage.set_string("nfb", self.nfb.clone());
