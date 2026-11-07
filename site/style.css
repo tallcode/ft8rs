@@ -22,6 +22,17 @@ header {
   border-bottom: 1px solid #ddd;
 }
 
+.site-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.site-heading img {
+  flex: none;
+}
+
 h1 {
   margin: 0;
   font-size: 2.25rem;
@@ -29,8 +40,8 @@ h1 {
   letter-spacing: -0.04em;
 }
 
-header p {
-  margin: 0.5rem 0 1rem;
+.site-heading p {
+  margin: 0.5rem 0 0;
 }
 
 nav {
