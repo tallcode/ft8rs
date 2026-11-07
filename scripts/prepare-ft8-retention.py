@@ -70,7 +70,7 @@ def main():
             target='UA3QNA' if sources[row[1]]=='230208_140300' else 'F5RXL'
             def included(reference):
                 marker=(reference.get('Extra') or '').strip()
-                mode={'wsjtx':'W','jtdx':'J','dx':'J','hybrid-exp':'He'}.get(row[0],'H')
+                mode={'wsjtx':'W','jtdx':'J','dx':'J','hybrid-exp':'Hecr'}.get(row[0],'H')
                 allowed=mode in marker.split('|')
                 return allowed and (not registry[row[0]] or target in row[3].split())
             classification='target' if any(included(r) for r in candidates) else 'other-reference' if candidates else 'unlabelled'

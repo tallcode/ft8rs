@@ -115,7 +115,7 @@ fn recording(fields: &[String], adapter: Adapter) -> Retention {
         let mode = match adapter.name {
             "wsjtx" => "W",
             "jtdx" | "dx" => "J",
-            "hybrid-exp" => "He",
+            "hybrid-exp" => "Hecr",
             _ => "H",
         };
         let included = marker.split('|').any(|value| value.trim() == mode)

@@ -65,11 +65,10 @@ frozen calibration rows and two supplemental Hybrid-exp checks. Exceptions are
 bound to recording SHA-256, profile, slot, complete message, the 2022 private
 CallDB, optimized build context and this pinned upstream revision. Every absence
 is logged as `EXPECTED UPSTREAM LOSS`; all other identities remain mandatory.
-Original-audio snapshots have no loss exemption. Five exact long-recording CSV
-rows now omit W (four old RR73 and the diagnosed CQ); all other fields and
-J/H/He markers are preserved, so the current W requirement is 429 rows.
-The historical retention corpus
-is unchanged; this policy is separate and is not a native truth oracle.
+Original-audio snapshots have no loss exemption. The original recording
+replay produces all five messages, so its CSV includes their `W` markers
+and requires all 434 rows. The historical retention corpus uses the separate
+fixed-noise policy above.
 
 The original 3.0 protocol, channel and audio data are preserved. The independent
 native `ft8/upstream/wsjtx-3.3/` layer supplies active current packing/rendering
@@ -139,14 +138,14 @@ Release tests protect the active alignment baseline.
 | Fixture | Active target |
 |---|---:|
 | `tests/ft8/210703_133430.wav` | `21/21` WSJT-X target rows; every target row is required |
-| `tests/ft8/230208_140300.wav` | `429/429` WSJT-X target rows |
+| `tests/ft8/230208_140300.wav` | `434/434` WSJT-X target rows |
 
-CSV `Extra` is a pipe-separated list of decoder memberships: `W` (WSJT-X),
-`J` (JTDX), `H` (Hybrid), `He` (Hybrid + experimental decoding). A blank value
-means the reviewed reference message was absent from the fixed replay. The
-long fixture has 429 `W` rows after the five explicitly approved annotation
-changes described above. The historical degraded-recording requirements
-are frozen separately in `tests/decoder/data/ft8/degraded/retention.tsv`.
+CSV `Extra` lists decoder memberships separated by pipes. See
+[recording markers](../../docs/VALIDATION.md#historical-recordings) for the
+decoder and option combinations. A blank value means the reviewed reference
+message was absent from the fixed replay. The historical
+degraded-recording requirements are frozen separately in
+`tests/decoder/data/ft8/degraded/retention.tsv`.
 
 The short test's old `19` acceptance floor was inherited from the early
 streaming decoder and remained after the documented `21/21` milestone. The

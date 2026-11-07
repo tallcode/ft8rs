@@ -357,7 +357,7 @@ fn historical_recordings_preserve_required_rows_and_export_per_message_snapshots
                 let mode = match adapter.name {
                     "wsjtx" => "W",
                     "jtdx" | "dx" => "J",
-                    "hybrid-exp" => "He",
+                    "hybrid-exp" => "Hecr",
                     _ => "H",
                 };
                 let included = marker.split('|').any(|value| value.trim() == mode);
@@ -414,11 +414,11 @@ fn historical_recordings_preserve_required_rows_and_export_per_message_snapshots
             }
             let required = match (adapter.name, long) {
                 ("wsjtx", false) => Some(21),
-                ("wsjtx", true) => Some(429),
+                ("wsjtx", true) => Some(434),
                 ("jtdx", false) => Some(20),
                 ("jtdx", true) => Some(453),
                 ("hybrid", true) => Some(476),
-                ("hybrid-exp", true) => Some(479),
+                ("hybrid-exp", true) => Some(486),
                 _ => None,
             };
             if let Some(required) = required {

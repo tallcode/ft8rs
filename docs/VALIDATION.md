@@ -13,10 +13,12 @@ session. Native baseline tests have SWL/AGC off and no user QSO context.
 
 | Profile | Short recording `210703_133430` | Long recording `230208_140300` |
 |---|---:|---:|
-| WSJT-X (`W`) | 21/21 target rows, every target required | 429/429 target rows |
+| WSJT-X (`W`) | 21/21 target rows, every target required | 434/434 target rows |
+| WSJT-X+ base (`WP`) | 21/21 target rows | 434/434 target rows |
+| WSJT-X+ with recovery and retry (`WPcr`) | 21/21 target rows | 446/446 target rows |
 | JTDX (`J`) | 20/20 target rows | 453/453 target rows, fixed one partition |
 | Hybrid (`H`) | 21/21 target rows | 476/476 target rows |
-| Hybrid + experiment (`He`) | 21/21 target rows | 479/479 target rows |
+| Hybrid + experiment with recovery and retry (`Hecr`) | 21/21 target rows | 486/486 target rows |
 
 The decoder runner uses `ALLCALL7.TXT.2022`, SHA-256:
 
@@ -36,10 +38,11 @@ replay, separated by `|`:
 | Marker | Interpretation |
 |---|---|
 | `W` | WSJT-X |
-| `Wp` | WSJT-X+ with compatibility recovery enabled |
+| `WP` | WSJT-X+ with compatibility recovery and candidate retry disabled |
+| `WPcr` | WSJT-X+ with compatibility recovery (`Pc`) and candidate retry (`Pr`) enabled |
 | `J` | JTDX |
 | `H` | Hybrid |
-| `He` | Hybrid with experimental decoding enabled |
+| `Hecr` | Hybrid with experimental decoding and the shared `Pc` and `Pr` enabled |
 | blank | Reviewed reference message, absent from this fixed replay |
 
 The current fixed replay uses `ALLCALL7.TXT.2022`, 100–3000 Hz for the short
@@ -50,13 +53,16 @@ retention corpus keeps its exact required rows in `retention.tsv`; its diagnosti
 classification uses the current CSV. Raw output counts can include unlabelled
 rows and must not be confused with target coverage.
 
-WSJT-X+ requires all 21 short and 434 long `Wp` rows by slot and message.
-The staged profile retention gate is `test_wsjtx_plus_preserves_wp_recording_baseline`.
+The `WP` gate checks per-slot parity with `W`, including the output order,
+message text, frequency, DT, SNR and tones. The staged `WPcr` gate checks all
+21 short and 446 long reference rows. On the long recording, `Hecr` retains
+all 479 reference rows from experimental Hybrid before candidate retry was
+enabled, and adds seven reference rows through `Pr`.
 
 The known pure JTDX long miss remains:
 
 ```text
-230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,
+230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,WPcr|Hecr
 ```
 
 It cannot be offset by a different new row. The WSJT-X short test's former floor
@@ -229,11 +235,11 @@ also matches HEAD; only its tests adapt frozen current input, exact identities
 and malformed-text fixtures to the current encoder. Cleanup adds no decoder
 algorithm or performance change.
 
-All real WAVs are byte-identical. Five exact long-recording CSV observations
-now omit W: old RR73 at slots 3,8,13,13 and CQ OH8CMS KP24 at slot11. The CQ
-has a separately diagnosed current-codec sentinel effect, not an RR73 grid
-cause. Other fields and J/H/He markers are unchanged. The current raw W target
-requirement is 429 rather than 434. This label edit does not filter outputs.
+The fixed-noise replay diagnosed five WSJT-X misses across the long-recording
+variants. Four legacy RR73 messages were missed at +1 dB, in slots 3, 8 and 13.
+An A7 sentinel affected `CQ OH8CMS KP24` in slot 11 at +1 and +3 dB. The
+original recording produces all five messages and its CSV includes their
+`W` markers.
 The frozen 1,458-row degraded-retention corpus and its exact ten-observation
 upstream policy remain unchanged; 1,450 non-exempt calibrated requirements and
 all other supplemental requirements remain mandatory.

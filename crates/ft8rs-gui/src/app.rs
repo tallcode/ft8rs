@@ -1370,7 +1370,9 @@ impl Ft8rsApp {
                             });
                         self.profile != before
                     });
-                    if self.profile == DecodeProfile::WsjtxPlus {
+                    if self.profile == DecodeProfile::WsjtxPlus
+                        || (self.profile == DecodeProfile::Hybrid && self.hybrid_experiment)
+                    {
                         commit |= setting_row(ui, tr("Compatibility recovery"), |ui| {
                             ui.add(egui::Checkbox::without_text(
                                 &mut self.wsjtx_plus_compatibility,

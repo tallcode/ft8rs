@@ -247,12 +247,20 @@ fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String>
         return Err("--hybrid-experiment requires --profile hybrid".to_string());
     }
     config.hybrid_experiment = args.hybrid_experiment;
-    if args.no_wsjtx_plus_compatibility && config.profile != DecodeProfile::WsjtxPlus {
-        return Err("--no-wsjtx-plus-compatibility requires --profile wsjtx-plus".to_string());
+    let supports_plus_options =
+        config.profile == DecodeProfile::WsjtxPlus || config.hybrid_experiment;
+    if args.no_wsjtx_plus_compatibility && !supports_plus_options {
+        return Err(
+            "--no-wsjtx-plus-compatibility requires --profile wsjtx-plus or --hybrid-experiment"
+                .to_string(),
+        );
     }
     config.wsjtx_plus_compatibility = !args.no_wsjtx_plus_compatibility;
-    if args.no_wsjtx_plus_candidate_retry && config.profile != DecodeProfile::WsjtxPlus {
-        return Err("--no-wsjtx-plus-candidate-retry requires --profile wsjtx-plus".to_string());
+    if args.no_wsjtx_plus_candidate_retry && !supports_plus_options {
+        return Err(
+            "--no-wsjtx-plus-candidate-retry requires --profile wsjtx-plus or --hybrid-experiment"
+                .to_string(),
+        );
     }
     config.wsjtx_plus_candidate_retry = !args.no_wsjtx_plus_candidate_retry;
     if config.profile == DecodeProfile::Dx && config.hiscall.is_none() {
@@ -422,14 +430,19 @@ mod tests {
     }
 
     #[test]
-    fn candidate_retry_switch_is_plus_only_and_independent() {
-        for (profile, disable, compatibility) in [
-            ("wsjtx-plus", false, true),
-            ("wsjtx-plus", true, true),
-            ("wsjtx-plus", false, false),
-            ("hybrid", true, true),
+    fn candidate_retry_switch_is_independent_in_plus_and_experimental_hybrid() {
+        for (profile, experiment, disable, compatibility) in [
+            ("wsjtx-plus", false, false, true),
+            ("wsjtx-plus", false, true, true),
+            ("wsjtx-plus", false, false, false),
+            ("hybrid", false, true, true),
+            ("hybrid", true, true, true),
+            ("hybrid", true, false, false),
         ] {
             let mut argv = vec!["ft8rs-cli", "file", "input.wav", "--profile", profile];
+            if experiment {
+                argv.push("--hybrid-experiment");
+            }
             if disable {
                 argv.push("--no-wsjtx-plus-candidate-retry");
             }
@@ -440,7 +453,7 @@ mod tests {
                 unreachable!()
             };
             let config = stream_decode_config(&args.decode);
-            if profile == "wsjtx-plus" {
+            if profile == "wsjtx-plus" || experiment {
                 let config = config.unwrap();
                 assert_eq!(config.wsjtx_plus_candidate_retry, !disable);
                 assert_eq!(config.wsjtx_plus_compatibility, compatibility);

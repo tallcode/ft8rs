@@ -169,10 +169,10 @@ impl A7SaveEntry {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StreamDecodeConfig {
     pub profile: DecodeProfile,
-    /// Search for legacy RR73 and CQ in WSJT-X+ after the base decode.
+    /// Search for legacy RR73 and CQ in WSJT-X+ and experimental Hybrid.
     #[serde(default = "default_enabled")]
     pub wsjtx_plus_compatibility: bool,
-    /// Retry final-stage candidates after the base decode in standalone WSJT-X+.
+    /// Retry final-stage candidates in WSJT-X+ and experimental Hybrid.
     #[serde(default = "default_enabled")]
     pub wsjtx_plus_candidate_retry: bool,
     pub nfa: f64,

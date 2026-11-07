@@ -66,6 +66,8 @@ pub const ADAPTERS: [Adapter; 5] = [
         preserves_native: true,
         build: |mut c| {
             c.hybrid_experiment = true;
+            c.wsjtx_plus_compatibility = true;
+            c.wsjtx_plus_candidate_retry = true;
             native(c, DecodeProfile::Hybrid)
         },
     },

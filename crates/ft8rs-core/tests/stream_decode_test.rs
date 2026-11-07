@@ -6,7 +6,7 @@ use ft8rs::stream::{
     StreamDecodeSession,
 };
 const SHORT_TARGET_COUNT: usize = 21;
-const LONG_TARGET_ACCEPTED_FLOOR: usize = 429;
+const LONG_TARGET_ACCEPTED_FLOOR: usize = 434;
 const JTDX_SHORT_TARGET_ACCEPTED_FLOOR: usize = 20;
 const JTDX_LONG_TARGET_ACCEPTED_FLOOR: usize = 453;
 const JTDX_LONG_ONE_PARTITION_TARGET_COUNT: usize = 453;
@@ -173,13 +173,73 @@ fn is_ignored_jtdx_baseline_marker(value: &str) -> bool {
 }
 
 #[test]
-#[ignore = "serial optimized WSJT-X+ recording retention gate"]
-fn test_wsjtx_plus_preserves_wp_recording_baseline() {
+#[ignore = "serial optimized WSJT-X and pure WSJT-X+ recording comparison"]
+fn test_pure_wsjtx_plus_matches_wsjtx_recordings() {
     assert_release_mode();
-    for (file, nfa, expected_count) in [("210703_133430", 100.0, 21), ("230208_140300", 200.0, 434)]
+    for (file, nfa) in [("210703_133430", 100.0), ("230208_140300", 200.0)] {
+        let baseline = parse_baseline_with(&format!("tests/ft8/{file}.csv"), |extra| {
+            let marked = |mode| extra.split('|').any(|mark| mark.trim() == mode);
+            assert_eq!(marked("W"), marked("WP"), "inconsistent markers: {extra}");
+            !marked("WP")
+        });
+        let mut expected: std::collections::BTreeSet<_> = baseline
+            .into_iter()
+            .filter(|row| !row.ignored)
+            .map(|row| (row.seg, row.norm_msg))
+            .collect();
+        let config = StreamDecodeConfig {
+            nfa,
+            wsjtx_plus_compatibility: false,
+            wsjtx_plus_candidate_retry: false,
+            ..Default::default()
+        };
+        let mut original = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+            profile: DecodeProfile::Wsjtx,
+            ..config.clone()
+        });
+        let mut plus = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+            profile: DecodeProfile::WsjtxPlus,
+            ..config
+        });
+        let samples = samples_12k_from_wav(&format!("tests/ft8/{file}.wav"));
+        let start = SlotTimestamp::parse(file).unwrap();
+        let mut total = 0;
+        for (slot, audio) in samples.chunks(180_000).enumerate() {
+            let timestamp = start.add_seconds(slot as i64 * 15);
+            let w = original.decode_slot_at(&timestamp, audio);
+            let wp = plus.decode_slot_at(&timestamp, audio);
+            assert_eq!(w.len(), wp.len(), "{file}, slot {slot}");
+            total += w.len();
+            for (w, wp) in w.iter().zip(&wp) {
+                assert_eq!(w.msg, wp.msg, "{file}, slot {slot}");
+                assert_eq!(w.freq, wp.freq, "{file}, slot {slot}: {}", w.msg);
+                assert_eq!(w.dt, wp.dt, "{file}, slot {slot}: {}", w.msg);
+                assert_eq!(w.snr, wp.snr, "{file}, slot {slot}: {}", w.msg);
+                assert_eq!(w.itone, wp.itone, "{file}, slot {slot}: {}", w.msg);
+                assert!(
+                    (w.sync - wp.sync).abs() <= 1e-9,
+                    "{file}, slot {slot}: {}",
+                    w.msg
+                );
+                expected.remove(&(slot, norm(&wp.msg)));
+            }
+        }
+        assert!(
+            expected.is_empty(),
+            "missing WP rows for {file}: {expected:?}"
+        );
+        eprintln!("WSJT-X and pure WSJT-X+ {file}: all {total} outputs agree");
+    }
+}
+
+#[test]
+#[ignore = "serial optimized WSJT-X+ recording retention gate"]
+fn test_wsjtx_plus_preserves_wpcr_recording_baseline() {
+    assert_release_mode();
+    for (file, nfa, expected_count) in [("210703_133430", 100.0, 21), ("230208_140300", 200.0, 446)]
     {
         let baseline = parse_baseline_with(&format!("tests/ft8/{file}.csv"), |extra| {
-            !extra.split('|').any(|mode| mode.trim() == "Wp")
+            !extra.split('|').any(|mode| mode.trim() == "WPcr")
         });
         let mut expected: std::collections::BTreeSet<_> = baseline
             .into_iter()
@@ -206,6 +266,8 @@ fn test_wsjtx_plus_preserves_wp_recording_baseline() {
         let start = SlotTimestamp::parse(file).unwrap();
         let mut decoder = ProfileStreamDecodeSession::new(StreamDecodeConfig {
             profile: DecodeProfile::WsjtxPlus,
+            wsjtx_plus_compatibility: true,
+            wsjtx_plus_candidate_retry: true,
             nfa,
             ..Default::default()
         });
@@ -218,11 +280,12 @@ fn test_wsjtx_plus_preserves_wp_recording_baseline() {
                     emitted.insert(msg.clone()),
                     "duplicate callback at {timestamp:?}: {msg}"
                 );
+                let identity = (slot, msg);
+                expected.remove(&identity);
                 if row.provenance == StreamDecodeProvenance::CandidateRetry {
-                    retry_targets.remove(&(slot, msg));
+                    retry_targets.remove(&identity);
                 } else {
                     base_count += 1;
-                    expected.remove(&(slot, msg));
                 }
                 Ok(())
             };
@@ -253,7 +316,7 @@ fn test_wsjtx_plus_preserves_wp_recording_baseline() {
         }
         assert!(
             expected.is_empty(),
-            "missing Wp rows for {file}: {expected:?}"
+            "missing WPcr rows for {file}: {expected:?}"
         );
         if file == "230208_140300" {
             assert_eq!(base_count, 435, "WSJT-X+ long recording base count");
@@ -262,7 +325,7 @@ fn test_wsjtx_plus_preserves_wp_recording_baseline() {
             retry_targets.is_empty(),
             "missing final-stage retries for {file}: {retry_targets:?}"
         );
-        eprintln!("WSJT-X+ {file}: all {expected_count} Wp rows retained");
+        eprintln!("WSJT-X+ {file}: all {expected_count} WPcr rows retained");
     }
 }
 

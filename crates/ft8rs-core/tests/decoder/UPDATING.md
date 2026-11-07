@@ -35,12 +35,10 @@ ad-hoc test runs without this context receive no exemption. A new upstream
 revision requires policy review; do not expand this list to unrelated messages.
 The wsjtx+ compatibility target retains these five messages as required gains.
 
-The current real-recording CSV removes only W from those five exact long-recording
-rows (four old RR73 plus the diagnosed CQ), keeping all other fields and J/H/He.
-Raw W requirements therefore number 429. `retention.json` retains the original
-calibration CSV hashes and its frozen 1,458 rows; these are historical provenance,
-not a request to regenerate the baseline after a label edit. Its separate ten
-exact allowances still apply, including the supplemental Hybrid-exp CQ cases.
+The real-recording CSV includes the five `W` markers observed in original audio,
+for a total of 434. `retention.json` records the calibration CSV hashes and the
+frozen 1,458 rows used for the fixed-noise replay. Its ten exact allowances still
+apply, including the supplemental Hybrid-exp CQ cases.
 
 ## Current RR73 sensitivity inputs
 

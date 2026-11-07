@@ -13,6 +13,12 @@ Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md).
 `--profile hybrid --hybrid-experiment` enables the ft8rs single-slot receive DSP.
 It is disabled by default and has no standalone profile or public decoder API.
 The GUI exposes **Experimental decoder** in Hybrid's Decode settings.
+With the experimental mode on, the WSJT-X+ leg uses the same compatibility
+recovery (`Pc`) and candidate retry (`Pr`) as standalone Plus. The recording
+marker for both options enabled is `Hecr`. The two Plus switches also apply
+to this mode. Hybrid starts downstream work when the Plus baseline and
+compatibility callbacks finish. It publishes retries after existing results
+and excludes them from SIC inputs and passive evidence.
 See [specialist implementation](src/decode/experiment/README.md)
 for the independent front end, soft metrics, conditional waveform admission,
 single residual search and known limitations.

@@ -9,7 +9,7 @@ use crate::decode::lib_wsjtx_plus::ft8_a7::{
 };
 use crate::decode::lib_wsjtx_plus::ft8_decode::{
     decode_f64_with_sbase, decode_f64_with_sbase_and_residual, ft8_a8d_result, DecodeOptions,
-    DecodedMessage,
+    DecodedMessage, FinalRetry,
 };
 use crate::decode::lib_wsjtx_plus::subtractft8::subtract_ft8_refined;
 use crate::stream::time::SlotTimestamp;
@@ -297,6 +297,36 @@ impl StreamDecodeSession {
         self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
     }
 
+    /// Signals the end of baseline and compatibility callbacks with `None`.
+    pub(crate) fn decode_hybrid_slot_tagged(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        staged: Option<StreamSlotDecodeState>,
+        samples: &[f32],
+        mut on_event: impl FnMut(Option<&StreamDecodedWithProvenance>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let is_file = staged.is_none();
+        let mut state = staged
+            .or_else(|| self.slot_state.take())
+            .unwrap_or_else(|| self.start_slot_decode());
+        let result = (|| {
+            let mut emit = |row: &StreamDecodedWithProvenance| on_event(Some(row));
+            if is_file {
+                state.reset_for_slot();
+                self.decode_slot_nzhsym41_tagged(timestamp, &mut state, samples, &mut emit)?;
+                self.subtract_slot_nzhsym47(&mut state, samples);
+            }
+            let pending = self.decode_slot_nzhsym50_base(&mut state, samples, emit)?;
+            // Allow Hybrid to start downstream work before the retry search.
+            on_event(None)?;
+            Self::finish_candidate_retry(&mut state, pending, |row| on_event(Some(row)))
+        })();
+        if is_file {
+            self.slot_state = Some(state);
+        }
+        result
+    }
+
     fn decode_slot_nzhsym50_and_finish_state<F>(
         &mut self,
         state: &mut StreamSlotDecodeState,
@@ -306,6 +336,17 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
+        let pending = self.decode_slot_nzhsym50_base(state, samples, &mut on_decode)?;
+        Self::finish_candidate_retry(state, pending, on_decode)?;
+        Ok(std::mem::take(&mut state.merged))
+    }
+
+    fn decode_slot_nzhsym50_base(
+        &mut self,
+        state: &mut StreamSlotDecodeState,
+        samples: &[f32],
+        mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    ) -> Result<Option<(FinalRetry, Vec<f64>)>, String> {
         fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 50, &mut state.work);
         if !self.params.nagain {
@@ -510,7 +551,15 @@ impl StreamDecodeSession {
                 }
             }
         }
-        if let Some(mut retry) = retry {
+        Ok(retry.map(|retry| (retry, sbase)))
+    }
+
+    fn finish_candidate_retry(
+        state: &mut StreamSlotDecodeState,
+        pending: Option<(FinalRetry, Vec<f64>)>,
+        mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if let Some((mut retry, sbase)) = pending {
             retry.sort_peaks();
             for result in retry.recover_local(&sbase, &state.merged) {
                 push_candidate_retry(state, result, &mut on_decode)?;
@@ -520,7 +569,7 @@ impl StreamDecodeSession {
                 push_candidate_retry(state, result, &mut on_decode)
             })?;
         }
-        Ok(std::mem::take(&mut state.merged))
+        Ok(())
     }
 
     fn fine_rr73_target(&self) -> Option<&str> {

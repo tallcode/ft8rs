@@ -107,14 +107,17 @@ pub fn config_diff(old: &StreamDecodeConfig, new: &StreamDecodeConfig) -> BTreeS
         }
     };
     note(old.profile != new.profile, ConfigField::Profile);
+    let uses_plus_options = |config: &StreamDecodeConfig| {
+        config.profile == DecodeProfile::WsjtxPlus
+            || (config.profile == DecodeProfile::Hybrid && config.hybrid_experiment)
+    };
+    let plus_options_active = uses_plus_options(old) || uses_plus_options(new);
     note(
-        (old.profile == DecodeProfile::WsjtxPlus || new.profile == DecodeProfile::WsjtxPlus)
-            && old.wsjtx_plus_compatibility != new.wsjtx_plus_compatibility,
+        plus_options_active && old.wsjtx_plus_compatibility != new.wsjtx_plus_compatibility,
         ConfigField::WsjtxPlusCompatibility,
     );
     note(
-        (old.profile == DecodeProfile::WsjtxPlus || new.profile == DecodeProfile::WsjtxPlus)
-            && old.wsjtx_plus_candidate_retry != new.wsjtx_plus_candidate_retry,
+        plus_options_active && old.wsjtx_plus_candidate_retry != new.wsjtx_plus_candidate_retry,
         ConfigField::WsjtxPlusCandidateRetry,
     );
     note(old.mycall != new.mycall, ConfigField::MyCall);
@@ -261,6 +264,11 @@ mod tests {
         old.config.profile = DecodeProfile::Hybrid;
         new.config.profile = DecodeProfile::Hybrid;
         assert!(plan_reconfig(&old, &new).is_noop());
+        old.config.hybrid_experiment = true;
+        new.config.hybrid_experiment = true;
+        let plan = plan_reconfig(&old, &new);
+        assert!(plan.rebuild_session);
+        assert!(!plan.restart_capture);
     }
 
     #[test]

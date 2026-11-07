@@ -12,7 +12,8 @@ use crate::decode::lib_wsjtx_plus::session::{
 };
 use crate::decode::lib_wsjtx_plus::subtractft8::subtract_ft8;
 use crate::stream::session::{
-    StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage, StreamDecodedWithProvenance,
+    DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage,
+    StreamDecodedWithProvenance,
 };
 use crate::stream::time::SlotTimestamp;
 
@@ -160,9 +161,14 @@ fn baseline_snapshot(
 /// In-progress state for the WSJT-X leg of a Hybrid slot.
 pub struct HybridSlotDecodeState(WsjtxPlusSlotState);
 
-fn wsjtx_session(config: &StreamDecodeConfig, compatibility: bool) -> WsjtxPlusSession {
+fn wsjtx_session(config: &StreamDecodeConfig, primary: bool) -> WsjtxPlusSession {
     let mut config = config.clone_for_profile_wsjt_x();
-    config.wsjtx_plus_compatibility = compatibility;
+    // Only the experimental profile's primary leg can run candidate retries.
+    if primary && config.hybrid_experiment {
+        config.profile = DecodeProfile::WsjtxPlus;
+    }
+    config.wsjtx_plus_compatibility =
+        primary && (!config.hybrid_experiment || config.wsjtx_plus_compatibility);
     WsjtxPlusSession::new(config)
 }
 
@@ -336,39 +342,64 @@ impl HybridStreamDecodeSession {
         let jtdx_agc = &mut self.jtdx_agc;
         let mut baseline = None;
         let mut experiment_rows = Vec::new();
-        let mut wsjtx_rows = self.early.clone();
+        let mut wsjtx_rows = Some(self.early.clone());
         thread::scope(|scope| {
             let mut experiment_rx = None;
             let (tx, rx) = mpsc::channel();
+            let (retry_tx, retry_rx) = mpsc::channel();
             let w_tx = tx.clone();
             scope.spawn(move || {
+                let staged = state.is_some();
                 let result = guard_worker(|| {
-                    let staged = state.is_some();
-                    let mut collect = |row: &StreamDecodedWithProvenance| {
-                        let event = if row.provenance == StreamDecodeProvenance::PlusCompatibility {
-                            WorkerEvent::WsjtxCompatibility(row.decode.clone())
-                        } else {
-                            let mut tagged = row.clone();
-                            if staged || tagged.provenance == StreamDecodeProvenance::Regular {
-                                tagged.provenance = wsjtx_provenance(&row.decode);
-                            }
-                            wsjtx_rows.push(tagged);
-                            WorkerEvent::Row(SignalSource::Wsjtx, row.decode.clone())
-                        };
-                        w_tx.send(event)
-                            .map_err(|_| "hybrid event receiver closed".to_string())
-                    };
-                    match state {
-                        Some(state) => {
-                            wsjtx.decode_slot_nzhsym50_tagged(state.0, samples, &mut collect)
-                        }
-                        None => {
-                            wsjtx.decode_slot_streaming_tagged_at(timestamp, samples, &mut collect)
-                        }
-                    }?;
-                    Ok(wsjtx_rows)
+                    wsjtx.decode_hybrid_slot_tagged(
+                        timestamp,
+                        state.map(|state| state.0),
+                        samples,
+                        |row| {
+                            let event = match row {
+                                None => WorkerEvent::Done(
+                                    SignalSource::Wsjtx,
+                                    Ok(wsjtx_rows.take().expect("WSJT-X baseline completed twice")),
+                                ),
+                                Some(row)
+                                    if row.provenance == StreamDecodeProvenance::CandidateRetry =>
+                                {
+                                    return retry_tx
+                                        .send(Ok(row.decode.clone()))
+                                        .map_err(|_| "hybrid retry receiver closed".to_string());
+                                }
+                                Some(row)
+                                    if row.provenance
+                                        == StreamDecodeProvenance::PlusCompatibility =>
+                                {
+                                    WorkerEvent::WsjtxCompatibility(row.decode.clone())
+                                }
+                                Some(row) => {
+                                    let mut tagged = row.clone();
+                                    if staged
+                                        || tagged.provenance == StreamDecodeProvenance::Regular
+                                    {
+                                        tagged.provenance = wsjtx_provenance(&row.decode);
+                                    }
+                                    wsjtx_rows
+                                        .as_mut()
+                                        .expect("WSJT-X baseline already completed")
+                                        .push(tagged);
+                                    WorkerEvent::Row(SignalSource::Wsjtx, row.decode.clone())
+                                }
+                            };
+                            w_tx.send(event)
+                                .map_err(|_| "hybrid event receiver closed".to_string())
+                        },
+                    )
                 });
-                let _ = w_tx.send(WorkerEvent::Done(SignalSource::Wsjtx, result));
+                if let Err(error) = result {
+                    if wsjtx_rows.is_some() {
+                        let _ = w_tx.send(WorkerEvent::Done(SignalSource::Wsjtx, Err(error)));
+                    } else {
+                        let _ = retry_tx.send(Err(error));
+                    }
+                }
             });
             let j_tx = tx.clone();
             scope.spawn(move || {
@@ -649,6 +680,23 @@ impl HybridStreamDecodeSession {
                     &mut first_error,
                     &mut on_decode,
                 );
+            }
+            // Retry output follows existing representatives and is never
+            // offered as native evidence, to SIC, or to the experiment.
+            for result in retry_rx {
+                match result {
+                    Ok(row) => publish(
+                        &mut ledger,
+                        SignalSource::Recovery,
+                        &row,
+                        StreamDecodeProvenance::CandidateRetry,
+                        &mut first_error,
+                        &mut on_decode,
+                    ),
+                    Err(error) => {
+                        first_error.get_or_insert(error);
+                    }
+                }
             }
         });
         let baseline = baseline.unwrap_or_default();
