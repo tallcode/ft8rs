@@ -188,7 +188,8 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, |_| Ok(()))
+        .expect("infallible decode callback");
     msgs
 }
 
@@ -198,7 +199,8 @@ pub fn decode_f64(samples: &[f64], options: DecodeOptions) -> Vec<DecodedMessage
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, |_| Ok(()))
+        .expect("infallible decode callback");
     msgs
 }
 
@@ -207,23 +209,31 @@ pub fn decode_f64_with_sbase(
     samples: &[f64],
     options: DecodeOptions,
 ) -> (Vec<DecodedMessage>, Vec<f64>) {
-    let t_start = std::time::Instant::now();
-    let len = samples.len().min(NMAX);
-    let dd = samples[..len].to_vec();
-    let t_dd = t_start.elapsed();
-    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start);
-    (msgs, sbase)
+    let (messages, sbase, _) = decode_f64_with_sbase_and_residual(samples, options);
+    (messages, sbase)
 }
 
 pub fn decode_f64_with_sbase_and_residual(
     samples: &[f64],
     options: DecodeOptions,
 ) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
+    decode_f64_streaming_with_residual(samples, options, |_| Ok(()))
+        .expect("infallible decode callback")
+}
+
+type DecodeSearch = (Vec<DecodedMessage>, Vec<f64>, Vec<f64>);
+
+/// Decode directly from f64 samples, publishing each accepted candidate.
+pub(crate) fn decode_f64_streaming_with_residual(
+    samples: &[f64],
+    options: DecodeOptions,
+    on_decode: impl FnMut(&DecodedMessage) -> Result<(), String>,
+) -> Result<DecodeSearch, String> {
     let t_start = std::time::Instant::now();
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    decode_from_f64(dd, options, t_dd, t_start)
+    decode_from_f64(dd, options, t_dd, t_start, on_decode)
 }
 
 /// Decode returning both messages and the sbase noise baseline.
@@ -239,7 +249,8 @@ pub fn decode_with_sbase(
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start);
+    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start, |_| Ok(()))
+        .expect("infallible decode callback");
     (msgs, sbase)
 }
 
@@ -248,7 +259,8 @@ fn decode_from_f64(
     options: DecodeOptions,
     _t_dd: std::time::Duration,
     _t_start: std::time::Instant,
-) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
+    mut on_decode: impl FnMut(&DecodedMessage) -> Result<(), String>,
+) -> Result<DecodeSearch, String> {
     // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
     if dd.len() > NMAX {
         dd.truncate(NMAX);
@@ -339,25 +351,25 @@ fn decode_from_f64(
                 &mut cand_ws,
             ) {
                 let message_key = normalize_message_key(&r.msg);
-                crate::decode::subtractft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
-                if seen_messages.contains(&message_key) {
-                    continue;
+                if seen_messages.insert(message_key) {
+                    ndecodes_total += 1;
+                    let message = DecodedMessage {
+                        freq: r.freq,
+                        dt: r.dt - 0.5,
+                        snr: r.snr,
+                        msg: r.msg.clone(),
+                        sync: cand.sync,
+                        itone: r.itone.to_vec(),
+                    };
+                    on_decode(&message)?;
+                    decoded.push(message);
                 }
-                seen_messages.insert(message_key);
-                ndecodes_total += 1;
-                decoded.push(DecodedMessage {
-                    freq: r.freq,
-                    dt: r.dt - 0.5,
-                    snr: r.snr,
-                    msg: r.msg.clone(),
-                    sync: cand.sync,
-                    itone: r.itone.to_vec(),
-                });
+                crate::decode::subtractft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);
             }
         }
     }
 
-    (decoded, sbase, residual)
+    Ok((decoded, sbase, residual))
 }
 
 fn default_outer_sync_min(depth: usize) -> f64 {

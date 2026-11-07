@@ -9,6 +9,21 @@ use crate::stream::session::{
     StreamDecodedWithProvenance,
 };
 use crate::stream::time::SlotTimestamp;
+use std::time::Instant;
+
+pub use crate::decode::cooperative::ledger::same_signal;
+pub use crate::decode::lib_jtdx::{JtdxBranch, JtdxCheckpoint, JtdxRestore};
+pub use crate::decode::lib_wsjtx_plus::session::A7Snapshot;
+
+pub type JtdxCheckpointSink<'a> = dyn FnMut(JtdxBranch, JtdxCheckpoint, bool) + 'a;
+
+/// Optional controls for a supervised live N50 decode.
+#[derive(Default)]
+pub struct SlotRecovery<'a> {
+    pub deadline: Option<Instant>,
+    pub checkpoint: Option<&'a mut dyn FnMut(A7Snapshot)>,
+    pub jtdx_checkpoint: Option<&'a mut JtdxCheckpointSink<'a>>,
+}
 
 /// Per-slot state for profiles using this wrapper's progressive monitor stages.
 pub enum ProfileSlotState {
@@ -38,6 +53,30 @@ impl ProfileStreamDecodeSession {
             )),
             DecodeProfile::Hybrid => Self::Hybrid(HybridStreamDecodeSession::new(config)),
             DecodeProfile::Dx => Self::Dx(DxStreamDecodeSession::new(config)),
+        }
+    }
+
+    /// Restore the predecessor of this N41 in a replacement live worker.
+    pub fn restore_a7(&mut self, timestamp: &SlotTimestamp, snapshot: A7Snapshot) {
+        match self {
+            Self::WsjtxPlus(session) => session.restore_a7(timestamp, snapshot),
+            Self::Hybrid(session) => session.restore_a7(timestamp, snapshot),
+            Self::Wsjtx(session) => session.restore_a7(timestamp, snapshot),
+            Self::Dx(session) => session.restore_a7(timestamp, snapshot),
+            Self::Jtdx(_) => {}
+        }
+    }
+
+    pub fn restore_jtdx(&mut self, [primary, complement]: [Option<JtdxRestore>; 2]) {
+        match self {
+            Self::Jtdx(session) => {
+                if let Some(primary) = primary {
+                    session.restore_history(primary);
+                }
+            }
+            Self::Hybrid(session) => session.restore_jtdx(primary, complement),
+            Self::Dx(session) => session.restore_jtdx(primary, complement),
+            _ => {}
         }
     }
 
@@ -115,15 +154,9 @@ impl ProfileStreamDecodeSession {
                 }
                 Ok(rows.len())
             }
-            Self::Jtdx(session) => {
-                let rows =
-                    session
-                        .decode_slot_streaming_with_provenance_at(timestamp, samples, |_| Ok(()))?;
-                for row in &rows {
-                    on_decode(row)?;
-                }
-                Ok(rows.len())
-            }
+            Self::Jtdx(session) => session
+                .decode_slot_tagged(timestamp, samples, None, on_decode)
+                .map(|rows| rows.len()),
             Self::WsjtxPlus(session) => session
                 .decode_slot_streaming_tagged_at(timestamp, samples, on_decode)
                 .map(|rows| rows.len()),
@@ -211,6 +244,26 @@ impl ProfileStreamDecodeSession {
         state: ProfileSlotState,
         _early_count: usize,
         samples: &[f32],
+        on_decode: F,
+    ) -> Result<usize, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
+        self.finish_slot_nzhsym50(
+            timestamp,
+            state,
+            samples,
+            SlotRecovery::default(),
+            on_decode,
+        )
+    }
+
+    pub fn finish_slot_nzhsym50<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        state: ProfileSlotState,
+        samples: &[f32],
+        recovery: SlotRecovery<'_>,
         mut on_decode: F,
     ) -> Result<usize, String>
     where
@@ -222,21 +275,37 @@ impl ProfileStreamDecodeSession {
                     return Err("wsjtx-plus nzhsym=50 without slot state".to_string());
                 };
                 session
-                    .decode_slot_nzhsym50_tagged(state, samples, on_decode)
+                    .decode_slot_nzhsym50_tagged(state, samples, recovery, on_decode)
                     .map(|rows| rows.len())
             }
             Self::Hybrid(session) => {
                 let ProfileSlotState::Hybrid(state) = state else {
                     return Err("hybrid nzhsym=50 without hybrid slot state".to_string());
                 };
-                let merged = session.decode_slot_nzhsym50_tagged(
+                let merged = session.finish_slot_nzhsym50(
                     timestamp,
                     state,
                     samples,
+                    recovery,
                     &mut on_decode,
                 )?;
                 Ok(merged.len())
             }
+            Self::Jtdx(session) => {
+                let mut checkpoint = recovery.jtdx_checkpoint;
+                let enabled = checkpoint.is_some();
+                let mut send = |update| {
+                    if let Some(checkpoint) = checkpoint.as_deref_mut() {
+                        checkpoint(JtdxBranch::Primary, update, true);
+                    }
+                };
+                session
+                    .decode_slot_tagged(timestamp, samples, enabled.then_some(&mut send), on_decode)
+                    .map(|rows| rows.len())
+            }
+            Self::Dx(session) => session
+                .decode_slot_supervised(timestamp, samples, recovery, on_decode)
+                .map(|rows| rows.len()),
             session => {
                 session.decode_slot_streaming_with_provenance_at(timestamp, samples, on_decode)
             }

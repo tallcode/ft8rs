@@ -30,6 +30,9 @@ pub mod ft8v2;
 pub mod gen_ft8wave;
 pub mod genft8;
 pub mod genft8sd;
+mod history;
+use history::{HistoryHints, JtdxConfirmed};
+pub use history::{JtdxBranch, JtdxCheckpoint, JtdxRestore};
 pub mod indexx;
 pub mod msgparser;
 pub mod partintft8;
@@ -138,11 +141,59 @@ impl JtdxStreamDecodeSession {
         &mut self,
         timestamp: &SlotTimestamp,
         samples: &[f32],
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    {
+        self.decode_slot_with_deadline(timestamp, samples, None, on_decode)
+    }
+
+    pub(crate) fn decode_slot_with_deadline<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        deadline: Option<std::time::Instant>,
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
+        self.decode_slot_inner(timestamp, samples, deadline, |row, _| {
+            on_decode(&row.decode)
+        })
+    }
+
+    pub(crate) fn decode_slot_tagged(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        mut checkpoint: Option<&mut dyn FnMut(JtdxCheckpoint)>,
+        mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    ) -> Result<Vec<StreamDecodedWithProvenance>, String> {
+        self.decode_slot_inner(timestamp, samples, None, |row, hints| {
+            if let Some(checkpoint) = checkpoint.as_mut() {
+                checkpoint(JtdxCheckpoint::Row(Box::new(JtdxConfirmed {
+                    row: row.clone(),
+                    hints,
+                })));
+            }
+            on_decode(row)
+        })?;
+        if let Some(checkpoint) = checkpoint {
+            checkpoint(JtdxCheckpoint::Complete(Box::new(self.history())));
+        }
+        Ok(std::mem::take(&mut self.last_provenance))
+    }
+
+    fn decode_slot_inner(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        deadline: Option<std::time::Instant>,
+        mut on_decode: impl FnMut(&StreamDecodedWithProvenance, HistoryHints) -> Result<(), String>,
+    ) -> Result<Vec<StreamDecodedMessage>, String> {
+        let within_budget = || deadline.is_none_or(|deadline| std::time::Instant::now() < deadline);
         self.last_provenance.clear();
         self._state.dd8.fill(0.0);
         for (dst, src) in self._state.dd8.iter_mut().zip(samples.iter().copied()) {
@@ -165,12 +216,15 @@ impl JtdxStreamDecodeSession {
         }
         let mut decoded = Vec::new();
         let mut dd8m: Option<Vec<f32>> = None;
-        for pass_block in jtdx_pass_blocks(&passes) {
+        'passes: for pass_block in jtdx_pass_blocks(&passes) {
             if let Some(first) = pass_block.first() {
                 apply_pass_sample_shift(&mut self._state.dd8, &mut dd8m, first.ipass, npass);
             }
             for band in &bands {
                 for pass in pass_block {
+                    if !within_budget() {
+                        break 'passes;
+                    }
                     self.decode_pass_band(
                         *pass,
                         npass,
@@ -178,6 +232,7 @@ impl JtdxStreamDecodeSession {
                         interval,
                         &mut decoded,
                         &mut on_decode,
+                        within_budget,
                     )?;
                 }
             }
@@ -201,6 +256,10 @@ impl JtdxStreamDecodeSession {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Each isolated SIC pass checks its slot budget between candidates"
+    )]
     fn decode_pass_band<F>(
         &mut self,
         pass: ft8_decode::JtdxPass,
@@ -209,9 +268,10 @@ impl JtdxStreamDecodeSession {
         interval: IntervalKind,
         decoded: &mut Vec<StreamDecodedMessage>,
         on_decode: &mut F,
+        within_budget: impl Fn() -> bool,
     ) -> Result<(), String>
     where
-        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+        F: FnMut(&StreamDecodedWithProvenance, HistoryHints) -> Result<(), String>,
     {
         let workspace = &mut self.ft8b_workspaces[band.index];
         workspace.new_pass();
@@ -231,7 +291,7 @@ impl JtdxStreamDecodeSession {
 
         let candidates = sync8::sync8(&self._state.dd8, sync8_config);
         let mut newdat1 = true;
-        for candidate in candidates {
+        for candidate in candidates.into_iter().take_while(|_| within_budget()) {
             let sd_candidate =
                 find_sd_candidate(&self._state, interval, candidate.freq, candidate.dt);
             let context = ft8b::Ft8bCandidateContext {
@@ -311,12 +371,15 @@ impl JtdxStreamDecodeSession {
                     } else {
                         collect_book(&self.book, &message.msg);
                     }
-                    self.last_provenance.push(StreamDecodedWithProvenance {
+                    let tagged = StreamDecodedWithProvenance {
                         decode: message.clone(),
                         provenance: jtdx_stream_provenance(&result),
-                    });
-                    on_decode(&message)?;
-                    update_qso_memory(&band_config, &mut self._state, &message, interval, &result);
+                    };
+                    let hints =
+                        HistoryHints::new(&result, is_focused_qso_decode(&band_config, &message));
+                    update_qso_memory(&band_config, &mut self._state, &message, interval, hints);
+                    on_decode(&tagged, hints)?;
+                    self.last_provenance.push(tagged);
                     update_deep_false_state(&band_config, &mut self._state, &result);
                     save_decode_state(&mut self._state, &result);
                     decoded.push(message);
@@ -544,20 +607,20 @@ fn update_qso_memory(
     state: &mut ft8_mod1::Ft8Mod1,
     message: &StreamDecodedMessage,
     interval: IntervalKind,
-    result: &ft8b::Ft8bDecodeResult,
+    hints: HistoryHints,
 ) {
-    save_call_dt(state, message, interval, result);
-    save_odd_even_message(config, state, message, interval, result);
+    save_call_dt(state, message, interval, hints);
+    save_odd_even_message(config, state, message, interval, hints);
     save_incall(config, state, message);
 
-    if !is_focused_qso_decode(config, message) {
+    if !hints.focused {
         return;
     }
     let Some(msgroot) = msgroot(config) else {
         return;
     };
-    let ft8s = result.source == DecodeSource::Ft8s;
-    if ((result.i3 == 1 && !ft8s) || ft8s) && message.msg.starts_with(&msgroot) {
+    let ft8s = hints.source == DecodeSource::Ft8s;
+    if ((hints.i3 == 1 && !ft8s) || ft8s) && message.msg.starts_with(&msgroot) {
         state.lasthcall = config.hiscall.clone().unwrap_or_default();
         state.lastrxmsg.lastmsg = message.msg.clone();
         state.lastrxmsg.xdt = message.dt as f32;
@@ -782,9 +845,9 @@ fn save_call_dt(
     state: &mut ft8_mod1::Ft8Mod1,
     message: &StreamDecodedMessage,
     interval: IntervalKind,
-    result: &ft8b::Ft8bDecodeResult,
+    hints: HistoryHints,
 ) {
-    if result.l_free_text {
+    if hints.free_text {
         return;
     }
     let Some(call2) = extract_call(&message.msg) else {
@@ -808,9 +871,9 @@ fn save_odd_even_message(
     state: &mut ft8_mod1::Ft8Mod1,
     message: &StreamDecodedMessage,
     interval: IntervalKind,
-    result: &ft8b::Ft8bDecodeResult,
+    hints: HistoryHints,
 ) {
-    if !should_save_odd_even_message(config, message, result) {
+    if !should_save_odd_even_message(config, message, hints) {
         return;
     }
     let target = match interval {
@@ -829,16 +892,16 @@ fn save_odd_even_message(
 fn should_save_odd_even_message(
     config: &StreamDecodeConfig,
     message: &StreamDecodedMessage,
-    result: &ft8b::Ft8bDecodeResult,
+    hints: HistoryHints,
 ) -> bool {
-    if result.i3 == 4 && message.msg.starts_with("CQ ") {
+    if hints.i3 == 4 && message.msg.starts_with("CQ ") {
         return true;
     }
-    if result.l_free_text || result.l_hashmsg || message.msg.contains('<') {
+    if hints.free_text || hints.hash_message || message.msg.contains('<') {
         return false;
     }
-    let ft8sd = result.source == DecodeSource::Ft8sd;
-    if !((result.i3 == 1 && !ft8sd) || ft8sd) {
+    let ft8sd = hints.source == DecodeSource::Ft8sd;
+    if !((hints.i3 == 1 && !ft8sd) || ft8sd) {
         return false;
     }
     let first = message.msg.split_whitespace().next().unwrap_or("");

@@ -199,14 +199,15 @@ fn hybrid_cw_experiment_adds_truth_without_replacing_baseline() {
     let samples: Vec<f32> = audio.iter().map(|&x| x as f32).collect();
     let timestamp = SlotTimestamp::parse("261029_120000").unwrap();
     let mut results = Vec::new();
-    for (enabled, staged, extra_samples) in [
-        (false, false, 0),
-        (true, false, 0),
-        (true, true, 0),
-        (true, true, 256),
+    for (enabled, staged, realtime, extra_samples) in [
+        (false, false, false, 0),
+        (true, false, false, 0),
+        (true, true, false, 0),
+        (true, true, true, 256),
     ] {
         let mut session = HybridStreamDecodeSession::new(StreamDecodeConfig {
             hybrid_experiment: enabled,
+            cooperative_realtime: realtime,
             ..Default::default()
         });
         let mut callbacks = Vec::new();

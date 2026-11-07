@@ -3,7 +3,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::decode::cooperative::observation::{jtdx_branch_configs, NativeObservation};
+use crate::decode::cooperative::observation::jtdx_branch_configs;
 use crate::decode::cooperative::recovery::{self, CancellationStats};
 use crate::decode::cooperative::{same_signal, OutputLedger, SignalSource};
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
@@ -11,6 +11,7 @@ use crate::decode::lib_wsjtx_plus::session::{
     StreamDecodeSession as WsjtxPlusSession, StreamSlotDecodeState as WsjtxPlusSlotState,
 };
 use crate::decode::lib_wsjtx_plus::subtractft8::subtract_ft8;
+use crate::stream::profile::{A7Snapshot, JtdxBranch, JtdxCheckpoint, JtdxRestore, SlotRecovery};
 use crate::stream::session::{
     DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage,
     StreamDecodedWithProvenance,
@@ -66,6 +67,11 @@ pub struct HybridSlotDiagnostics {
 enum WorkerEvent {
     Row(SignalSource, StreamDecodedMessage),
     WsjtxCompatibility(StreamDecodedMessage),
+    Supplemental(StreamDecodedMessage, StreamDecodeProvenance),
+    A7Checkpoint(A7Snapshot),
+    JtdxCheckpoint(JtdxBranch, JtdxCheckpoint),
+    RetryDone(Result<(), String>),
+    Experiment(ExperimentEvent),
     Done(
         SignalSource,
         Result<Vec<StreamDecodedWithProvenance>, String>,
@@ -83,22 +89,41 @@ enum ExperimentEvent {
     Done(Result<ExperimentDiagnostics, String>, Duration, Duration),
 }
 
+fn record_experiment(
+    diagnostics: &mut HybridSlotDiagnostics,
+    result: Result<ExperimentDiagnostics, String>,
+    start: Duration,
+    finish: Duration,
+) {
+    diagnostics.experiment_start = Some(start);
+    diagnostics.experiment_finish = Some(finish);
+    match result {
+        Ok(report) => diagnostics.experiment = report,
+        Err(failure) => diagnostics.experiment.error = Some(failure),
+    }
+}
+
 fn spawn_experiment<'scope, 'env>(
     scope: &'scope thread::Scope<'scope, 'env>,
     clock: Instant,
+    live: Option<mpsc::Sender<WorkerEvent>>,
     work: impl FnOnce(&mut dyn FnMut(&StreamDecodedMessage)) -> Result<ExperimentDiagnostics, String>
         + Send
         + 'scope,
 ) -> mpsc::Receiver<ExperimentEvent> {
     let (tx, rx) = mpsc::channel();
     scope.spawn(move || {
+        let send = |event| match &live {
+            Some(live) => {
+                let _ = live.send(WorkerEvent::Experiment(event));
+            }
+            None => {
+                let _ = tx.send(event);
+            }
+        };
         let start = clock.elapsed();
-        let result = guard_worker(|| {
-            work(&mut |row| {
-                let _ = tx.send(ExperimentEvent::Row(row.clone()));
-            })
-        });
-        let _ = tx.send(ExperimentEvent::Done(result, start, clock.elapsed()));
+        let result = guard_worker(|| work(&mut |row| send(ExperimentEvent::Row(row.clone()))));
+        send(ExperimentEvent::Done(result, start, clock.elapsed()));
     });
     rx
 }
@@ -135,12 +160,7 @@ where
                 }
             }
             ExperimentEvent::Done(result, start, finish) => {
-                diagnostics.experiment_start = Some(start);
-                diagnostics.experiment_finish = Some(finish);
-                match result {
-                    Ok(report) => diagnostics.experiment = report,
-                    Err(failure) => diagnostics.experiment.error = Some(failure),
-                }
+                record_experiment(diagnostics, result, start, finish);
                 return rows;
             }
         }
@@ -210,6 +230,23 @@ impl HybridStreamDecodeSession {
         &self.diagnostics
     }
 
+    pub(crate) fn restore_a7(&mut self, timestamp: &SlotTimestamp, snapshot: A7Snapshot) {
+        self.wsjtx.restore_a7(timestamp, snapshot);
+    }
+
+    pub(crate) fn restore_jtdx(
+        &mut self,
+        primary: Option<JtdxRestore>,
+        complement: Option<JtdxRestore>,
+    ) {
+        if let Some(primary) = primary {
+            self.jtdx.restore_history(primary);
+        }
+        if let Some(complement) = complement {
+            self.jtdx_agc.restore_history(complement);
+        }
+    }
+
     pub fn decode_slot_streaming_at<F>(
         &mut self,
         timestamp: &SlotTimestamp,
@@ -231,7 +268,7 @@ impl HybridStreamDecodeSession {
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
         self.early.clear();
-        self.run_slot(timestamp, samples, None, on_decode)
+        self.run_slot(timestamp, samples, None, SlotRecovery::default(), on_decode)
     }
     pub fn start_slot(&mut self) -> HybridSlotDecodeState {
         // No shared calls are injected into either long-lived baseline book.
@@ -263,17 +300,14 @@ impl HybridStreamDecodeSession {
         self.early.clear();
         self.wsjtx
             .decode_slot_nzhsym41_tagged(timestamp, &mut state.0, samples, |row| {
-                self.early.push(row.clone());
+                let mut tagged = row.clone();
+                if tagged.provenance == StreamDecodeProvenance::Regular {
+                    tagged.provenance = StreamDecodeProvenance::Unknown;
+                }
+                on_decode(&tagged)?;
+                self.early.push(tagged);
                 Ok(())
             })?;
-        for row in &mut self.early {
-            if row.provenance == StreamDecodeProvenance::Regular {
-                row.provenance = StreamDecodeProvenance::Unknown;
-            }
-        }
-        for row in &self.early {
-            on_decode(row)?;
-        }
         Ok(self.early.len())
     }
     pub fn subtract_slot_nzhsym47(&mut self, state: &mut HybridSlotDecodeState, samples: &[f32]) {
@@ -290,9 +324,13 @@ impl HybridStreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        self.run_slot(timestamp, samples, Some(state), |row| {
-            on_decode(&row.decode)
-        })
+        self.run_slot(
+            timestamp,
+            samples,
+            Some(state),
+            SlotRecovery::default(),
+            |row| on_decode(&row.decode),
+        )
     }
     pub fn decode_slot_nzhsym50_tagged<F>(
         &mut self,
@@ -304,7 +342,27 @@ impl HybridStreamDecodeSession {
     where
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
-        self.run_slot(timestamp, samples, Some(state), on_decode)
+        self.finish_slot_nzhsym50(
+            timestamp,
+            state,
+            samples,
+            SlotRecovery::default(),
+            on_decode,
+        )
+    }
+
+    pub(crate) fn finish_slot_nzhsym50<F>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        state: HybridSlotDecodeState,
+        samples: &[f32],
+        recovery: SlotRecovery<'_>,
+        on_decode: F,
+    ) -> Result<Vec<StreamDecodedMessage>, String>
+    where
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    {
+        self.run_slot(timestamp, samples, Some(state), recovery, on_decode)
     }
 
     fn run_slot<F>(
@@ -312,6 +370,7 @@ impl HybridStreamDecodeSession {
         timestamp: &SlotTimestamp,
         samples: &[f32],
         state: Option<HybridSlotDecodeState>,
+        mut recovery: SlotRecovery<'_>,
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
@@ -319,6 +378,11 @@ impl HybridStreamDecodeSession {
     {
         let clock = Instant::now();
         let mut ledger = OutputLedger::default();
+        // Supervised live output is deduplicated by the parent. Keep the local
+        // ledger unique for file output and diagnostics.
+        ledger.forward_duplicates(
+            self.config.cooperative_realtime && recovery.jtdx_checkpoint.is_some(),
+        );
         for row in &self.early {
             ledger.admit(SignalSource::Wsjtx, &row.decode, row.provenance);
         }
@@ -336,7 +400,12 @@ impl HybridStreamDecodeSession {
         let mut diagnostics = HybridSlotDiagnostics::default();
         let config = self.config.clone();
         let realtime = config.cooperative_realtime;
+        let deadline = recovery.deadline;
+        let within_budget = || deadline.is_none_or(|deadline| Instant::now() < deadline);
+        let checkpoint_enabled = recovery.checkpoint.is_some();
+        let jtdx_checkpoint_enabled = recovery.jtdx_checkpoint.is_some();
         let mut first_error = None;
+        let mut output_error = None;
         let wsjtx = &mut self.wsjtx;
         let jtdx = &mut self.jtdx;
         let jtdx_agc = &mut self.jtdx_agc;
@@ -350,17 +419,35 @@ impl HybridStreamDecodeSession {
             let w_tx = tx.clone();
             scope.spawn(move || {
                 let staged = state.is_some();
+                let mut checkpoint = |snapshot| {
+                    let _ = w_tx.send(WorkerEvent::A7Checkpoint(snapshot));
+                };
                 let result = guard_worker(|| {
                     wsjtx.decode_hybrid_slot_tagged(
                         timestamp,
                         state.map(|state| state.0),
                         samples,
+                        SlotRecovery {
+                            deadline,
+                            checkpoint: checkpoint_enabled.then_some(&mut checkpoint),
+                            jtdx_checkpoint: None,
+                        },
                         |row| {
                             let event = match row {
                                 None => WorkerEvent::Done(
                                     SignalSource::Wsjtx,
                                     Ok(wsjtx_rows.take().expect("WSJT-X baseline completed twice")),
                                 ),
+                                Some(row)
+                                    if realtime
+                                        && matches!(
+                                            row.provenance,
+                                            StreamDecodeProvenance::CandidateRetry
+                                                | StreamDecodeProvenance::PlusCompatibility
+                                        ) =>
+                                {
+                                    WorkerEvent::Supplemental(row.decode.clone(), row.provenance)
+                                }
                                 Some(row)
                                     if row.provenance == StreamDecodeProvenance::CandidateRetry =>
                                 {
@@ -393,40 +480,106 @@ impl HybridStreamDecodeSession {
                         },
                     )
                 });
-                if let Err(error) = result {
-                    if wsjtx_rows.is_some() {
+                let result = match result {
+                    Err(error) if wsjtx_rows.is_some() => {
                         let _ = w_tx.send(WorkerEvent::Done(SignalSource::Wsjtx, Err(error)));
-                    } else {
-                        let _ = retry_tx.send(Err(error));
+                        Ok(())
                     }
+                    result => result,
+                };
+                if realtime {
+                    let _ = w_tx.send(WorkerEvent::RetryDone(result));
+                } else if let Err(error) = result {
+                    let _ = retry_tx.send(Err(error));
                 }
             });
             let j_tx = tx.clone();
             scope.spawn(move || {
                 let result = guard_worker(|| {
-                    NativeObservation::Jtdx(jtdx).decode(timestamp, samples, |row| {
-                        j_tx.send(WorkerEvent::Row(SignalSource::Jtdx, row.clone()))
-                            .map_err(|_| "hybrid event receiver closed".to_string())
-                    })
+                    let mut checkpoint = |update| {
+                        let _ = j_tx.send(WorkerEvent::JtdxCheckpoint(JtdxBranch::Primary, update));
+                    };
+                    jtdx.decode_slot_tagged(
+                        timestamp,
+                        samples,
+                        jtdx_checkpoint_enabled.then_some(&mut checkpoint),
+                        |tagged| {
+                            let row = &tagged.decode;
+                            j_tx.send(WorkerEvent::Row(SignalSource::Jtdx, row.clone()))
+                                .map_err(|_| "hybrid event receiver closed".to_string())
+                        },
+                    )
                 });
                 let _ = j_tx.send(WorkerEvent::Done(SignalSource::Jtdx, result));
             });
             let agc_tx = tx.clone();
             scope.spawn(move || {
                 let result = guard_worker(|| {
-                    NativeObservation::Jtdx(jtdx_agc).decode(timestamp, samples, |row| {
-                        agc_tx
-                            .send(WorkerEvent::AgcRow(row.clone()))
-                            .map_err(|_| "hybrid event receiver closed".to_string())
-                    })
+                    let mut checkpoint = |update| {
+                        let _ = agc_tx
+                            .send(WorkerEvent::JtdxCheckpoint(JtdxBranch::Complement, update));
+                    };
+                    jtdx_agc.decode_slot_tagged(
+                        timestamp,
+                        samples,
+                        jtdx_checkpoint_enabled.then_some(&mut checkpoint),
+                        |tagged| {
+                            let row = &tagged.decode;
+                            agc_tx
+                                .send(WorkerEvent::AgcRow(row.clone()))
+                                .map_err(|_| "hybrid event receiver closed".to_string())
+                        },
+                    )
                 });
                 let _ = agc_tx.send(WorkerEvent::AgcDone(result));
             });
-            let (mut active, mut finished) = (3, 0);
+            let (mut active, mut finished) = (3 + usize::from(realtime), 0);
             while finished < active {
                 let event = rx.recv().expect("coordinator retains an event sender");
                 match event {
                     WorkerEvent::WsjtxCompatibility(row) => compatibility_rows.push(row),
+                    WorkerEvent::A7Checkpoint(snapshot) => {
+                        if let Some(checkpoint) = recovery.checkpoint.as_mut() {
+                            checkpoint(snapshot);
+                        }
+                    }
+                    WorkerEvent::JtdxCheckpoint(branch, update) => {
+                        if let Some(checkpoint) = recovery.jtdx_checkpoint.as_mut() {
+                            checkpoint(branch, update, realtime);
+                        }
+                    }
+                    WorkerEvent::Supplemental(row, provenance) => publish(
+                        &mut ledger,
+                        SignalSource::Recovery,
+                        &row,
+                        provenance,
+                        &mut output_error,
+                        &mut on_decode,
+                    ),
+                    WorkerEvent::RetryDone(result) => {
+                        finished += 1;
+                        if let Err(error) = result {
+                            first_error.get_or_insert(error);
+                        }
+                    }
+                    WorkerEvent::Experiment(ExperimentEvent::Row(row)) => {
+                        diagnostics
+                            .experiment_publish_start
+                            .get_or_insert(clock.elapsed());
+                        publish(
+                            &mut ledger,
+                            SignalSource::Recovery,
+                            &row,
+                            StreamDecodeProvenance::Experiment,
+                            &mut output_error,
+                            &mut on_decode,
+                        );
+                        experiment_rows.push(row);
+                    }
+                    WorkerEvent::Experiment(ExperimentEvent::Done(result, start, finish)) => {
+                        finished += 1;
+                        record_experiment(&mut diagnostics, result, start, finish);
+                    }
                     WorkerEvent::Row(source, row) => {
                         if source == SignalSource::Wsjtx {
                             w_seen.push(row.clone());
@@ -445,7 +598,7 @@ impl HybridStreamDecodeSession {
                                 } else {
                                     StreamDecodeProvenance::Unknown
                                 },
-                                &mut first_error,
+                                &mut output_error,
                                 &mut on_decode,
                             );
                         }
@@ -469,7 +622,7 @@ impl HybridStreamDecodeSession {
                                     SignalSource::Jtdx,
                                     &row,
                                     StreamDecodeProvenance::Unknown,
-                                    &mut first_error,
+                                    &mut output_error,
                                     &mut on_decode,
                                 );
                             }
@@ -486,7 +639,7 @@ impl HybridStreamDecodeSession {
                                 SignalSource::Jtdx,
                                 &row,
                                 StreamDecodeProvenance::Unknown,
-                                &mut first_error,
+                                &mut output_error,
                                 &mut on_decode,
                             );
                         }
@@ -509,7 +662,7 @@ impl HybridStreamDecodeSession {
                                 SignalSource::Recovery,
                                 &row,
                                 StreamDecodeProvenance::CooperativeRecovery,
-                                &mut first_error,
+                                &mut output_error,
                                 &mut on_decode,
                             );
                         }
@@ -547,7 +700,7 @@ impl HybridStreamDecodeSession {
                         continue;
                     }
                     scheduled[index] = true;
-                    if realtime && clock.elapsed() >= Duration::from_secs(3) {
+                    if !within_budget() || realtime && clock.elapsed() >= Duration::from_secs(3) {
                         diagnostics.recovery_budget_skips += 1;
                         continue;
                     }
@@ -577,8 +730,9 @@ impl HybridStreamDecodeSession {
                                 task_config.nfa,
                                 task_config.nfb,
                                 subtract_ft8,
+                                deadline,
                             );
-                            if stats.accepted > 0 {
+                            if stats.accepted > 0 && within_budget() {
                                 let emit = |row: &StreamDecodedMessage| {
                                     task_tx
                                         .send(WorkerEvent::Recovered(direction, row.clone()))
@@ -588,9 +742,10 @@ impl HybridStreamDecodeSession {
                                     crate::stream::session::seeded_jtdx_session(
                                         task_config.clone_for_profile_jtdx(),
                                     )
-                                    .decode_slot_streaming_at(timestamp, &input, emit)?;
+                                    .decode_slot_with_deadline(timestamp, &input, deadline, emit)?;
                                 } else {
                                     wsjtx_session(&task_config, false)
+                                        .with_search_deadline(deadline)
                                         .decode_slot_streaming_at(timestamp, &input, emit)?;
                                 }
                             }
@@ -605,6 +760,7 @@ impl HybridStreamDecodeSession {
                     && w_rows.is_some()
                     && j_rows.is_some()
                     && agc_done
+                    && within_budget()
                 {
                     // All three Done events follow their callbacks. Only owned
                     // snapshots cross into exp; no native session or SIC rows do.
@@ -612,18 +768,24 @@ impl HybridStreamDecodeSession {
                     let input = samples.to_vec();
                     let models = baseline.as_ref().unwrap().clone();
                     let (low, high) = (config.nfa, config.nfb);
-                    experiment_rx = Some(spawn_experiment(scope, clock, move |emit| {
-                        Ok(crate::decode::experiment::decode(
-                            crate::decode::experiment::ExperimentInput {
-                                samples: &input,
-                                baseline: &models,
-                                low,
-                                high,
-                                deadline: clock + Duration::from_secs(10),
-                            },
-                            emit,
-                        ))
-                    }));
+                    active += usize::from(realtime);
+                    experiment_rx = Some(spawn_experiment(
+                        scope,
+                        clock,
+                        realtime.then(|| tx.clone()),
+                        move |emit| {
+                            Ok(crate::decode::experiment::decode(
+                                crate::decode::experiment::ExperimentInput {
+                                    samples: &input,
+                                    baseline: &models,
+                                    low,
+                                    high,
+                                    deadline: deadline.unwrap_or(clock + Duration::from_secs(10)),
+                                },
+                                emit,
+                            ))
+                        },
+                    ));
                 }
             }
             diagnostics.workers_finish = clock.elapsed();
@@ -636,7 +798,7 @@ impl HybridStreamDecodeSession {
                             SignalSource::Recovery,
                             row,
                             StreamDecodeProvenance::CooperativeRecovery,
-                            &mut first_error,
+                            &mut output_error,
                             &mut on_decode,
                         );
                     }
@@ -649,7 +811,7 @@ impl HybridStreamDecodeSession {
                         SignalSource::Jtdx,
                         &row.decode,
                         row.provenance,
-                        &mut first_error,
+                        &mut output_error,
                         &mut on_decode,
                     );
                 }
@@ -666,18 +828,18 @@ impl HybridStreamDecodeSession {
                     SignalSource::Recovery,
                     row,
                     StreamDecodeProvenance::PlusCompatibility,
-                    &mut first_error,
+                    &mut output_error,
                     &mut on_decode,
                 );
             }
             // Waiting for exp cannot delay baseline, SIC, or compatibility callbacks.
-            if let Some(rx) = experiment_rx {
+            if let Some(rx) = experiment_rx.filter(|_| !realtime) {
                 experiment_rows = publish_experiment(
                     rx,
                     clock,
                     &mut diagnostics,
                     &mut ledger,
-                    &mut first_error,
+                    &mut output_error,
                     &mut on_decode,
                 );
             }
@@ -690,7 +852,7 @@ impl HybridStreamDecodeSession {
                         SignalSource::Recovery,
                         &row,
                         StreamDecodeProvenance::CandidateRetry,
-                        &mut first_error,
+                        &mut output_error,
                         &mut on_decode,
                     ),
                     Err(error) => {
@@ -733,10 +895,12 @@ impl HybridStreamDecodeSession {
         }
         self.active_call_context
             .update_from_evidence(&self.last_evidence_store);
+        self.wsjtx
+            .add_a7_rows(timestamp, ledger.tagged().iter().map(|row| &row.decode));
         self.early.clear();
         diagnostics.elapsed = clock.elapsed();
         self.diagnostics = diagnostics;
-        if let Some(error) = first_error.or(agc_error) {
+        if let Some(error) = output_error.or(first_error).or(agc_error) {
             Err(error)
         } else {
             Ok(ledger.into_sorted())
@@ -996,7 +1160,7 @@ mod tests {
             let (release_tx, release_rx) = mpsc::channel();
             let rows = [native.clone(), recovered.clone(), unique.clone()];
             let clock = Instant::now();
-            let rx = spawn_experiment(scope, clock, move |emit| {
+            let rx = spawn_experiment(scope, clock, None, move |emit| {
                 for row in &rows {
                     emit(row);
                 }
@@ -1060,7 +1224,7 @@ mod tests {
     fn prior_native_error_suppresses_already_computed_exp_rows() {
         thread::scope(|scope| {
             let clock = Instant::now();
-            let rx = spawn_experiment(scope, clock, |emit| {
+            let rx = spawn_experiment(scope, clock, None, |emit| {
                 emit(&decoded(2000.0, 0.5, "CQ G4ABC IO91"));
                 Ok(ExperimentDiagnostics::default())
             });
@@ -1086,7 +1250,7 @@ mod tests {
     fn exp_callback_failure_keeps_collected_passive_rows_and_original_error() {
         thread::scope(|scope| {
             let clock = Instant::now();
-            let rx = spawn_experiment(scope, clock, |emit| {
+            let rx = spawn_experiment(scope, clock, None, |emit| {
                 emit(&decoded(1000.0, 0.5, "CQ K1ABC FN42"));
                 emit(&decoded(2000.0, 0.5, "CQ G4ABC IO91"));
                 Ok(ExperimentDiagnostics::default())

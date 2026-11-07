@@ -1,8 +1,9 @@
 //! Common execution boundary for isolated WSJT-X+ and JTDX observations.
 use crate::decode::lib_jtdx::JtdxStreamDecodeSession;
 use crate::decode::lib_wsjtx_plus::session::StreamDecodeSession as WsjtxPlusSession;
+use crate::stream::profile::{A7Snapshot, JtdxCheckpoint};
 use crate::stream::session::{
-    StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedMessage, StreamDecodedWithProvenance,
+    StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedWithProvenance,
 };
 use crate::stream::time::SlotTimestamp;
 
@@ -17,23 +18,42 @@ pub(crate) enum NativeObservation<'a> {
     WsjtxPlus(&'a mut WsjtxPlusSession),
     Jtdx(&'a mut JtdxStreamDecodeSession),
 }
+pub(crate) enum ObservationHistory {
+    A7(A7Snapshot),
+    Jtdx(JtdxCheckpoint),
+}
+
 impl NativeObservation<'_> {
-    pub(crate) fn decode<F>(
+    pub(crate) fn decode_with_history<F>(
         &mut self,
         timestamp: &SlotTimestamp,
         samples: &[f32],
+        realtime: bool,
+        mut history: Option<&mut dyn FnMut(ObservationHistory)>,
         mut emit: F,
     ) -> Result<Vec<StreamDecodedWithProvenance>, String>
     where
-        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
         match self {
             Self::WsjtxPlus(session) => {
-                // DX publishes compatibility rows from the completed result.
+                // File mode preserves its canonical compatibility ordering.
                 let mut rows = Vec::new();
                 session.decode_slot_streaming_tagged_at(timestamp, samples, |row| {
-                    if row.provenance != StreamDecodeProvenance::PlusCompatibility {
-                        emit(&row.decode)?;
+                    if let Some(history) = history.as_deref_mut() {
+                        if matches!(
+                            row.provenance,
+                            StreamDecodeProvenance::Regular
+                                | StreamDecodeProvenance::A7Memory
+                                | StreamDecodeProvenance::A8List
+                        ) {
+                            let mut seeds = A7Snapshot::default();
+                            seeds.record(&row.decode, row.decode.freq);
+                            history(ObservationHistory::A7(seeds));
+                        }
+                    }
+                    if realtime || row.provenance != StreamDecodeProvenance::PlusCompatibility {
+                        emit(row)?;
                     }
                     rows.push(row.clone());
                     Ok(())
@@ -41,7 +61,18 @@ impl NativeObservation<'_> {
                 Ok(rows)
             }
             Self::Jtdx(session) => {
-                session.decode_slot_streaming_with_provenance_at(timestamp, samples, emit)
+                let enabled = history.is_some();
+                let mut checkpoint = |update| {
+                    if let Some(history) = history.as_deref_mut() {
+                        history(ObservationHistory::Jtdx(update));
+                    }
+                };
+                session.decode_slot_tagged(
+                    timestamp,
+                    samples,
+                    enabled.then_some(&mut checkpoint),
+                    emit,
+                )
             }
         }
     }

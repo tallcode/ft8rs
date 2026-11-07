@@ -13,8 +13,8 @@ window with seven pages:
 | Page | Controls and information |
 |---|---|
 | Station | My Callsign and My Grid |
-| Audio | Input device, channel, actual opened format, recent peaks and per-slot capture timing |
-| Decode | Profile, WSJT-X+ compatibility recovery, Hybrid cross cancellation, SWL and focused deep decoding |
+| Audio | Input device, channel, input level and capture discontinuity count |
+| Decode | Profile, SWL, focused deep decoding and the Hybrid experimental decoder |
 | Frequency | Lower and upper audio-frequency bounds |
 | Output | Outgoing UDP decode reports, host and port |
 | Compare | Incoming WSJT-X UDP feed and frequency matching tolerance |
@@ -64,16 +64,14 @@ amplitude by 6 dB; opposite-phase channels can cancel. Older ft8.rs versions
 averaged the input for Mono, so recheck the selected channel when comparing an
 older recording or setup.
 
-**Settings → Audio** distinguishes the OS default device format from the actual
-opened format. During monitoring it shows recent decoder-input peak and native
-channel peaks, followed by per-slot capture diagnostics. Levels use **dBFS**:
-0 dBFS is full scale. They do not use WSJT-X's positive noise-meter units.
+During monitoring, **Settings → Audio** shows the peak level of the audio sent
+to the decoder. The level is measured in **dBFS**, where 0 dBFS is full scale.
 48 kHz conversion uses the WSJT-X `fil4` coefficients; other rates use an
 anti-aliasing resampler. Neither path changes decoder thresholds.
 
 On Windows FlexRadio systems, select the receive audio endpoint for the intended
-slice, for example `DAX Audio RX 1` or `DAX RX 1 (FlexRadio DAX)`. Verify which
-channel actually carries audio using the channel peaks. Hardware-specific DAX
+slice, for example `DAX Audio RX 1` or `DAX RX 1 (FlexRadio DAX)`. Check the
+input level with the intended channel selected. Hardware-specific DAX
 behavior still needs a live comparison with the same endpoint, slice, channel
 and signal; synthetic channel/PCM tests do not replace that comparison.
 
@@ -253,7 +251,7 @@ acceptance, use identical audio, context and database with the
 |---|---|
 | GUI exits before showing a window, while CLI works | Windows defaults to DX12, avoiding automatic Vulkan enumeration. An affected Windows 11 / i5-9600T machine could launch 0.0.24 after setting `WGPU_BACKEND=dx12`. Read `%LOCALAPPDATA%\ft8rs\logs\ft8rs-gui.log` on newer builds. Returned startup graphics errors retry with OpenGL before the app starts; set `FT8RS_RENDERER=glow` to bypass wgpu, including when a driver crashes before it can return an error. The previous session is saved as `ft8rs-gui.previous.log`. |
 | No GUI diagnostic log is created | If the executable cannot reach `main` (e.g. a missing imported DLL or a native loader failure), inspect Windows Event Viewer → Windows Logs → Application for the failed executable, module and exception code. |
-| No messages and input peak stays silent | Correct receive endpoint, actual opened format, per-channel peaks, microphone/input permission |
+| No messages and input peak stays silent | Correct receive endpoint, channel selection, microphone/input permission |
 | Audio is present but unexpectedly weak | Mono/Left/Right selection, single-sided source mixed down, opposite-phase channels, receiver levels |
 | GUI cannot start DX | Fill the target Callsign; your own callsign is optional |
 | Different JTDX/Hybrid results across runs or machines | CallDB hash, SWL/AGC, logical partitions, context, FFT backend and build profile |

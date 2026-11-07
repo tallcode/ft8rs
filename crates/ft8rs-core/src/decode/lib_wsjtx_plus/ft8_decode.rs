@@ -90,6 +90,7 @@ pub struct DecodeOptions {
     /// Messages already decoded in an earlier progressive stage for the same
     /// slot. WSJT-X carries these in `allmessages`/`ndecodes` when nzhsym=50.
     pub initial_messages: Vec<String>,
+    pub search_deadline: Option<std::time::Instant>,
 }
 
 #[derive(Clone)]
@@ -199,7 +200,8 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, None);
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, None, |_| Ok(()))
+        .expect("infallible decode callback");
     msgs
 }
 
@@ -213,33 +215,25 @@ pub fn decode_f64(samples: &[f64], options: DecodeOptions) -> Vec<DecodedMessage
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, None);
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, None, |_| Ok(()))
+        .expect("infallible decode callback");
     msgs
 }
 
-/// Decode directly from f64 samples and return the sbase noise baseline.
-pub fn decode_f64_with_sbase(
-    samples: &[f64],
-    options: DecodeOptions,
-) -> (Vec<DecodedMessage>, Vec<f64>) {
-    let t_start = std::time::Instant::now();
-    let len = samples.len().min(NMAX);
-    let dd = samples[..len].to_vec();
-    let t_dd = t_start.elapsed();
-    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start, None);
-    (msgs, sbase)
-}
+type DecodeSearch = (Vec<DecodedMessage>, Vec<f64>, Vec<f64>);
 
+/// Decode directly from f64 samples, publishing each accepted candidate.
 pub(super) fn decode_f64_with_sbase_and_residual(
     samples: &[f64],
     options: DecodeOptions,
     retry: Option<&mut Option<FinalRetry>>,
-) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
+    on_decode: impl FnMut(&DecodedMessage) -> Result<(), String>,
+) -> Result<DecodeSearch, String> {
     let t_start = std::time::Instant::now();
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    decode_from_f64(dd, options, t_dd, t_start, retry)
+    decode_from_f64(dd, options, t_dd, t_start, retry, on_decode)
 }
 
 /// Decode returning both messages and the sbase noise baseline.
@@ -259,7 +253,8 @@ pub fn decode_with_sbase(
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start, None);
+    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start, None, |_| Ok(()))
+        .expect("infallible decode callback");
     (msgs, sbase)
 }
 
@@ -269,7 +264,8 @@ fn decode_from_f64(
     _t_dd: std::time::Duration,
     _t_start: std::time::Instant,
     mut retry: Option<&mut Option<FinalRetry>>,
-) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
+    mut on_decode: impl FnMut(&DecodedMessage) -> Result<(), String>,
+) -> Result<DecodeSearch, String> {
     // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
     if dd.len() > NMAX {
         dd.truncate(NMAX);
@@ -318,7 +314,15 @@ fn decode_from_f64(
 
     // WSJT-X sync8 refreshes sbase for each pass on the current residual.
     let mut sbase: Vec<f64> = Vec::new();
-    for pass_idx in 0..max_passes {
+    let within_budget = || {
+        options
+            .search_deadline
+            .is_none_or(|deadline| std::time::Instant::now() < deadline)
+    };
+    'passes: for pass_idx in 0..max_passes {
+        if !within_budget() {
+            break;
+        }
         if pass_idx == 2 && ndecodes_total == 0 {
             continue;
         }
@@ -356,6 +360,9 @@ fn decode_from_f64(
         // Candidate decoding is sequential so each accepted signal updates the residual
         // before later candidates are evaluated.
         for cand in &candidates {
+            if !within_budget() {
+                break 'passes;
+            }
             if let Some(r) = ft8b(
                 &residual,
                 &cx_re,
@@ -372,25 +379,25 @@ fn decode_from_f64(
                 &mut cand_ws,
             ) {
                 let message_key = normalize_message_key(&r.msg);
+                if seen_messages.insert(message_key) {
+                    ndecodes_total += 1;
+                    let message = DecodedMessage {
+                        freq: r.freq,
+                        dt: r.dt - 0.5,
+                        snr: r.snr,
+                        msg: r.msg.clone(),
+                        sync: cand.sync,
+                        itone: r.itone.to_vec(),
+                    };
+                    on_decode(&message)?;
+                    decoded.push(message);
+                }
                 crate::decode::lib_wsjtx_plus::subtractft8::subtract_ft8(
                     &mut residual,
                     &r.itone,
                     r.freq,
                     r.dt,
                 );
-                if seen_messages.contains(&message_key) {
-                    continue;
-                }
-                seen_messages.insert(message_key);
-                ndecodes_total += 1;
-                decoded.push(DecodedMessage {
-                    freq: r.freq,
-                    dt: r.dt - 0.5,
-                    snr: r.snr,
-                    msg: r.msg.clone(),
-                    sync: cand.sync,
-                    itone: r.itone.to_vec(),
-                });
             }
         }
         if keep_spectrum && (pass_idx == 2 || ndecodes_total == 0) {
@@ -411,7 +418,7 @@ fn decode_from_f64(
         }
     }
 
-    (decoded, sbase, residual)
+    Ok((decoded, sbase, residual))
 }
 
 pub(super) struct FinalRetry {
@@ -433,6 +440,7 @@ impl FinalRetry {
         &'a self,
         sbase: &'a [f64],
         base: &[crate::StreamDecodedMessage],
+        deadline: Option<std::time::Instant>,
     ) -> impl Iterator<Item = DecodedMessage> + 'a {
         let candidates: Vec<_> = self
             .peaks
@@ -441,25 +449,31 @@ impl FinalRetry {
             .take(self.limit)
             .collect();
         let mut workspace = create_decode_workspace();
-        candidates.into_iter().filter_map(move |candidate| {
-            let row = retry_ft8b(
-                &self.cx_re,
-                &self.cx_im,
-                candidate,
-                sbase,
-                self.depth,
-                &self.ap_options,
-                &self.book,
-                &mut workspace,
-            )?;
-            Some(retry_message(row, candidate.sync))
-        })
+        candidates
+            .into_iter()
+            .take_while(move |_| {
+                deadline.is_none_or(|deadline| std::time::Instant::now() < deadline)
+            })
+            .filter_map(move |candidate| {
+                let row = retry_ft8b(
+                    &self.cx_re,
+                    &self.cx_im,
+                    candidate,
+                    sbase,
+                    self.depth,
+                    &self.ap_options,
+                    &self.book,
+                    &mut workspace,
+                )?;
+                Some(retry_message(row, candidate.sync))
+            })
     }
 
     pub(super) fn recover_adaptive(
         &self,
         sbase: &[f64],
         base: &[crate::StreamDecodedMessage],
+        deadline: Option<std::time::Instant>,
         mut emit: impl FnMut(DecodedMessage) -> Result<(), String>,
     ) -> Result<(), String> {
         let candidates: Vec<_> = self
@@ -522,6 +536,7 @@ impl FinalRetry {
             &ap,
             &self.book,
             base,
+            deadline,
             |row, sync| emit(retry_message(row, sync)),
         )
     }

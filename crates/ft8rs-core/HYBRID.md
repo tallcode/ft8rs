@@ -17,20 +17,19 @@ With the experimental mode on, the WSJT-X+ leg uses the same compatibility
 recovery (`Pc`) and candidate retry (`Pr`) as standalone Plus. The recording
 marker for both options enabled is `Hecr`. The two Plus switches also apply
 to this mode. Hybrid starts downstream work when the Plus baseline and
-compatibility callbacks finish. It publishes retries after existing results
-and excludes them from SIC inputs and passive evidence.
+compatibility callbacks finish. Retry results stay out of SIC inputs and
+passive evidence.
 See [specialist implementation](src/decode/experiment/README.md)
 for the independent front end, soft metrics, conditional waveform admission,
 single residual search and known limitations.
 
 The specialist starts after the three native workers and their streaming
 callbacks finish, using isolated audio and a baseline snapshot. It can run
-alongside the SIC tail within the remaining ten-second slot-work budget. A
-separate FIFO holds its output until all native/SIC publications complete;
-native callbacks never wait for it. Its output is appended through the
-payload-aware ledger, preserving native representatives. Tagged rows use
+alongside the SIC tail. In supervised live mode, it uses the remaining slot
+budget and sends accepted rows through the same ledger as the other branches.
+File mode buffers specialist output until native/SIC publications complete. Tagged rows use
 `Experiment` / CLI/GUI marker `exp`; passive specialist evidence cannot create
-independent confirmation or seed native AP/hash memory. `StreamDecodeConfig::hybrid_sic`
+independent confirmation or import a hash entry. `StreamDecodeConfig::hybrid_sic`
 controls the cross-decoder cancellation; the specialist has its own residual
 search. The specialist diagnostic is available in
 `HybridSlotDiagnostics.experiment`. Neither its work budget nor an in-flight
@@ -46,9 +45,8 @@ revoke an old entry after a later collision is found.
 The baseline union is retained regardless of recovery success. Recovery uses a
 private copy of the original audio and a disposable native session. It cannot
 mutate the baseline decoder or feed results back into another recovery round.
-The Plus leg's compatibility results are published after baseline and SIC rows
-with the `ctx` marker. They are terminal output, isolated from the SIC seeds,
-experimental receiver inputs and passive evidence store.
+The Plus leg's compatibility results use the `Pc` marker and stay out of
+the SIC seeds, experimental receiver inputs and passive evidence store.
 
 ## Shared components
 
@@ -109,8 +107,9 @@ start budget are unchanged. Diagnostics report each baseline's completion time
 The GUI and CLI always enable cross cancellation for Hybrid. For a baseline
 comparison, set `StreamDecodeConfig::hybrid_sic` to `false` to retain all three
 baseline sessions without cross cancellation.
-Generic per-call-pair replay, AP callbook imports and SameParityA7 feedback are
-not enabled.
+Hybrid seeds the next same-parity A7 search from confirmed rows across its
+branches. Seed admission requires a plain callsign pair or a standard CQ. The
+native hash books and JTDX history stay separate.
 
 ## Scheduling and output
 
@@ -126,10 +125,14 @@ then merges the AGC output. Real-time
 and file scheduling need not select identical additional opportunities on every
 recording.
 
-Real-time rows are forwarded immediately. Worker completion does not hold back
-an already discovered row. GUI markers `?` and `sic` indicate unknown native
-provenance and isolated cancellation recovery; N41 follows the same provenance
-rules. Callback errors are returned after started workers have been drained.
+In real time, each branch forwards confirmed rows as it finds them. The
+supervisor deduplicates output and retains every complete frame already sent
+when it has to kill the worker. It collects A7 seeds throughout the slot and
+can restore them for the exact same-parity successor. Each JTDX branch sends
+incremental confirmed rows and a native history checkpoint after completion.
+On restart, its own completed history and any newer confirmed rows restore
+the branch's context. Live recovery shares a deadline before the hard watchdog,
+with checks between candidates and search steps.
 
 The product only listens. Evaluate message arrival by the next slot +2/+3 seconds
 separately from total worker completion. The start budget cannot interrupt an

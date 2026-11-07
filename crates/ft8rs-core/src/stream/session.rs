@@ -2,8 +2,7 @@ use std::collections::HashSet;
 
 use crate::decode::ft8_a7::{ft8_a7d_with_downsample_cache, ApDecodeResult, ApDownsampleCache};
 use crate::decode::ft8_decode::{
-    decode_f64_with_sbase, decode_f64_with_sbase_and_residual, ft8_a8d_result, DecodeOptions,
-    DecodedMessage,
+    decode_f64_streaming_with_residual, ft8_a8d_result, DecodeOptions, DecodedMessage,
 };
 use crate::decode::subtractft8::subtract_ft8_refined;
 use crate::stream::time::SlotTimestamp;
@@ -317,13 +316,14 @@ impl StreamDecodeConfig {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StreamDecodedMessage {
     pub freq: f64,
     pub dt: f64,
     pub snr: f64,
     pub msg: String,
     pub sync: f64,
+    #[serde(with = "crate::stream::fixed_array")]
     pub itone: [i32; 79],
 }
 
@@ -331,11 +331,11 @@ pub struct StreamDecodedMessage {
 pub enum StreamDecodeProvenance {
     /// The upstream result does not expose whether its regular path used AP.
     Unknown,
-    /// Produced by an isolated orchestration recovery task, never a new seed.
+    /// Produced by an isolated orchestration recovery task.
     CooperativeRecovery,
     /// Isolated DX context task; this does not claim a native AP subtype.
     ContextRecovery,
-    /// Hybrid-only independent DSP; terminal output, never imported into AP.
+    /// Hybrid-only independent DSP.
     Experiment,
     Regular,
     ApMask,
@@ -349,7 +349,7 @@ pub enum StreamDecodeProvenance {
     PlusCompatibility,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StreamDecodedWithProvenance {
     pub decode: StreamDecodedMessage,
     pub provenance: StreamDecodeProvenance,
@@ -402,6 +402,18 @@ impl StreamDecodeSession {
             jseq: 0,
             slot_state: None,
         }
+    }
+
+    pub fn restore_a7(&mut self, timestamp: &SlotTimestamp, snapshot: super::profile::A7Snapshot) {
+        self.a7[jseq_from_nutc(timestamp.nutc())][1] = snapshot
+            .0
+            .into_iter()
+            .map(|(msg, f0, dt0)| A7SaveEntry {
+                msg0: FixedMsg37::from_trimmed(&msg),
+                f0,
+                dt0,
+            })
+            .collect();
     }
 
     pub fn decode_slot(&mut self, samples: &[f32]) -> Vec<StreamDecodedMessage> {
@@ -503,27 +515,37 @@ impl StreamDecodeSession {
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
+        self.decode_slot_nzhsym41_tagged(timestamp, state, samples, |row| on_decode(&row.decode))
+    }
+
+    pub fn decode_slot_nzhsym41_tagged(
+        &mut self,
+        timestamp: Option<&SlotTimestamp>,
+        state: &mut StreamSlotDecodeState,
+        samples: &[f32],
+        mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    ) -> Result<(), String> {
         self.ft8_a7_new_slot(timestamp);
 
         fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 41, &mut state.work);
-        let (early_results, _) = if self.params.ndepth == 1 {
-            (Vec::new(), Vec::new())
-        } else {
-            decode_f64_with_sbase(&state.work, self.ft8_decode_options(41))
-        };
-        state.early_results = early_results;
-        for d in &state.early_results {
-            push_regular_decode(
-                &mut state.seen,
-                &mut state.merged,
-                &mut state.provenance,
-                &self.book,
-                &mut self.regular_hash_calls,
-                StreamDecodeProvenance::Regular,
-                d,
-                &mut on_decode,
-            )?;
+        if self.params.ndepth != 1 {
+            let options = self.ft8_decode_options(41);
+            let (early_results, _, _) =
+                decode_f64_streaming_with_residual(&state.work, options, |d| {
+                    push_regular_decode(
+                        &mut state.seen,
+                        &mut state.merged,
+                        &mut state.provenance,
+                        &self.book,
+                        &mut self.regular_hash_calls,
+                        StreamDecodeProvenance::Regular,
+                        d,
+                        &mut on_decode,
+                    )
+                })?;
+            self.a7[self.jseq][1] = early_results.iter().filter_map(ft8_a7_save_entry).collect();
+            state.early_results = early_results;
         }
         Ok(())
     }
@@ -550,12 +572,14 @@ impl StreamDecodeSession {
         &mut self,
         mut state: StreamSlotDecodeState,
         samples: &[f32],
-        on_decode: F,
+        mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
+        self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, |row| {
+            on_decode(&row.decode)
+        })
     }
 
     /// Staged early decode that returns the early rows with provenance (for the
@@ -583,6 +607,16 @@ impl StreamDecodeSession {
         Ok(state.provenance)
     }
 
+    pub fn decode_slot_nzhsym50_tagged(
+        &mut self,
+        mut state: StreamSlotDecodeState,
+        samples: &[f32],
+        on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    ) -> Result<usize, String> {
+        self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
+            .map(|rows| rows.len())
+    }
+
     fn decode_slot_nzhsym50_and_finish_state<F>(
         &mut self,
         state: &mut StreamSlotDecodeState,
@@ -590,7 +624,7 @@ impl StreamDecodeSession {
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
-        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
         fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 50, &mut state.work);
@@ -609,8 +643,18 @@ impl StreamDecodeSession {
         let mut full_options = self.ft8_decode_options(50);
         full_options.initial_messages = state.early_results.iter().map(|d| d.msg.clone()).collect();
         let (full_results, sbase, full_residual) =
-            decode_f64_with_sbase_and_residual(&state.work, full_options);
-
+            decode_f64_streaming_with_residual(&state.work, full_options, |d| {
+                push_regular_decode(
+                    &mut state.seen,
+                    &mut state.merged,
+                    &mut state.provenance,
+                    &self.book,
+                    &mut self.regular_hash_calls,
+                    StreamDecodeProvenance::Regular,
+                    d,
+                    &mut on_decode,
+                )
+            })?;
         // Build current a7 table entries before AP. Current entries suppress
         // previous entries already accounted for by a regular decode in this
         // sequence.
@@ -643,6 +687,28 @@ impl StreamDecodeSession {
                 if let Some(r) = result {
                     let norm_r = normal(&r.msg);
                     if !ap_msgs.iter().any(|a| normal(&a.msg) == norm_r) {
+                        if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, r.freq, r.dt) {
+                            entries_to_save.push(entry);
+                        }
+                        let key = normal(&r.msg);
+                        if state.seen.insert(key) {
+                            let decode = StreamDecodedMessage {
+                                freq: r.freq,
+                                dt: r.dt,
+                                snr: r.snr,
+                                msg: r.msg.clone(),
+                                sync: 0.0,
+                                itone: [0i32; 79],
+                            };
+                            collect_book(&self.book, &decode.msg);
+                            let tagged = StreamDecodedWithProvenance {
+                                decode: decode.clone(),
+                                provenance: StreamDecodeProvenance::A7Memory,
+                            };
+                            on_decode(&tagged)?;
+                            state.provenance.push(tagged);
+                            state.merged.push(decode);
+                        }
                         ap_msgs.push(r);
                     }
                 }
@@ -661,42 +727,6 @@ impl StreamDecodeSession {
             None
         };
 
-        for d in &full_results {
-            push_regular_decode(
-                &mut state.seen,
-                &mut state.merged,
-                &mut state.provenance,
-                &self.book,
-                &mut self.regular_hash_calls,
-                StreamDecodeProvenance::Regular,
-                d,
-                &mut on_decode,
-            )?;
-        }
-
-        for r in &ap_results {
-            if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, r.freq, r.dt) {
-                entries_to_save.push(entry);
-            }
-            let key = normal(&r.msg);
-            if state.seen.insert(key) {
-                let decode = StreamDecodedMessage {
-                    freq: r.freq,
-                    dt: r.dt,
-                    snr: r.snr,
-                    msg: r.msg.clone(),
-                    sync: 0.0,
-                    itone: [0i32; 79],
-                };
-                collect_book(&self.book, &decode.msg);
-                on_decode(&decode)?;
-                state.provenance.push(StreamDecodedWithProvenance {
-                    decode: decode.clone(),
-                    provenance: StreamDecodeProvenance::A7Memory,
-                });
-                state.merged.push(decode);
-            }
-        }
         if let Some(r) = &a8_result {
             if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, self.params.nfqso, r.dt) {
                 entries_to_save.push(entry);
@@ -712,11 +742,12 @@ impl StreamDecodeSession {
                     itone: r.itone,
                 };
                 collect_book(&self.book, &decode.msg);
-                on_decode(&decode)?;
-                state.provenance.push(StreamDecodedWithProvenance {
+                let tagged = StreamDecodedWithProvenance {
                     decode: decode.clone(),
                     provenance: StreamDecodeProvenance::A8List,
-                });
+                };
+                on_decode(&tagged)?;
+                state.provenance.push(tagged);
                 state.merged.push(decode);
             }
         }
@@ -810,7 +841,9 @@ impl StreamDecodeSession {
         let result = (|| {
             self.decode_slot_nzhsym41_at(timestamp, &mut state, samples, &mut on_decode)?;
             self.subtract_slot_nzhsym47(&mut state, samples);
-            self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
+            self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, |row| {
+                on_decode(&row.decode)
+            })
         })();
         let provenance = if result.is_ok() {
             std::mem::take(&mut state.provenance)
@@ -990,7 +1023,7 @@ fn push_regular_decode<F>(
     on_decode: &mut F,
 ) -> Result<(), String>
 where
-    F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+    F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
 {
     let key = normal(&d.msg);
     if !seen.insert(key) {
@@ -1010,11 +1043,12 @@ where
     for call in collect_book(book, &decode.msg) {
         regular_hash_calls.insert(call);
     }
-    on_decode(&decode)?;
-    provenance_rows.push(StreamDecodedWithProvenance {
+    let tagged = StreamDecodedWithProvenance {
         decode: decode.clone(),
         provenance,
-    });
+    };
+    on_decode(&tagged)?;
+    provenance_rows.push(tagged);
     merged.push(decode);
     Ok(())
 }

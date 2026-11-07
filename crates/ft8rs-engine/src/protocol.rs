@@ -107,6 +107,18 @@ pub enum EngineEvent {
     DecodeRowsDropped(u64),
     Status(EngineStatus),
     Decode(DecodeRecord),
+    /// Internal event consumed by the live worker supervisor.
+    A7Checkpoint {
+        timestamp: SlotTimestamp,
+        snapshot: ft8rs::stream::profile::A7Snapshot,
+    },
+    /// Internal JTDX progress, consumed by the live worker supervisor.
+    JtdxCheckpoint {
+        timestamp: SlotTimestamp,
+        branch: ft8rs::stream::profile::JtdxBranch,
+        update: ft8rs::stream::profile::JtdxCheckpoint,
+        publish: bool,
+    },
     SlotComplete {
         timestamp: SlotTimestamp,
         count: usize,

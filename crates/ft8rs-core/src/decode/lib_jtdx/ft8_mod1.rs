@@ -200,26 +200,26 @@ impl Default for Ft8Mod1 {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct LastRxMsg {
     pub xdt: f32,
     pub lstate: bool,
     pub lastmsg: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct CallSignDt {
     pub dt: f32,
     pub call2: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct InCall {
     pub xdt: f32,
     pub msg: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct OddEvenMessage {
     pub freq: f32,
     pub dt: f32,

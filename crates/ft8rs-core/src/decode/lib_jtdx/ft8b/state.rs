@@ -65,7 +65,7 @@ pub struct Ft8bDecodeResult {
     pub source: DecodeSource,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DecodeSource {
     Regular,
     Ft8s,
@@ -89,10 +89,31 @@ pub(super) struct SymbolMetrics {
     pub(super) nsync2: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct CsMatrix {
+    #[serde(with = "matrix")]
     pub(super) re: [[f32; 79]; 8],
+    #[serde(with = "matrix")]
     pub(super) im: [[f32; 79]; 8],
+}
+
+mod matrix {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(matrix: &[[f32; 79]; 8], s: S) -> Result<S::Ok, S::Error> {
+        matrix.each_ref().map(|row| row.as_slice()).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[[f32; 79]; 8], D::Error> {
+        let rows = <[Vec<f32>; 8]>::deserialize(d)?;
+        let mut matrix = [[0.0; 79]; 8];
+        for (out, row) in matrix.iter_mut().zip(rows) {
+            *out = row
+                .try_into()
+                .map_err(|_| serde::de::Error::custom("invalid JTDX signal matrix"))?;
+        }
+        Ok(matrix)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -152,7 +173,7 @@ pub(super) enum MetricSource {
     CsCsoldSum,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct SignalEntry {
     freq: f32,
     xdt: f32,
@@ -165,16 +186,20 @@ struct DecodedSignalEntry {
     xdt: f32,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(super) struct SignalMemory {
-    tmpcqdec: Vec<DecodedSignalEntry>,
-    tmpmyc: Vec<DecodedSignalEntry>,
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SignalHistory {
     evencq: Vec<SignalEntry>,
     oddcq: Vec<SignalEntry>,
     evenmyc: Vec<SignalEntry>,
     oddmyc: Vec<SignalEntry>,
     evenqso: Option<SignalEntry>,
     oddqso: Option<SignalEntry>,
+}
+#[derive(Clone, Debug, Default)]
+pub(super) struct SignalMemory {
+    tmpcqdec: Vec<DecodedSignalEntry>,
+    tmpmyc: Vec<DecodedSignalEntry>,
+    previous: SignalHistory,
     tmpcqsig: Vec<SignalEntry>,
     tmpmycsig: Vec<SignalEntry>,
     tmpqsosig: Option<SignalEntry>,
@@ -211,6 +236,14 @@ impl Default for Ft8bWorkspace {
 }
 
 impl Ft8bWorkspace {
+    pub(crate) fn signal_history(&self) -> SignalHistory {
+        self.signal_memory.previous.clone()
+    }
+
+    pub(crate) fn restore_signal_history(&mut self, history: SignalHistory) {
+        self.signal_memory.previous = history;
+    }
+
     pub fn begin_slot(&mut self) {
         self.signal_memory.tmpcqsig.clear();
         self.signal_memory.tmpmycsig.clear();
@@ -252,19 +285,19 @@ impl SignalMemory {
         lqsomsgdcd: bool,
     ) {
         if levenint {
-            copy_signal_prefix(&mut self.evencq, &self.tmpcqsig);
+            copy_signal_prefix(&mut self.previous.evencq, &self.tmpcqsig);
             if lapmyc {
-                copy_signal_prefix(&mut self.evenmyc, &self.tmpmycsig);
+                copy_signal_prefix(&mut self.previous.evenmyc, &self.tmpmycsig);
                 if !lqsomsgdcd && self.tmpqsosig.is_some() {
-                    self.evenqso = self.tmpqsosig.clone();
+                    self.previous.evenqso = self.tmpqsosig.clone();
                 }
             }
         } else if loddint {
-            copy_signal_prefix(&mut self.oddcq, &self.tmpcqsig);
+            copy_signal_prefix(&mut self.previous.oddcq, &self.tmpcqsig);
             if lapmyc {
-                copy_signal_prefix(&mut self.oddmyc, &self.tmpmycsig);
+                copy_signal_prefix(&mut self.previous.oddmyc, &self.tmpmycsig);
                 if !lqsomsgdcd && self.tmpqsosig.is_some() {
-                    self.oddqso = self.tmpqsosig.clone();
+                    self.previous.oddqso = self.tmpqsosig.clone();
                 }
             }
         }
@@ -281,12 +314,12 @@ impl SignalMemory {
         xdt: f64,
     ) -> Option<CsMatrix> {
         let entries: &[SignalEntry] = match (kind, context.levenint, context.loddint) {
-            (SignalKind::Cq, true, _) => &self.evencq,
-            (SignalKind::Cq, _, true) => &self.oddcq,
-            (SignalKind::MyCall, true, _) => &self.evenmyc,
-            (SignalKind::MyCall, _, true) => &self.oddmyc,
-            (SignalKind::Qso, true, _) => return self.match_one(&self.evenqso, freq, xdt),
-            (SignalKind::Qso, _, true) => return self.match_one(&self.oddqso, freq, xdt),
+            (SignalKind::Cq, true, _) => &self.previous.evencq,
+            (SignalKind::Cq, _, true) => &self.previous.oddcq,
+            (SignalKind::MyCall, true, _) => &self.previous.evenmyc,
+            (SignalKind::MyCall, _, true) => &self.previous.oddmyc,
+            (SignalKind::Qso, true, _) => return self.match_one(&self.previous.evenqso, freq, xdt),
+            (SignalKind::Qso, _, true) => return self.match_one(&self.previous.oddqso, freq, xdt),
             _ => return None,
         };
         entries

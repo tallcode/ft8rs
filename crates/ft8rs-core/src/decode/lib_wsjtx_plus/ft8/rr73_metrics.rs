@@ -246,6 +246,7 @@ pub(in crate::decode::lib_wsjtx_plus) fn recover_rr73(
     focus: f64,
     band: std::ops::RangeInclusive<f64>,
     target: &str,
+    slot_deadline: Option<std::time::Instant>,
     mut on_trial: impl FnMut(),
 ) -> Option<crate::stream::session::StreamDecodedMessage> {
     use super::super::{create_decode_workspace, sync8, DT2, NFFT1_LONG};
@@ -265,6 +266,7 @@ pub(in crate::decode::lib_wsjtx_plus) fn recover_rr73(
         return None;
     }
     let deadline = Instant::now() + Duration::from_millis(125);
+    let deadline = slot_deadline.map_or(deadline, |slot| slot.min(deadline));
     let (candidates, sbase) = sync8(audio, lo, hi, 1.5, focus, 8);
     if candidates.is_empty() || Instant::now() >= deadline {
         return None;

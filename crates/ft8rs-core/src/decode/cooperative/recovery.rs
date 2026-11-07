@@ -45,6 +45,7 @@ pub(crate) fn prepare_with_subtractor(
     low: f64,
     high: f64,
     subtract: fn(&mut Vec<f64>, &[i32; 79], f64, f64),
+    deadline: Option<std::time::Instant>,
 ) -> (Vec<f32>, CancellationStats) {
     let mut residual: Vec<f64> = samples.iter().map(|v| f64::from(*v)).collect();
     let mut stats = CancellationStats::default();
@@ -55,6 +56,9 @@ pub(crate) fn prepare_with_subtractor(
             .then_with(|| a.freq.total_cmp(&b.freq))
     });
     for seed in ordered {
+        if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            break;
+        }
         stats.proposed += 1;
         if !eligible_shape(seed, low, high) || waveform_support(&residual, seed) < 0.70 {
             stats.rejected_support += 1;

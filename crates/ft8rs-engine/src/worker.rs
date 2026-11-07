@@ -5,8 +5,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
+use ft8rs::stream::profile::{same_signal, A7Snapshot, JtdxBranch, JtdxCheckpoint, JtdxRestore};
+use ft8rs::stream::session::StreamDecodeProvenance;
+use ft8rs::DecodeProfile;
 use ft8rs::{SlotTimestamp, StreamDecodeConfig, StreamDecodedMessage};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +20,7 @@ use crate::soundcard::SlotStage;
 const WORKER_ARGUMENT: &str = "--ft8rs-decode-worker";
 const PREFIX: &str = "FT8RS-WORKER ";
 const LIVE_BUDGET: Duration = Duration::from_secs(10);
+const RECOVERY_HEADROOM: Duration = Duration::from_millis(250);
 const POLL: Duration = Duration::from_millis(5);
 
 #[derive(Serialize, Deserialize)]
@@ -27,6 +31,9 @@ enum Request {
         stage: SlotStage,
         timestamp: String,
         samples: Vec<f32>,
+        recovery_deadline: Option<SystemTime>,
+        restore_a7: Option<A7Snapshot>,
+        restore_jtdx: [Option<JtdxRestore>; 2],
     },
     Reconfigure {
         id: u64,
@@ -53,6 +60,16 @@ enum Response {
         timestamp: String,
         count: usize,
     },
+    A7Checkpoint {
+        timestamp: String,
+        snapshot: A7Snapshot,
+    },
+    JtdxCheckpoint {
+        timestamp: String,
+        branch: JtdxBranch,
+        update: JtdxCheckpoint,
+        publish: bool,
+    },
     Dx(DxContextSnapshot),
     Error(String),
     Log(String),
@@ -69,7 +86,8 @@ fn write_frame(output: &mut impl Write, value: &impl Serialize) -> Result<(), St
 fn read_frame<T: for<'a> Deserialize<'a>>(input: &mut impl BufRead) -> Result<Option<T>, String> {
     loop {
         let mut line = String::new();
-        if input.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+        input.read_line(&mut line).map_err(|e| e.to_string())?;
+        if !line.ends_with('\n') {
             return Ok(None);
         }
         if let Some(frame) = line.strip_prefix(PREFIX) {
@@ -96,6 +114,24 @@ fn response(event: EngineEvent) -> Option<Response> {
         EngineEvent::SlotComplete { timestamp, count } => Response::SlotComplete {
             timestamp: timestamp.format(),
             count,
+        },
+        EngineEvent::A7Checkpoint {
+            timestamp,
+            snapshot,
+        } => Response::A7Checkpoint {
+            timestamp: timestamp.format(),
+            snapshot,
+        },
+        EngineEvent::JtdxCheckpoint {
+            timestamp,
+            branch,
+            update,
+            publish,
+        } => Response::JtdxCheckpoint {
+            timestamp: timestamp.format(),
+            branch,
+            update,
+            publish,
         },
         EngineEvent::DxContext(dx) => Response::Dx(dx),
         EngineEvent::Error(error) => Response::Error(error),
@@ -133,6 +169,24 @@ fn event(response: Response) -> Result<Option<EngineEvent>, String> {
         Response::SlotComplete { timestamp, count } => EngineEvent::SlotComplete {
             timestamp: SlotTimestamp::parse(&timestamp)?,
             count,
+        },
+        Response::A7Checkpoint {
+            timestamp,
+            snapshot,
+        } => EngineEvent::A7Checkpoint {
+            timestamp: SlotTimestamp::parse(&timestamp)?,
+            snapshot,
+        },
+        Response::JtdxCheckpoint {
+            timestamp,
+            branch,
+            update,
+            publish,
+        } => EngineEvent::JtdxCheckpoint {
+            timestamp: SlotTimestamp::parse(&timestamp)?,
+            branch,
+            update,
+            publish,
         },
         Response::Dx(dx) => EngineEvent::DxContext(dx),
         Response::Error(error) => EngineEvent::Error(error),
@@ -192,6 +246,9 @@ fn worker_main() -> Result<(), String> {
                 stage,
                 timestamp,
                 samples,
+                recovery_deadline,
+                restore_a7,
+                restore_jtdx,
             } => (
                 id,
                 DecodeCmd::Stage {
@@ -199,6 +256,16 @@ fn worker_main() -> Result<(), String> {
                     timestamp: SlotTimestamp::parse(&timestamp)?,
                     samples_12k: samples,
                     submitted: Instant::now(),
+                    recovery_deadline: recovery_deadline.map(|deadline| {
+                        let remaining = deadline
+                            .duration_since(SystemTime::now())
+                            .unwrap_or_default()
+                            .min(LIVE_BUDGET);
+                        Instant::now() + remaining
+                    }),
+                    restore_a7,
+                    restore_jtdx,
+                    supervised: true,
                 },
             ),
             Request::Reconfigure {
@@ -254,6 +321,12 @@ struct Worker {
     input: Option<Sender<Request>>,
     output: Receiver<Result<Response, String>>,
     pipes: Vec<JoinHandle<()>>,
+    restore_pending: [bool; 2],
+    restore_jtdx_pending: bool,
+    #[cfg(test)]
+    kill_at_checkpoint: Option<&'static str>,
+    #[cfg(test)]
+    kill_at_baseline_row: Option<&'static str>,
 }
 
 impl Worker {
@@ -312,6 +385,12 @@ impl Worker {
             input: Some(input),
             output,
             pipes: vec![writer, reader],
+            restore_pending: [true; 2],
+            restore_jtdx_pending: true,
+            #[cfg(test)]
+            kill_at_checkpoint: None,
+            #[cfg(test)]
+            kill_at_baseline_row: None,
         })
     }
 
@@ -322,10 +401,11 @@ impl Worker {
             .send(request)
             .map_err(|e| e.to_string())
     }
-}
 
-impl Drop for Worker {
-    fn drop(&mut self) {
+    fn stop(&mut self) {
+        if self.input.is_none() {
+            return;
+        }
         // Kill and reap before a replacement can start. Native CPU work cannot
         // survive cancellation; closing pipes also releases blocked pipe I/O.
         let _ = self.child.kill();
@@ -334,6 +414,163 @@ impl Drop for Worker {
         for pipe in self.pipes.drain(..) {
             let _ = pipe.join();
         }
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn parity(timestamp: &SlotTimestamp) -> usize {
+    (timestamp.milliseconds_since_midnight() / 15_000 % 2) as usize
+}
+
+#[derive(Default)]
+struct WorkerHistory {
+    a7: [Option<(SlotTimestamp, A7Snapshot)>; 2],
+    jtdx: [Option<(SlotTimestamp, JtdxRestore)>; 2],
+}
+
+impl WorkerHistory {
+    fn a7_for_slot(&mut self, timestamp: &SlotTimestamp) -> &mut A7Snapshot {
+        let bank = &mut self.a7[parity(timestamp)];
+        if bank.as_ref().is_none_or(|(slot, _)| slot != timestamp) {
+            *bank = Some((timestamp.clone(), A7Snapshot::default()));
+        }
+        &mut bank.as_mut().unwrap().1
+    }
+
+    fn jtdx_for_restart(&self, timestamp: &SlotTimestamp) -> [Option<JtdxRestore>; 2] {
+        self.jtdx.each_ref().map(|branch| {
+            branch
+                .as_ref()
+                .filter(|(slot, _)| {
+                    slot.add_seconds(15) == *timestamp || slot.add_seconds(30) == *timestamp
+                })
+                .map(|(_, restore)| restore.clone())
+        })
+    }
+}
+
+#[derive(Default)]
+struct SlotDelivery {
+    rows: Vec<StreamDecodedMessage>,
+    complete: bool,
+}
+
+impl SlotDelivery {
+    fn forward(
+        &mut self,
+        value: Response,
+        history: &mut WorkerHistory,
+        config: &StreamDecodeConfig,
+        events: &Sender<EngineEvent>,
+    ) -> Result<(), String> {
+        let Some(value) = event(value)? else {
+            return Ok(());
+        };
+        let value = match value {
+            EngineEvent::A7Checkpoint {
+                timestamp,
+                snapshot,
+            } => {
+                let saved = history.a7_for_slot(&timestamp);
+                let mut combined = snapshot;
+                combined.merge(std::mem::take(saved));
+                *saved = combined;
+                return Ok(());
+            }
+            EngineEvent::JtdxCheckpoint {
+                timestamp,
+                branch,
+                update,
+                publish,
+            } => {
+                let (latest, restore) = history.jtdx[branch.index()]
+                    .get_or_insert_with(|| (timestamp.clone(), JtdxRestore::default()));
+                *latest = timestamp.clone();
+                match update {
+                    JtdxCheckpoint::Complete(snapshot) => {
+                        restore.completed = Some(snapshot);
+                        restore.partial.clear();
+                        return Ok(());
+                    }
+                    JtdxCheckpoint::Row(confirmed) => {
+                        let slot = timestamp.format();
+                        if restore.partial.last().is_none_or(|(last, _)| last != &slot) {
+                            // Preserve a partial bank of each parity across repeated kills.
+                            if restore.partial.len() == 2 {
+                                restore.partial.remove(0);
+                            }
+                            restore.partial.push((slot, Vec::new()));
+                        }
+                        let record = publish.then(|| DecodeRecord {
+                            timestamp,
+                            row: confirmed.row.decode.clone(),
+                            provenance: if config.profile == DecodeProfile::Jtdx {
+                                confirmed.row.provenance
+                            } else {
+                                StreamDecodeProvenance::Unknown
+                            },
+                            stage: DecodeStage::Final,
+                        });
+                        restore.partial.last_mut().unwrap().1.push(*confirmed);
+                        let Some(record) = record else {
+                            return Ok(());
+                        };
+                        EngineEvent::Decode(record)
+                    }
+                }
+            }
+            other => other,
+        };
+        let value = match value {
+            EngineEvent::Decode(record) => {
+                let native_seed = matches!(
+                    config.profile,
+                    DecodeProfile::Wsjtx | DecodeProfile::WsjtxPlus
+                ) && matches!(
+                    record.provenance,
+                    StreamDecodeProvenance::Regular
+                        | StreamDecodeProvenance::A7Memory
+                        | StreamDecodeProvenance::A8List
+                );
+                if config.profile == DecodeProfile::Hybrid || native_seed {
+                    let frequency =
+                        if native_seed && record.provenance == StreamDecodeProvenance::A8List {
+                            config.nfqso
+                        } else {
+                            record.row.freq
+                        };
+                    history
+                        .a7_for_slot(&record.timestamp)
+                        .record(&record.row, frequency);
+                }
+                if self.rows.iter().any(|row| {
+                    (config.profile != DecodeProfile::Dx
+                        || (row.freq - record.row.freq).abs() <= 3.0)
+                        && same_signal(row, &record.row)
+                }) {
+                    return Ok(());
+                }
+                self.rows.push(record.row.clone());
+                EngineEvent::Decode(record)
+            }
+            EngineEvent::SlotComplete { timestamp, .. } => {
+                if self.complete {
+                    return Ok(());
+                }
+                self.complete = true;
+                EngineEvent::SlotComplete {
+                    timestamp,
+                    count: self.rows.len(),
+                }
+            }
+            other => other,
+        };
+        events.send(value).map_err(|_| "monitor stopped".into())
     }
 }
 
@@ -357,16 +594,21 @@ fn supervise(
     let mut slot = None;
     let mut work = Duration::ZERO;
     let mut aborted = None;
-    let mut count = 0;
+    let mut delivery = SlotDelivery::default();
+    let mut history = WorkerHistory::default();
     loop {
         let command = match pending.pop_front().or_else(|| commands.recv().ok()) {
             Some(c) => c,
             None => return,
         };
-        let (request, deadline, timestamp) = match command {
+        let (mut request, deadline, timestamp) = match command {
             DecodeCmd::Stop => return,
             DecodeCmd::Barrier(done) => {
                 let _ = done.send(());
+                continue;
+            }
+            DecodeCmd::InvalidateA7Checkpoint => {
+                history = WorkerHistory::default();
                 continue;
             }
             DecodeCmd::Reconfigure {
@@ -375,6 +617,7 @@ fn supervise(
                 reset_dx_operator,
             } => {
                 config = next;
+                history = WorkerHistory::default();
                 sequence += 1;
                 (
                     Request::Reconfigure {
@@ -392,6 +635,7 @@ fn supervise(
                 timestamp,
                 samples_12k,
                 submitted,
+                ..
             } => {
                 if aborted.as_ref() == Some(&timestamp) {
                     continue;
@@ -399,17 +643,33 @@ fn supervise(
                 if slot.as_ref() != Some(&timestamp) {
                     slot = Some(timestamp.clone());
                     work = Duration::ZERO;
-                    count = 0;
+                    delivery = SlotDelivery::default();
                 }
                 sequence += 1;
+                let now = Instant::now();
+                let deadline = (now + budget.saturating_sub(work)).min(submitted + budget);
+                let recovery_deadline = (stage == SlotStage::N50
+                    && matches!(
+                        config.profile,
+                        DecodeProfile::Hybrid | DecodeProfile::WsjtxPlus
+                    ))
+                .then(|| {
+                    SystemTime::now()
+                        + deadline
+                            .saturating_duration_since(now)
+                            .saturating_sub(RECOVERY_HEADROOM)
+                });
                 (
                     Request::Stage {
                         id: sequence,
                         stage,
                         timestamp: timestamp.format(),
                         samples: samples_12k,
+                        recovery_deadline,
+                        restore_a7: None,
+                        restore_jtdx: [None, None],
                     },
-                    (Instant::now() + budget.saturating_sub(work)).min(submitted + budget),
+                    deadline,
                     Some(timestamp),
                 )
             }
@@ -426,7 +686,30 @@ fn supervise(
                 child.send(Request::Init(config.clone()))?;
                 worker = Some(child);
             }
-            let child = worker.as_ref().unwrap();
+            let child = worker.as_mut().unwrap();
+            if let (
+                Some(timestamp),
+                Request::Stage {
+                    stage: SlotStage::N41,
+                    restore_a7,
+                    restore_jtdx,
+                    ..
+                },
+            ) = (&timestamp, &mut request)
+            {
+                let index = parity(timestamp);
+                if config.profile == DecodeProfile::Hybrid
+                    || std::mem::take(&mut child.restore_pending[index])
+                {
+                    *restore_a7 = history.a7[index]
+                        .as_ref()
+                        .filter(|(previous, _)| previous.add_seconds(30) == *timestamp)
+                        .map(|(_, snapshot)| snapshot.clone());
+                }
+                if std::mem::take(&mut child.restore_jtdx_pending) {
+                    *restore_jtdx = history.jtdx_for_restart(timestamp);
+                }
+            }
             child.send(request)?;
             loop {
                 // Stop/Shutdown must preempt even a blocked native FEC call.
@@ -446,13 +729,27 @@ fn supervise(
                 {
                     Ok(Ok(Response::Done(id))) if id == sequence => return Ok(()),
                     Ok(Ok(value)) => {
-                        if let Some(value) = event(value)? {
-                            if matches!(value, EngineEvent::Decode(_)) {
-                                count += 1;
+                        #[cfg(test)]
+                        let force_timeout = match &value {
+                            Response::A7Checkpoint { timestamp, .. } => {
+                                child.kill_at_checkpoint == Some(timestamp.as_str())
                             }
-                            if events.send(value).is_err() {
-                                return Err("monitor stopped".into());
-                            }
+                            Response::Decode {
+                                message,
+                                stage: DecodeStage::Final,
+                                ..
+                            } => child.kill_at_baseline_row == Some(message.as_str()),
+                            Response::JtdxCheckpoint {
+                                update: JtdxCheckpoint::Row(entry),
+                                ..
+                            } => child.kill_at_baseline_row == Some(entry.row.decode.msg.as_str()),
+                            _ => false,
+                        };
+                        delivery.forward(value, &mut history, &config, &events)?;
+                        #[cfg(test)]
+                        if force_timeout {
+                            deadline_expired = true;
+                            return Err("test forced a decoder timeout".into());
                         }
                     }
                     Ok(Err(error)) => return Err(error),
@@ -467,12 +764,30 @@ fn supervise(
             work += started.elapsed();
         }
         if let Err(error) = result {
-            // Drop performs kill + wait, including every native worker thread.
-            worker.take();
             if error == "monitor stopped" {
                 return;
             }
-            log::warn!("{error}; worker terminated and reaped before next slot");
+            if let Some(mut child) = worker.take() {
+                // Reap the process before draining. The reader finishes at EOF,
+                // so only complete frames already written by this worker survive.
+                child.stop();
+                for frame in child.output.try_iter().filter_map(Result::ok) {
+                    if delivery
+                        .forward(frame, &mut history, &config, &events)
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+            if let Some(timestamp) = &timestamp {
+                log::warn!(
+                    "slot {}: {error}; worker terminated and reaped before next slot",
+                    timestamp.format()
+                );
+            } else {
+                log::warn!("{error}; worker terminated and reaped before next slot");
+            }
             // A deadline is normal live scheduling: keep the diagnostic log
             // without showing a GUI error. Actual worker failures still surface.
             if !deadline_expired {
@@ -480,7 +795,12 @@ fn supervise(
             }
             if let Some(timestamp) = timestamp {
                 aborted = Some(timestamp.clone());
-                let _ = events.send(EngineEvent::SlotComplete { timestamp, count });
+                if !delivery.complete {
+                    let _ = events.send(EngineEvent::SlotComplete {
+                        timestamp,
+                        count: delivery.rows.len(),
+                    });
+                }
             }
         }
     }
@@ -490,6 +810,15 @@ fn supervise(
 mod tests {
     use super::*;
     use ft8rs::stream::profile::ProfileStreamDecodeSession;
+    use ft8rs::stream::session::StreamDecodeProvenance;
+
+    const HANG_RECOVERY_ROWS: [StreamDecodeProvenance; 5] = [
+        StreamDecodeProvenance::Unknown,
+        StreamDecodeProvenance::CooperativeRecovery,
+        StreamDecodeProvenance::PlusCompatibility,
+        StreamDecodeProvenance::CandidateRetry,
+        StreamDecodeProvenance::Experiment,
+    ];
 
     fn fixture(mode: &str) -> Result<Worker, String> {
         if mode == "native" {
@@ -511,7 +840,7 @@ mod tests {
         let Ok(mode) = std::env::var("FT8RS_WORKER_TEST_FIXTURE") else {
             return;
         };
-        if mode == "native" {
+        if mode == "native" || mode.starts_with("pause-baseline:") {
             worker_main().unwrap();
             return;
         }
@@ -531,7 +860,11 @@ mod tests {
                 &mut std::io::stdout().lock(),
                 &Response::Decode {
                     timestamp: timestamp.clone(),
-                    freq: 1137.0,
+                    freq: if mode == "cumulative" && stage == SlotStage::N47 {
+                        1150.0
+                    } else {
+                        1137.0
+                    },
                     dt: 2.4,
                     snr: -8.0,
                     sync: 1.0,
@@ -543,6 +876,25 @@ mod tests {
             )
             .unwrap();
             if timestamp.ends_with("120000") && (mode != "cumulative" || stage == SlotStage::N50) {
+                if mode == "hang-multi" {
+                    for (index, provenance) in HANG_RECOVERY_ROWS.into_iter().enumerate() {
+                        write_frame(
+                            &mut std::io::stdout().lock(),
+                            &Response::Decode {
+                                timestamp: timestamp.clone(),
+                                freq: 1200.0 + 10.0 * index as f64,
+                                dt: 0.1,
+                                snr: -8.0,
+                                sync: 1.0,
+                                message: "CQ K1ABC FN42".into(),
+                                tones: vec![0; 79],
+                                provenance,
+                                stage: DecodeStage::Final,
+                            },
+                        )
+                        .unwrap();
+                    }
+                }
                 // An intentionally uncooperative CPU task. It can only stop
                 // when its containing process is terminated by the watchdog.
                 loop {
@@ -572,7 +924,297 @@ mod tests {
             stage,
             samples_12k: samples,
             submitted: Instant::now(),
+            recovery_deadline: None,
+            restore_a7: None,
+            restore_jtdx: [None, None],
+            supervised: false,
         }
+    }
+
+    #[test]
+    fn killed_hybrid_worker_preserves_rows_and_restores_a7_thirty_seconds_later() {
+        use ft8rs::stream::session::StreamDecodeProvenance::A7Memory;
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ft8rs-core/tests/ft8/230208_140300.wav");
+        let audio = ft8rs::input::audio::read_wav_mono_f32(path).unwrap();
+        let start = SlotTimestamp::parse("230208_140300").unwrap();
+        let config = StreamDecodeConfig {
+            profile: DecodeProfile::Hybrid,
+            cooperative_realtime: true,
+            ..Default::default()
+        };
+        let (tx, commands) = mpsc::channel();
+        let (events, results) = mpsc::channel();
+        let supervisor = thread::spawn(move || {
+            let mut starts = 0;
+            supervise(
+                config,
+                commands,
+                events,
+                || {
+                    let mut child = fixture("native")?;
+                    if starts == 0 {
+                        child.kill_at_checkpoint = Some("230208_140300");
+                    }
+                    starts += 1;
+                    Ok(child)
+                },
+                LIVE_BUDGET,
+            );
+            starts
+        });
+
+        for (index, samples) in audio.samples.chunks_exact(180_000).take(3).enumerate() {
+            let timestamp = start.add_seconds(index as i64 * 15);
+            for (kind, len) in [
+                (SlotStage::N41, 141696),
+                (SlotStage::N47, 162432),
+                (SlotStage::N50, 180000),
+            ] {
+                tx.send(stage(&timestamp.format(), kind, samples[..len].to_vec()))
+                    .unwrap();
+            }
+            let mut rows: Vec<DecodeRecord> = Vec::new();
+            loop {
+                match results.recv_timeout(Duration::from_secs(15)).unwrap() {
+                    EngineEvent::Decode(record) => {
+                        assert_eq!(record.timestamp, timestamp);
+                        assert!(
+                            !rows.iter().any(|old| old.row.msg == record.row.msg
+                                && (old.row.freq - record.row.freq).abs() <= 5.0
+                                && (old.row.dt - record.row.dt).abs() <= 0.3),
+                            "duplicate row: {record:?}"
+                        );
+                        rows.push(record);
+                    }
+                    EngineEvent::SlotComplete {
+                        timestamp: completed,
+                        count,
+                    } => {
+                        assert_eq!(completed, timestamp);
+                        assert_eq!(count, rows.len());
+                        break;
+                    }
+                    EngineEvent::Error(error) => panic!("live worker failed: {error}"),
+                    _ => {}
+                }
+            }
+            if index == 0 {
+                assert!(rows.iter().any(|row| row.row.msg == "PD2RLD R6KEE KN75"));
+            }
+            if index == 2 {
+                assert!(rows
+                    .iter()
+                    .any(|row| row.row.msg == "CQ R6KEE KN75" && row.provenance == A7Memory));
+            }
+        }
+        tx.send(DecodeCmd::Stop).unwrap();
+        assert_eq!(
+            supervisor.join().unwrap(),
+            2,
+            "one real child must have been replaced"
+        );
+        assert!(results.try_recv().is_err());
+    }
+
+    #[test]
+    fn killed_in_base_search_keeps_confirmations_and_restores_native_history() {
+        use StreamDecodeProvenance::{A7Memory, JtdxDeep};
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ft8rs-core/tests/ft8/230208_140300.wav");
+        let audio = ft8rs::input::audio::read_wav_mono_f32(path).unwrap();
+        let start = SlotTimestamp::parse("230208_140300").unwrap();
+        for (profile, seed, recovered, provenance) in [
+            (
+                DecodeProfile::Wsjtx,
+                "PD2RLD R6KEE KN75",
+                "CQ R6KEE KN75",
+                A7Memory,
+            ),
+            (
+                DecodeProfile::Hybrid,
+                "PD2RLD R6KEE KN75",
+                "CQ R6KEE KN75",
+                A7Memory,
+            ),
+            (
+                DecodeProfile::Jtdx,
+                "CQ D1DX KN87",
+                "CQ D1DX KN87",
+                JtdxDeep,
+            ),
+        ] {
+            let config = StreamDecodeConfig {
+                profile,
+                cooperative_realtime: true,
+                ..Default::default()
+            };
+            let mut cold = ProfileStreamDecodeSession::new(config.clone());
+            assert!(
+                !cold
+                    .decode_slot_at(&start.add_seconds(30), &audio.samples[360_000..540_000])
+                    .iter()
+                    .any(|row| row.msg == recovered),
+                "{profile:?} control unexpectedly decoded {recovered}"
+            );
+            let (tx, commands) = mpsc::channel();
+            let (events, results) = mpsc::channel();
+            let supervisor = thread::spawn(move || {
+                let mut starts = 0;
+                supervise(
+                    config,
+                    commands,
+                    events,
+                    || {
+                        let child = if starts == 0 {
+                            let mut child = fixture(&format!("pause-baseline:{seed}"))?;
+                            child.kill_at_baseline_row = Some(seed);
+                            child
+                        } else {
+                            fixture("native")?
+                        };
+                        starts += 1;
+                        // The first child parks inside the actual confirmation callback.
+                        // The supervisor always terminates and reaps it.
+                        Ok(child)
+                    },
+                    LIVE_BUDGET,
+                );
+                starts
+            });
+
+            for (index, samples) in audio.samples.chunks_exact(180_000).take(3).enumerate() {
+                let timestamp = start.add_seconds(index as i64 * 15);
+                for (kind, len) in [
+                    (SlotStage::N41, 141696),
+                    (SlotStage::N47, 162432),
+                    (SlotStage::N50, 180000),
+                ] {
+                    let input = if index == 0 && kind == SlotStage::N41 {
+                        // Ensure the classic seed is confirmed in the N50 search.
+                        vec![0.0; len]
+                    } else {
+                        samples[..len].to_vec()
+                    };
+                    tx.send(stage(&timestamp.format(), kind, input)).unwrap();
+                }
+                let mut rows: Vec<DecodeRecord> = Vec::new();
+                loop {
+                    match results.recv_timeout(Duration::from_secs(15)).unwrap() {
+                        EngineEvent::Decode(record) => {
+                            assert_eq!(record.timestamp, timestamp);
+                            assert!(!rows.iter().any(|old| same_signal(&old.row, &record.row)));
+                            rows.push(record);
+                        }
+                        EngineEvent::SlotComplete {
+                            timestamp: completed,
+                            count,
+                        } => {
+                            assert_eq!(completed, timestamp);
+                            assert_eq!(count, rows.len());
+                            break;
+                        }
+                        EngineEvent::Error(error) => panic!("{profile:?}: {error}"),
+                        _ => {}
+                    }
+                }
+                if index == 0 {
+                    assert!(rows
+                        .iter()
+                        .any(|row| row.row.msg == seed && row.stage == DecodeStage::Final));
+                }
+                if index == 2 {
+                    assert!(
+                        rows.iter()
+                            .any(|row| row.row.msg == recovered && row.provenance == provenance),
+                        "{profile:?} lost history for {recovered}"
+                    );
+                }
+            }
+            tx.send(DecodeCmd::Stop).unwrap();
+            assert_eq!(
+                supervisor.join().unwrap(),
+                2,
+                "{profile:?} did not replace exactly one worker"
+            );
+            assert!(results.try_recv().is_err());
+        }
+    }
+
+    #[test]
+    fn hybrid_uses_a_jtdx_only_confirmation_as_a7_seed() {
+        use ft8rs::stream::profile::SlotRecovery;
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ft8rs-core/tests/ft8/230208_140300.wav");
+        let audio = ft8rs::input::audio::read_wav_mono_f32(path).unwrap();
+        let seed_slot = SlotTimestamp::parse("230208_140300").unwrap();
+        let next = seed_slot.add_seconds(30);
+        let config = StreamDecodeConfig {
+            profile: DecodeProfile::Hybrid,
+            cooperative_realtime: true,
+            ..Default::default()
+        };
+        let mut peer = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+            profile: DecodeProfile::Jtdx,
+            ..config.clone()
+        });
+        let mut history = WorkerHistory::default();
+        let mut delivery = SlotDelivery::default();
+        let (events, received) = mpsc::channel();
+        let mut checkpoint = |branch, update, publish| {
+            if matches!(&update, JtdxCheckpoint::Row(entry)
+                if entry.row.decode.msg == "PD2RLD R6KEE KN75")
+            {
+                delivery
+                    .forward(
+                        Response::JtdxCheckpoint {
+                            timestamp: seed_slot.format(),
+                            branch,
+                            update,
+                            publish,
+                        },
+                        &mut history,
+                        &config,
+                        &events,
+                    )
+                    .unwrap();
+            }
+        };
+        let state = peer.start_slot();
+        peer.finish_slot_nzhsym50(
+            &seed_slot,
+            state,
+            &audio.samples[..180_000],
+            SlotRecovery {
+                jtdx_checkpoint: Some(&mut checkpoint),
+                ..Default::default()
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(received.try_iter().count(), 1);
+
+        let mut hybrid = ProfileStreamDecodeSession::new(config);
+        hybrid.restore_a7(&next, history.a7[parity(&next)].take().unwrap().1);
+        let mut decoded = false;
+        hybrid
+            .decode_slot_streaming_with_provenance_at(
+                &next,
+                &audio.samples[360_000..540_000],
+                |row| {
+                    decoded |= row.decode.msg == "CQ R6KEE KN75"
+                        && row.provenance == StreamDecodeProvenance::A7Memory;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert!(
+            decoded,
+            "the WSJT-X branch must be able to use a JTDX-only seed"
+        );
     }
 
     #[test]
@@ -584,28 +1226,29 @@ mod tests {
                 StreamDecodeConfig::default(),
                 rx,
                 events,
-                || fixture("hang"),
+                || fixture("hang-multi"),
                 Duration::from_millis(700),
             )
         });
         let start = Instant::now();
         tx.send(stage("261030_120000", SlotStage::N50, vec![0.0; 32]))
             .unwrap();
-        let mut decoded = 0;
+        let mut decoded = Vec::new();
         loop {
             match results.recv_timeout(Duration::from_secs(3)).unwrap() {
-                EngineEvent::Decode(_) => decoded += 1,
+                EngineEvent::Decode(record) => decoded.push(record.provenance),
                 EngineEvent::Error(message) => {
                     panic!("normal deadline must not show a GUI error: {message}");
                 }
                 EngineEvent::SlotComplete { count, .. } => {
-                    assert_eq!(count, 1);
+                    assert_eq!(count, 1 + HANG_RECOVERY_ROWS.len());
                     break;
                 }
                 _ => {}
             }
         }
-        assert_eq!(decoded, 1);
+        assert_eq!(decoded[0], StreamDecodeProvenance::Regular);
+        assert_eq!(decoded[1..], HANG_RECOVERY_ROWS);
         assert!(start.elapsed() < Duration::from_secs(2));
         tx.send(stage("261030_120015", SlotStage::N50, vec![0.0; 32]))
             .unwrap();
@@ -702,6 +1345,10 @@ mod tests {
             stage: SlotStage::N41,
             samples_12k: vec![],
             submitted: Instant::now() - Duration::from_secs(2),
+            recovery_deadline: None,
+            restore_a7: None,
+            restore_jtdx: [None, None],
+            supervised: false,
         })
         .unwrap();
         tx.send(DecodeCmd::Stop).unwrap();
@@ -948,19 +1595,17 @@ mod tests {
                 rows
             };
             if realtime {
-                // Native real-time cancellation races can change a reported SNR /
-                // sync slightly even without IPC. Require each original payload,
-                // tones, source, frequency and DT; the wire test above separately
-                // verifies bit-exact transport of every numeric field.
+                // The first branch to report a signal chooses the representative.
+                // IPC can affect scheduling, so compare unique signals here;
+                // the wire test separately checks every encoded field.
                 assert_eq!(actual.len(), expected.len());
                 for wanted in &expected {
                     assert!(
-                        actual.iter().any(|row| row.decode.msg == wanted.decode.msg
-                            && row.decode.itone == wanted.decode.itone
-                            && row.provenance == wanted.provenance
-                            && (row.decode.freq - wanted.decode.freq).abs() <= 0.01
-                            && (row.decode.dt - wanted.decode.dt).abs() <= 0.001),
-                        "lost native signal: {wanted:?}"
+                        actual
+                            .iter()
+                            .any(|row| same_signal(&row.decode, &wanted.decode)),
+                        "lost native signal: {:?}",
+                        wanted.decode.msg
                     );
                 }
             } else {

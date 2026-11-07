@@ -28,7 +28,9 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use ft8rs::input::audio::resample_linear;
-use ft8rs::stream::profile::{ProfileSlotState, ProfileStreamDecodeSession};
+use ft8rs::stream::profile::{
+    A7Snapshot, JtdxRestore, ProfileSlotState, ProfileStreamDecodeSession, SlotRecovery,
+};
 use ft8rs::stream::session::{
     DecodeProfile, StreamDecodeConfig, StreamDecodeSession, StreamDecodedWithProvenance,
     StreamSlotDecodeState,
@@ -213,6 +215,10 @@ fn run_monitor(
                             timestamp,
                             samples_12k,
                             submitted,
+                            recovery_deadline: None,
+                            restore_a7: None,
+                            restore_jtdx: [None, None],
+                            supervised: false,
                         },
                         cmd_rx,
                         &dec_evt_rx,
@@ -264,6 +270,7 @@ fn run_monitor(
                             match start_input_stream(new_state.device.as_deref(), new_state.channel)
                             {
                                 Ok(capture) => {
+                                    let _ = dec_cmd_tx.send(DecodeCmd::InvalidateA7Checkpoint);
                                     drop(stream);
                                     stream = capture.stream;
                                     rx = capture.rx;
@@ -326,6 +333,7 @@ fn run_monitor(
                 device,
                 channel,
             } => {
+                let _ = dec_cmd_tx.send(DecodeCmd::InvalidateA7Checkpoint);
                 let mut active = state.clone();
                 active.device = device;
                 active.channel = channel;
@@ -570,17 +578,18 @@ fn effective_config(config: &StreamDecodeConfig) -> StreamDecodeConfig {
 
 // ── Decode actor ────────────────────────────────────────────────────────────
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "The eight-entry staged queue bounds the inline configuration overhead to a few KB"
-)]
 pub(crate) enum DecodeCmd {
     Stage {
         stage: SlotStage,
         timestamp: SlotTimestamp,
         samples_12k: Vec<f32>,
         submitted: Instant,
+        recovery_deadline: Option<Instant>,
+        restore_a7: Option<A7Snapshot>,
+        restore_jtdx: [Option<JtdxRestore>; 2],
+        supervised: bool,
     },
+    InvalidateA7Checkpoint,
     Barrier(Sender<()>),
     Reconfigure {
         config: StreamDecodeConfig,
@@ -676,6 +685,21 @@ fn send_record(
 }
 
 #[cfg(test)]
+fn pause_fixture_after_confirmation(timestamp: &SlotTimestamp, message: &str) {
+    if timestamp.format() == "230208_140300"
+        && std::env::var("FT8RS_WORKER_TEST_FIXTURE")
+            .ok()
+            .and_then(|mode| mode.strip_prefix("pause-baseline:").map(str::to_owned))
+            .as_deref()
+            == Some(message)
+    {
+        loop {
+            thread::park();
+        }
+    }
+}
+
+#[cfg(test)]
 fn spawn_decode_actor(
     config: StreamDecodeConfig,
 ) -> (SyncSender<DecodeCmd>, Receiver<EngineEvent>) {
@@ -694,15 +718,15 @@ pub(crate) fn decode_actor(
 ) {
     let mut experiment_enabled = config.hybrid_experiment;
     let mut session = build_session(&config);
-    // wsjtx staged state plus the count of early rows already emitted at nzhsym=41.
-    let mut slot_state: Option<(StreamSlotDecodeState, usize)> = None;
-    // The same, for the unified Profile path (hybrid streams early WSJT-X rows;
-    // jtdx/dx are stateless and decode fully at nzhsym=50).
+    // Classic WSJT-X preserves staged audio and duplicate tracking through N50.
+    let mut slot_state: Option<StreamSlotDecodeState> = None;
+    // JTDX/DX only run their searches at N50; their sessions persist across slots.
     let mut profile_slot: Option<(ProfileSlotState, usize)> = None;
 
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
             DecodeCmd::Stop => break,
+            DecodeCmd::InvalidateA7Checkpoint => {}
             DecodeCmd::Barrier(done) => {
                 let _ = done.send(());
             }
@@ -723,42 +747,46 @@ pub(crate) fn decode_actor(
                 timestamp,
                 samples_12k,
                 submitted: _,
+                recovery_deadline,
+                restore_a7,
+                restore_jtdx,
+                supervised,
             } => match (&mut session, stage) {
                 (DecodeSession::Wsjtx(s), SlotStage::N41) => {
+                    if let Some(snapshot) = restore_a7 {
+                        s.restore_a7(&timestamp, snapshot);
+                    }
                     let mut state = s.start_slot_decode();
-                    match s.decode_slot_nzhsym41_with_provenance_at(
+                    match s.decode_slot_nzhsym41_tagged(
                         Some(&timestamp),
                         &mut state,
                         &samples_12k,
+                        |row| {
+                            send_record(&evt_tx, &timestamp, row, DecodeStage::Early);
+                            Ok(())
+                        },
                     ) {
-                        Ok(early) => {
-                            for row in &early {
-                                send_record(&evt_tx, &timestamp, row, DecodeStage::Early);
-                            }
-                            slot_state = Some((state, early.len()));
-                        }
+                        Ok(()) => slot_state = Some(state),
                         Err(err) => {
                             let _ = evt_tx.send(EngineEvent::Error(err));
                         }
                     }
                 }
                 (DecodeSession::Wsjtx(s), SlotStage::N47) => {
-                    if let Some((state, _)) = slot_state.as_mut() {
+                    if let Some(state) = slot_state.as_mut() {
                         s.subtract_slot_nzhsym47(state, &samples_12k);
                     }
                 }
                 (DecodeSession::Wsjtx(s), SlotStage::N50) => {
-                    if let Some((state, early_count)) = slot_state.take() {
-                        match s.decode_slot_nzhsym50_and_finish_with_provenance(state, &samples_12k)
-                        {
-                            Ok(all) => {
-                                for row in all.iter().skip(early_count) {
-                                    send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
-                                }
-                                let _ = evt_tx.send(EngineEvent::SlotComplete {
-                                    timestamp,
-                                    count: all.len(),
-                                });
+                    if let Some(state) = slot_state.take() {
+                        match s.decode_slot_nzhsym50_tagged(state, &samples_12k, |row| {
+                            send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
+                            #[cfg(test)]
+                            pause_fixture_after_confirmation(&timestamp, &row.decode.msg);
+                            Ok(())
+                        }) {
+                            Ok(count) => {
+                                let _ = evt_tx.send(EngineEvent::SlotComplete { timestamp, count });
                             }
                             Err(err) => {
                                 let _ = evt_tx.send(EngineEvent::Error(err));
@@ -769,6 +797,10 @@ pub(crate) fn decode_actor(
                 (DecodeSession::Profile(p), SlotStage::N41) => {
                     // Hybrid streams early WSJT-X rows here (before the slot
                     // boundary); jtdx/dx are no-ops that just open a stateless slot.
+                    if let Some(snapshot) = restore_a7 {
+                        p.restore_a7(&timestamp, snapshot);
+                    }
+                    p.restore_jtdx(restore_jtdx);
                     let mut state = p.start_slot();
                     match p.decode_slot_nzhsym41_streaming_with_provenance(
                         &timestamp,
@@ -793,14 +825,45 @@ pub(crate) fn decode_actor(
                 (DecodeSession::Profile(p), SlotStage::N50) => {
                     // Finish the slot: hybrid emits the remaining WSJT-X rows then
                     // JTDX-unique rows; jtdx/dx run their full decode here.
-                    if let Some((state, early_count)) = profile_slot.take() {
-                        let result = p.decode_slot_nzhsym50_streaming_with_provenance(
+                    if let Some((state, _)) = profile_slot.take() {
+                        let mut checkpoint = |snapshot| {
+                            let _ = evt_tx.send(EngineEvent::A7Checkpoint {
+                                timestamp: timestamp.clone(),
+                                snapshot,
+                            });
+                        };
+                        let mut jtdx_checkpoint = |branch, update, publish| {
+                            #[cfg(test)]
+                            let message = match &update {
+                                ft8rs::stream::profile::JtdxCheckpoint::Row(entry) => {
+                                    Some(entry.row.decode.msg.clone())
+                                }
+                                _ => None,
+                            };
+                            let _ = evt_tx.send(EngineEvent::JtdxCheckpoint {
+                                timestamp: timestamp.clone(),
+                                branch,
+                                update,
+                                publish,
+                            });
+                            #[cfg(test)]
+                            if let Some(message) = message {
+                                pause_fixture_after_confirmation(&timestamp, &message);
+                            }
+                        };
+                        let result = p.finish_slot_nzhsym50(
                             &timestamp,
                             state,
-                            early_count,
                             &samples_12k,
+                            SlotRecovery {
+                                deadline: recovery_deadline,
+                                checkpoint: supervised.then_some(&mut checkpoint),
+                                jtdx_checkpoint: supervised.then_some(&mut jtdx_checkpoint),
+                            },
                             |row| {
                                 send_record(&evt_tx, &timestamp, row, DecodeStage::Final);
+                                #[cfg(test)]
+                                pause_fixture_after_confirmation(&timestamp, &row.decode.msg);
                                 Ok(())
                             },
                         );
@@ -914,6 +977,10 @@ mod tests {
                     timestamp: ts.clone(),
                     samples_12k: samples,
                     submitted: Instant::now(),
+                    recovery_deadline: None,
+                    restore_a7: None,
+                    restore_jtdx: [None, None],
+                    supervised: false,
                 })
                 .unwrap();
         }

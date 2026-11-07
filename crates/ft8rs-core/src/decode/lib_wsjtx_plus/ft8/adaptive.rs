@@ -4,6 +4,7 @@ use crate::decode::lib_wsjtx_plus::ft8_decode::{create_decode_workspace, Candida
 
 const START_POINTS: usize = 2;
 
+#[derive(Default)]
 struct Plan {
     order: Vec<Point>,
     untested: Vec<Point>,
@@ -215,9 +216,11 @@ pub(in crate::decode::lib_wsjtx_plus::ft8_decode) fn run(
     ap: &Ft8bApOptions,
     book: &Option<HashCallBook>,
     base: &[crate::StreamDecodedMessage],
+    deadline: Option<std::time::Instant>,
     mut emit: impl FnMut(Ft8bResult, f64) -> Result<(), String>,
 ) -> Result<(), String> {
-    if peaks.is_empty() {
+    let within_budget = || deadline.is_none_or(|deadline| std::time::Instant::now() < deadline);
+    if peaks.is_empty() || !within_budget() {
         return Ok(());
     }
     let inputs = Inputs {
@@ -240,6 +243,9 @@ pub(in crate::decode::lib_wsjtx_plus::ft8_decode) fn run(
                 chunk
                     .iter()
                     .map(|candidate| {
+                        if !within_budget() {
+                            return Plan::default();
+                        }
                         let mut search = inputs.search(&mut workspace, &None, Vec::new());
                         let (mut points, fine, coarse) = search.screen(candidate);
                         let limit = SLOT_POINT_BUDGET.min(points.len());
@@ -277,12 +283,13 @@ pub(in crate::decode::lib_wsjtx_plus::ft8_decode) fn run(
                 while let Ok(batch) = jobs.recv() {
                     let results = batch
                         .into_iter()
+                        .take_while(|_| within_budget())
                         .map(|probe| {
                             let mut search = inputs.search(&mut workspace, &book, probe.hits);
                             search.loaded_bin = loaded_bin;
                             search.decode(probe.point, probe.confirm);
                             let mut tested = Vec::new();
-                            for point in &probe.extra {
+                            for point in probe.extra.iter().take_while(|_| within_budget()) {
                                 if search
                                     .hits
                                     .iter()
@@ -293,7 +300,7 @@ pub(in crate::decode::lib_wsjtx_plus::ft8_decode) fn run(
                                 search.decode(*point, true);
                                 tested.push(*point);
                             }
-                            let confirmations = if probe.confirm {
+                            let confirmations = if probe.confirm || !within_budget() {
                                 Vec::new()
                             } else {
                                 let provisional: Vec<_> = search
@@ -314,6 +321,7 @@ pub(in crate::decode::lib_wsjtx_plus::ft8_decode) fn run(
                                             .neighbors
                                             .iter()
                                             .copied()
+                                            .take_while(|_| within_budget())
                                             .map(|p| (tone_support(&mut search, p, &tones), p))
                                             .collect();
                                         order.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -339,7 +347,7 @@ pub(in crate::decode::lib_wsjtx_plus::ft8_decode) fn run(
         }
 
         let mut credits = SLOT_POINT_BUDGET;
-        while credits > 0 {
+        while credits > 0 && within_budget() {
             let wave_limit = plans.len().div_ceil(2).min(credits);
             let mut eligible: Vec<_> = plans
                 .iter()
@@ -434,9 +442,9 @@ pub(in crate::decode::lib_wsjtx_plus::ft8_decode) fn run(
                 }
             }
         }
-        debug_assert_eq!(
-            SLOT_POINT_BUDGET - credits,
-            plans.iter().map(|p| p.tried).sum::<usize>()
+        debug_assert!(
+            !within_budget()
+                || SLOT_POINT_BUDGET - credits == plans.iter().map(|p| p.tried).sum::<usize>()
         );
         Ok(())
     })

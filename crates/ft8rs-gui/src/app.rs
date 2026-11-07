@@ -22,7 +22,7 @@ use ft8rs_engine::protocol::{
 };
 use ft8rs_engine::reconfig::{plan_reconfig, EngineState};
 use ft8rs_engine::report::UdpConfig;
-use ft8rs_engine::soundcard::{InputChannel, SoundcardDeviceInfo, SoundcardFormatInfo};
+use ft8rs_engine::soundcard::{InputChannel, SoundcardDeviceInfo};
 use ft8rs_engine::EngineHandle;
 
 /// Hard cap on retained decode rows. Painting is virtualized; DecodeBatch
@@ -134,13 +134,7 @@ pub struct Ft8rsApp {
     selected_device: Option<String>, // id:<backend-qualified ID>; None = default
     input_channel: InputChannel,     // which channel of a multi-channel device to decode
     input_peak: Option<f32>,         // recent capture peak; None until audio arrives
-    capture_format: Option<(String, SoundcardFormatInfo)>,
-    channel_peaks: Vec<f32>,
     capture_xruns: u64,
-    // Last slot's capture diagnostics (samples, blocks, avg_block, jitter_ms) and
-    // decode count — an at-a-glance readout for locating capture/alignment issues.
-    capture_diag: Option<(usize, u32, u32, i64, u32)>,
-    last_slot_decodes: Option<usize>,
 
     // Runtime.
     status: EngineStatus,
@@ -269,11 +263,7 @@ impl Ft8rsApp {
             // mono stream and otherwise takes the first capture channel.
             input_channel: InputChannel::parse(&load("audio_channel", "mono")).unwrap_or_default(),
             input_peak: None,
-            capture_format: None,
-            channel_peaks: Vec::new(),
             capture_xruns: 0,
-            capture_diag: None,
-            last_slot_decodes: None,
             status: EngineStatus::Idle,
             applied: None,
             rows: Vec::new(),
@@ -409,9 +399,6 @@ impl Ft8rsApp {
             self.applied = None;
             self.pending_confirm = None;
             self.input_peak = None;
-            self.capture_format = None;
-            self.channel_peaks.clear();
-            self.capture_diag = None;
             self.capture_xruns = 0;
             return;
         }
@@ -436,10 +423,6 @@ impl Ft8rsApp {
         self.display_items.clear();
         self.dx = None;
         self.input_peak = None;
-        self.capture_format = None;
-        self.capture_diag = None;
-        self.channel_peaks.clear();
-        self.last_slot_decodes = None;
         self.capture_xruns = 0;
         if self
             .engine
@@ -508,9 +491,6 @@ impl Ft8rsApp {
                         self.pending_confirm = None;
                         self.applied = None;
                         self.input_peak = None;
-                        self.capture_format = None;
-                        self.channel_peaks.clear();
-                        self.capture_diag = None;
                         self.capture_xruns = 0;
                     }
                     self.status = status;
@@ -525,23 +505,11 @@ impl Ft8rsApp {
                     self.devices = devices;
                 }
                 EngineEvent::InputLevel(peak) => self.input_peak = Some(peak),
-                EngineEvent::CaptureStarted {
-                    device_name,
-                    format,
-                } => {
-                    self.capture_format = Some((device_name, format));
+                EngineEvent::CaptureStarted { .. } => {
                     self.input_peak = None;
-                    self.channel_peaks.clear();
-                    self.capture_diag = None;
-                    self.last_slot_decodes = None;
                     self.capture_xruns = 0;
                 }
-                EngineEvent::CaptureLevels {
-                    channel_peaks,
-                    peak,
-                    xruns,
-                } => {
-                    self.channel_peaks = channel_peaks;
+                EngineEvent::CaptureLevels { peak, xruns, .. } => {
                     self.input_peak = Some(peak);
                     self.capture_xruns = xruns;
                 }
@@ -566,16 +534,12 @@ impl Ft8rsApp {
                         }
                     }
                 }
-                EngineEvent::CaptureDiag {
-                    samples,
-                    blocks,
-                    avg_block,
-                    jitter_ms,
-                    sample_rate,
-                } => self.capture_diag = Some((samples, blocks, avg_block, jitter_ms, sample_rate)),
                 EngineEvent::Decode(record) => batch.insert(local_decode_row(record)),
-                EngineEvent::SlotComplete { count, .. } => self.last_slot_decodes = Some(count),
-                EngineEvent::Reconfigured(_) => {}
+                EngineEvent::A7Checkpoint { .. }
+                | EngineEvent::JtdxCheckpoint { .. }
+                | EngineEvent::CaptureDiag { .. }
+                | EngineEvent::SlotComplete { .. }
+                | EngineEvent::Reconfigured(_) => {}
                 EngineEvent::DxContext(snapshot) => self.dx = Some(snapshot),
                 EngineEvent::Error(err) => self.error = Some(err),
                 EngineEvent::DecodeRowsDropped(count) => {
@@ -913,7 +877,7 @@ impl Ft8rsApp {
                     } else {
                         text_color
                     };
-                    let job = decode_highlight_job(
+                    let (job, highlights) = decode_highlight_job(
                         &row.text,
                         own_call.as_deref(),
                         target_call.as_deref(),
@@ -921,12 +885,7 @@ impl Ft8rsApp {
                         font.clone(),
                         color,
                     );
-                    let galley = ui.painter().layout_job(job);
-                    ui.painter().galley(
-                        egui::pos2(rect.left() + PAD, rect.center().y - galley.size().y / 2.0),
-                        galley,
-                        color,
-                    );
+                    paint_decode_row(ui.painter(), rect, job, &highlights, color);
                     if resp.double_clicked() {
                         fill = Some((row.tokens.clone(), row.freq));
                     }
@@ -1201,23 +1160,6 @@ impl Ft8rsApp {
                         self.input_channel != before
                     });
                 });
-                if let Some((name, format)) = &self.capture_format {
-                    ui.add_space(2.0);
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(format!(
-                                "{}: {name} · {} {} / {} Hz / {}",
-                                tr("Active"),
-                                format.channels,
-                                tr("Ch"),
-                                format.sample_rate,
-                                format.sample_format,
-                            ))
-                            .weak(),
-                        )
-                        .wrap(),
-                    );
-                }
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     ui.label(tr("Input level"));
@@ -1253,21 +1195,6 @@ impl Ft8rsApp {
                         }
                     }
                 });
-                if !self.channel_peaks.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        for (i, &peak) in self.channel_peaks.iter().enumerate() {
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} {}: {} dBFS",
-                                    tr("Ch"),
-                                    i + 1,
-                                    format_dbfs(peak)
-                                ))
-                                .weak(),
-                            );
-                        }
-                    });
-                }
                 if self.capture_xruns > 0 {
                     ui.label(
                         RichText::new(format!(
@@ -1278,43 +1205,6 @@ impl Ft8rsApp {
                         ))
                         .weak(),
                     );
-                }
-                // Per-slot capture diagnostics: window length (should be ~14–15 s),
-                // driver block size/count, arrival jitter (large ⇒ unreliable capture
-                // timestamps), and decodes in the last slot. One live run locates most
-                // capture/alignment issues.
-                if let Some((samples, blocks, avg_block, jitter_ms, sample_rate)) =
-                    self.capture_diag
-                {
-                    ui.add_space(2.0);
-                    let secs = samples as f64 / f64::from(sample_rate);
-                    let decodes = self
-                        .last_slot_decodes
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| "—".to_string());
-                    // Flag jitter that would smear a timestamp-precise window.
-                    let jitter_color = if jitter_ms >= 100 {
-                        Color32::from_rgb(0xdc, 0x26, 0x26)
-                    } else {
-                        ui.visuals().weak_text_color()
-                    };
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "{}: {secs:.1}s / {samples} {} · {blocks} {} (~{avg_block} {}) · ",
-                                tr("slot"),
-                                tr("smp"),
-                                tr("blk"),
-                                tr("smp")
-                            ))
-                            .weak(),
-                        );
-                        ui.label(
-                            RichText::new(format!("{} {jitter_ms} ms", tr("jitter")))
-                                .color(jitter_color),
-                        );
-                        ui.label(RichText::new(format!(" · {decodes} {}", tr("dec"))).weak());
-                    });
                 }
                 if self.input_channel == InputChannel::Mono
                     || self.input_channel == InputChannel::Mix
@@ -1888,6 +1778,7 @@ impl eframe::App for Ft8rsApp {
 fn callsign_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Response {
     let resp = ui.add(
         egui::TextEdit::singleline(value)
+            .align(egui::Align2::LEFT_CENTER)
             .desired_width(width)
             .margin(egui::Margin::symmetric(8, 4)),
     );
@@ -1912,6 +1803,7 @@ fn grid_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Respon
     }) + 20.0;
     let resp = ui.add(
         egui::TextEdit::singleline(value)
+            .align(egui::Align2::LEFT_CENTER)
             .desired_width(width.max(min_width))
             .margin(egui::Margin::symmetric(8, 4)),
     );
@@ -2171,11 +2063,11 @@ fn setting_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -
     commit
 }
 
-/// A bare single-line field. Symmetric margin gives it a uniform height with the
-/// text vertically centered. Returns true on edit commit (focus left / Enter).
+/// A single-line settings field. Returns true on edit commit (focus left / Enter).
 fn text_field(ui: &mut egui::Ui, value: &mut String) -> bool {
     ui.add(
         egui::TextEdit::singleline(value)
+            .align(egui::Align2::LEFT_CENTER)
             .desired_width(f32::INFINITY)
             .margin(egui::Margin::symmetric(8, 4)),
     )
@@ -2191,6 +2083,45 @@ fn norm(value: &str) -> Option<String> {
     }
 }
 
+struct DecodeHighlight {
+    bytes: std::ops::Range<usize>,
+    background: Color32,
+}
+
+fn paint_decode_row(
+    painter: &egui::Painter,
+    row: egui::Rect,
+    job: egui::text::LayoutJob,
+    highlights: &[DecodeHighlight],
+    color: Color32,
+) {
+    use egui::emath::GuiRounding as _;
+    use egui::text::CCursor;
+
+    let galley = painter.layout_job(job);
+    let pixels_per_point = painter.pixels_per_point();
+    let pos = egui::pos2(
+        row.left() + TABLE_PAD,
+        row.center().y - galley.size().y / 2.0,
+    );
+    let text_x = pos.x.round_to_pixels(pixels_per_point);
+    let inset = row.shrink2(egui::vec2(0.0, DECODE_ROW_PADDING_Y));
+    for highlight in highlights {
+        let x = |byte| {
+            let cursor = CCursor::end_of_str(&galley.job.text[..byte]);
+            text_x + galley.pos_from_cursor(cursor).left()
+        };
+        // Keep the width tied to the token and the height tied to the table row.
+        let background = egui::Rect::from_min_max(
+            egui::pos2(x(highlight.bytes.start) - 1.0, inset.top()),
+            egui::pos2(x(highlight.bytes.end) + 1.0, inset.bottom()),
+        )
+        .round_to_pixels(pixels_per_point);
+        painter.rect_filled(background, 0.0, highlight.background);
+    }
+    painter.galley(pos, galley, color);
+}
+
 /// Highlight complete callsign and target-grid tokens in the message column, leaving the time,
 /// signal and provenance columns in their existing compare-mode color.
 fn decode_highlight_job(
@@ -2200,9 +2131,10 @@ fn decode_highlight_job(
     target_grid: Option<&str>,
     font_id: egui::FontId,
     color: Color32,
-) -> egui::text::LayoutJob {
+) -> (egui::text::LayoutJob, Vec<DecodeHighlight>) {
     const MESSAGE_START: usize = 24; // six UTC + dB/DT/frequency fields and separators
     let mut job = egui::text::LayoutJob::default();
+    let mut highlights = Vec::new();
     let plain = egui::TextFormat {
         font_id,
         color,
@@ -2234,9 +2166,12 @@ fn decode_highlight_job(
                     None
                 };
             let format = if let Some((background, foreground)) = background {
+                highlights.push(DecodeHighlight {
+                    bytes: start..start + token.len(),
+                    background,
+                });
                 egui::TextFormat {
                     color: foreground,
-                    background,
                     ..plain.clone()
                 }
             } else {
@@ -2250,7 +2185,7 @@ fn decode_highlight_job(
     if cursor < text.len() {
         job.append(&text[cursor..], 0.0, plain);
     }
-    job
+    (job, highlights)
 }
 
 fn parse_frequency_range(low: &str, high: &str) -> Result<(f64, f64), String> {
@@ -2272,14 +2207,6 @@ fn parse_port(value: &str) -> Result<u16, String> {
         .ok()
         .filter(|&port| port != 0)
         .ok_or_else(|| "UDP port must be an integer from 1 to 65535".to_string())
-}
-
-fn format_dbfs(peak: f32) -> String {
-    if peak > 0.0 {
-        format!("{:.1}", 20.0 * peak.log10())
-    } else {
-        "−inf".to_string()
-    }
 }
 
 fn absolute_slot(slot_key: u32, now_seconds: u64) -> u64 {
@@ -3036,6 +2963,7 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ft8rs_engine::soundcard::SoundcardFormatInfo;
 
     fn insert_decode_row(
         rows: &mut Vec<Row>,
@@ -3249,7 +3177,7 @@ mod tests {
             "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
             "020045", -25, -0.4, 1256, "5R8IC ZY7H HI06", "a7"
         );
-        let job = decode_highlight_job(
+        let (job, highlights) = decode_highlight_job(
             &text,
             None,
             Some("ZY7H"),
@@ -3257,17 +3185,15 @@ mod tests {
             egui::FontId::monospace(14.0),
             Color32::BLACK,
         );
-        let marked: Vec<_> = job
-            .sections
+        let marked: Vec<_> = highlights
             .iter()
-            .filter(|section| section.format.background != Color32::TRANSPARENT)
-            .map(|section| &job.text[section.byte_range.start.0..section.byte_range.end.0])
+            .map(|highlight| &job.text[highlight.bytes.clone()])
             .collect();
         assert_eq!(marked, ["ZY7H", "HI06"]);
         assert_eq!(job.text, text);
 
         let similar = text.replace("ZY7H", "ZY7H/P").replace("HI06", "HI06AA");
-        let job = decode_highlight_job(
+        let (_, highlights) = decode_highlight_job(
             &similar,
             None,
             Some("ZY7H"),
@@ -3275,10 +3201,7 @@ mod tests {
             egui::FontId::monospace(14.0),
             Color32::BLACK,
         );
-        assert!(job
-            .sections
-            .iter()
-            .all(|section| section.format.background == Color32::TRANSPARENT));
+        assert!(highlights.is_empty());
     }
 
     #[test]
@@ -3287,28 +3210,68 @@ mod tests {
             "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
             "020045", -18, -0.4, 1108, "CQ BG5ATV PM00", ""
         );
-        let job = decode_highlight_job(
+        let (job, highlights) = decode_highlight_job(
             &text,
             Some("BG5ATV"),
             None,
             None,
             egui::FontId::monospace(14.0),
-            Color32::BLACK,
+            Color32::WHITE,
         );
-        let marked: Vec<_> = job
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(&job.text[highlights[0].bytes.clone()], "BG5ATV");
+        assert_eq!(highlights[0].background, Color32::YELLOW);
+        let marked = job
             .sections
             .iter()
-            .filter(|section| section.format.background != Color32::TRANSPARENT)
-            .map(|section| {
-                (
-                    &job.text[section.byte_range.start.0..section.byte_range.end.0],
-                    section.format.background,
-                    section.format.color,
-                )
-            })
-            .collect();
-        assert_eq!(marked, [("BG5ATV", Color32::YELLOW, Color32::BLACK)]);
+            .find(|section| section.byte_range.start.0 == highlights[0].bytes.start)
+            .unwrap();
+        assert_eq!(marked.format.color, Color32::BLACK);
         assert_eq!(job.text, text);
+    }
+
+    #[test]
+    fn target_highlight_is_centered_in_decode_row() {
+        for scale in [1.0, 1.25, 2.0] {
+            let ctx = egui::Context::default();
+            let mut input = egui::RawInput::default();
+            input
+                .viewports
+                .get_mut(&input.viewport_id)
+                .unwrap()
+                .native_pixels_per_point = Some(scale);
+            let mut row = egui::Rect::ZERO;
+            let red = Color32::from_rgb(0xe0, 0x22, 0x22);
+            let mut output = ctx.run_ui(input, |ui| {
+                assert_eq!(ui.pixels_per_point(), scale);
+                row = egui::Rect::from_min_size(
+                    egui::pos2(12.0, 30.25),
+                    egui::vec2(450.0, Ft8rsApp::row_height(ui.ctx())),
+                );
+                let (job, highlights) = decode_highlight_job(
+                    "134730 -15   0.1   385  BI3AMG RR73; JA1NGD <KH8A> -14",
+                    None,
+                    Some("KH8A"),
+                    None,
+                    egui::FontId::monospace(DECODE_FONT_SIZE),
+                    Color32::BLACK,
+                );
+                assert_eq!(&job.text[highlights[0].bytes.clone()], "<KH8A>");
+                paint_decode_row(ui.painter(), row, job, &highlights, Color32::BLACK);
+            });
+            output.textures_delta.clear();
+            let background = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) if rect.fill == red => Some(rect.rect),
+                    _ => None,
+                })
+                .unwrap();
+            let rounding = 0.5 / scale + 1e-5;
+            assert!((background.top() - row.top() - DECODE_ROW_PADDING_Y).abs() <= rounding);
+            assert!((row.bottom() - background.bottom() - DECODE_ROW_PADDING_Y).abs() <= rounding);
+        }
     }
 
     #[test]
@@ -3967,6 +3930,59 @@ mod tests {
             absolute_slot(120, day + 1801),
             absolute_slot(120, day + 1817)
         );
+    }
+
+    #[test]
+    fn settings_text_fields_center_host_and_port() {
+        use egui::emath::GuiRounding as _;
+
+        let ctx = egui::Context::default();
+        apply_style(&ctx, egui::Theme::Light);
+        let mut host = "127.0.0.1".to_owned();
+        let mut port = "2238".to_owned();
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            ctx.set_pixels_per_point(scale);
+            for min_height in [24.0, 30.0] {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.set_max_width(440.0);
+                    ui.spacing_mut().interact_size.y = min_height;
+                    settings_form(ui, |ui| {
+                        setting_row(ui, "Host", |ui| text_field(ui, &mut host));
+                        setting_row(ui, "Port", |ui| text_field(ui, &mut port));
+                    });
+                });
+                output.textures_delta.clear();
+                for value in [&host, &port] {
+                    let text = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if &text.galley.job.text == value => Some(text),
+                            _ => None,
+                        })
+                        .unwrap();
+                    let frame = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Rect(rect)
+                                if rect.fill == Color32::WHITE && rect.rect.contains(text.pos) =>
+                            {
+                                Some(rect.rect)
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    let ink_y =
+                        text.pos.y.round_to_pixels(scale) + text.galley.mesh_bounds.center().y;
+                    let error_px = (ink_y - frame.center().y).abs() * scale;
+                    assert!(
+                        error_px <= 1.01,
+                        "{value} at {scale}x and {min_height} pt is off center by {error_px} px"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

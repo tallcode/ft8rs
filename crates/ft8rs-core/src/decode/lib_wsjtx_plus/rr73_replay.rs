@@ -606,7 +606,7 @@ fn fine_rr73_independent_negatives() {
             }
             let mut count = 0;
             let started = Instant::now();
-            let result = recover_rr73(&audio, 1000.0, 200.0..=3000.0, target, || count += 1);
+            let result = recover_rr73(&audio, 1000.0, 200.0..=3000.0, target, None, || count += 1);
             worst = worst.max(started.elapsed());
             assert!(result.is_none(), "{label} slot {slot}: {result:?}");
             assert!(count <= 80);

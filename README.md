@@ -123,9 +123,9 @@ The GUI runs one instance per user; launching it again restores the existing
 window. Private decode worker processes remain independent.
 
 The GUI monitors live audio; use the CLI for WAV files. Settings changes can be
-applied while listening. Audio diagnostics show the actual opened format,
-input/channel peaks and capture timing. **Compare** can merge an external
-WSJT-X UDP feed into the display; **Output** sends ft8.rs decode reports.
+applied while listening. The Audio page shows the decoder input level and reports
+capture discontinuities. **Compare** can merge an external WSJT-X UDP feed into
+the display. **Output** sends ft8.rs decode reports.
 
 [GUI, audio setup and comparison guide →](docs/USAGE.md)
 

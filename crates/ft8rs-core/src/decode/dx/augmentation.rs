@@ -197,6 +197,7 @@ where
         request.config.nfa,
         request.config.nfb,
         subtract_ft8,
+        None,
     );
     outcome.stats = stats;
     if outcome.stats.accepted == 0 {

@@ -10,7 +10,7 @@ pub(crate) enum SignalSource {
     Recovery,
 }
 
-pub(crate) fn same_signal(a: &StreamDecodedMessage, b: &StreamDecodedMessage) -> bool {
+pub fn same_signal(a: &StreamDecodedMessage, b: &StreamDecodedMessage) -> bool {
     (a.freq - b.freq).abs() <= 5.0 && (a.dt - b.dt).abs() <= 0.3 && same_message(a, b)
 }
 
@@ -64,6 +64,7 @@ pub(crate) struct OutputLedger {
     rows: Vec<StreamDecodedWithProvenance>,
     sources: Vec<Vec<SignalSource>>,
     freq_tolerance: f64,
+    forward_duplicates: bool,
 }
 impl Default for OutputLedger {
     fn default() -> Self {
@@ -77,8 +78,13 @@ impl OutputLedger {
             rows: Vec::new(),
             sources: Vec::new(),
             freq_tolerance,
+            forward_duplicates: false,
         }
     }
+    pub fn forward_duplicates(&mut self, enabled: bool) {
+        self.forward_duplicates = enabled;
+    }
+
     /// Source agreement and whether a message was emitted are separate facts.
     pub fn admit(
         &mut self,
@@ -94,7 +100,7 @@ impl OutputLedger {
             if !self.sources[index].contains(&source) {
                 self.sources[index].push(source);
             }
-            return false;
+            return self.forward_duplicates;
         }
         self.rows.push(StreamDecodedWithProvenance {
             decode: row.clone(),

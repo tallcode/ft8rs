@@ -3,15 +3,16 @@ use crate::stream::session::{
     StreamDecodedMessage, StreamDecodedWithProvenance,
 };
 use std::collections::HashSet;
+use std::time::Instant;
 
 use crate::decode::lib_wsjtx_plus::ft8_a7::{
     ft8_a7d_with_downsample_cache, A7Recovery, ApDecodeResult, ApDownsampleCache,
 };
 use crate::decode::lib_wsjtx_plus::ft8_decode::{
-    decode_f64_with_sbase, decode_f64_with_sbase_and_residual, ft8_a8d_result, DecodeOptions,
-    DecodedMessage, FinalRetry,
+    decode_f64_with_sbase_and_residual, ft8_a8d_result, DecodeOptions, DecodedMessage, FinalRetry,
 };
 use crate::decode::lib_wsjtx_plus::subtractft8::subtract_ft8_refined;
+use crate::stream::profile::SlotRecovery;
 use crate::stream::time::SlotTimestamp;
 use crate::HashCallBook;
 
@@ -41,7 +42,6 @@ impl FixedMsg37 {
         Self { bytes }
     }
 
-    #[cfg(test)]
     fn trimmed(&self) -> String {
         let end = self
             .bytes
@@ -82,6 +82,44 @@ struct A7SaveEntry {
     msg0: FixedMsg37,
     dt0: f64,
     f0: f64,
+}
+
+/// A7 seed entries collected for a single slot.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct A7Snapshot(pub(crate) Vec<(String, f64, f64)>);
+
+impl A7Snapshot {
+    pub fn record(&mut self, row: &StreamDecodedMessage, frequency: f64) {
+        let Some(entry) = ft8_a7_save_entry_from_parts(&row.msg, frequency, row.dt) else {
+            return;
+        };
+        let Some(fields) = entry.decode_fields() else {
+            return;
+        };
+        if (fields.call_1 == "CQ" || is_reference_chkcall(&fields.call_1))
+            && is_reference_chkcall(&fields.call_2)
+            && frequency.is_finite()
+            && row.dt.is_finite()
+        {
+            self.insert(entry.msg0.trimmed(), entry.f0, entry.dt0);
+        }
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        for (msg, freq, dt) in other.0 {
+            self.insert(msg, freq, dt);
+        }
+    }
+
+    fn insert(&mut self, msg: String, freq: f64, dt: f64) {
+        if !self
+            .0
+            .iter()
+            .any(|(m, f, t)| m == &msg && (*f - freq).abs() <= 3.0 && (*t - dt).abs() <= 0.3)
+        {
+            self.0.push((msg, freq, dt));
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -142,6 +180,7 @@ pub struct StreamDecodeSession {
     /// Current sequence parity: 0=even, 1=odd.
     jseq: usize,
     slot_state: Option<StreamSlotDecodeState>,
+    search_deadline: Option<Instant>,
 }
 
 impl StreamDecodeSession {
@@ -157,6 +196,7 @@ impl StreamDecodeSession {
             a7: [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]],
             jseq: 0,
             slot_state: None,
+            search_deadline: None,
         }
     }
 
@@ -183,7 +223,12 @@ impl StreamDecodeSession {
         let result = (|| {
             self.decode_slot_nzhsym41_tagged(timestamp, &mut state, samples, &mut on_decode)?;
             self.subtract_slot_nzhsym47(&mut state, samples);
-            self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
+            self.decode_slot_nzhsym50_and_finish_state(
+                &mut state,
+                samples,
+                SlotRecovery::default(),
+                on_decode,
+            )
         })();
         self.slot_state = Some(state);
         result
@@ -193,6 +238,44 @@ impl StreamDecodeSession {
         for call in calls {
             self.book.save(call);
         }
+    }
+
+    pub(crate) fn restore_a7(&mut self, timestamp: &SlotTimestamp, snapshot: A7Snapshot) {
+        self.a7[jseq_from_nutc(timestamp.nutc())][1] = Self::a7_entries(snapshot);
+    }
+
+    pub(crate) fn add_a7_rows<'a>(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        rows: impl Iterator<Item = &'a StreamDecodedMessage>,
+    ) {
+        let bank = &mut self.a7[jseq_from_nutc(timestamp.nutc())][1];
+        let mut snapshot = A7Snapshot(
+            bank.iter()
+                .map(|e| (e.msg0.trimmed(), e.f0, e.dt0))
+                .collect(),
+        );
+        for row in rows {
+            snapshot.record(row, row.freq);
+        }
+        *bank = Self::a7_entries(snapshot);
+    }
+
+    fn a7_entries(snapshot: A7Snapshot) -> Vec<A7SaveEntry> {
+        snapshot
+            .0
+            .into_iter()
+            .map(|(msg, f0, dt0)| A7SaveEntry {
+                msg0: FixedMsg37::from_trimmed(&msg),
+                f0,
+                dt0,
+            })
+            .collect()
+    }
+
+    pub(crate) fn with_search_deadline(mut self, deadline: Option<Instant>) -> Self {
+        self.search_deadline = deadline;
+        self
     }
 
     pub fn export_regular_hash_calls(&self) -> Vec<String> {
@@ -240,22 +323,22 @@ impl StreamDecodeSession {
 
         fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 41, &mut state.work);
-        let (early_results, _) = if self.params.ndepth == 1 {
-            (Vec::new(), Vec::new())
-        } else {
-            decode_f64_with_sbase(&state.work, self.ft8_decode_options(41))
-        };
-        state.early_results = early_results;
-        for d in &state.early_results {
-            push_regular_decode(
-                &mut state.seen,
-                &mut state.merged,
-                &self.book,
-                &mut self.regular_hash_calls,
-                StreamDecodeProvenance::Regular,
-                d,
-                &mut on_decode,
-            )?;
+        if self.params.ndepth != 1 {
+            let options = self.ft8_decode_options(41);
+            let (early_results, _, _) =
+                decode_f64_with_sbase_and_residual(&state.work, options, None, |d| {
+                    push_regular_decode(
+                        &mut state.seen,
+                        &mut state.merged,
+                        &self.book,
+                        &mut self.regular_hash_calls,
+                        StreamDecodeProvenance::Regular,
+                        d,
+                        &mut on_decode,
+                    )
+                })?;
+            self.a7[self.jseq][1] = early_results.iter().filter_map(ft8_a7_save_entry).collect();
+            state.early_results = early_results;
         }
         Ok(state.merged.len())
     }
@@ -285,16 +368,19 @@ impl StreamDecodeSession {
         samples: &[f32],
         mut on_decode: impl FnMut(&StreamDecodedMessage) -> Result<(), String>,
     ) -> Result<Vec<StreamDecodedMessage>, String> {
-        self.decode_slot_nzhsym50_tagged(state, samples, |row| on_decode(&row.decode))
+        self.decode_slot_nzhsym50_tagged(state, samples, SlotRecovery::default(), |row| {
+            on_decode(&row.decode)
+        })
     }
 
     pub(crate) fn decode_slot_nzhsym50_tagged(
         &mut self,
         mut state: StreamSlotDecodeState,
         samples: &[f32],
+        recovery: SlotRecovery<'_>,
         on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     ) -> Result<Vec<StreamDecodedMessage>, String> {
-        self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
+        self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, recovery, on_decode)
     }
 
     /// Signals the end of baseline and compatibility callbacks with `None`.
@@ -303,6 +389,7 @@ impl StreamDecodeSession {
         timestamp: &SlotTimestamp,
         staged: Option<StreamSlotDecodeState>,
         samples: &[f32],
+        recovery: SlotRecovery<'_>,
         mut on_event: impl FnMut(Option<&StreamDecodedWithProvenance>) -> Result<(), String>,
     ) -> Result<(), String> {
         let is_file = staged.is_none();
@@ -316,10 +403,11 @@ impl StreamDecodeSession {
                 self.decode_slot_nzhsym41_tagged(timestamp, &mut state, samples, &mut emit)?;
                 self.subtract_slot_nzhsym47(&mut state, samples);
             }
-            let pending = self.decode_slot_nzhsym50_base(&mut state, samples, emit)?;
+            let deadline = recovery.deadline;
+            let pending = self.decode_slot_nzhsym50_base(&mut state, samples, recovery, emit)?;
             // Allow Hybrid to start downstream work before the retry search.
             on_event(None)?;
-            Self::finish_candidate_retry(&mut state, pending, |row| on_event(Some(row)))
+            Self::finish_candidate_retry(&mut state, pending, deadline, |row| on_event(Some(row)))
         })();
         if is_file {
             self.slot_state = Some(state);
@@ -331,13 +419,15 @@ impl StreamDecodeSession {
         &mut self,
         state: &mut StreamSlotDecodeState,
         samples: &[f32],
+        recovery: SlotRecovery<'_>,
         mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
-        let pending = self.decode_slot_nzhsym50_base(state, samples, &mut on_decode)?;
-        Self::finish_candidate_retry(state, pending, on_decode)?;
+        let deadline = recovery.deadline;
+        let pending = self.decode_slot_nzhsym50_base(state, samples, recovery, &mut on_decode)?;
+        Self::finish_candidate_retry(state, pending, deadline, on_decode)?;
         Ok(std::mem::take(&mut state.merged))
     }
 
@@ -345,8 +435,11 @@ impl StreamDecodeSession {
         &mut self,
         state: &mut StreamSlotDecodeState,
         samples: &[f32],
+        recovery: SlotRecovery<'_>,
         mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     ) -> Result<Option<(FinalRetry, Vec<f64>)>, String> {
+        let deadline = recovery.deadline.or(self.search_deadline);
+        let within_budget = || deadline.is_none_or(|deadline| Instant::now() < deadline);
         fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 50, &mut state.work);
         if !self.params.nagain {
@@ -366,6 +459,7 @@ impl StreamDecodeSession {
         let mut retry = None;
         let retry_enabled = self.params.profile == DecodeProfile::WsjtxPlus
             && self.params.wsjtx_plus_candidate_retry
+            && within_budget()
             && self.params.ndepth >= 3
             && self.params.ncontest == 0
             && !self.params.nagain
@@ -374,7 +468,18 @@ impl StreamDecodeSession {
             &state.work,
             full_options,
             retry_enabled.then_some(&mut retry),
-        );
+            |d| {
+                push_regular_decode(
+                    &mut state.seen,
+                    &mut state.merged,
+                    &self.book,
+                    &mut self.regular_hash_calls,
+                    StreamDecodeProvenance::Regular,
+                    d,
+                    &mut on_decode,
+                )
+            },
+        )?;
         #[cfg(test)]
         super::validation::rr73_replay::record_terminal_residual(&full_residual);
 
@@ -406,11 +511,32 @@ impl StreamDecodeSession {
                     cache,
                     entry,
                     &sbase,
-                    self.params.wsjtx_plus_compatibility,
+                    self.params.wsjtx_plus_compatibility && within_budget(),
                 );
                 if let Some(r) = result {
                     let norm_r = normal(&r.msg);
                     if !ap_results.iter().any(|a| normal(&a.msg) == norm_r) {
+                        if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, r.freq, r.dt) {
+                            entries_to_save.push(entry);
+                        }
+                        let key = normal(&r.msg);
+                        if state.seen.insert(key) {
+                            let decode = StreamDecodedMessage {
+                                freq: r.freq,
+                                dt: r.dt,
+                                snr: r.snr,
+                                msg: r.msg.clone(),
+                                sync: 0.0,
+                                itone: [0i32; 79],
+                            };
+                            collect_book(&self.book, &decode.msg);
+                            emit_decode(
+                                &mut state.merged,
+                                decode,
+                                StreamDecodeProvenance::A7Memory,
+                                &mut on_decode,
+                            )?;
+                        }
                         ap_results.push(r);
                     }
                 } else if !recovery.is_empty() {
@@ -429,47 +555,15 @@ impl StreamDecodeSession {
                 hiscall,
                 self.params.hisgrid.as_deref().unwrap_or(""),
                 self.params.nfqso,
-                self.params.wsjtx_plus_compatibility && standard(mycall) && standard(hiscall),
+                self.params.wsjtx_plus_compatibility
+                    && within_budget()
+                    && standard(mycall)
+                    && standard(hiscall),
             )
         } else {
             (None, None)
         };
 
-        for d in &full_results {
-            push_regular_decode(
-                &mut state.seen,
-                &mut state.merged,
-                &self.book,
-                &mut self.regular_hash_calls,
-                StreamDecodeProvenance::Regular,
-                d,
-                &mut on_decode,
-            )?;
-        }
-
-        for r in &ap_results {
-            if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, r.freq, r.dt) {
-                entries_to_save.push(entry);
-            }
-            let key = normal(&r.msg);
-            if state.seen.insert(key) {
-                let decode = StreamDecodedMessage {
-                    freq: r.freq,
-                    dt: r.dt,
-                    snr: r.snr,
-                    msg: r.msg.clone(),
-                    sync: 0.0,
-                    itone: [0i32; 79],
-                };
-                collect_book(&self.book, &decode.msg);
-                emit_decode(
-                    &mut state.merged,
-                    decode,
-                    StreamDecodeProvenance::A7Memory,
-                    &mut on_decode,
-                )?;
-            }
-        }
         if let Some(r) = &a8_result {
             if let Some(entry) = ft8_a7_save_entry_from_parts(&r.msg, self.params.nfqso, r.dt) {
                 entries_to_save.push(entry);
@@ -496,12 +590,24 @@ impl StreamDecodeSession {
 
         // Save current decodes for the next same-parity slot.
         self.a7[self.jseq][1] = entries_to_save;
+        if let Some(checkpoint) = recovery.checkpoint {
+            checkpoint(A7Snapshot(
+                self.a7[self.jseq][1]
+                    .iter()
+                    .map(|entry| (entry.msg0.trimmed(), entry.f0, entry.dt0))
+                    .collect(),
+            ));
+        }
         self.jseq = 1 - self.jseq;
 
         // Supplementary outputs are emitted after the baseline callbacks and
         // never saved into the hash book, A7 memory, or subtraction input.
-        for attempts in missed {
-            if let Some(r) = attempts.into_iter().find_map(A7Recovery::recover) {
+        for attempts in missed.into_iter().take_while(|_| within_budget()) {
+            if let Some(r) = attempts
+                .into_iter()
+                .take_while(|_| within_budget())
+                .find_map(A7Recovery::recover)
+            {
                 push_compatibility_decode(
                     state,
                     StreamDecodedMessage {
@@ -516,7 +622,10 @@ impl StreamDecodeSession {
                 )?;
             }
         }
-        if let Some(r) = a8_recovery.and_then(|recovery| recovery.recover()) {
+        if let Some(r) = a8_recovery
+            .filter(|_| within_budget())
+            .and_then(|recovery| recovery.recover())
+        {
             push_compatibility_decode(
                 state,
                 StreamDecodedMessage {
@@ -530,7 +639,7 @@ impl StreamDecodeSession {
                 &mut on_decode,
             )?;
         }
-        if let Some(target) = self.fine_rr73_target() {
+        if let Some(target) = self.fine_rr73_target().filter(|_| within_budget()) {
             let already_received = state.merged.iter().any(|row| {
                 row.msg.ends_with(" RR73")
                     && row
@@ -545,6 +654,7 @@ impl StreamDecodeSession {
                     self.params.nfqso,
                     self.params.nfa..=self.params.nfb,
                     target,
+                    deadline,
                     || {},
                 ) {
                     push_compatibility_decode(state, row, &mut on_decode)?;
@@ -557,15 +667,16 @@ impl StreamDecodeSession {
     fn finish_candidate_retry(
         state: &mut StreamSlotDecodeState,
         pending: Option<(FinalRetry, Vec<f64>)>,
+        deadline: Option<Instant>,
         mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     ) -> Result<(), String> {
         if let Some((mut retry, sbase)) = pending {
             retry.sort_peaks();
-            for result in retry.recover_local(&sbase, &state.merged) {
+            for result in retry.recover_local(&sbase, &state.merged, deadline) {
                 push_candidate_retry(state, result, &mut on_decode)?;
             }
             let base = state.merged.clone();
-            retry.recover_adaptive(&sbase, &base, |result| {
+            retry.recover_adaptive(&sbase, &base, deadline, |result| {
                 push_candidate_retry(state, result, &mut on_decode)
             })?;
         }
@@ -648,6 +759,7 @@ impl StreamDecodeSession {
             lapcqonly: Some(self.params.lapcqonly),
             nagain: Some(self.params.nagain),
             nzhsym: Some(nzhsym),
+            search_deadline: self.search_deadline,
             ..Default::default()
         }
     }

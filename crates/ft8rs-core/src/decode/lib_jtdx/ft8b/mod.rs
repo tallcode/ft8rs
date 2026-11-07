@@ -20,6 +20,7 @@ mod decode_helpers;
 mod qso;
 mod regular;
 mod state;
+pub(crate) use state::SignalHistory;
 
 use decode_helpers::*;
 use qso::{jtdx_qso_plan, qso_attempts};

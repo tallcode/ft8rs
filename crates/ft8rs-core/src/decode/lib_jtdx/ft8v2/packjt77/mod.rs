@@ -370,6 +370,13 @@ pub struct HashCallBook {
     hash22_entries: RefCell<Vec<(usize, String)>>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct HistoryHashBook {
+    calls10: Vec<Option<String>>,
+    calls12: Vec<Option<String>>,
+    hash22_entries: Vec<(usize, String)>,
+}
+
 impl Default for HashCallBook {
     fn default() -> Self {
         Self::new()
@@ -469,6 +476,20 @@ impl HashCallBook {
             }
         }
         calls
+    }
+
+    pub(crate) fn snapshot(&self) -> HistoryHashBook {
+        HistoryHashBook {
+            calls10: self.calls10.borrow().clone(),
+            calls12: self.calls12.borrow().clone(),
+            hash22_entries: self.hash22_entries.borrow().clone(),
+        }
+    }
+
+    pub(crate) fn restore(&self, history: HistoryHashBook) {
+        *self.calls10.borrow_mut() = history.calls10;
+        *self.calls12.borrow_mut() = history.calls12;
+        *self.hash22_entries.borrow_mut() = history.hash22_entries;
     }
 
     pub fn clone_book(&self) -> HashCallBook {
