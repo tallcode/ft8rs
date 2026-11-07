@@ -11,8 +11,13 @@
   </head>
   <body>
     <header>
-      <h1>ft8.rs</h1>
-      <p>A Rust implementation of an FT8 decoder</p>
+      <div class="site-heading">
+        <img src="${asset_prefix}ft8rs.png?v=$logo_version" width="84" height="84" alt="">
+        <div>
+          <h1>ft8.rs</h1>
+          <p>A Rust implementation of an FT8 decoder</p>
+        </div>
+      </div>
       <nav aria-label="Page navigation">
         <a href="#download">Download</a>
         <a href="#usage">Getting started</a>
@@ -70,8 +75,7 @@
           <dd>The default mode uses WSJT-X FT8 decoding. It is suitable for getting started and general band monitoring.</dd>
           <dt id="wsjtx-plus">WSJT-X+</dt>
           <dd>
-            Displays the WSJT-X baseline results first, then automatically runs compatibility recovery and candidate retry. <strong>Compatibility recovery (Pc)</strong> looks for legacy RR73 and some CQ messages missed during candidate selection. <strong>Candidate retry (Pr)</strong> tries other time and frequency alignments for some weak or overlapping signals. Additional results carry <code>Pc</code> or <code>Pr</code>.
-            <p>In a replay of the same 19 slots, WSJT-X+ recovered 12 additional reference messages. <a href="#recording">See the recording comparison.</a></p>
+            Displays the WSJT-X baseline results first, then automatically runs compatibility recovery and candidate retry. <strong>Compatibility recovery (Pc)</strong> looks for legacy RR73 and some CQ messages missed during candidate selection. <strong>Candidate retry (Pr)</strong> tries other time and frequency alignments for some weak or overlapping signals.
           </dd>
           <dt id="jtdx">JTDX</dt>
           <dd>
@@ -83,15 +87,14 @@
           </dd>
           <dt id="hybrid">Hybrid</dt>
           <dd>
-            Runs WSJT-X and two JTDX decoding paths, then merges their results and removes duplicates. The JTDX paths use the original audio and audio with automatic gain adjustment. Running these paths together uses more computing resources.
-            <p>Hybrid automatically runs <strong>cross cancellation (SIC)</strong>: it cancels an already decoded signal from a copy of the audio, then searches for messages that signal may have masked. Additional results carry <code>sic</code>.</p>
-            <p>The <strong>Experimental decoder</strong> is off by default. Enable it in <strong>Settings → Decode</strong> to use the <strong>Hybrid + exp</strong> benchmark mode. It tries to recover stable weak signals and messages affected by single-tone interference or overlapping FT8 signals. Baseline results appear first. Additional results carry <code>exp</code> and may appear several seconds later; background work for the slot may take around 10 seconds or longer.</p>
+            Runs one WSJT-X+ path and two JTDX paths, then merges their results and removes duplicates. The JTDX paths use the original audio and audio with automatic gain adjustment. Running these paths together uses more computing resources. Hybrid automatically runs <strong>cross cancellation (SIC)</strong>: it cancels an already decoded signal from a copy of the audio, then searches for messages that signal may have masked.
+            <ul>
+              <li><strong>Experimental decoder:</strong> Off by default. Enable it in <strong>Settings → Decode</strong> to use the <strong>Hybrid + exp</strong> benchmark mode. It tries to recover stable weak signals and messages affected by single-tone interference or overlapping FT8 signals. Baseline results appear first. Additional results may appear several seconds later. Background work for the slot may take around 10 seconds or longer.</li>
+            </ul>
           </dd>
           <dt>DX</dt>
           <dd>Follows a target callsign and displays messages related to it. Enter the target in the main window's <strong>Callsign</strong> field before listening, or double-click a decoded message to select its target and audio frequency. Your own callsign is optional; supplying a valid, distinct own/target callsign pair enables additional context recovery. DX manages SWL and deep searches internally, so their general switches do not need adjustment.</dd>
         </dl>
-
-        <p>The <code>Pc</code>, <code>Pr</code>, <code>sic</code> and <code>exp</code> suffixes identify how a message was decoded. Cross-check important callsigns or rare signals against later slots and the received audio.</p>
 
         <h3 id="compare">Compare with WSJT-X</h3>
         <p>Compare receives live decoded messages from WSJT-X and merges them with ft8.rs's local results. It shows which messages were received by one program and which were received by both.</p>
@@ -115,7 +118,7 @@
         <p>These conditions were deliberately chosen for the experiment. In everyday reception, weak signals often face changing fading, drift and interference; they are rarely this stable or controlled. The increase shown here cannot be used to predict real-world decode rates, and it does not mean every receive slot will yield more messages.</p>
 
         <h4 id="recording">Real recording test</h4>
-        <p>Each mode replays the same 19 slots from a real recording in one continuous session. The chart totals reference matches and known errors. <strong>WSJT-X+</strong> uses the configuration with compatibility recovery and candidate retry enabled (<code>WPcr</code>).</p>
+        <p>Each mode replays the same 19 slots from a real recording in one continuous session. The chart totals reference matches and known errors. <strong>WSJT-X+</strong> uses the configuration with compatibility recovery and candidate retry enabled.</p>
         <figure class="sensitivity-chart">
           <img src="${asset_prefix}recording.svg?v=$recording_version" width="680" height="348" alt="Reviewed output rows from the long recording replay: WSJT-X 434, WSJT-X+ 446, JTDX 455, Hybrid 478, and Hybrid with experimental decoding 488.">
           <figcaption>WSJT-X+ matched 446 reference messages, 12 more than WSJT-X. Candidate retry recovered all 12 additional messages.</figcaption>
@@ -132,7 +135,7 @@
             </tbody>
           </table>
         </div>
-        <p class="comparison-note">Hybrid and Hybrid + exp both use cross cancellation. Hybrid + exp also uses both Plus recovery features (<code>Hecr</code>). The replay uses the fixed 2022 callsign database and one JTDX partition, with counts tallied per slot.</p>
+        <p class="comparison-note">Hybrid and Hybrid + exp both use cross cancellation. Hybrid + exp also uses both Plus recovery features. The replay uses the fixed 2022 callsign database and one JTDX partition, with counts tallied per slot.</p>
 
         <h3>Linux command line</h3>
         <p>Open a terminal in the extracted directory. List the input devices, then start listening with the appropriate device number:</p>
