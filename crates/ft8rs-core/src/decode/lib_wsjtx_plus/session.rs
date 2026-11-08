@@ -85,6 +85,32 @@ struct A7SaveEntry {
     f0: f64,
 }
 
+#[derive(Default)]
+struct A7Slot {
+    timestamp: Option<SlotTimestamp>,
+    entries: Vec<A7SaveEntry>,
+}
+
+#[derive(Default)]
+struct OlderA7History {
+    current_time: Option<SlotTimestamp>,
+    previous_time: Option<SlotTimestamp>,
+    older: A7Slot,
+}
+
+const MAX_OLDER_A7_CANDIDATES: usize = 8;
+
+enum OlderA7Audio {
+    Cached(ApDownsampleCache),
+    Residual(Vec<f64>),
+}
+
+struct FinalSlotWork {
+    retry: Option<FinalRetry>,
+    sbase: Vec<f64>,
+    older_a7: Option<OlderA7Audio>,
+}
+
 /// A7 seed entries collected for a single slot.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct A7Snapshot(pub(crate) Vec<(String, f64, f64)>);
@@ -154,6 +180,7 @@ impl A7SaveEntry {
 
 pub struct StreamSlotDecodeState {
     timestamp: Option<SlotTimestamp>,
+    a7_started: bool,
     dd0: Vec<f64>,
     seen: HashSet<String>,
     merged: Vec<StreamDecodedMessage>,
@@ -179,6 +206,7 @@ pub struct StreamDecodeSession {
     /// AP memory: a7[jseq][k], where jseq is even/odd UTC sequence parity and
     /// k=0/1 is previous/current for that parity.
     a7: [[Vec<A7SaveEntry>; 2]; 2],
+    older_a7: Option<Box<[OlderA7History; 2]>>,
     cq_history: [Option<(SlotTimestamp, CqSpectrum)>; 2],
     /// Current sequence parity: 0=even, 1=odd.
     jseq: usize,
@@ -196,12 +224,21 @@ impl StreamDecodeSession {
             params,
             book,
             regular_hash_calls: HashSet::new(),
-            a7: [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]],
+            a7: Default::default(),
+            older_a7: None,
             cq_history: [None, None],
             jseq: 0,
             slot_state: None,
             search_deadline: None,
         }
+    }
+
+    pub(crate) fn new_standalone(params: StreamDecodeConfig) -> Self {
+        let mut session = Self::new(params);
+        if session.params.wsjtx_plus_candidate_retry {
+            session.older_a7 = Some(Box::default());
+        }
+        session
     }
 
     pub(crate) fn decode_slot_streaming_at(
@@ -245,7 +282,11 @@ impl StreamDecodeSession {
     }
 
     pub(crate) fn restore_a7(&mut self, timestamp: &SlotTimestamp, snapshot: A7Snapshot) {
-        self.a7[jseq_from_nutc(timestamp.nutc())][1] = Self::a7_entries(snapshot);
+        let jseq = jseq_from_nutc(timestamp.nutc());
+        self.a7[jseq][1] = Self::a7_entries(snapshot);
+        if let Some(history) = &mut self.older_a7 {
+            history[jseq].current_time = Some(timestamp.add_seconds(-30));
+        }
     }
 
     pub(crate) fn add_a7_rows<'a>(
@@ -291,6 +332,7 @@ impl StreamDecodeSession {
     pub fn start_slot_decode(&self) -> StreamSlotDecodeState {
         StreamSlotDecodeState {
             timestamp: None,
+            a7_started: false,
             dd0: vec![0.0; NMAX],
             seen: HashSet::new(),
             merged: Vec::new(),
@@ -324,11 +366,16 @@ impl StreamDecodeSession {
         samples: &[f32],
         mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     ) -> Result<usize, String> {
-        self.ft8_a7_new_slot(Some(timestamp));
         state.timestamp = Some(timestamp.clone());
 
         fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 41, &mut state.work);
+        state.a7_started =
+            self.older_a7.is_none() || state.work.iter().any(|&sample| sample != 0.0);
+        self.ft8_a7_new_slot(Some(timestamp), state.a7_started);
+        if !state.a7_started {
+            return Ok(0);
+        }
         if self.params.ndepth != 1 {
             let options = self.ft8_decode_options(41);
             let (early_results, _, _) =
@@ -413,7 +460,12 @@ impl StreamDecodeSession {
             let pending = self.decode_slot_nzhsym50_base(&mut state, samples, recovery, emit)?;
             // Allow Hybrid to start downstream work before the retry search.
             on_event(None)?;
-            if let Some((mut retry, sbase)) = pending {
+            if let Some(FinalSlotWork {
+                retry: Some(mut retry),
+                sbase,
+                ..
+            }) = pending
+            {
                 Self::finish_candidate_retry(&mut state, &mut retry, &sbase, deadline, |row| {
                     on_event(Some(row))
                 })?;
@@ -438,21 +490,37 @@ impl StreamDecodeSession {
     {
         let deadline = recovery.deadline;
         let pending = self.decode_slot_nzhsym50_base(state, samples, recovery, &mut on_decode)?;
-        if let Some((mut retry, sbase)) = pending {
-            Self::finish_candidate_retry(state, &mut retry, &sbase, deadline, &mut on_decode)?;
-            if let Some(timestamp) = &state.timestamp {
-                let bank = &mut self.cq_history[jseq_from_nutc(timestamp.nutc())];
-                let previous = bank
-                    .as_ref()
-                    .filter(|(time, _)| time.add_seconds(30) == *timestamp)
-                    .map(|(_, spectrum)| spectrum);
-                let base = state.merged.clone();
-                let timestamp = timestamp.clone();
-                *bank = retry
-                    .recover_cq(previous, &sbase, &base, deadline, |result| {
-                        push_candidate_retry(state, result, &mut on_decode)
-                    })?
-                    .map(|spectrum| (timestamp, spectrum));
+        if let Some(FinalSlotWork {
+            retry,
+            sbase,
+            older_a7,
+        }) = pending
+        {
+            if let Some(mut retry) = retry {
+                Self::finish_candidate_retry(state, &mut retry, &sbase, deadline, &mut on_decode)?;
+                if let Some(timestamp) = &state.timestamp {
+                    let bank = &mut self.cq_history[jseq_from_nutc(timestamp.nutc())];
+                    let previous = bank
+                        .as_ref()
+                        .filter(|(time, _)| time.add_seconds(30) == *timestamp)
+                        .map(|(_, spectrum)| spectrum);
+                    let base = state.merged.clone();
+                    let timestamp = timestamp.clone();
+                    *bank = retry
+                        .recover_cq(previous, &sbase, &base, deadline, |result| {
+                            push_candidate_retry(state, result, &mut on_decode)
+                        })?
+                        .map(|spectrum| (timestamp, spectrum));
+                }
+            }
+            if let Some(audio) = older_a7 {
+                self.recover_older_a7(
+                    state,
+                    audio,
+                    &sbase,
+                    deadline.or(self.search_deadline),
+                    &mut on_decode,
+                )?;
             }
         }
         Ok(std::mem::take(&mut state.merged))
@@ -464,7 +532,7 @@ impl StreamDecodeSession {
         samples: &[f32],
         recovery: SlotRecovery<'_>,
         mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
-    ) -> Result<Option<(FinalRetry, Vec<f64>)>, String> {
+    ) -> Result<Option<FinalSlotWork>, String> {
         let deadline = recovery.deadline.or(self.search_deadline);
         let within_budget = || deadline.is_none_or(|deadline| Instant::now() < deadline);
         fill_dd0_from_samples(samples, &mut state.dd0);
@@ -479,6 +547,15 @@ impl StreamDecodeSession {
                     subtract_ft8_refined(&mut state.work, &itone, d.freq, d.dt + 0.5, true);
                 }
             }
+        }
+
+        if !state.a7_started {
+            // A staged slot can have audio at the final pass after a muted prefix.
+            if state.work.iter().all(|&sample| sample == 0.0) {
+                self.jseq = 1 - self.jseq;
+                return Ok(None);
+            }
+            self.ft8_a7_new_slot(state.timestamp.as_ref(), true);
         }
 
         let mut full_options = self.ft8_decode_options(50);
@@ -688,7 +765,144 @@ impl StreamDecodeSession {
                 }
             }
         }
-        Ok(retry.map(|retry| (retry, sbase)))
+        let older_a7 = (ap_allowed
+            && within_budget()
+            && state
+                .timestamp
+                .as_ref()
+                .is_some_and(|timestamp| !self.older_a7_entries(timestamp).is_empty()))
+        .then_some(match cache {
+            Some(cache) => OlderA7Audio::Cached(cache),
+            None => OlderA7Audio::Residual(full_residual),
+        });
+        Ok(
+            (retry.is_some() || older_a7.is_some()).then_some(FinalSlotWork {
+                retry,
+                sbase,
+                older_a7,
+            }),
+        )
+    }
+
+    fn older_a7_entries(&self, timestamp: &SlotTimestamp) -> &[A7SaveEntry] {
+        let Some(history) = &self.older_a7 else {
+            return &[];
+        };
+        let older = &history[jseq_from_nutc(timestamp.nutc())].older;
+        if older
+            .timestamp
+            .as_ref()
+            .is_some_and(|time| time.add_seconds(60) == *timestamp)
+        {
+            &older.entries
+        } else {
+            &[]
+        }
+    }
+
+    fn recover_older_a7(
+        &self,
+        state: &mut StreamSlotDecodeState,
+        audio: OlderA7Audio,
+        sbase: &[f64],
+        deadline: Option<Instant>,
+        on_decode: &mut impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let within_budget = || deadline.is_none_or(|deadline| Instant::now() < deadline);
+        let Some(timestamp) = state.timestamp.as_ref().filter(|_| within_budget()) else {
+            return Ok(());
+        };
+        let recent = &self.a7[jseq_from_nutc(timestamp.nutc())][0];
+        let current: Vec<_> = state
+            .merged
+            .iter()
+            .filter_map(|row| ft8_a7_save_entry_from_parts(&row.msg, row.freq, row.dt))
+            .collect();
+        let mut candidates = Vec::new();
+        for entry in self
+            .older_a7_entries(timestamp)
+            .iter()
+            .take_while(|_| within_budget())
+        {
+            if !recent
+                .iter()
+                .chain(&current)
+                .chain(candidates.iter().copied())
+                .any(|other| same_a7_hint(entry, other))
+            {
+                candidates.push(entry);
+            }
+        }
+        if candidates.is_empty() || !within_budget() {
+            return Ok(());
+        }
+        let cache = match audio {
+            OlderA7Audio::Cached(cache) => cache,
+            OlderA7Audio::Residual(residual) => ApDownsampleCache::new(&residual),
+        };
+        let mut ranked: Vec<_> = candidates
+            .into_iter()
+            .take_while(|_| within_budget())
+            .filter_map(|entry| {
+                let noise = a7_xbase(entry.f0, sbase);
+                let score = cache.older_a7_sync(entry.f0, entry.dt0) / noise;
+                (score.is_finite() && score > 0.0).then_some((score, entry, noise))
+            })
+            .collect();
+        ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (_, entry, noise) in ranked
+            .into_iter()
+            .take(MAX_OLDER_A7_CANDIDATES)
+            .take_while(|_| within_budget())
+        {
+            let Some(fields) = entry.decode_fields() else {
+                continue;
+            };
+            let decode = |freq, noise| {
+                ft8_a7d_with_downsample_cache(
+                    &cache,
+                    &fields.call_1,
+                    &fields.call_2,
+                    &fields.grid4,
+                    entry.dt0,
+                    freq,
+                    noise,
+                    false,
+                )
+                .0
+            };
+            let Some(row) = decode(entry.f0, noise) else {
+                continue;
+            };
+            let key = normal(&row.msg);
+            // A quarter-Hz offset changes the grid of half-Hz alignments.
+            let shifted = entry.f0 + 0.25;
+            let confirmed = !state.seen.contains(&key)
+                && within_budget()
+                && decode(shifted, a7_xbase(shifted, sbase)).is_some_and(|other| {
+                    other.msg == row.msg
+                        && (other.freq - row.freq).abs() <= 1.0
+                        && (other.dt - row.dt).abs() <= 0.04
+                });
+            if !confirmed {
+                continue;
+            }
+            state.seen.insert(key);
+            emit_decode(
+                &mut state.merged,
+                StreamDecodedMessage {
+                    freq: row.freq,
+                    dt: row.dt,
+                    snr: row.snr,
+                    msg: row.msg,
+                    sync: 0.0,
+                    itone: [0; 79],
+                },
+                StreamDecodeProvenance::CandidateRetry,
+                on_decode,
+            )?;
+        }
+        Ok(())
     }
 
     fn finish_candidate_retry(
@@ -757,11 +971,23 @@ impl StreamDecodeSession {
         la8 && ltry_a8
     }
 
-    fn ft8_a7_new_slot(&mut self, timestamp: Option<&SlotTimestamp>) {
+    fn ft8_a7_new_slot(&mut self, timestamp: Option<&SlotTimestamp>, has_audio: bool) {
         if let Some(timestamp) = timestamp {
             self.jseq = jseq_from_nutc(timestamp.nutc());
         }
-        self.a7[self.jseq][0] = std::mem::take(&mut self.a7[self.jseq][1]);
+        if has_audio {
+            let [previous, current] = &mut self.a7[self.jseq];
+            let older = std::mem::replace(previous, std::mem::take(current));
+            if let Some(history) = &mut self.older_a7 {
+                let history = &mut history[self.jseq];
+                history.older = A7Slot {
+                    timestamp: history.previous_time.take(),
+                    entries: older,
+                };
+                history.previous_time =
+                    std::mem::replace(&mut history.current_time, timestamp.cloned());
+            }
+        }
     }
 
     fn ft8_decode_options(&self, nzhsym: usize) -> DecodeOptions {
@@ -975,6 +1201,14 @@ fn suppress_previous_a7_entries(
         .collect()
 }
 
+fn same_a7_hint(a: &A7SaveEntry, b: &A7SaveEntry) -> bool {
+    (a.f0 - b.f0).abs() <= 3.0
+        && (a.dt0 - b.dt0).abs() <= 0.3
+        && a.msg0.word_bounds().zip(b.msg0.word_bounds()).is_some_and(
+            |((_, _, a_end), (_, _, b_end))| a.msg0.bytes[..a_end] == b.msg0.bytes[..b_end],
+        )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_regular_decode<F>(
     seen: &mut std::collections::HashSet<String>,
@@ -1145,8 +1379,8 @@ fn normal(msg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ft8_a7_save_entry_from_parts, is_reference_chkcall, jseq_from_nutc, split77_words,
-        A7SaveEntry, FixedMsg37, StreamDecodeConfig, StreamDecodeSession,
+        ft8_a7_save_entry_from_parts, is_reference_chkcall, jseq_from_nutc, same_a7_hint,
+        split77_words, A7SaveEntry, FixedMsg37, StreamDecodeConfig, StreamDecodeSession,
     };
     use crate::stream::time::SlotTimestamp;
 
@@ -1247,6 +1481,20 @@ mod tests {
     }
 
     #[test]
+    fn older_a7_hint_matches_the_pair_and_signal_position() {
+        let recent = ft8_a7_save_entry_from_parts("K1ABC W9XYZ -07", 1500.0, 0.2).unwrap();
+        for (msg, freq, dt, duplicate) in [
+            ("K1ABC W9XYZ EN50", 1502.0, 0.3, true),
+            ("K1ABC W9XYZ EN50", 1504.0, 0.3, false),
+            ("K1ABC W9XYZ EN50", 1502.0, 0.6, false),
+            ("W1AW W9XYZ EN50", 1502.0, 0.3, false),
+        ] {
+            let older = ft8_a7_save_entry_from_parts(msg, freq, dt).unwrap();
+            assert_eq!(same_a7_hint(&recent, &older), duplicate);
+        }
+    }
+
+    #[test]
     fn msg37_storage_is_fixed_width_uppercase_and_blank_padded() {
         let msg37 = FixedMsg37::from_trimmed("k1abc w9xyz rr73");
 
@@ -1269,7 +1517,7 @@ mod tests {
         session.a7[1][1].push(test_a7_entry("N0CALL W1AW"));
 
         let even_timestamp = SlotTimestamp::parse("230208_140330").unwrap();
-        session.ft8_a7_new_slot(Some(&even_timestamp));
+        session.ft8_a7_new_slot(Some(&even_timestamp), true);
         assert_eq!(session.jseq, 0);
         assert_eq!(session.a7[0][0].len(), 1);
         assert!(session.a7[0][1].is_empty());
@@ -1277,7 +1525,7 @@ mod tests {
         assert_eq!(session.a7[1][1].len(), 1);
 
         let odd_timestamp = SlotTimestamp::parse("230208_140345").unwrap();
-        session.ft8_a7_new_slot(Some(&odd_timestamp));
+        session.ft8_a7_new_slot(Some(&odd_timestamp), true);
         assert_eq!(session.jseq, 1);
         assert_eq!(session.a7[1][0].len(), 1);
         assert!(session.a7[1][1].is_empty());

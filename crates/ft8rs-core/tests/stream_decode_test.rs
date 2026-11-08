@@ -424,6 +424,87 @@ fn test_stream_decode_reused_fixed_buffer_refreshes_audio_between_stages() {
         .decode_slot_nzhsym50_and_finish(state, &capture, |_| Ok(()))
         .unwrap();
     assert!(rows.iter().any(|row| norm(&row.msg) == "W1FC F5BZB -08"));
+
+    let mut plus = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+        profile: DecodeProfile::WsjtxPlus,
+        ..Default::default()
+    });
+    capture.fill(0.0);
+    let mut state = plus.start_slot();
+    let early = plus
+        .decode_slot_nzhsym41_streaming_with_provenance(
+            &timestamp,
+            &mut state,
+            &capture,
+            |_| Ok(()),
+        )
+        .unwrap();
+    assert_eq!(early, 0);
+    capture.copy_from_slice(&samples[..180_000]);
+    plus.subtract_slot_nzhsym47(&mut state, &capture);
+    let mut found = false;
+    plus.decode_slot_nzhsym50_streaming_with_provenance(
+        &timestamp,
+        state,
+        early,
+        &capture,
+        |row| {
+            found |= norm(&row.decode.msg) == "W1FC F5BZB -08";
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(found);
+}
+
+#[test]
+fn plus_a7_history_survives_silence_and_recovers_across_a_missed_slot() {
+    assert_release_mode();
+    let audio = samples_12k_from_wav("tests/decoder/data/ft8/degraded/230208_140300_plus_1db.wav");
+    let slot = |index: usize| &audio[index * 180_000..(index + 1) * 180_000];
+    let start = SlotTimestamp::parse("230208_140315").unwrap();
+    let silence = vec![0.0; 180_000];
+    let mut seed = 129u32;
+    let noise: Vec<_> = (0..180_000)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed as i32 as f32) * (0.02 / 2_147_483_648.0)
+        })
+        .collect();
+    for profile in [DecodeProfile::Wsjtx, DecodeProfile::WsjtxPlus] {
+        let plus = profile == DecodeProfile::WsjtxPlus;
+        let retry = plus.then_some(StreamDecodeProvenance::CandidateRetry);
+        let cases = [(&noise[..], retry, false), (slot(2), retry, true)]
+            .into_iter()
+            .chain(plus.then_some((&silence[..], Some(StreamDecodeProvenance::A7Memory), false)));
+        for (gap, expected, has_rows) in cases {
+            let mut decoder = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+                profile,
+                ..Default::default()
+            });
+            assert!(decoder
+                .decode_slot_at(&start, slot(1))
+                .iter()
+                .any(|row| row.msg == "OZ1GCD SV1MRW KM17"));
+            let gap_rows = decoder.decode_slot_at(&start.add_seconds(30), gap);
+            assert_eq!(!gap_rows.is_empty(), has_rows);
+            assert!(gap_rows
+                .iter()
+                .all(|row| !row.msg.starts_with("OZ1GCD SV1MRW")));
+            let mut recovered = None;
+            decoder
+                .decode_slot_streaming_with_provenance_at(&start.add_seconds(60), slot(5), |row| {
+                    if row.decode.msg == "OZ1GCD SV1MRW 73" {
+                        recovered = Some(row.provenance);
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(recovered, expected, "{profile:?}");
+        }
+    }
 }
 
 #[test]

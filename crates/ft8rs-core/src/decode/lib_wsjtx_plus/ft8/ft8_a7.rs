@@ -59,6 +59,16 @@ impl ApDownsampleCache {
         crate::decode::lib_wsjtx_plus::fft::four2a_r2c(&mut cx_re, &mut cx_im);
         Self { cx_re, cx_im }
     }
+
+    /// Rank older Plus hints using the current Costas sync near their saved DT.
+    pub(super) fn older_a7_sync(&self, freq: f64, dt: f64) -> f64 {
+        let (re, im) = ap_downsample(self, freq);
+        let costas = build_costas_sync_templates();
+        let center = nint_wsjtx_f32((dt + 0.5) * FS2);
+        (center - 10..=center + 10)
+            .map(|time| sync8d(&re, &im, time, &costas.re, &costas.im))
+            .fold(0.0, f64::max)
+    }
 }
 
 /// WSJT-X ft8_a7d: AP decode at known (call_1, call_2, grid4, xdt, f1) position.

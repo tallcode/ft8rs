@@ -47,7 +47,7 @@ impl ProfileStreamDecodeSession {
             DecodeProfile::Wsjtx => {
                 Self::Wsjtx(StreamDecodeSession::new(config.clone_for_profile_wsjt_x()))
             }
-            DecodeProfile::WsjtxPlus => Self::WsjtxPlus(WsjtxPlusSession::new(config)),
+            DecodeProfile::WsjtxPlus => Self::WsjtxPlus(WsjtxPlusSession::new_standalone(config)),
             DecodeProfile::Jtdx => Self::Jtdx(crate::stream::session::seeded_jtdx_session(
                 config.clone_for_profile_jtdx(),
             )),

@@ -769,6 +769,8 @@ fn fine_rr73_long_truth_recordings() {
             nfa: 925.0,
             nfb: 1075.0,
             wsjtx_plus_compatibility: true,
+            // Candidate retry can independently recover the same RR73.
+            wsjtx_plus_candidate_retry: false,
             ..Default::default()
         };
         let mut base = StreamDecodeSession::new(config.clone());
@@ -861,6 +863,8 @@ fn fine_rr73_real_background_truth() {
         nfa: 925.0,
         nfb: 1075.0,
         wsjtx_plus_compatibility: true,
+        // Keep the injected-signal comparison specific to fine RR73 recovery.
+        wsjtx_plus_candidate_retry: false,
         ..Default::default()
     };
     let stamp = SlotTimestamp::parse("230208_140300").unwrap();
