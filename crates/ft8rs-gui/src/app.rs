@@ -821,7 +821,10 @@ impl Ft8rsApp {
         let row_h = Self::row_height(ui.ctx());
         let dark = ui.visuals().dark_mode;
         let text_color = ui.visuals().text_color();
-        let ink_center_y = decode_cap_center(ui.painter(), &font);
+        let ink_center_y = cap_height_sample(ui.painter(), &font)
+            .mesh_bounds
+            .center()
+            .y;
         let own_call = norm(&self.mycall);
         let target_call = norm(&self.hiscall);
         let target_grid = norm(&self.hisgrid);
@@ -1773,15 +1776,32 @@ impl eframe::App for Ft8rsApp {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
+fn centered_text_edit(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Response {
+    let font = egui::FontSelection::Default.resolve(ui.style());
+    let sample = cap_height_sample(ui.painter(), &font);
+    // TextEdit centers the line box. Balance its native margins around the
+    // visible caps instead so the editor also moves its cursor and selection.
+    const PAD_Y: i8 = 4;
+    let shift = (sample.rect.center().y - sample.mesh_bounds.center().y)
+        .round()
+        .clamp(-f32::from(PAD_Y), f32::from(PAD_Y)) as i8;
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .font(font)
+            .align(egui::Align2::LEFT_CENTER)
+            .desired_width(width)
+            .margin(egui::Margin {
+                top: PAD_Y + shift,
+                bottom: PAD_Y - shift,
+                ..egui::Margin::symmetric(8, PAD_Y)
+            }),
+    )
+}
+
 /// A callsign field: forces ASCII uppercase live. Returns the Response (use
 /// `.lost_focus()` for the commit signal, `.rect.height()` for sizing).
 fn callsign_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Response {
-    let resp = ui.add(
-        egui::TextEdit::singleline(value)
-            .align(egui::Align2::LEFT_CENTER)
-            .desired_width(width)
-            .margin(egui::Margin::symmetric(8, 4)),
-    );
+    let resp = centered_text_edit(ui, value, width);
     if resp.changed() && value.chars().any(|c| c.is_ascii_lowercase()) {
         *value = value.to_ascii_uppercase();
     }
@@ -1793,7 +1813,7 @@ fn callsign_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Re
 fn grid_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Response {
     // TextEdit's width includes its margins. Measure all four characters with
     // the active font and leave room for both padding and the end cursor.
-    let font = egui::TextStyle::Body.resolve(ui.style());
+    let font = egui::FontSelection::Default.resolve(ui.style());
     let min_width = ui.fonts_mut(|fonts| {
         fonts
             .layout_no_wrap("RR99".to_owned(), font, Color32::WHITE)
@@ -1801,12 +1821,7 @@ fn grid_field(ui: &mut egui::Ui, value: &mut String, width: f32) -> egui::Respon
             .x
             .ceil()
     }) + 20.0;
-    let resp = ui.add(
-        egui::TextEdit::singleline(value)
-            .align(egui::Align2::LEFT_CENTER)
-            .desired_width(width.max(min_width))
-            .margin(egui::Margin::symmetric(8, 4)),
-    );
+    let resp = centered_text_edit(ui, value, width.max(min_width));
     if resp.changed() {
         let cleaned = sanitize_grid(value);
         if cleaned != *value {
@@ -2065,13 +2080,7 @@ fn setting_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -
 
 /// A single-line settings field. Returns true on edit commit (focus left / Enter).
 fn text_field(ui: &mut egui::Ui, value: &mut String) -> bool {
-    ui.add(
-        egui::TextEdit::singleline(value)
-            .align(egui::Align2::LEFT_CENTER)
-            .desired_width(f32::INFINITY)
-            .margin(egui::Margin::symmetric(8, 4)),
-    )
-    .lost_focus()
+    centered_text_edit(ui, value, f32::INFINITY).lost_focus()
 }
 
 fn norm(value: &str) -> Option<String> {
@@ -2088,14 +2097,9 @@ struct DecodeHighlight {
     background: Color32,
 }
 
-fn decode_cap_center(painter: &egui::Painter, font: &egui::FontId) -> f32 {
-    // FT8 rows are uppercase letters and digits. Keep a shared baseline so
-    // punctuation and the occasional descender don't shift neighboring rows.
-    painter
-        .layout_no_wrap("H0".into(), font.clone(), Color32::PLACEHOLDER)
-        .mesh_bounds
-        .center()
-        .y
+fn cap_height_sample(painter: &egui::Painter, font: &egui::FontId) -> std::sync::Arc<egui::Galley> {
+    // A stable reference for callsigns, grid locators, and numeric fields.
+    painter.layout_no_wrap("H0".into(), font.clone(), Color32::PLACEHOLDER)
 }
 
 fn decode_text_origin(row: egui::Rect, ink_center_y: f32, pixels_per_point: f32) -> egui::Pos2 {
@@ -3310,7 +3314,10 @@ mod tests {
                         job,
                         &highlights,
                         Color32::BLACK,
-                        decode_cap_center(ui.painter(), &font),
+                        cap_height_sample(ui.painter(), &font)
+                            .mesh_bounds
+                            .center()
+                            .y,
                     );
                 });
                 let meshes = ctx.tessellate(output.shapes, output.pixels_per_point);
@@ -4002,56 +4009,117 @@ mod tests {
     }
 
     #[test]
-    fn settings_text_fields_center_host_and_port() {
+    fn settings_text_fields_center_visible_text() {
         use egui::emath::GuiRounding as _;
 
-        let ctx = egui::Context::default();
-        apply_style(&ctx, egui::Theme::Light);
-        let mut host = "127.0.0.1".to_owned();
-        let mut port = "2238".to_owned();
-        for scale in [1.0, 1.25, 1.5, 2.0] {
-            ctx.set_pixels_per_point(scale);
-            for min_height in [24.0, 30.0] {
-                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    ui.set_max_width(440.0);
-                    ui.spacing_mut().interact_size.y = min_height;
-                    settings_form(ui, |ui| {
-                        setting_row(ui, "Host", |ui| text_field(ui, &mut host));
-                        setting_row(ui, "Port", |ui| text_field(ui, &mut port));
+        for (system_font, ink_offset) in [(false, 0.0), (true, 0.0), (false, -2.0)] {
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                let ctx = egui::Context::default();
+                if system_font {
+                    install_fonts(&ctx);
+                } else if ink_offset != 0.0 {
+                    // Reproduce high glyphs even on machines whose installed
+                    // fonts already have well-balanced vertical metrics.
+                    let mut fonts = egui::FontDefinitions::default();
+                    let primary = &fonts.families[&egui::FontFamily::Monospace][0];
+                    let font = std::sync::Arc::make_mut(fonts.font_data.get_mut(primary).unwrap());
+                    font.tweak.y_offset += ink_offset;
+                    ctx.set_fonts(fonts);
+                }
+                apply_style(&ctx, egui::Theme::Light);
+                let mut call = "BG5ATV".to_owned();
+                let mut grid = "PM00".to_owned();
+                let mut host = "127.0.0.1".to_owned();
+                let mut port = "2238".to_owned();
+                let mut input = egui::RawInput::default();
+                input
+                    .viewports
+                    .get_mut(&input.viewport_id)
+                    .unwrap()
+                    .native_pixels_per_point = Some(scale);
+                for min_height in [24.0, 30.0] {
+                    let output = ctx.run_ui(input.clone(), |ui| {
+                        assert_eq!(ui.pixels_per_point(), scale);
+                        ui.set_max_width(440.0);
+                        ui.spacing_mut().interact_size.y = min_height;
+                        settings_form(ui, |ui| {
+                            setting_row(ui, "Callsign", |ui| {
+                                callsign_field(ui, &mut call, f32::INFINITY).lost_focus()
+                            });
+                            setting_row(ui, "Grid", |ui| {
+                                grid_field(ui, &mut grid, f32::INFINITY).lost_focus()
+                            });
+                            setting_row(ui, "Host", |ui| text_field(ui, &mut host));
+                            setting_row(ui, "Port", |ui| text_field(ui, &mut port));
+                        });
                     });
-                });
-                output.textures_delta.clear();
-                for value in [&host, &port] {
-                    let text = output
-                        .shapes
-                        .iter()
-                        .find_map(|shape| match &shape.shape {
-                            egui::Shape::Text(text) if &text.galley.job.text == value => Some(text),
-                            _ => None,
-                        })
-                        .unwrap();
-                    let frame = output
-                        .shapes
-                        .iter()
-                        .find_map(|shape| match &shape.shape {
-                            egui::Shape::Rect(rect)
-                                if rect.fill == Color32::WHITE && rect.rect.contains(text.pos) =>
-                            {
-                                Some(rect.rect)
-                            }
-                            _ => None,
-                        })
-                        .unwrap();
-                    let ink_y =
-                        text.pos.y.round_to_pixels(scale) + text.galley.mesh_bounds.center().y;
-                    let error_px = (ink_y - frame.center().y).abs() * scale;
-                    assert!(
-                        error_px <= 1.01,
-                        "{value} at {scale}x and {min_height} pt is off center by {error_px} px"
-                    );
+                    for value in [&call, &grid, &host, &port] {
+                        let text = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text) if &text.galley.job.text == value => {
+                                    Some(text)
+                                }
+                                _ => None,
+                            })
+                            .unwrap();
+                        let frame = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Rect(rect)
+                                    if rect.fill == Color32::WHITE
+                                        && rect.rect.contains(text.pos) =>
+                                {
+                                    Some(rect.rect.round_to_pixels(scale))
+                                }
+                                _ => None,
+                            })
+                            .unwrap();
+                        let ink_y =
+                            text.pos.y.round_to_pixels(scale) + text.galley.mesh_bounds.center().y;
+                        let error_px = (ink_y - frame.center().y).abs() * scale;
+                        assert!(
+                            error_px <= 1.01,
+                            "{value} at {scale}x and {min_height} pt (system font: {system_font}, ink offset: {ink_offset}) is off center by {error_px} px"
+                        );
+                    }
                 }
             }
         }
+    }
+
+    #[test]
+    fn centered_callsign_field_replaces_the_native_selection() {
+        let ctx = egui::Context::default();
+        let mut call = "BG5ATV".to_owned();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let response = callsign_field(ui, &mut call, 110.0);
+            response.request_focus();
+            let mut state = egui::text_edit::TextEditState::load(ui.ctx(), response.id).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(3),
+                    egui::text::CCursor::new(6),
+                )));
+            state.store(ui.ctx(), response.id);
+        });
+        let input = egui::RawInput {
+            events: vec![egui::Event::Text("xyz".to_owned())],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            let response = callsign_field(ui, &mut call, 110.0);
+            assert!(response.has_focus());
+            assert!(response.changed());
+            let state = egui::text_edit::TextEditState::load(ui.ctx(), response.id).unwrap();
+            let range = state.cursor.char_range().unwrap();
+            assert!(range.is_empty());
+            assert_eq!(range.primary, egui::text::CCursor::new(6));
+        });
+        assert_eq!(call, "BG5XYZ");
     }
 
     #[test]
