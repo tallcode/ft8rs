@@ -1,8 +1,6 @@
 use ft8rs::input::audio::downsample_12k;
 use ft8rs::stream::profile::{ProfileSlotState, ProfileStreamDecodeSession};
-use ft8rs::stream::session::{
-    DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance, StreamDecodedWithProvenance,
-};
+use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig, StreamDecodedWithProvenance};
 use ft8rs::stream::{SlotTimestamp, StreamDecodeSession, StreamDecodedMessage};
 
 use cpal::traits::StreamTrait;
@@ -439,7 +437,7 @@ fn start_decode_worker(
                 } => {
                     let mut state = decoder.start_slot_decode();
                     let event_tx = event_tx.clone();
-                    let stage_result = decoder.decode_slot_nzhsym41_at(
+                    let stage_result = decoder.decode_slot_nzhsym41_tagged(
                         Some(&timestamp),
                         &mut state,
                         &samples_12k,
@@ -447,10 +445,7 @@ fn start_decode_worker(
                             event_tx
                                 .send(DecodeWorkerEvent::Decode {
                                     timestamp: timestamp.clone(),
-                                    decode: StreamDecodedWithProvenance {
-                                        decode: decode.clone(),
-                                        provenance: StreamDecodeProvenance::Unknown,
-                                    },
+                                    decode: decode.clone(),
                                 })
                                 .map_err(|err| err.to_string())
                         },
@@ -478,23 +473,15 @@ fn start_decode_worker(
                     if let Some(state) = slot_state.take() {
                         let event_tx = event_tx.clone();
                         decoder
-                            .decode_slot_nzhsym50_and_finish(state, &samples_12k, |decode| {
+                            .decode_slot_nzhsym50_tagged(state, &samples_12k, |decode| {
                                 event_tx
                                     .send(DecodeWorkerEvent::Decode {
                                         timestamp: timestamp.clone(),
-                                        decode: StreamDecodedWithProvenance {
-                                            decode: decode.clone(),
-                                            provenance: StreamDecodeProvenance::Unknown,
-                                        },
+                                        decode: decode.clone(),
                                     })
                                     .map_err(|err| err.to_string())
                             })
-                            .map(|results| {
-                                Some(DecodeWorkerEvent::SlotComplete {
-                                    timestamp,
-                                    count: results.len(),
-                                })
-                            })
+                            .map(|count| Some(DecodeWorkerEvent::SlotComplete { timestamp, count }))
                     } else {
                         Err(format!("{timestamp}: received nzhsym=50 before nzhsym=41"))
                     }

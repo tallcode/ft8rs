@@ -41,12 +41,7 @@ impl NativeObservation<'_> {
                 let mut rows = Vec::new();
                 session.decode_slot_streaming_tagged_at(timestamp, samples, |row| {
                     if let Some(history) = history.as_deref_mut() {
-                        if matches!(
-                            row.provenance,
-                            StreamDecodeProvenance::Regular
-                                | StreamDecodeProvenance::A7Memory
-                                | StreamDecodeProvenance::A8List
-                        ) {
+                        if row.provenance.is_wsjtx_history_seed() {
                             let mut seeds = A7Snapshot::default();
                             seeds.record(&row.decode, row.decode.freq);
                             history(ObservationHistory::A7(seeds));

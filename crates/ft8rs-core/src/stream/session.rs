@@ -327,6 +327,30 @@ pub struct StreamDecodedMessage {
     pub itone: [i32; 79],
 }
 
+/// AP mask used by a successful classic WSJT-X candidate decode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum WsjtxApType {
+    Cq,
+    MyCall,
+    BothCalls,
+    Rrr,
+    SeventyThree,
+    Rr73,
+}
+
+impl WsjtxApType {
+    pub fn annotation(self) -> &'static str {
+        match self {
+            Self::Cq => "a1",
+            Self::MyCall => "a2",
+            Self::BothCalls => "a3",
+            Self::Rrr => "a4",
+            Self::SeventyThree => "a5",
+            Self::Rr73 => "a6",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StreamDecodeProvenance {
     /// The upstream result does not expose whether its regular path used AP.
@@ -339,6 +363,7 @@ pub enum StreamDecodeProvenance {
     Experiment,
     Regular,
     ApMask,
+    WsjtxAp(WsjtxApType),
     A7Memory,
     A8List,
     JtdxDeep,
@@ -347,6 +372,37 @@ pub enum StreamDecodeProvenance {
     CandidateRetry,
     /// Isolated Plus recovery for legacy RR73 and CQ.
     PlusCompatibility,
+}
+
+impl StreamDecodeProvenance {
+    pub(crate) fn from_wsjtx_pass(ap_type: usize) -> Self {
+        match ap_type {
+            0 => Self::Regular,
+            1 => Self::WsjtxAp(WsjtxApType::Cq),
+            2 => Self::WsjtxAp(WsjtxApType::MyCall),
+            3 => Self::WsjtxAp(WsjtxApType::BothCalls),
+            4 => Self::WsjtxAp(WsjtxApType::Rrr),
+            5 => Self::WsjtxAp(WsjtxApType::SeventyThree),
+            6 => Self::WsjtxAp(WsjtxApType::Rr73),
+            _ => Self::Unknown,
+        }
+    }
+
+    /// A7 snapshot eligibility for results returned by a native WSJT-X session.
+    pub fn is_wsjtx_history_seed(self) -> bool {
+        matches!(
+            self,
+            Self::Regular | Self::WsjtxAp(_) | Self::A7Memory | Self::A8List
+        )
+    }
+
+    /// The JTDX adapter uses A7Memory internally for all of its AP masks.
+    pub fn for_jtdx_display(self) -> Self {
+        match self {
+            Self::A7Memory => Self::ApMask,
+            other => other,
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -459,13 +515,25 @@ impl StreamDecodeSession {
         &mut self,
         timestamp: &SlotTimestamp,
         samples: &[f32],
-        on_decode: F,
+        mut on_decode: F,
     ) -> Result<Vec<StreamDecodedWithProvenance>, String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
+        self.ft8_decode_slot_with_provenance_at(Some(timestamp), samples, |row| {
+            on_decode(&row.decode)
+        })
+        .map(|(_, provenance)| provenance)
+    }
+
+    pub(crate) fn decode_slot_tagged_at(
+        &mut self,
+        timestamp: &SlotTimestamp,
+        samples: &[f32],
+        on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+    ) -> Result<usize, String> {
         self.ft8_decode_slot_with_provenance_at(Some(timestamp), samples, on_decode)
-            .map(|(_, provenance)| provenance)
+            .map(|(rows, _)| rows.len())
     }
 
     pub fn import_hash_calls(&mut self, calls: &[String]) {
@@ -532,14 +600,14 @@ impl StreamDecodeSession {
         if self.params.ndepth != 1 {
             let options = self.ft8_decode_options(41);
             let (early_results, _, _) =
-                decode_f64_streaming_with_residual(&state.work, options, |d| {
+                decode_f64_streaming_with_residual(&state.work, options, |d, ap_type| {
                     push_regular_decode(
                         &mut state.seen,
                         &mut state.merged,
                         &mut state.provenance,
                         &self.book,
                         &mut self.regular_hash_calls,
-                        StreamDecodeProvenance::Regular,
+                        StreamDecodeProvenance::from_wsjtx_pass(ap_type),
                         d,
                         &mut on_decode,
                     )
@@ -643,14 +711,14 @@ impl StreamDecodeSession {
         let mut full_options = self.ft8_decode_options(50);
         full_options.initial_messages = state.early_results.iter().map(|d| d.msg.clone()).collect();
         let (full_results, sbase, full_residual) =
-            decode_f64_streaming_with_residual(&state.work, full_options, |d| {
+            decode_f64_streaming_with_residual(&state.work, full_options, |d, ap_type| {
                 push_regular_decode(
                     &mut state.seen,
                     &mut state.merged,
                     &mut state.provenance,
                     &self.book,
                     &mut self.regular_hash_calls,
-                    StreamDecodeProvenance::Regular,
+                    StreamDecodeProvenance::from_wsjtx_pass(ap_type),
                     d,
                     &mut on_decode,
                 )
@@ -815,12 +883,12 @@ impl StreamDecodeSession {
         &mut self,
         timestamp: Option<&SlotTimestamp>,
         samples: &[f32],
-        on_decode: F,
+        mut on_decode: F,
     ) -> Result<Vec<StreamDecodedMessage>, String>
     where
         F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
     {
-        self.ft8_decode_slot_with_provenance_at(timestamp, samples, on_decode)
+        self.ft8_decode_slot_with_provenance_at(timestamp, samples, |row| on_decode(&row.decode))
             .map(|(rows, _)| rows)
     }
 
@@ -831,7 +899,7 @@ impl StreamDecodeSession {
         mut on_decode: F,
     ) -> Result<(Vec<StreamDecodedMessage>, Vec<StreamDecodedWithProvenance>), String>
     where
-        F: FnMut(&StreamDecodedMessage) -> Result<(), String>,
+        F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
         let mut state = self
             .slot_state
@@ -839,11 +907,9 @@ impl StreamDecodeSession {
             .unwrap_or_else(|| self.start_slot_decode());
         state.reset_for_slot();
         let result = (|| {
-            self.decode_slot_nzhsym41_at(timestamp, &mut state, samples, &mut on_decode)?;
+            self.decode_slot_nzhsym41_tagged(timestamp, &mut state, samples, &mut on_decode)?;
             self.subtract_slot_nzhsym47(&mut state, samples);
-            self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, |row| {
-                on_decode(&row.decode)
-            })
+            self.decode_slot_nzhsym50_and_finish_state(&mut state, samples, on_decode)
         })();
         let provenance = if result.is_ok() {
             std::mem::take(&mut state.provenance)

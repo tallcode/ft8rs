@@ -65,7 +65,7 @@ pub struct HybridSlotDiagnostics {
 }
 
 enum WorkerEvent {
-    Row(SignalSource, StreamDecodedMessage),
+    Row(SignalSource, StreamDecodedMessage, StreamDecodeProvenance),
     WsjtxCompatibility(StreamDecodedMessage),
     Supplemental(StreamDecodedMessage, StreamDecodeProvenance),
     A7Checkpoint(A7Snapshot),
@@ -463,16 +463,25 @@ impl HybridStreamDecodeSession {
                                 }
                                 Some(row) => {
                                     let mut tagged = row.clone();
-                                    if staged
-                                        || tagged.provenance == StreamDecodeProvenance::Regular
+                                    if tagged.provenance == StreamDecodeProvenance::Regular {
+                                        tagged.provenance = StreamDecodeProvenance::Unknown;
+                                    }
+                                    let event = WorkerEvent::Row(
+                                        SignalSource::Wsjtx,
+                                        tagged.decode.clone(),
+                                        tagged.provenance,
+                                    );
+                                    // Preserve the live evidence policy independently of the
+                                    // annotation forwarded to the display.
+                                    if staged && tagged.provenance == StreamDecodeProvenance::A8List
                                     {
-                                        tagged.provenance = wsjtx_provenance(&row.decode);
+                                        tagged.provenance = StreamDecodeProvenance::Unknown;
                                     }
                                     wsjtx_rows
                                         .as_mut()
                                         .expect("WSJT-X baseline already completed")
                                         .push(tagged);
-                                    WorkerEvent::Row(SignalSource::Wsjtx, row.decode.clone())
+                                    event
                                 }
                             };
                             w_tx.send(event)
@@ -505,8 +514,12 @@ impl HybridStreamDecodeSession {
                         jtdx_checkpoint_enabled.then_some(&mut checkpoint),
                         |tagged| {
                             let row = &tagged.decode;
-                            j_tx.send(WorkerEvent::Row(SignalSource::Jtdx, row.clone()))
-                                .map_err(|_| "hybrid event receiver closed".to_string())
+                            j_tx.send(WorkerEvent::Row(
+                                SignalSource::Jtdx,
+                                row.clone(),
+                                StreamDecodeProvenance::Unknown,
+                            ))
+                            .map_err(|_| "hybrid event receiver closed".to_string())
                         },
                     )
                 });
@@ -580,7 +593,7 @@ impl HybridStreamDecodeSession {
                         finished += 1;
                         record_experiment(&mut diagnostics, result, start, finish);
                     }
-                    WorkerEvent::Row(source, row) => {
+                    WorkerEvent::Row(source, row, provenance) => {
                         if source == SignalSource::Wsjtx {
                             w_seen.push(row.clone());
                         } else {
@@ -593,11 +606,7 @@ impl HybridStreamDecodeSession {
                                 &mut ledger,
                                 source,
                                 &row,
-                                if source == SignalSource::Wsjtx {
-                                    wsjtx_provenance(&row)
-                                } else {
-                                    StreamDecodeProvenance::Unknown
-                                },
+                                provenance,
                                 &mut output_error,
                                 &mut on_decode,
                             );
@@ -930,13 +939,6 @@ fn cancellation_seeds(
     seeds
 }
 
-fn wsjtx_provenance(row: &StreamDecodedMessage) -> StreamDecodeProvenance {
-    if row.itone.iter().all(|tone| *tone == 0) {
-        StreamDecodeProvenance::A7Memory
-    } else {
-        StreamDecodeProvenance::Unknown
-    }
-}
 fn guard_worker<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
         .map_err(|_| "cooperative worker panicked".to_string())?
@@ -1040,7 +1042,7 @@ fn admit_tagged_rows(
 
 fn provenance_from_stream(provenance: StreamDecodeProvenance) -> Provenance {
     match provenance {
-        StreamDecodeProvenance::Unknown => Provenance::Unknown,
+        StreamDecodeProvenance::Unknown | StreamDecodeProvenance::WsjtxAp(_) => Provenance::Unknown,
         StreamDecodeProvenance::CooperativeRecovery => Provenance::CrossCancellation,
         StreamDecodeProvenance::ContextRecovery
         | StreamDecodeProvenance::PlusCompatibility

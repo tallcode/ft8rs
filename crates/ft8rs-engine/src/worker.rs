@@ -510,7 +510,7 @@ impl SlotDelivery {
                             timestamp,
                             row: confirmed.row.decode.clone(),
                             provenance: if config.profile == DecodeProfile::Jtdx {
-                                confirmed.row.provenance
+                                confirmed.row.provenance.for_jtdx_display()
                             } else {
                                 StreamDecodeProvenance::Unknown
                             },
@@ -531,12 +531,7 @@ impl SlotDelivery {
                 let native_seed = matches!(
                     config.profile,
                     DecodeProfile::Wsjtx | DecodeProfile::WsjtxPlus
-                ) && matches!(
-                    record.provenance,
-                    StreamDecodeProvenance::Regular
-                        | StreamDecodeProvenance::A7Memory
-                        | StreamDecodeProvenance::A8List
-                );
+                ) && record.provenance.is_wsjtx_history_seed();
                 if config.profile == DecodeProfile::Hybrid || native_seed {
                     let frequency =
                         if native_seed && record.provenance == StreamDecodeProvenance::A8List {
@@ -965,7 +960,8 @@ mod tests {
             starts
         });
 
-        for (index, samples) in audio.samples.chunks_exact(180_000).take(3).enumerate() {
+        let (slots, _) = audio.samples.as_chunks::<180_000>();
+        for (index, samples) in slots.iter().take(3).enumerate() {
             let timestamp = start.add_seconds(index as i64 * 15);
             for (kind, len) in [
                 (SlotStage::N41, 141696),
@@ -1085,7 +1081,8 @@ mod tests {
                 starts
             });
 
-            for (index, samples) in audio.samples.chunks_exact(180_000).take(3).enumerate() {
+            let (slots, _) = audio.samples.as_chunks::<180_000>();
+            for (index, samples) in slots.iter().take(3).enumerate() {
                 let timestamp = start.add_seconds(index as i64 * 15);
                 for (kind, len) in [
                     (SlotStage::N41, 141696),

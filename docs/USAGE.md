@@ -118,9 +118,12 @@ recovery. Derived rows supply weak hints rather than independent confirmation.
 Plus compatibility and candidate retry results carry `Pc` and `Pr` in the
 GUI and CLI. The GUI also uses `sic` for isolated cancellation recovery,
 `ctx` for DX context recovery and `exp` for the opt-in Hybrid experimental receiver.
-The native routines do not expose every AP subtype. Unknown native provenance
-has no visible tag and is retained as unknown internally.
-These markers describe how a row was obtained, not proof that the message is true.
+Standalone WSJT-X+ also uses `Pr` for standard CQ messages recovered by its
+candidate retry. This search can use audio from the same sequence 30 seconds earlier.
+WSJT-X results carry the successful AP subtype (`a1` through `a8`) when
+available. Standalone JTDX AP results use `ap` because their masks have a
+different numbering scheme. Unknown provenance has no visible tag.
+These markers identify the decode path. They do not establish message truth.
 
 JTDX uses one logical frequency partition by default. `--jtdx-threads N` changes
 partitioning/search state and currently processes those bands serially within a

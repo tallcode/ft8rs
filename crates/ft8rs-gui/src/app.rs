@@ -2312,6 +2312,7 @@ fn provenance_tag(provenance: StreamDecodeProvenance) -> &'static str {
         StreamDecodeProvenance::Experiment => "exp",
         StreamDecodeProvenance::A7Memory => "a7",
         StreamDecodeProvenance::ApMask => "ap",
+        StreamDecodeProvenance::WsjtxAp(ap_type) => ap_type.annotation(),
         StreamDecodeProvenance::A8List => "a8",
         StreamDecodeProvenance::JtdxDeep => "dp",
         StreamDecodeProvenance::ImportedMemory => "im",
@@ -3417,6 +3418,8 @@ mod tests {
             StreamDecodeProvenance::PlusCompatibility,
             StreamDecodeProvenance::CandidateRetry,
             StreamDecodeProvenance::ApMask,
+            StreamDecodeProvenance::WsjtxAp(ft8rs::stream::session::WsjtxApType::Cq),
+            StreamDecodeProvenance::A8List,
         ] {
             let local_text = format!(
                 "120000 -20   0.1  1002  {message} {}",

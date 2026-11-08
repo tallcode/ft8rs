@@ -1,6 +1,6 @@
 use ft8rs::decode::lib_jtdx::JtdxStreamDecodeSession;
 use ft8rs::input::audio::{read_wav_mono_f32, resample_linear};
-use ft8rs::stream::session::StreamDecodeProvenance;
+use ft8rs::stream::session::{StreamDecodeProvenance, WsjtxApType};
 use ft8rs::stream::{
     DecodeProfile, ProfileStreamDecodeSession, SlotTimestamp, StreamDecodeConfig,
     StreamDecodeSession,
@@ -255,6 +255,8 @@ fn test_wsjtx_plus_preserves_wpcr_recording_baseline() {
                     (5, "PD0YL OY1DZ -15"),
                     (5, "RJ3DC OE9GWV +06"),
                     (6, "N1F US7UK -09"),
+                    (7, "CQ M0BEN IO92"),
+                    (7, "CQ IZ7MFY JN81"),
                     (16, "F1MLZ UA3QNA -04"),
                 ]
                 .map(|(slot, msg)| (slot, msg.to_owned())),
@@ -425,6 +427,101 @@ fn test_stream_decode_reused_fixed_buffer_refreshes_audio_between_stages() {
 }
 
 #[test]
+fn cq_ap_provenance_survives_native_and_hybrid_callbacks() {
+    assert_release_mode();
+    let samples = samples_12k_from_wav("tests/ft8/230208_140300.wav");
+    let slot = &samples[..180_000];
+    let timestamp = SlotTimestamp::parse("230208_140300").unwrap();
+    let target = "CQ D1DX KN87";
+    let mut without_ap = StreamDecodeSession::new(StreamDecodeConfig {
+        lft8apon: false,
+        ..Default::default()
+    });
+    assert!(!without_ap
+        .decode_slot(slot)
+        .iter()
+        .any(|row| row.msg == target));
+
+    for profile in [
+        DecodeProfile::Wsjtx,
+        DecodeProfile::WsjtxPlus,
+        DecodeProfile::Hybrid,
+    ] {
+        let mut decoder = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+            profile,
+            ..Default::default()
+        });
+        let mut observed = None;
+        decoder
+            .decode_slot_streaming_with_provenance_at(&timestamp, slot, |row| {
+                if row.decode.msg == target {
+                    observed = Some(row.provenance);
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            observed,
+            Some(StreamDecodeProvenance::WsjtxAp(WsjtxApType::Cq)),
+            "{profile:?}"
+        );
+    }
+}
+
+#[test]
+fn plus_recovers_weak_cq_with_current_and_same_parity_soft_information() {
+    assert_release_mode();
+    let samples = samples_12k_from_wav("tests/ft8/230208_140300.wav");
+    let start = SlotTimestamp::parse("230208_140415").unwrap();
+    let targets = [
+        ("CQ M0BEN IO92", 508.0, 1.29),
+        ("CQ IZ7MFY JN81", 1256.0, 0.565),
+    ];
+    let decode = |offsets: &[usize], enable_ap, enable_retry| {
+        let mut decoder = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+            profile: DecodeProfile::WsjtxPlus,
+            lft8apon: enable_ap,
+            wsjtx_plus_candidate_retry: enable_retry,
+            ..Default::default()
+        });
+        let mut results = Vec::new();
+        for &offset in offsets {
+            let slot = 5 + offset;
+            decoder
+                .decode_slot_streaming_with_provenance_at(
+                    &start.add_seconds(offset as i64 * 15),
+                    &samples[slot * 180_000..(slot + 1) * 180_000],
+                    |row| {
+                        if offset == 2 {
+                            results.push(row.clone());
+                        }
+                        Ok(())
+                    },
+                )
+                .unwrap();
+        }
+        results
+    };
+    let baseline = decode(&[0, 2], true, false);
+    let ap_disabled = decode(&[0, 2], false, true);
+    let current = decode(&[2], true, true);
+    let combined = decode(&[0, 2], true, true);
+    for (message, freq, dt) in targets {
+        assert!(!baseline.iter().any(|row| row.decode.msg == message));
+        assert!(!ap_disabled.iter().any(|row| row.decode.msg == message));
+        let recovered = combined
+            .iter()
+            .find(|row| row.decode.msg == message)
+            .unwrap();
+        assert_eq!(recovered.provenance, StreamDecodeProvenance::CandidateRetry);
+        assert!((recovered.decode.freq - freq).abs() <= 2.0);
+        assert!((recovered.decode.dt - dt).abs() <= 0.05);
+    }
+    assert!(!current.iter().any(|row| row.decode.msg == targets[0].0));
+    assert!(current.iter().any(|row| row.decode.msg == targets[1].0));
+}
+
+#[test]
 fn test_stream_decode_a8d_audio() {
     assert_release_mode();
     let samples = samples_12k_from_wav("tests/ft8/a8d_k1jt_bg5atv_pm00.wav");
@@ -463,6 +560,44 @@ fn test_stream_decode_a8d_audio() {
         "a8 fixture should decode with a8d context: {:?}",
         with_a8.iter().map(|d| d.msg.as_str()).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn a8d_provenance_survives_staged_hybrid_callback() {
+    assert_release_mode();
+    let samples = samples_12k_from_wav("tests/ft8/a8d_k1jt_bg5atv_pm00.wav");
+    let timestamp = SlotTimestamp::parse("230208_140300").unwrap();
+    let mut decoder = ProfileStreamDecodeSession::new(StreamDecodeConfig {
+        profile: DecodeProfile::Hybrid,
+        nfa: 900.0,
+        nfb: 1100.0,
+        nfqso: 1000.0,
+        mycall: Some("K1JT".into()),
+        hiscall: Some("BG5ATV".into()),
+        hisgrid: Some("PM00".into()),
+        cooperative_realtime: true,
+        ..Default::default()
+    });
+    let mut state = decoder.start_slot();
+    let early = decoder
+        .decode_slot_nzhsym41_streaming_with_provenance(
+            &timestamp,
+            &mut state,
+            &samples,
+            |_| Ok(()),
+        )
+        .unwrap();
+    decoder.subtract_slot_nzhsym47(&mut state, &samples);
+    let mut observed = None;
+    decoder
+        .decode_slot_nzhsym50_streaming_with_provenance(&timestamp, state, early, &samples, |row| {
+            if row.decode.msg == "K1JT BG5ATV PM00" {
+                observed = Some(row.provenance);
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(observed, Some(StreamDecodeProvenance::A8List));
 }
 
 #[test]

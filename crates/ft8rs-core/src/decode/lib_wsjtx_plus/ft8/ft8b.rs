@@ -218,7 +218,7 @@ fn decode_metrics(
     // This represents the absolute noise power at f1 in the original spectrum.
     let xbase = spectrum_noise_power(_sbase, f1)?;
 
-    let result = try_decode_passes(workspace, depth, f1, ap_options, _book)?;
+    let (result, ap_type) = try_decode_passes(workspace, depth, f1, ap_options, _book)?;
 
     if result.cw.iter().all(|&b| b == 0) {
         return None;
@@ -262,6 +262,7 @@ fn decode_metrics(
     }
     Some(Ft8bResult {
         msg,
+        ap_type,
         freq: f1,
         dt: xdt,
         snr,
@@ -608,7 +609,7 @@ fn try_decode_passes(
     f1: f64,
     ap_options: &Ft8bApOptions,
     book: &Option<HashCallBook>,
-) -> Option<DecodeResult> {
+) -> Option<(DecodeResult, usize)> {
     let maxosd_base = if depth >= 2 { 2 } else { -1 };
     let scalefac = 2.83f32;
     // Passes 1-5: regular WSJT-X BP+OSD decoding with 5 bit metrics.
@@ -653,6 +654,7 @@ fn try_decode_passes(
         }
 
         workspace.apmask.fill(0);
+        let mut iaptype = 0;
         if ipass > 5 {
             let apmag = (workspace
                 .llr
@@ -660,7 +662,7 @@ fn try_decode_passes(
                 .map(|x| x.abs() as f32)
                 .fold(0.0f32, f32::max)
                 * 1.1f32) as f64;
-            let iaptype = if ap_options.cq_only {
+            iaptype = if ap_options.cq_only {
                 1
             } else {
                 naptypes[ap_options.nqso_progress][(ipass - 6) / 2]
@@ -681,7 +683,7 @@ fn try_decode_passes(
             let acceptable =
                 result.nharderrors <= 36 && is_wsjtx_acceptable_codeword(&result, ap_options, book);
             if acceptable {
-                return Some(result);
+                return Some((result, iaptype));
             }
         }
     }
@@ -986,5 +988,7 @@ mod tests {
     }
 }
 
+#[path = "cq_retry.rs"]
+pub(super) mod cq_retry;
 #[path = "cross_retry.rs"]
 pub(super) mod cross_retry;

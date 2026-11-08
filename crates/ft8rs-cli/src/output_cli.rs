@@ -42,18 +42,23 @@ fn decode_line(
     provenance: StreamDecodeProvenance,
 ) -> String {
     let suffix = match provenance {
-        StreamDecodeProvenance::Experiment => " exp",
-        StreamDecodeProvenance::PlusCompatibility => " Pc",
-        StreamDecodeProvenance::CandidateRetry => " Pr",
+        StreamDecodeProvenance::Experiment => "exp",
+        StreamDecodeProvenance::PlusCompatibility => "Pc",
+        StreamDecodeProvenance::CandidateRetry => "Pr",
+        StreamDecodeProvenance::WsjtxAp(ap_type) => ap_type.annotation(),
+        StreamDecodeProvenance::A7Memory => "a7",
+        StreamDecodeProvenance::A8List => "a8",
+        StreamDecodeProvenance::ApMask => "ap",
         _ => "",
     };
     format!(
-        "{} {:>3} {:+.1} {:>5.0} {}{}",
+        "{} {:>3} {:+.1} {:>5.0} {}{}{}",
         timestamp.format_time(),
         row.snr.round() as i32,
         row.dt,
         row.freq.round(),
         row.msg,
+        if suffix.is_empty() { "" } else { " " },
         suffix
     )
 }
@@ -61,6 +66,7 @@ fn decode_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ft8rs::stream::session::WsjtxApType;
     #[test]
     fn provenance_tags_are_suffixes_and_never_change_payload() {
         let time = SlotTimestamp::parse("261029_120000").unwrap();
@@ -81,6 +87,21 @@ mod tests {
         for (provenance, tag) in [
             (StreamDecodeProvenance::PlusCompatibility, "Pc"),
             (StreamDecodeProvenance::CandidateRetry, "Pr"),
+            (StreamDecodeProvenance::WsjtxAp(WsjtxApType::Cq), "a1"),
+            (StreamDecodeProvenance::WsjtxAp(WsjtxApType::MyCall), "a2"),
+            (
+                StreamDecodeProvenance::WsjtxAp(WsjtxApType::BothCalls),
+                "a3",
+            ),
+            (StreamDecodeProvenance::WsjtxAp(WsjtxApType::Rrr), "a4"),
+            (
+                StreamDecodeProvenance::WsjtxAp(WsjtxApType::SeventyThree),
+                "a5",
+            ),
+            (StreamDecodeProvenance::WsjtxAp(WsjtxApType::Rr73), "a6"),
+            (StreamDecodeProvenance::A7Memory, "a7"),
+            (StreamDecodeProvenance::A8List, "a8"),
+            (StreamDecodeProvenance::ApMask, "ap"),
         ] {
             assert_eq!(
                 decode_line(&time, &row, provenance),

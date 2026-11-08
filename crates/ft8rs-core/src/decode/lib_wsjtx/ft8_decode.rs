@@ -92,6 +92,7 @@ pub(super) struct Candidate {
 
 pub(super) struct Ft8bResult {
     pub(super) msg: String,
+    pub(super) ap_type: usize,
     pub(super) freq: f64,
     pub(super) dt: f64,
     pub(super) snr: f64,
@@ -188,7 +189,7 @@ pub fn decode(samples: &[f32], options: DecodeOptions) -> Vec<DecodedMessage> {
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, |_| Ok(()))
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, |_, _| Ok(()))
         .expect("infallible decode callback");
     msgs
 }
@@ -199,7 +200,7 @@ pub fn decode_f64(samples: &[f64], options: DecodeOptions) -> Vec<DecodedMessage
     let len = samples.len().min(NMAX);
     let dd = samples[..len].to_vec();
     let t_dd = t_start.elapsed();
-    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, |_| Ok(()))
+    let (msgs, _, _) = decode_from_f64(dd, options, t_dd, t_start, |_, _| Ok(()))
         .expect("infallible decode callback");
     msgs
 }
@@ -217,7 +218,7 @@ pub fn decode_f64_with_sbase_and_residual(
     samples: &[f64],
     options: DecodeOptions,
 ) -> (Vec<DecodedMessage>, Vec<f64>, Vec<f64>) {
-    decode_f64_streaming_with_residual(samples, options, |_| Ok(()))
+    decode_f64_streaming_with_residual(samples, options, |_, _| Ok(()))
         .expect("infallible decode callback")
 }
 
@@ -227,7 +228,7 @@ type DecodeSearch = (Vec<DecodedMessage>, Vec<f64>, Vec<f64>);
 pub(crate) fn decode_f64_streaming_with_residual(
     samples: &[f64],
     options: DecodeOptions,
-    on_decode: impl FnMut(&DecodedMessage) -> Result<(), String>,
+    on_decode: impl FnMut(&DecodedMessage, usize) -> Result<(), String>,
 ) -> Result<DecodeSearch, String> {
     let t_start = std::time::Instant::now();
     let len = samples.len().min(NMAX);
@@ -249,7 +250,7 @@ pub fn decode_with_sbase(
         resample(samples, sample_rate, SAMPLE_RATE, NMAX)
     };
     let t_dd = t_start.elapsed();
-    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start, |_| Ok(()))
+    let (msgs, sbase, _) = decode_from_f64(dd, options, t_dd, t_start, |_, _| Ok(()))
         .expect("infallible decode callback");
     (msgs, sbase)
 }
@@ -259,7 +260,7 @@ fn decode_from_f64(
     options: DecodeOptions,
     _t_dd: std::time::Duration,
     _t_start: std::time::Instant,
-    mut on_decode: impl FnMut(&DecodedMessage) -> Result<(), String>,
+    mut on_decode: impl FnMut(&DecodedMessage, usize) -> Result<(), String>,
 ) -> Result<DecodeSearch, String> {
     // Truncate to NMAX (15s @ 12kHz = 180000 samples) matching WSJT-X NPTS
     if dd.len() > NMAX {
@@ -361,7 +362,7 @@ fn decode_from_f64(
                         sync: cand.sync,
                         itone: r.itone.to_vec(),
                     };
-                    on_decode(&message)?;
+                    on_decode(&message, r.ap_type)?;
                     decoded.push(message);
                 }
                 crate::decode::subtractft8::subtract_ft8(&mut residual, &r.itone, r.freq, r.dt);

@@ -9,7 +9,8 @@ use crate::decode::lib_wsjtx_plus::ft8_a7::{
     ft8_a7d_with_downsample_cache, A7Recovery, ApDecodeResult, ApDownsampleCache,
 };
 use crate::decode::lib_wsjtx_plus::ft8_decode::{
-    decode_f64_with_sbase_and_residual, ft8_a8d_result, DecodeOptions, DecodedMessage, FinalRetry,
+    decode_f64_with_sbase_and_residual, ft8_a8d_result, CqSpectrum, DecodeOptions, DecodedMessage,
+    FinalRetry,
 };
 use crate::decode::lib_wsjtx_plus::subtractft8::subtract_ft8_refined;
 use crate::stream::profile::SlotRecovery;
@@ -152,6 +153,7 @@ impl A7SaveEntry {
 }
 
 pub struct StreamSlotDecodeState {
+    timestamp: Option<SlotTimestamp>,
     dd0: Vec<f64>,
     seen: HashSet<String>,
     merged: Vec<StreamDecodedMessage>,
@@ -177,6 +179,7 @@ pub struct StreamDecodeSession {
     /// AP memory: a7[jseq][k], where jseq is even/odd UTC sequence parity and
     /// k=0/1 is previous/current for that parity.
     a7: [[Vec<A7SaveEntry>; 2]; 2],
+    cq_history: [Option<(SlotTimestamp, CqSpectrum)>; 2],
     /// Current sequence parity: 0=even, 1=odd.
     jseq: usize,
     slot_state: Option<StreamSlotDecodeState>,
@@ -194,6 +197,7 @@ impl StreamDecodeSession {
             book,
             regular_hash_calls: HashSet::new(),
             a7: [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]],
+            cq_history: [None, None],
             jseq: 0,
             slot_state: None,
             search_deadline: None,
@@ -286,6 +290,7 @@ impl StreamDecodeSession {
 
     pub fn start_slot_decode(&self) -> StreamSlotDecodeState {
         StreamSlotDecodeState {
+            timestamp: None,
             dd0: vec![0.0; NMAX],
             seen: HashSet::new(),
             merged: Vec::new(),
@@ -320,6 +325,7 @@ impl StreamDecodeSession {
         mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     ) -> Result<usize, String> {
         self.ft8_a7_new_slot(Some(timestamp));
+        state.timestamp = Some(timestamp.clone());
 
         fill_dd0_from_samples(samples, &mut state.dd0);
         dd0_partial_nzhsym_into(&state.dd0, 41, &mut state.work);
@@ -332,7 +338,7 @@ impl StreamDecodeSession {
                         &mut state.merged,
                         &self.book,
                         &mut self.regular_hash_calls,
-                        StreamDecodeProvenance::Regular,
+                        StreamDecodeProvenance::from_wsjtx_pass(d.ap_type),
                         d,
                         &mut on_decode,
                     )
@@ -407,7 +413,12 @@ impl StreamDecodeSession {
             let pending = self.decode_slot_nzhsym50_base(&mut state, samples, recovery, emit)?;
             // Allow Hybrid to start downstream work before the retry search.
             on_event(None)?;
-            Self::finish_candidate_retry(&mut state, pending, deadline, |row| on_event(Some(row)))
+            if let Some((mut retry, sbase)) = pending {
+                Self::finish_candidate_retry(&mut state, &mut retry, &sbase, deadline, |row| {
+                    on_event(Some(row))
+                })?;
+            }
+            Ok(())
         })();
         if is_file {
             self.slot_state = Some(state);
@@ -427,7 +438,23 @@ impl StreamDecodeSession {
     {
         let deadline = recovery.deadline;
         let pending = self.decode_slot_nzhsym50_base(state, samples, recovery, &mut on_decode)?;
-        Self::finish_candidate_retry(state, pending, deadline, on_decode)?;
+        if let Some((mut retry, sbase)) = pending {
+            Self::finish_candidate_retry(state, &mut retry, &sbase, deadline, &mut on_decode)?;
+            if let Some(timestamp) = &state.timestamp {
+                let bank = &mut self.cq_history[jseq_from_nutc(timestamp.nutc())];
+                let previous = bank
+                    .as_ref()
+                    .filter(|(time, _)| time.add_seconds(30) == *timestamp)
+                    .map(|(_, spectrum)| spectrum);
+                let base = state.merged.clone();
+                let timestamp = timestamp.clone();
+                *bank = retry
+                    .recover_cq(previous, &sbase, &base, deadline, |result| {
+                        push_candidate_retry(state, result, &mut on_decode)
+                    })?
+                    .map(|spectrum| (timestamp, spectrum));
+            }
+        }
         Ok(std::mem::take(&mut state.merged))
     }
 
@@ -474,7 +501,7 @@ impl StreamDecodeSession {
                     &mut state.merged,
                     &self.book,
                     &mut self.regular_hash_calls,
-                    StreamDecodeProvenance::Regular,
+                    StreamDecodeProvenance::from_wsjtx_pass(d.ap_type),
                     d,
                     &mut on_decode,
                 )
@@ -666,21 +693,19 @@ impl StreamDecodeSession {
 
     fn finish_candidate_retry(
         state: &mut StreamSlotDecodeState,
-        pending: Option<(FinalRetry, Vec<f64>)>,
+        retry: &mut FinalRetry,
+        sbase: &[f64],
         deadline: Option<Instant>,
         mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     ) -> Result<(), String> {
-        if let Some((mut retry, sbase)) = pending {
-            retry.sort_peaks();
-            for result in retry.recover_local(&sbase, &state.merged, deadline) {
-                push_candidate_retry(state, result, &mut on_decode)?;
-            }
-            let base = state.merged.clone();
-            retry.recover_adaptive(&sbase, &base, deadline, |result| {
-                push_candidate_retry(state, result, &mut on_decode)
-            })?;
+        retry.sort_peaks();
+        for result in retry.recover_local(sbase, &state.merged, deadline) {
+            push_candidate_retry(state, result, &mut on_decode)?;
         }
-        Ok(())
+        let base = state.merged.clone();
+        retry.recover_adaptive(sbase, &base, deadline, |result| {
+            push_candidate_retry(state, result, &mut on_decode)
+        })
     }
 
     fn fine_rr73_target(&self) -> Option<&str> {

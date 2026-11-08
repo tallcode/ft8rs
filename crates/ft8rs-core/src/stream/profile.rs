@@ -145,17 +145,11 @@ impl ProfileStreamDecodeSession {
         F: FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
     {
         match self {
-            Self::Wsjtx(session) => {
-                let rows =
-                    session
-                        .decode_slot_streaming_with_provenance_at(timestamp, samples, |_| Ok(()))?;
-                for row in &rows {
-                    on_decode(row)?;
-                }
-                Ok(rows.len())
-            }
+            Self::Wsjtx(session) => session.decode_slot_tagged_at(timestamp, samples, on_decode),
             Self::Jtdx(session) => session
-                .decode_slot_tagged(timestamp, samples, None, on_decode)
+                .decode_slot_tagged(timestamp, samples, None, |row| {
+                    on_decode(&jtdx_display_row(row))
+                })
                 .map(|rows| rows.len()),
             Self::WsjtxPlus(session) => session
                 .decode_slot_streaming_tagged_at(timestamp, samples, on_decode)
@@ -300,7 +294,9 @@ impl ProfileStreamDecodeSession {
                     }
                 };
                 session
-                    .decode_slot_tagged(timestamp, samples, enabled.then_some(&mut send), on_decode)
+                    .decode_slot_tagged(timestamp, samples, enabled.then_some(&mut send), |row| {
+                        on_decode(&jtdx_display_row(row))
+                    })
                     .map(|rows| rows.len())
             }
             Self::Dx(session) => session
@@ -332,5 +328,12 @@ impl ProfileStreamDecodeSession {
             }
             Self::Dx(decoder) => decoder.decode_slot_streaming_at(timestamp, samples, on_decode),
         }
+    }
+}
+
+fn jtdx_display_row(row: &StreamDecodedWithProvenance) -> StreamDecodedWithProvenance {
+    StreamDecodedWithProvenance {
+        decode: row.decode.clone(),
+        provenance: row.provenance.for_jtdx_display(),
     }
 }

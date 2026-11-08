@@ -40,7 +40,7 @@ use self::ft8apset::{M73, MCQ, MCQFD, MCQRU, MCQTEST, MCQWW, MRR73, MRRR};
 #[cfg(test)]
 pub(super) use self::ft8b::measure_audio;
 pub(super) use self::ft8b::recover_rr73;
-use self::ft8b::{cross_retry::adaptive, ft8b, retry_ft8b};
+use self::ft8b::{cq_retry, cross_retry::adaptive, ft8b, retry_ft8b};
 pub(super) use self::ft8b::{extract_symbol_spectrum, normalize_bmet};
 use self::get_spectrum_baseline::get_spectrum_baseline;
 use self::sync8::{sync8, sync8_with_peaks};
@@ -53,6 +53,7 @@ const FINAL_RETRY_CANDIDATES: usize = 64;
 
 #[derive(Clone)]
 pub struct DecodedMessage {
+    pub(super) ap_type: usize,
     pub freq: f64,
     pub dt: f64,
     pub snr: f64,
@@ -103,6 +104,7 @@ pub(super) struct Candidate {
 #[derive(Clone)]
 pub(super) struct Ft8bResult {
     pub(super) msg: String,
+    pub(super) ap_type: usize,
     pub(super) freq: f64,
     pub(super) dt: f64,
     pub(super) snr: f64,
@@ -382,6 +384,7 @@ fn decode_from_f64(
                 if seen_messages.insert(message_key) {
                     ndecodes_total += 1;
                     let message = DecodedMessage {
+                        ap_type: r.ap_type,
                         freq: r.freq,
                         dt: r.dt - 0.5,
                         snr: r.snr,
@@ -403,6 +406,8 @@ fn decode_from_f64(
         if keep_spectrum && (pass_idx == 2 || ndecodes_total == 0) {
             if let Some(retry) = retry.take() {
                 let mut ap_options = ap_options.clone();
+                let cq_ap = ap_options.enabled
+                    && (ap_options.cq_only || matches!(ap_options.nqso_progress, 0 | 5));
                 ap_options.enabled = false;
                 *retry = Some(FinalRetry {
                     peaks,
@@ -412,6 +417,7 @@ fn decode_from_f64(
                     book,
                     depth: ndepth,
                     limit: ncand.min(FINAL_RETRY_CANDIDATES),
+                    cq_ap,
                 });
                 break;
             }
@@ -429,9 +435,29 @@ pub(super) struct FinalRetry {
     book: Option<HashCallBook>,
     depth: usize,
     limit: usize,
+    cq_ap: bool,
 }
 
+pub(super) struct CqSpectrum(Vec<f64>, Vec<f64>);
+
 impl FinalRetry {
+    pub(super) fn recover_cq(
+        self,
+        previous: Option<&CqSpectrum>,
+        sbase: &[f64],
+        base: &[crate::StreamDecodedMessage],
+        deadline: Option<std::time::Instant>,
+        mut emit: impl FnMut(DecodedMessage) -> Result<(), String>,
+    ) -> Result<Option<CqSpectrum>, String> {
+        if !self.cq_ap {
+            return Ok(None);
+        }
+        cq_retry::run(&self, previous, sbase, base, deadline, |row, sync| {
+            emit(retry_message(row, sync))
+        })?;
+        Ok(Some(CqSpectrum(self.cx_re, self.cx_im)))
+    }
+
     pub(super) fn sort_peaks(&mut self) {
         self.peaks.sort_by(|a, b| b.sync.total_cmp(&a.sync));
     }
@@ -549,6 +575,7 @@ fn near_reported(candidate: &Candidate, base: &[crate::StreamDecodedMessage]) ->
 
 fn retry_message(row: Ft8bResult, sync: f64) -> DecodedMessage {
     DecodedMessage {
+        ap_type: row.ap_type,
         freq: row.freq,
         dt: row.dt - 0.5,
         snr: row.snr,
