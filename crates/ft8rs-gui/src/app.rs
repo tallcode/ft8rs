@@ -817,11 +817,11 @@ impl Ft8rsApp {
     /// The scrolling decode rows (edge-to-edge, alternating slot background, with
     /// internal left padding). Lives in the central panel below the header.
     fn decode_rows(&mut self, ui: &mut egui::Ui) {
-        const PAD: f32 = TABLE_PAD;
         let font = egui::FontId::monospace(DECODE_FONT_SIZE);
         let row_h = Self::row_height(ui.ctx());
         let dark = ui.visuals().dark_mode;
         let text_color = ui.visuals().text_color();
+        let ink_center_y = decode_cap_center(ui.painter(), &font);
         let own_call = norm(&self.mycall);
         let target_call = norm(&self.hiscall);
         let target_grid = norm(&self.hisgrid);
@@ -861,13 +861,13 @@ impl Ft8rsApp {
                     let row = match item {
                         DisplayItem::Decode(index) => &rows[*index],
                         DisplayItem::Separator(gen) => {
-                            ui.painter().rect_filled(rect, 0.0, separator_bg);
-                            ui.painter().text(
-                                egui::pos2(rect.left() + PAD, rect.center().y),
-                                egui::Align2::LEFT_CENTER,
+                            paint_decode_separator(
+                                ui.painter(),
+                                rect,
                                 separator_label(*gen),
                                 font.clone(),
                                 text_color,
+                                separator_bg,
                             );
                             continue;
                         }
@@ -885,7 +885,7 @@ impl Ft8rsApp {
                         font.clone(),
                         color,
                     );
-                    paint_decode_row(ui.painter(), rect, job, &highlights, color);
+                    paint_decode_row(ui.painter(), rect, job, &highlights, color, ink_center_y);
                     if resp.double_clicked() {
                         fill = Some((row.tokens.clone(), row.freq));
                     }
@@ -2088,28 +2088,62 @@ struct DecodeHighlight {
     background: Color32,
 }
 
+fn decode_cap_center(painter: &egui::Painter, font: &egui::FontId) -> f32 {
+    // FT8 rows are uppercase letters and digits. Keep a shared baseline so
+    // punctuation and the occasional descender don't shift neighboring rows.
+    painter
+        .layout_no_wrap("H0".into(), font.clone(), Color32::PLACEHOLDER)
+        .mesh_bounds
+        .center()
+        .y
+}
+
+fn decode_text_origin(row: egui::Rect, ink_center_y: f32, pixels_per_point: f32) -> egui::Pos2 {
+    use egui::emath::GuiRounding as _;
+
+    egui::pos2(row.left() + TABLE_PAD, row.center().y - ink_center_y)
+        .round_to_pixels(pixels_per_point)
+}
+
+fn paint_decode_separator(
+    painter: &egui::Painter,
+    row: egui::Rect,
+    label: String,
+    font: egui::FontId,
+    color: Color32,
+    background: Color32,
+) {
+    use egui::emath::GuiRounding as _;
+
+    let pixels_per_point = painter.pixels_per_point();
+    let row = row.round_to_pixels(pixels_per_point);
+    let galley = painter.layout_no_wrap(label, font, color);
+    let pos = decode_text_origin(row, galley.mesh_bounds.center().y, pixels_per_point);
+    painter.rect_filled(row, 0.0, background);
+    painter.galley(pos, galley, color);
+}
+
 fn paint_decode_row(
     painter: &egui::Painter,
     row: egui::Rect,
     job: egui::text::LayoutJob,
     highlights: &[DecodeHighlight],
     color: Color32,
+    ink_center_y: f32,
 ) {
     use egui::emath::GuiRounding as _;
     use egui::text::CCursor;
 
     let galley = painter.layout_job(job);
     let pixels_per_point = painter.pixels_per_point();
-    let pos = egui::pos2(
-        row.left() + TABLE_PAD,
-        row.center().y - galley.size().y / 2.0,
-    );
-    let text_x = pos.x.round_to_pixels(pixels_per_point);
-    let inset = row.shrink2(egui::vec2(0.0, DECODE_ROW_PADDING_Y));
+    let row = row.round_to_pixels(pixels_per_point);
+    let pos = decode_text_origin(row, ink_center_y, pixels_per_point);
+    let padding = DECODE_ROW_PADDING_Y.round_to_pixels(pixels_per_point);
+    let inset = row.shrink2(egui::vec2(0.0, padding));
     for highlight in highlights {
         let x = |byte| {
             let cursor = CCursor::end_of_str(&galley.job.text[..byte]);
-            text_x + galley.pos_from_cursor(cursor).left()
+            pos.x + galley.pos_from_cursor(cursor).left()
         };
         // Keep the width tied to the token and the height tied to the table row.
         let background = egui::Rect::from_min_max(
@@ -3231,46 +3265,81 @@ mod tests {
     }
 
     #[test]
-    fn target_highlight_is_centered_in_decode_row() {
-        for scale in [1.0, 1.25, 2.0] {
-            let ctx = egui::Context::default();
-            let mut input = egui::RawInput::default();
-            input
-                .viewports
-                .get_mut(&input.viewport_id)
-                .unwrap()
-                .native_pixels_per_point = Some(scale);
-            let mut row = egui::Rect::ZERO;
-            let red = Color32::from_rgb(0xe0, 0x22, 0x22);
-            let mut output = ctx.run_ui(input, |ui| {
-                assert_eq!(ui.pixels_per_point(), scale);
-                row = egui::Rect::from_min_size(
-                    egui::pos2(12.0, 30.25),
-                    egui::vec2(450.0, Ft8rsApp::row_height(ui.ctx())),
-                );
-                let (job, highlights) = decode_highlight_job(
-                    "134730 -15   0.1   385  BI3AMG RR73; JA1NGD <KH8A> -14",
-                    None,
-                    Some("KH8A"),
-                    None,
-                    egui::FontId::monospace(DECODE_FONT_SIZE),
-                    Color32::BLACK,
-                );
-                assert_eq!(&job.text[highlights[0].bytes.clone()], "<KH8A>");
-                paint_decode_row(ui.painter(), row, job, &highlights, Color32::BLACK);
-            });
-            output.textures_delta.clear();
-            let background = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Rect(rect) if rect.fill == red => Some(rect.rect),
-                    _ => None,
-                })
-                .unwrap();
-            let rounding = 0.5 / scale + 1e-5;
-            assert!((background.top() - row.top() - DECODE_ROW_PADDING_Y).abs() <= rounding);
-            assert!((row.bottom() - background.bottom() - DECODE_ROW_PADDING_Y).abs() <= rounding);
+    fn decode_highlight_and_separator_center_rendered_glyphs() {
+        let red = Color32::from_rgb(0xe0, 0x22, 0x22);
+        let gray = Color32::from_gray(210);
+        let separator_text = Color32::from_gray(40);
+        for system_font in [false, true] {
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                let ctx = egui::Context::default();
+                if system_font {
+                    crate::fonts::install(&ctx);
+                }
+                let mut input = egui::RawInput::default();
+                input
+                    .viewports
+                    .get_mut(&input.viewport_id)
+                    .unwrap()
+                    .native_pixels_per_point = Some(scale);
+                let output = ctx.run_ui(input, |ui| {
+                    assert_eq!(ui.pixels_per_point(), scale);
+                    let size = egui::vec2(450.0, Ft8rsApp::row_height(ui.ctx()));
+                    let separator = egui::Rect::from_min_size(egui::pos2(12.0, 30.25), size);
+                    let font = egui::FontId::monospace(DECODE_FONT_SIZE);
+                    paint_decode_separator(
+                        ui.painter(),
+                        separator,
+                        "------ 2026-11-08 - 03:07:30 UTC - FT8 ------".into(),
+                        font.clone(),
+                        separator_text,
+                        gray,
+                    );
+
+                    let (job, highlights) = decode_highlight_job(
+                        "030730   0  -0.1  1838  UA0FF ZZ5UNO -11",
+                        None,
+                        Some("ZZ5UNO"),
+                        None,
+                        font.clone(),
+                        Color32::BLACK,
+                    );
+                    assert_eq!(&job.text[highlights[0].bytes.clone()], "ZZ5UNO");
+                    paint_decode_row(
+                        ui.painter(),
+                        separator.translate(egui::vec2(0.0, size.y)),
+                        job,
+                        &highlights,
+                        Color32::BLACK,
+                        decode_cap_center(ui.painter(), &font),
+                    );
+                });
+                let meshes = ctx.tessellate(output.shapes, output.pixels_per_point);
+                let bounds = |color| {
+                    let mut bounds = egui::Rect::NOTHING;
+                    for primitive in &meshes {
+                        if let egui::epaint::Primitive::Mesh(mesh) = &primitive.primitive {
+                            for vertex in
+                                mesh.vertices.iter().filter(|vertex| vertex.color == color)
+                            {
+                                bounds.extend_with(vertex.pos);
+                            }
+                        }
+                    }
+                    assert!(bounds.is_positive(), "missing rendered color {color:?}");
+                    bounds
+                };
+                for (text, fill, tolerance) in
+                    [(Color32::WHITE, red, 1.0), (separator_text, gray, 0.5)]
+                {
+                    let text = bounds(text);
+                    let fill = bounds(fill);
+                    let offset = (text.center().y - fill.center().y).abs() * scale;
+                    assert!(
+                        offset <= tolerance + 1e-4,
+                        "ink shifted {offset} physical pixels at {scale}x (system font: {system_font})",
+                    );
+                }
+            }
         }
     }
 
