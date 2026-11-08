@@ -112,7 +112,6 @@ pub struct Ft8rsApp {
     profile: DecodeProfile,
     swl: bool,
     hybrid_experiment: bool,
-    nagain: bool,
     nfa: String,
     nfb: String,
     mygrid: String,
@@ -122,6 +121,7 @@ pub struct Ft8rsApp {
     filter: bool,
     hide_dupes: bool,
     hide_hash: bool,
+    hide_telemetry: bool,
 
     // Compare (GUI-only): listen to WSJT-X UDP decodes and merge/dedupe them
     // with the local decoder's, coloring by source.
@@ -243,7 +243,6 @@ impl Ft8rsApp {
             profile,
             swl: load_bool("swl", false),
             hybrid_experiment: load_bool("hybrid_experiment", false),
-            nagain: load_bool("nagain", false),
             nfa: load("nfa", "200"),
             nfb: load("nfb", "3000"),
             mygrid: load("mygrid", ""),
@@ -253,6 +252,7 @@ impl Ft8rsApp {
             filter: load_bool("filter", false),
             hide_dupes: load_bool("hide_dupes", false),
             hide_hash: load_bool("hide_hash", false),
+            hide_telemetry: load_bool("hide_telemetry", false),
             udp_in_on: load_bool("udp_in_on", true),
             udp_in_host: load("udp_in_host", "127.0.0.1"),
             udp_in_port: load("udp_in_port", "2237"),
@@ -323,7 +323,7 @@ impl Ft8rsApp {
             hisgrid: norm(&self.hisgrid),
             swl: self.swl,
             hybrid_experiment: self.hybrid_experiment,
-            nagain: self.nagain,
+            nagain: false,
             filter: self.filter,
             hide_dupes: self.hide_dupes,
             hide_hash: self.hide_hash,
@@ -478,7 +478,12 @@ impl Ft8rsApp {
 
     fn pump_events(&mut self, ctx: &egui::Context) {
         let clock = Instant::now();
-        let mut batch = DecodeBatch::new(&mut self.rows, &mut self.display_items, self.udp_in_tol);
+        let mut batch = DecodeBatch::new(
+            &mut self.rows,
+            &mut self.display_items,
+            self.udp_in_tol,
+            self.hide_telemetry,
+        );
         // Keep the existing local-before-external consumption order, with one
         // budget for both sources rather than an unbounded drain of either.
         while clock.elapsed() < EVENT_BUDGET {
@@ -1261,13 +1266,6 @@ impl Ft8rsApp {
                                 .changed()
                         });
                     }
-                    if self.profile != DecodeProfile::Dx {
-                        commit |= setting_row(ui, tr("Deep decode"), |ui| {
-                            ui.add(egui::Checkbox::without_text(&mut self.nagain))
-                                .on_hover_text(tr("Enable focused deep decoding (nagain)."))
-                                .changed()
-                        });
-                    }
                     if self.profile == DecodeProfile::Hybrid {
                         commit |= setting_row(ui, tr("Experimental decoder"), |ui| {
                             ui.add(egui::Checkbox::without_text(&mut self.hybrid_experiment))
@@ -1376,9 +1374,18 @@ impl Ft8rsApp {
                         ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_hash))
                             .changed()
                     });
+                    setting_row(ui, tr("Hide telemetry"), |ui| {
+                        if ui
+                            .add(egui::Checkbox::without_text(&mut self.hide_telemetry))
+                            .changed()
+                        {
+                            self.display_items = display_items(&self.rows, self.hide_telemetry);
+                        }
+                        false
+                    });
                 });
                 ui.add_space(6.0);
-                ui.label(RichText::new(tr("Changes take effect at the next slot.")).weak());
+                ui.label(RichText::new(tr("Decoder changes take effect at the next slot.")).weak());
             }
         }
         commit
@@ -1672,7 +1679,6 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("profile", self.profile.as_str().to_string());
         storage.set_string("swl", bs(self.swl));
         storage.set_string("hybrid_experiment", bs(self.hybrid_experiment));
-        storage.set_string("nagain", bs(self.nagain));
         storage.set_string("nfa", self.nfa.clone());
         storage.set_string("nfb", self.nfb.clone());
         storage.set_string("udp_on", bs(self.udp_on));
@@ -1681,6 +1687,7 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("filter", bs(self.filter));
         storage.set_string("hide_dupes", bs(self.hide_dupes));
         storage.set_string("hide_hash", bs(self.hide_hash));
+        storage.set_string("hide_telemetry", bs(self.hide_telemetry));
         storage.set_string("udp_in_on", bs(self.udp_in_on));
         storage.set_string("udp_in_host", self.udp_in_host.clone());
         storage.set_string("udp_in_port", self.udp_in_port.clone());
@@ -2261,19 +2268,33 @@ fn absolute_slot(slot_key: u32, now_seconds: u64) -> u64 {
     .unwrap()
 }
 
-/// Build one divider before the first decoded slot and each subsequent slot.
-/// Missing slots produce no item, so the log never contains an empty section.
-fn display_items(rows: &[Row]) -> Vec<DisplayItem> {
+/// Build a divider for each slot with at least one visible decode.
+fn display_items(rows: &[Row], hide_telemetry: bool) -> Vec<DisplayItem> {
     let mut items = Vec::with_capacity(rows.len() * 2);
-    let mut previous = None;
     for (index, row) in rows.iter().enumerate() {
-        if previous != Some(row.gen) {
-            items.push(DisplayItem::Separator(row.gen));
+        if !hide_telemetry || !is_telemetry(&row.tokens) {
+            push_display_row(&mut items, rows, index);
         }
-        items.push(DisplayItem::Decode(index));
-        previous = Some(row.gen);
     }
     items
+}
+
+fn push_display_row(items: &mut Vec<DisplayItem>, rows: &[Row], index: usize) {
+    let gen = rows[index].gen;
+    if !matches!(items.last(), Some(DisplayItem::Decode(last)) if rows[*last].gen == gen) {
+        items.push(DisplayItem::Separator(gen));
+    }
+    items.push(DisplayItem::Decode(index));
+}
+
+fn is_telemetry(tokens: &[String]) -> bool {
+    let [payload] = tokens else { return false };
+    let bytes = payload.as_bytes();
+    // FT8 telemetry is 71 bits. WSJT-X can omit leading zeroes in UDP text.
+    // At 13 characters or fewer the text can also be an FT8 free-text message.
+    (14..=18).contains(&bytes.len())
+        && (bytes.len() < 18 || bytes[0] <= b'7')
+        && bytes.iter().all(u8::is_ascii_hexdigit)
 }
 
 fn separator_label(gen: u64) -> String {
@@ -2370,16 +2391,23 @@ struct DecodeBatch<'a> {
     prefix: usize,
     rebuild: bool,
     tolerance: f64,
+    hide_telemetry: bool,
 }
 
 impl<'a> DecodeBatch<'a> {
-    fn new(rows: &'a mut Vec<Row>, display: &'a mut Vec<DisplayItem>, tolerance: f64) -> Self {
+    fn new(
+        rows: &'a mut Vec<Row>,
+        display: &'a mut Vec<DisplayItem>,
+        tolerance: f64,
+        hide_telemetry: bool,
+    ) -> Self {
         Self {
             rows,
             display,
             prefix: 0,
             rebuild: false,
             tolerance,
+            hide_telemetry,
         }
     }
 
@@ -2387,19 +2415,18 @@ impl<'a> DecodeBatch<'a> {
         let live = &mut self.rows[self.prefix..];
         let low = live.partition_point(|row| row.gen < incoming.gen);
         let high = live.partition_point(|row| row.gen <= incoming.gen);
+        let hidden = self.hide_telemetry && is_telemetry(&incoming.tokens);
         if fold_decode_row(&mut live[low..high], &incoming, self.tolerance) {
+            // Folding can replace an unresolved token in a previously visible row.
+            self.rebuild |= hidden;
             return;
         }
         let index = self.prefix + high;
-        if index == self.rows.len() && !self.rebuild {
-            if self.rows.last().is_none_or(|row| row.gen != incoming.gen) {
-                self.display.push(DisplayItem::Separator(incoming.gen));
-            }
-            self.display.push(DisplayItem::Decode(index));
-        } else {
-            self.rebuild = true;
-        }
+        self.rebuild |= index != self.rows.len();
         self.rows.insert(index, incoming);
+        if !self.rebuild && !hidden {
+            push_display_row(self.display, self.rows, index);
+        }
         let prefix = self.rows.len().saturating_sub(MAX_ROWS);
         if prefix > self.prefix {
             self.prefix = prefix;
@@ -2414,7 +2441,7 @@ impl Drop for DecodeBatch<'_> {
             self.rows.drain(..self.prefix);
         }
         if self.rebuild {
-            *self.display = display_items(self.rows);
+            *self.display = display_items(self.rows, self.hide_telemetry);
         }
     }
 }
@@ -3010,7 +3037,7 @@ mod tests {
         incoming: Row,
         tolerance: f64,
     ) {
-        DecodeBatch::new(rows, display, tolerance).insert(incoming);
+        DecodeBatch::new(rows, display, tolerance, false).insert(incoming);
     }
 
     // Frozen sequential UI operation, before batching. This is intentionally
@@ -3035,11 +3062,11 @@ mod tests {
         }
         rows.insert(index, incoming);
         if !append {
-            *display = display_items(rows);
+            *display = display_items(rows, false);
         }
         if rows.len() > MAX_ROWS {
             rows.drain(..rows.len() - MAX_ROWS);
-            *display = display_items(rows);
+            *display = display_items(rows, false);
         }
     }
 
@@ -3081,7 +3108,7 @@ mod tests {
             }
             for chunk_size in [1, 17, 128, 1536] {
                 let mut expected = initial_rows.clone();
-                let mut expected_display = display_items(&expected);
+                let mut expected_display = display_items(&expected, false);
                 let mut actual = expected.clone();
                 let mut actual_display = expected_display.clone();
                 for chunk in input.chunks(chunk_size) {
@@ -3094,7 +3121,8 @@ mod tests {
                         );
                     }
                     {
-                        let mut batch = DecodeBatch::new(&mut actual, &mut actual_display, 7.0);
+                        let mut batch =
+                            DecodeBatch::new(&mut actual, &mut actual_display, 7.0, false);
                         for incoming in chunk {
                             batch.insert(incoming.clone());
                         }
@@ -3181,6 +3209,46 @@ mod tests {
     }
 
     #[test]
+    fn hiding_telemetry_retains_rows_and_keeps_only_visible_slot_dividers() {
+        let row = |gen, text: &str, source| Row {
+            text: text.into(),
+            gen,
+            freq: 1386.0,
+            dt: 0.0,
+            tokens: norm_tokens(text),
+            source,
+        };
+        let mut rows = Vec::new();
+        let mut display = Vec::new();
+        {
+            let mut batch = DecodeBatch::new(&mut rows, &mut display, 7.0, true);
+            batch.insert(row(10, "17E65738A547413FF0", DecodeSource::Local));
+            batch.insert(row(10, "73", DecodeSource::Local));
+            batch.insert(row(12, "65738A547413FF0", DecodeSource::External));
+        }
+        assert_eq!(
+            display,
+            [DisplayItem::Separator(10), DisplayItem::Decode(1)]
+        );
+        DecodeBatch::new(&mut rows, &mut display, 7.0, true).insert(row(
+            11,
+            "CQ JR2PEB PM84",
+            DecodeSource::External,
+        ));
+        assert_eq!(
+            display,
+            [
+                DisplayItem::Separator(10),
+                DisplayItem::Decode(1),
+                DisplayItem::Separator(11),
+                DisplayItem::Decode(2),
+            ]
+        );
+        assert_eq!(display_items(&rows, true), display);
+        assert_eq!(display_items(&rows, false).len(), 7);
+    }
+
+    #[test]
     fn separators_mark_first_and_subsequent_nonempty_slots() {
         let row = |gen| Row {
             text: String::new(),
@@ -3191,7 +3259,7 @@ mod tests {
             source: DecodeSource::Local,
         };
         let rows = [row(10), row(10), row(13), row(13), row(15)];
-        let items = display_items(&rows);
+        let items = display_items(&rows, false);
         assert_eq!(items.len(), 8);
         assert!(matches!(items[0], DisplayItem::Separator(10)));
         assert!(matches!(items[1], DisplayItem::Decode(0)));
@@ -3199,10 +3267,10 @@ mod tests {
         assert!(matches!(items[3], DisplayItem::Separator(13)));
         assert!(matches!(items[6], DisplayItem::Separator(15)));
         assert!(matches!(
-            display_items(&rows[1..])[0],
+            display_items(&rows[1..], false)[0],
             DisplayItem::Separator(10)
         ));
-        assert!(display_items(&[]).is_empty());
+        assert!(display_items(&[], false).is_empty());
         // Unix epoch plus one skipped slot: no divider for the missing slot.
         assert_eq!(
             separator_label(2),
