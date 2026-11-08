@@ -103,7 +103,7 @@ decoder.decode_with_callback(slot, audio, |batch| {
 
 1. Open **Settings → Audio**, select the receiver's audio input and channel.
 2. Choose a profile in **Settings → Decode** or the **Profile** menu.
-3. Enter your station context in **Settings → Station** if needed. DX also
+3. Fill in **My Station** under **Settings → General** if needed. DX also
    requires the target **Callsign** in the main window.
 4. Press the play button to monitor; press stop to finish. Capture is aligned
    to UTC 15-second FT8 slots, and decoded messages appear as they arrive.
@@ -124,8 +124,8 @@ window. Private decode worker processes remain independent.
 
 The GUI monitors live audio; use the CLI for WAV files. Settings changes can be
 applied while listening. The Audio page shows the decoder input level and reports
-capture discontinuities. **Compare** can merge an external WSJT-X UDP feed into
-the display. **Output** sends ft8.rs decode reports.
+capture discontinuities. Enable **Listen to UDP** in **Compare** to merge an
+external WSJT-X UDP feed into the display. **Output** sends ft8.rs decode reports.
 
 [GUI, audio setup and comparison guide →](docs/USAGE.md)
 

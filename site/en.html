@@ -12,11 +12,11 @@
   <body>
     <header>
       <div class="site-heading">
-        <img src="${asset_prefix}ft8rs.png?v=$logo_version" width="84" height="84" alt="">
         <div>
           <h1>ft8.rs</h1>
           <p>A Rust implementation of an FT8 decoder</p>
         </div>
+        <img src="${asset_prefix}ft8rs.png?v=$logo_version" width="84" height="84" alt="">
       </div>
       <nav aria-label="Page navigation">
         <a href="#download">Download</a>
@@ -64,8 +64,8 @@
           <li><strong>Start listening.</strong> Click the play button in the main window. FT8 reception follows 15-second slots; decoded messages appear as they become available after each slot. Click stop to finish.</li>
         </ol>
         <h3 id="station">My callsign and grid</h3>
-        <p>Leave it blank for general band listening; you can use ft8.rs without having a callsign. In <strong>Settings → Station</strong>, <strong>My Callsign</strong> is your own callsign and <strong>My Grid</strong> is your grid locator. They are separate from the target station's <strong>Callsign / Grid</strong> in the main window.</p>
-        <p>Entering the correct My Callsign can help decode some weak messages containing your callsign and resolve hashed representations of that callsign. It provides no direct decoding assistance for messages that do not contain your callsign. Your callsign is also highlighted in the message list.</p>
+        <p>For general band listening, you can leave these fields blank. In the <strong>My Station</strong> section of <strong>Settings → General</strong>, enter your own callsign and grid locator in <strong>Callsign</strong> and <strong>Grid</strong>. The main window's <strong>Callsign / Grid</strong> fields specify the target station.</p>
+        <p>Entering your own callsign can help decode some weak messages containing that callsign and resolve its hashed representations. The message list also highlights your callsign.</p>
         <p>Entering a callsign does not enable transmission; ft8.rs remains receive-only.</p>
 
         <h3 id="modes">Decoding modes</h3>
@@ -88,18 +88,18 @@
           <dd>
             Runs one WSJT-X+ path and two JTDX paths, then merges their results and removes duplicates. The JTDX paths use the original audio and audio with automatic gain adjustment. Running these paths together uses more computing resources. Hybrid automatically runs <strong>cross cancellation (SIC)</strong>: it cancels an already decoded signal from a copy of the audio, then searches for messages that signal may have masked.
             <ul>
-              <li><strong>Experimental decoder:</strong> Off by default. Enable it in <strong>Settings → Decode</strong> to use the <strong>Hybrid + exp</strong> benchmark mode. It tries to recover stable weak signals and messages affected by single-tone interference or overlapping FT8 signals. Baseline results appear first. Additional results may appear several seconds later. Background work for the slot may take around 10 seconds or longer.</li>
+              <li><strong>Experimental decoder:</strong> Off by default. Enable <strong>Exp. decoder</strong> in <strong>Settings → Decode</strong> to use the <strong>Hybrid + exp</strong> benchmark mode. It tries to recover stable weak signals and messages affected by single-tone interference or overlapping FT8 signals. Baseline results appear first. Additional results may appear several seconds later. Background work for the slot may take around 10 seconds or longer.</li>
             </ul>
           </dd>
           <dt>DX</dt>
-          <dd><strong>Use DX for a deeper search near a target station's RX audio frequency.</strong> Enter the target in the main window's <strong>Callsign</strong> field and set <strong>RX</strong> if you know its audio frequency. You can also double-click a decoded message to fill both fields. Enter <strong>My Callsign</strong> in <strong>Settings → Station</strong> to enable the focused search. With only the target callsign, DX can still listen for related messages and learn the target's frequency.</dd>
+          <dd><strong>Use DX for a deeper search near a target station's RX audio frequency.</strong> Enter the target in the main window's <strong>Callsign</strong> field and set <strong>RX</strong> if you know its audio frequency. You can also double-click a decoded message to fill both fields. Enter your own callsign in the <strong>My Station</strong> section of <strong>Settings → General</strong> to enable the focused search. With only the target callsign, DX can still listen for related messages and learn the target's frequency.</dd>
         </dl>
 
         <h3 id="compare">Compare with WSJT-X</h3>
         <p>Compare receives live decoded messages from WSJT-X and merges them with ft8.rs's local results. It shows which messages were received by one program and which were received by both.</p>
         <ol>
           <li><strong>Use the same receive audio.</strong> Set ft8.rs and WSJT-X to listen to the same receiver, frequency and audio channel, and start reception in both.</li>
-          <li><strong>Check ft8.rs's listener.</strong> In <strong>Settings → Compare</strong>, enable <strong>Listen to WSJT-X (UDP)</strong>. It is enabled by default on first use, with Host <code>127.0.0.1</code> and Port <code>2237</code>.</li>
+          <li><strong>Check ft8.rs's listener.</strong> In <strong>Settings → Compare</strong>, enable <strong>Listen to UDP</strong>. It is enabled by default on first use, with Host <code>127.0.0.1</code> and Port <code>2237</code>.</li>
           <li><strong>Set WSJT-X's UDP output.</strong> Send WSJT-X's UDP reports to <code>127.0.0.1</code>, port <code>2237</code>. This assumes both programs run on the same computer. If the port is in use, select the same free port in both programs.</li>
           <li><strong>Wait for new receive slots.</strong> The message list uses source colors, with a legend in Compare settings: only WSJT-X, only ft8.rs, or both decoders. Comparison uses new live reports; it does not import WSJT-X's message history.</li>
         </ol>

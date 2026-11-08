@@ -46,20 +46,18 @@ enum SettingsTab {
     Audio,
     Decode,
     Frequency,
-    Station,
     Output,
     Compare,
     Advanced,
 }
 
-const SETTINGS_TABS: [(SettingsTab, &str); 8] = [
+const SETTINGS_TABS: [(SettingsTab, &str); 7] = [
     (SettingsTab::General, "General"),
-    (SettingsTab::Station, "Station"),
     (SettingsTab::Audio, "Audio"),
     (SettingsTab::Decode, "Decode"),
     (SettingsTab::Frequency, "Frequency"),
-    (SettingsTab::Output, "Output"),
     (SettingsTab::Compare, "Compare"),
+    (SettingsTab::Output, "Output"),
     (SettingsTab::Advanced, "Advanced"),
 ];
 
@@ -83,6 +81,17 @@ struct Row {
     dt: f64,
     tokens: Vec<String>,
     source: DecodeSource,
+    filterable: Option<FilterableMessage>,
+}
+
+impl Row {
+    fn local_filterable(&self) -> Option<FilterableMessage> {
+        if self.source == DecodeSource::Local {
+            self.filterable
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -90,6 +99,33 @@ struct Row {
 enum DisplayItem {
     Decode(usize),
     Separator(u64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FilterableMessage {
+    Contest,
+    Telemetry,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DisplayFilters {
+    hide_contest: bool,
+    hide_telemetry: bool,
+}
+
+impl DisplayFilters {
+    const NONE: Self = Self {
+        hide_contest: false,
+        hide_telemetry: false,
+    };
+
+    fn hides(self, row: &Row) -> bool {
+        match row.local_filterable() {
+            Some(FilterableMessage::Contest) => self.hide_contest,
+            Some(FilterableMessage::Telemetry) => self.hide_telemetry,
+            None => false,
+        }
+    }
 }
 
 pub struct Ft8rsApp {
@@ -118,10 +154,8 @@ pub struct Ft8rsApp {
     udp_on: bool,
     udp_host: String,
     udp_port: String,
-    filter: bool,
-    hide_dupes: bool,
     hide_hash: bool,
-    hide_telemetry: bool,
+    display_filters: DisplayFilters,
 
     // Compare (GUI-only): listen to WSJT-X UDP decodes and merge/dedupe them
     // with the local decoder's, coloring by source.
@@ -249,10 +283,11 @@ impl Ft8rsApp {
             udp_on: load_bool("udp_on", false),
             udp_host: load("udp_host", "127.0.0.1"),
             udp_port: load("udp_port", "2238"),
-            filter: load_bool("filter", false),
-            hide_dupes: load_bool("hide_dupes", false),
             hide_hash: load_bool("hide_hash", false),
-            hide_telemetry: load_bool("hide_telemetry", false),
+            display_filters: DisplayFilters {
+                hide_contest: load_bool("hide_contest", true),
+                hide_telemetry: load_bool("hide_telemetry", true),
+            },
             udp_in_on: load_bool("udp_in_on", true),
             udp_in_host: load("udp_in_host", "127.0.0.1"),
             udp_in_port: load("udp_in_port", "2237"),
@@ -277,7 +312,7 @@ impl Ft8rsApp {
             copyright_focus: DialogFocus::default(),
             about_open: false,
             copyright_open: false,
-            tab: SettingsTab::Station,
+            tab: SettingsTab::General,
             menu_events,
             native_menu,
             menu_synced: (profile, language, locale),
@@ -324,8 +359,8 @@ impl Ft8rsApp {
             swl: self.swl,
             hybrid_experiment: self.hybrid_experiment,
             nagain: false,
-            filter: self.filter,
-            hide_dupes: self.hide_dupes,
+            filter: false,
+            hide_dupes: false,
             hide_hash: self.hide_hash,
             ..StreamDecodeConfig::default()
         };
@@ -482,7 +517,7 @@ impl Ft8rsApp {
             &mut self.rows,
             &mut self.display_items,
             self.udp_in_tol,
-            self.hide_telemetry,
+            self.display_filters,
         );
         // Keep the existing local-before-external consumption order, with one
         // budget for both sources rather than an unbounded drain of either.
@@ -1105,7 +1140,18 @@ impl Ft8rsApp {
         let mut commit = false;
         match self.tab {
             SettingsTab::General => {
-                section_heading(ui, tr("General"));
+                section_heading(ui, tr("My Station"));
+                ui.push_id("my_station", |ui| {
+                    settings_form(ui, |ui| {
+                        commit |= setting_row(ui, tr("Callsign"), |ui| {
+                            callsign_field(ui, &mut self.mycall, f32::INFINITY).lost_focus()
+                        });
+                        commit |= setting_row(ui, tr("Grid"), |ui| {
+                            grid_field(ui, &mut self.mygrid, f32::INFINITY).lost_focus()
+                        });
+                    });
+                });
+                section_heading(ui, tr("Display"));
                 settings_form(ui, |ui| {
                     setting_row(ui, tr("Language"), |ui| {
                         egui::ComboBox::from_id_salt("language")
@@ -1267,7 +1313,7 @@ impl Ft8rsApp {
                         });
                     }
                     if self.profile == DecodeProfile::Hybrid {
-                        commit |= setting_row(ui, tr("Experimental decoder"), |ui| {
+                        commit |= setting_row(ui, tr("Exp. decoder"), |ui| {
                             ui.add(egui::Checkbox::without_text(&mut self.hybrid_experiment))
                                 .on_hover_text(
                                     tr("Adds weak stable-signal and interference recovery. Results carry exp; processing may take about 10 seconds."),
@@ -1284,17 +1330,6 @@ impl Ft8rsApp {
                     commit |= setting_row(ui, tr("High (Hz)"), |ui| text_field(ui, &mut self.nfb));
                 });
             }
-            SettingsTab::Station => {
-                section_heading(ui, tr("Station"));
-                settings_form(ui, |ui| {
-                    commit |= setting_row(ui, tr("My Callsign"), |ui| {
-                        callsign_field(ui, &mut self.mycall, f32::INFINITY).lost_focus()
-                    });
-                    commit |= setting_row(ui, tr("My Grid"), |ui| {
-                        grid_field(ui, &mut self.mygrid, f32::INFINITY).lost_focus()
-                    });
-                });
-            }
             SettingsTab::Output => {
                 section_heading(ui, tr("Output"));
                 settings_form(ui, |ui| {
@@ -1309,7 +1344,7 @@ impl Ft8rsApp {
             SettingsTab::Compare => {
                 section_heading(ui, tr("Compare"));
                 settings_form(ui, |ui| {
-                    commit |= setting_row(ui, tr("Listen to WSJT-X (UDP)"), |ui| {
+                    commit |= setting_row(ui, tr("Listen to UDP"), |ui| {
                         ui.add(egui::Checkbox::without_text(&mut self.udp_in_on))
                             .changed()
                     });
@@ -1360,30 +1395,29 @@ impl Ft8rsApp {
             }
             SettingsTab::Advanced => {
                 section_heading(ui, tr("Advanced"));
+                let previous_filters = self.display_filters;
                 settings_form(ui, |ui| {
                     let dx = self.profile == DecodeProfile::Dx;
-                    commit |= setting_row(ui, tr("Narrow-band filter"), |ui| {
-                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.filter))
-                            .changed()
-                    });
-                    commit |= setting_row(ui, tr("Hide duplicates"), |ui| {
-                        ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_dupes))
-                            .changed()
-                    });
                     commit |= setting_row(ui, tr("Hide <...> calls"), |ui| {
                         ui.add_enabled(!dx, egui::Checkbox::without_text(&mut self.hide_hash))
                             .changed()
                     });
-                    setting_row(ui, tr("Hide telemetry"), |ui| {
-                        if ui
-                            .add(egui::Checkbox::without_text(&mut self.hide_telemetry))
-                            .changed()
-                        {
-                            self.display_items = display_items(&self.rows, self.hide_telemetry);
-                        }
-                        false
-                    });
+                    for (label, enabled) in [
+                        (
+                            "Hide contest messages",
+                            &mut self.display_filters.hide_contest,
+                        ),
+                        ("Hide telemetry", &mut self.display_filters.hide_telemetry),
+                    ] {
+                        setting_row(ui, tr(label), |ui| {
+                            ui.add(egui::Checkbox::without_text(enabled));
+                            false
+                        });
+                    }
                 });
+                if self.display_filters != previous_filters {
+                    self.display_items = display_items(&self.rows, self.display_filters);
+                }
                 ui.add_space(6.0);
                 ui.label(RichText::new(tr("Decoder changes take effect at the next slot.")).weak());
             }
@@ -1684,10 +1718,9 @@ impl eframe::App for Ft8rsApp {
         storage.set_string("udp_on", bs(self.udp_on));
         storage.set_string("udp_host", self.udp_host.clone());
         storage.set_string("udp_port", self.udp_port.clone());
-        storage.set_string("filter", bs(self.filter));
-        storage.set_string("hide_dupes", bs(self.hide_dupes));
         storage.set_string("hide_hash", bs(self.hide_hash));
-        storage.set_string("hide_telemetry", bs(self.hide_telemetry));
+        storage.set_string("hide_contest", bs(self.display_filters.hide_contest));
+        storage.set_string("hide_telemetry", bs(self.display_filters.hide_telemetry));
         storage.set_string("udp_in_on", bs(self.udp_in_on));
         storage.set_string("udp_in_host", self.udp_in_host.clone());
         storage.set_string("udp_in_port", self.udp_in_port.clone());
@@ -2269,10 +2302,10 @@ fn absolute_slot(slot_key: u32, now_seconds: u64) -> u64 {
 }
 
 /// Build a divider for each slot with at least one visible decode.
-fn display_items(rows: &[Row], hide_telemetry: bool) -> Vec<DisplayItem> {
+fn display_items(rows: &[Row], filters: DisplayFilters) -> Vec<DisplayItem> {
     let mut items = Vec::with_capacity(rows.len() * 2);
     for (index, row) in rows.iter().enumerate() {
-        if !hide_telemetry || !is_telemetry(&row.tokens) {
+        if !filters.hides(row) {
             push_display_row(&mut items, rows, index);
         }
     }
@@ -2287,14 +2320,26 @@ fn push_display_row(items: &mut Vec<DisplayItem>, rows: &[Row], index: usize) {
     items.push(DisplayItem::Decode(index));
 }
 
-fn is_telemetry(tokens: &[String]) -> bool {
-    let [payload] = tokens else { return false };
-    let bytes = payload.as_bytes();
-    // FT8 telemetry is 71 bits. WSJT-X can omit leading zeroes in UDP text.
-    // At 13 characters or fewer the text can also be an FT8 free-text message.
-    (14..=18).contains(&bytes.len())
-        && (bytes.len() < 18 || bytes[0] <= b'7')
-        && bytes.iter().all(u8::is_ascii_hexdigit)
+fn filterable_message(tones: &[i32; 79]) -> Option<FilterableMessage> {
+    const COSTAS: [i32; 7] = [3, 1, 4, 0, 6, 5, 2];
+    if tones[..7] != COSTAS || tones[36..43] != COSTAS || tones[72..] != COSTAS {
+        return None;
+    }
+
+    // The first data block starts at tone 7. Its 24th through 26th
+    // symbols carry the systematic payload's subtype (bits 71..74) and type
+    // (bits 74..77). Undo the FT8 Gray mapping before extracting them.
+    const UNGRAY: [u8; 8] = [0, 1, 3, 2, 6, 4, 5, 7];
+    let first = *UNGRAY.get(tones[30] as usize)?;
+    let middle = *UNGRAY.get(tones[31] as usize)?;
+    let last = *UNGRAY.get(tones[32] as usize)?;
+    let subtype = ((first & 1) << 2) | (middle >> 1);
+    let kind = ((middle & 1) << 2) | (last >> 1);
+    match (kind, subtype) {
+        (0, 3 | 4) | (3 | 5, _) => Some(FilterableMessage::Contest),
+        (0, 5) => Some(FilterableMessage::Telemetry),
+        _ => None,
+    }
 }
 
 fn separator_label(gen: u64) -> String {
@@ -2391,7 +2436,7 @@ struct DecodeBatch<'a> {
     prefix: usize,
     rebuild: bool,
     tolerance: f64,
-    hide_telemetry: bool,
+    filters: DisplayFilters,
 }
 
 impl<'a> DecodeBatch<'a> {
@@ -2399,7 +2444,7 @@ impl<'a> DecodeBatch<'a> {
         rows: &'a mut Vec<Row>,
         display: &'a mut Vec<DisplayItem>,
         tolerance: f64,
-        hide_telemetry: bool,
+        filters: DisplayFilters,
     ) -> Self {
         Self {
             rows,
@@ -2407,7 +2452,7 @@ impl<'a> DecodeBatch<'a> {
             prefix: 0,
             rebuild: false,
             tolerance,
-            hide_telemetry,
+            filters,
         }
     }
 
@@ -2415,10 +2460,11 @@ impl<'a> DecodeBatch<'a> {
         let live = &mut self.rows[self.prefix..];
         let low = live.partition_point(|row| row.gen < incoming.gen);
         let high = live.partition_point(|row| row.gen <= incoming.gen);
-        let hidden = self.hide_telemetry && is_telemetry(&incoming.tokens);
-        if fold_decode_row(&mut live[low..high], &incoming, self.tolerance) {
-            // Folding can replace an unresolved token in a previously visible row.
-            self.rebuild |= hidden;
+        let hidden = self.filters.hides(&incoming);
+        if let Some(filterable_changed) =
+            fold_decode_row(&mut live[low..high], &incoming, self.tolerance)
+        {
+            self.rebuild |= filterable_changed && self.filters != DisplayFilters::NONE;
             return;
         }
         let index = self.prefix + high;
@@ -2441,7 +2487,7 @@ impl Drop for DecodeBatch<'_> {
             self.rows.drain(..self.prefix);
         }
         if self.rebuild {
-            *self.display = display_items(self.rows, self.hide_telemetry);
+            *self.display = display_items(self.rows, self.filters);
         }
     }
 }
@@ -2454,6 +2500,7 @@ fn decode_row(
     text: String,
     tokens: Vec<String>,
     source: DecodeSource,
+    filterable: Option<FilterableMessage>,
 ) -> Row {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2466,6 +2513,7 @@ fn decode_row(
         dt,
         tokens,
         source,
+        filterable,
     }
 }
 
@@ -2477,6 +2525,7 @@ fn local_decode_row(record: ft8rs_engine::protocol::DecodeRecord) -> Row {
         local_decode_text(&record),
         norm_tokens(&record.row.msg),
         DecodeSource::Local,
+        filterable_message(&record.row.itone),
     )
 }
 
@@ -2488,13 +2537,15 @@ fn external_decode_row(decode: crate::wsjtx_udp::ExternalDecode) -> Row {
         external_decode_text(&decode),
         norm_tokens(&decode.message),
         DecodeSource::External,
+        None,
     )
 }
 
 /// Merge repeated observations of the same transmission. SNR and annotation
 /// changes do not create a new signal. DT keeps distinct same-message signals
 /// apart; cross-source matching retains the configured frequency tolerance.
-fn fold_decode_row(rows: &mut [Row], incoming: &Row, tolerance: f64) -> bool {
+/// A match reports whether its display-filter category changed.
+fn fold_decode_row(rows: &mut [Row], incoming: &Row, tolerance: f64) -> Option<bool> {
     for row in rows {
         let same_source = row.source == incoming.source;
         let tolerance = if same_source {
@@ -2507,6 +2558,7 @@ fn fold_decode_row(rows: &mut [Row], incoming: &Row, tolerance: f64) -> bool {
             && (row.dt - incoming.dt).abs() <= 0.3
             && tokens_compatible(&row.tokens, &incoming.tokens)
         {
+            let previous_filterable = row.local_filterable();
             if incoming.source == DecodeSource::Local && row.source == DecodeSource::External {
                 let resolved = row.tokens.clone();
                 row.text.clone_from(&incoming.text);
@@ -2532,10 +2584,11 @@ fn fold_decode_row(rows: &mut [Row], incoming: &Row, tolerance: f64) -> bool {
             if row.source != incoming.source {
                 row.source = DecodeSource::Both;
             }
-            return true;
+            row.filterable = row.filterable.or(incoming.filterable);
+            return Some(row.local_filterable() != previous_filterable);
         }
     }
-    false
+    None
 }
 
 /// Enrich only the displayed row, keeping its measurements and provenance.
@@ -3037,7 +3090,7 @@ mod tests {
         incoming: Row,
         tolerance: f64,
     ) {
-        DecodeBatch::new(rows, display, tolerance, false).insert(incoming);
+        DecodeBatch::new(rows, display, tolerance, DisplayFilters::NONE).insert(incoming);
     }
 
     // Frozen sequential UI operation, before batching. This is intentionally
@@ -3048,7 +3101,7 @@ mod tests {
         incoming: Row,
         tolerance: f64,
     ) {
-        if fold_decode_row(rows, &incoming, tolerance) {
+        if fold_decode_row(rows, &incoming, tolerance).is_some() {
             return;
         }
         let gen = incoming.gen;
@@ -3062,11 +3115,11 @@ mod tests {
         }
         rows.insert(index, incoming);
         if !append {
-            *display = display_items(rows, false);
+            *display = display_items(rows, DisplayFilters::NONE);
         }
         if rows.len() > MAX_ROWS {
             rows.drain(..rows.len() - MAX_ROWS);
-            *display = display_items(rows, false);
+            *display = display_items(rows, DisplayFilters::NONE);
         }
     }
 
@@ -3080,6 +3133,7 @@ mod tests {
                 freq: 200.0 + (id % 2800) as f64,
                 dt: 0.0,
                 tokens: norm_tokens(&message),
+                filterable: None,
                 source: DecodeSource::Local,
             }
         };
@@ -3108,7 +3162,7 @@ mod tests {
             }
             for chunk_size in [1, 17, 128, 1536] {
                 let mut expected = initial_rows.clone();
-                let mut expected_display = display_items(&expected, false);
+                let mut expected_display = display_items(&expected, DisplayFilters::NONE);
                 let mut actual = expected.clone();
                 let mut actual_display = expected_display.clone();
                 for chunk in input.chunks(chunk_size) {
@@ -3121,8 +3175,12 @@ mod tests {
                         );
                     }
                     {
-                        let mut batch =
-                            DecodeBatch::new(&mut actual, &mut actual_display, 7.0, false);
+                        let mut batch = DecodeBatch::new(
+                            &mut actual,
+                            &mut actual_display,
+                            7.0,
+                            DisplayFilters::NONE,
+                        );
                         for incoming in chunk {
                             batch.insert(incoming.clone());
                         }
@@ -3145,6 +3203,7 @@ mod tests {
             freq: 1137.0,
             dt,
             tokens: norm_tokens("JA8IIK/P SV9GPV -18"),
+            filterable: None,
             source,
         };
         let mut rows = Vec::new();
@@ -3209,43 +3268,116 @@ mod tests {
     }
 
     #[test]
-    fn hiding_telemetry_retains_rows_and_keeps_only_visible_slot_dividers() {
-        let row = |gen, text: &str, source| Row {
+    fn display_filters_retain_local_rows_and_leave_udp_visible() {
+        let row = |gen, text: &str, source, filterable| Row {
             text: text.into(),
             gen,
             freq: 1386.0,
             dt: 0.0,
             tokens: norm_tokens(text),
+            filterable,
             source,
         };
+        let filters = DisplayFilters {
+            hide_contest: true,
+            hide_telemetry: true,
+        };
+        let field_day = "K1ABC W9XYZ 6A WI";
         let mut rows = Vec::new();
         let mut display = Vec::new();
         {
-            let mut batch = DecodeBatch::new(&mut rows, &mut display, 7.0, true);
-            batch.insert(row(10, "17E65738A547413FF0", DecodeSource::Local));
-            batch.insert(row(10, "73", DecodeSource::Local));
-            batch.insert(row(12, "65738A547413FF0", DecodeSource::External));
+            let mut batch = DecodeBatch::new(&mut rows, &mut display, 7.0, filters);
+            batch.insert(row(
+                10,
+                "7",
+                DecodeSource::Local,
+                Some(FilterableMessage::Telemetry),
+            ));
+            batch.insert(row(
+                11,
+                field_day,
+                DecodeSource::Local,
+                Some(FilterableMessage::Contest),
+            ));
+            batch.insert(row(12, "17E65738A547413FF0", DecodeSource::External, None));
         }
         assert_eq!(
             display,
-            [DisplayItem::Separator(10), DisplayItem::Decode(1)]
+            [DisplayItem::Separator(12), DisplayItem::Decode(2)]
         );
-        DecodeBatch::new(&mut rows, &mut display, 7.0, true).insert(row(
+        assert_eq!(display_items(&rows, DisplayFilters::NONE).len(), 6);
+        for (filters, visible_slot) in [
+            (
+                DisplayFilters {
+                    hide_contest: false,
+                    ..filters
+                },
+                11,
+            ),
+            (
+                DisplayFilters {
+                    hide_telemetry: false,
+                    ..filters
+                },
+                10,
+            ),
+        ] {
+            assert_eq!(
+                display_items(&rows, filters)[0],
+                DisplayItem::Separator(visible_slot)
+            );
+        }
+        DecodeBatch::new(&mut rows, &mut display, 7.0, filters).insert(row(
             11,
-            "CQ JR2PEB PM84",
+            field_day,
             DecodeSource::External,
+            None,
+        ));
+        DecodeBatch::new(&mut rows, &mut display, 7.0, filters).insert(row(
+            12,
+            "17E65738A547413FF0",
+            DecodeSource::Local,
+            Some(FilterableMessage::Telemetry),
         ));
         assert_eq!(
             display,
             [
-                DisplayItem::Separator(10),
-                DisplayItem::Decode(1),
                 DisplayItem::Separator(11),
+                DisplayItem::Decode(1),
+                DisplayItem::Separator(12),
                 DisplayItem::Decode(2),
             ]
         );
-        assert_eq!(display_items(&rows, true), display);
-        assert_eq!(display_items(&rows, false).len(), 7);
+        assert_eq!(rows[1].source, DecodeSource::Both);
+        assert_eq!(rows[2].source, DecodeSource::Both);
+        assert_eq!(display_items(&rows, filters), display);
+    }
+
+    #[test]
+    fn reads_filter_types_from_the_ft8_symbols() {
+        use FilterableMessage::{Contest, Telemetry};
+
+        // Symbols 30..33 from frames encoded by the FT8 encoder.
+        for (symbols, expected) in [
+            ([4, 0, 0], None),            // 0.0, free text
+            ([3, 3, 1], None),            // 0.1, DXpedition
+            ([0, 4, 0], Some(Contest)),   // 0.3, Field Day
+            ([7, 0, 1], Some(Contest)),   // 0.4, Field Day
+            ([7, 3, 1], Some(Telemetry)), // 0.5, telemetry
+            ([4, 0, 3], None),            // 1, standard
+            ([6, 5, 5], None),            // 2, /P
+            ([6, 3, 4], Some(Contest)),   // 3, RTTY Roundup
+            ([6, 1, 0], None),            // 4, nonstandard call
+            ([3, 2, 2], Some(Contest)),   // 5, EU VHF exchange
+        ] {
+            let mut tones = [0; 79];
+            for sync in [0, 36, 72] {
+                tones[sync..sync + 7].copy_from_slice(&[3, 1, 4, 0, 6, 5, 2]);
+            }
+            tones[30..33].copy_from_slice(&symbols);
+            assert_eq!(filterable_message(&tones), expected);
+        }
+        assert_eq!(filterable_message(&[0; 79]), None);
     }
 
     #[test]
@@ -3256,10 +3388,11 @@ mod tests {
             freq: 1000.0,
             dt: 0.0,
             tokens: Vec::new(),
+            filterable: None,
             source: DecodeSource::Local,
         };
         let rows = [row(10), row(10), row(13), row(13), row(15)];
-        let items = display_items(&rows, false);
+        let items = display_items(&rows, DisplayFilters::NONE);
         assert_eq!(items.len(), 8);
         assert!(matches!(items[0], DisplayItem::Separator(10)));
         assert!(matches!(items[1], DisplayItem::Decode(0)));
@@ -3267,10 +3400,10 @@ mod tests {
         assert!(matches!(items[3], DisplayItem::Separator(13)));
         assert!(matches!(items[6], DisplayItem::Separator(15)));
         assert!(matches!(
-            display_items(&rows[1..], false)[0],
+            display_items(&rows[1..], DisplayFilters::NONE)[0],
             DisplayItem::Separator(10)
         ));
-        assert!(display_items(&[], false).is_empty());
+        assert!(display_items(&[], DisplayFilters::NONE).is_empty());
         // Unix epoch plus one skipped slot: no divider for the missing slot.
         assert_eq!(
             separator_label(2),
@@ -3506,6 +3639,7 @@ mod tests {
                     freq: if local_first { 1002.0 } else { 1000.0 },
                     dt: 0.0,
                     tokens: norm_tokens(message),
+                    filterable: None,
                     source: first,
                 }];
                 assert!(fold_decode_row(
@@ -3515,6 +3649,7 @@ mod tests {
                         freq: if local_first { 1000.0 } else { 1002.0 },
                         dt: 0.0,
                         tokens: norm_tokens(message),
+                        filterable: None,
                         source: if local_first {
                             DecodeSource::External
                         } else {
@@ -3528,7 +3663,8 @@ mod tests {
                         .to_string()
                     },
                     7.0
-                ));
+                )
+                .is_some());
                 assert_eq!(rows[0].source, DecodeSource::Both);
                 assert_eq!(rows[0].text, local_text);
                 assert_eq!(rows[0].freq, 1002.0);
@@ -3560,6 +3696,7 @@ mod tests {
                 freq: 1002.0,
                 dt: 0.1,
                 tokens: norm_tokens(local_message),
+                filterable: None,
                 source: DecodeSource::Local,
             };
             let external = || Row {
@@ -3574,6 +3711,7 @@ mod tests {
                 freq: 1000.0,
                 dt: 0.2,
                 tokens: norm_tokens(external_message),
+                filterable: None,
                 source: DecodeSource::External,
             };
             for local_first in [true, false] {
@@ -3602,10 +3740,11 @@ mod tests {
                     let report = rows[0].tokens.last().unwrap();
                     let unresolved = Row {
                         tokens: norm_tokens(&format!("<...> <...> {report}")),
+                        filterable: None,
                         source,
                         ..local()
                     };
-                    assert!(fold_decode_row(&mut rows, &unresolved, 7.0));
+                    assert!(fold_decode_row(&mut rows, &unresolved, 7.0).is_some());
                     assert_eq!(rows[0].text, text);
                     assert_eq!(rows[0].tokens, norm_tokens(expected_message));
                 }
@@ -3617,7 +3756,7 @@ mod tests {
                     .position(|token| !is_hash_token(token))
                     .unwrap();
                 conflicting.tokens[index] = "W9XYZ".into();
-                assert!(!fold_decode_row(&mut rows, &conflicting, 7.0));
+                assert!(fold_decode_row(&mut rows, &conflicting, 7.0).is_none());
                 assert_eq!(rows[0].text, text);
             }
         }
@@ -3645,6 +3784,7 @@ mod tests {
                 freq: record.row.freq,
                 dt: record.row.dt,
                 tokens: norm_tokens(message),
+                filterable: None,
                 source: DecodeSource::Local,
             }
         };
@@ -3666,6 +3806,7 @@ mod tests {
                 freq: decode.freq as f64,
                 dt: decode.dt,
                 tokens: norm_tokens(&decode.message),
+                filterable: None,
                 source: DecodeSource::External,
             };
             let (first, second) = if local_first {
@@ -3674,7 +3815,7 @@ mod tests {
                 (external, native)
             };
             let mut rows = vec![first];
-            assert!(fold_decode_row(&mut rows, &second, 7.0));
+            assert!(fold_decode_row(&mut rows, &second, 7.0).is_some());
             assert_eq!(rows[0].source, DecodeSource::Both);
             assert!(rows[0].text.contains("<PJ4X> W1AW RR73"));
             let annotations = |row: &Row| {
@@ -3690,7 +3831,7 @@ mod tests {
                 StreamDecodeProvenance::CooperativeRecovery,
             );
             for _ in 0..2 {
-                assert!(fold_decode_row(&mut rows, &repeated, 7.0));
+                assert!(fold_decode_row(&mut rows, &repeated, 7.0).is_some());
                 assert_eq!(annotations(&rows[0]), ["?", "a7", "exp", "sic"]);
                 assert_eq!(rows[0].tokens, norm_tokens("<PJ4X> W1AW RR73"));
             }
@@ -3713,6 +3854,7 @@ mod tests {
                 freq: 2367.0,
                 dt: 0.0,
                 tokens: norm_tokens(message),
+                filterable: None,
                 source: first,
             }];
             assert!(fold_decode_row(
@@ -3722,11 +3864,13 @@ mod tests {
                     freq: 2369.0,
                     dt: 0.0,
                     tokens: norm_tokens("CQ BA7SAY OL53 ? a2"),
+                    filterable: None,
                     source: second,
                     text: message.to_string()
                 },
                 7.0
-            ));
+            )
+            .is_some());
             assert_eq!(rows[0].source, DecodeSource::Both);
         }
     }
@@ -3771,6 +3915,7 @@ mod tests {
                 freq: 1118.0,
                 dt: 0.0,
                 tokens: tokens.clone(),
+                filterable: None,
                 source: first,
             }];
             assert!(fold_decode_row(
@@ -3780,11 +3925,13 @@ mod tests {
                     freq: 1118.0,
                     dt: 0.0,
                     tokens: incoming.to_vec(),
+                    filterable: None,
                     source,
                     text: local_text.to_string()
                 },
                 7.0
-            ));
+            )
+            .is_some());
             assert_eq!(rows[0].source, DecodeSource::Both);
             assert_eq!(rows[0].text, local_text);
         }
@@ -3869,6 +4016,7 @@ mod tests {
             freq,
             dt: 0.0,
             tokens: norm_tokens(msg),
+            filterable: None,
             source,
         };
         let mut rows = vec![mk(DecodeSource::Local, 1000.0, "CQ K1ABC FN42")];
@@ -3881,11 +4029,13 @@ mod tests {
                 freq: 1002.0,
                 dt: 0.0,
                 tokens: norm_tokens("CQ K1ABC FN42"),
+                filterable: None,
                 source: DecodeSource::Local,
                 text: String::new()
             },
             7.0
-        ));
+        )
+        .is_some());
         assert_eq!(rows[0].source, DecodeSource::Local);
 
         // An EXTERNAL decode of the same signal folds into the local row → Both.
@@ -3896,11 +4046,13 @@ mod tests {
                 freq: 1001.0,
                 dt: 0.0,
                 tokens: norm_tokens("CQ K1ABC FN42"),
+                filterable: None,
                 source: DecodeSource::External,
                 text: String::new()
             },
             7.0
-        ));
+        )
+        .is_some());
         assert_eq!(rows[0].source, DecodeSource::Both);
         // A Both row continues to absorb repeat observations from either source.
         for source in [DecodeSource::Local, DecodeSource::External] {
@@ -3911,26 +4063,30 @@ mod tests {
                     freq: 1001.0,
                     dt: 0.0,
                     tokens: norm_tokens("CQ K1ABC FN42"),
+                    filterable: None,
                     source,
                     text: String::new()
                 },
                 7.0
-            ));
+            )
+            .is_some());
         }
 
         // A different gen (different slot) never folds.
-        assert!(!fold_decode_row(
+        assert!(fold_decode_row(
             &mut rows,
             &Row {
                 gen: 2,
                 freq: 1000.0,
                 dt: 0.0,
                 tokens: norm_tokens("CQ K1ABC FN42"),
+                filterable: None,
                 source: DecodeSource::External,
                 text: String::new()
             },
             7.0
-        ));
+        )
+        .is_none());
     }
 
     #[test]
@@ -3961,6 +4117,7 @@ mod tests {
                     freq: 1118.0,
                     dt: 0.0,
                     tokens: norm_tokens("CQ ZL2AGY RF70 a7"),
+                    filterable: None,
                     source: first,
                 }];
                 assert_eq!(
@@ -3971,11 +4128,13 @@ mod tests {
                             freq: 1118.0 + offset,
                             dt: 0.0,
                             tokens: norm_tokens("CQ ZL2AGY RF70 ? a1"),
+                            filterable: None,
                             source: incoming,
                             text: String::new()
                         },
                         tolerance
-                    ),
+                    )
+                    .is_some(),
                     expected,
                     "source={first:?}, tolerance={tolerance}, offset={offset}",
                 );
@@ -4215,7 +4374,7 @@ mod tests {
                         |ui| {
                             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                             settings_form(ui, |ui| {
-                                setting_row(ui, locale.text("My Callsign"), |ui| {
+                                setting_row(ui, locale.text("Callsign"), |ui| {
                                     fields[0] = callsign_field(ui, &mut value, f32::INFINITY).rect;
                                     false
                                 });
@@ -4427,9 +4586,9 @@ mod tests {
                     settings_page(ui, tab, |ui| {
                         let label = match tab {
                             SettingsTab::Audio => "Input device",
-                            SettingsTab::Compare => "Listen to WSJT-X (UDP)",
+                            SettingsTab::Compare => "Listen to UDP",
                             SettingsTab::Frequency => "Low (Hz)",
-                            _ => "My Callsign",
+                            _ => "Callsign",
                         };
                         settings_form(ui, |ui| {
                             setting_row(ui, label, |ui| {
@@ -4447,10 +4606,10 @@ mod tests {
             SettingsTab::Audio,
             SettingsTab::Compare,
             SettingsTab::Frequency,
-            SettingsTab::Station,
+            SettingsTab::General,
             SettingsTab::Compare,
             SettingsTab::Audio,
-            SettingsTab::Station,
+            SettingsTab::General,
             SettingsTab::Frequency,
         ] {
             let first = render(tab);

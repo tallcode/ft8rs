@@ -12,11 +12,11 @@
   <body>
     <header>
       <div class="site-heading">
-        <img src="${asset_prefix}ft8rs.png?v=$logo_version" width="84" height="84" alt="">
         <div>
           <h1>ft8.rs</h1>
           <p>FT8 解码器的 Rust 实现</p>
         </div>
+        <img src="${asset_prefix}ft8rs.png?v=$logo_version" width="84" height="84" alt="">
       </div>
       <nav aria-label="页面导航">
         <a href="#download">下载</a>
@@ -64,8 +64,8 @@
           <li><strong>开始收听。</strong>点击主窗口的播放按钮（<strong>开始监听</strong>）。软件按 15 秒一轮接收 FT8，完成一轮接收后会陆续显示消息；点击停止按钮（<strong>停止监听</strong>）结束收听。</li>
         </ol>
         <h3 id="station">我的呼号与网格</h3>
-        <p>普通频段收听可以留空，没有自己的呼号也能使用。在 <strong>设置 → 电台</strong> 中，<strong>我的呼号</strong> 填写自己的呼号，<strong>我的网格</strong> 填写自己的网格位置；它们与主窗口中目标电台的 <strong>呼号</strong>和<strong>网格</strong> 是分开的。</p>
-        <p>正确填写<strong>我的呼号</strong>，有助于解码包含你呼号的部分弱信号消息，以及还原消息中以哈希形式编码的该呼号。对于不包含该呼号的消息，这项设置不提供直接的解码帮助。消息列表也会突出显示你的呼号。</p>
+        <p>普通频段收听可以留空，没有自己的呼号也能使用。在<strong>设置 → 通用</strong>的<strong>本站信息</strong>中，填写自己的<strong>呼号</strong>和<strong>网格</strong>。主窗口的<strong>呼号</strong>和<strong>网格</strong>用于指定目标电台。</p>
+        <p>填写自己的呼号，有助于解码包含该呼号的部分弱信号消息，以及还原消息中以哈希形式编码的该呼号。消息列表也会突出显示你的呼号。</p>
         <p>填写呼号不会启用发射功能，ft8.rs 始终只接收。</p>
 
         <h3 id="modes">解码方案</h3>
@@ -92,14 +92,14 @@
             </ul>
           </dd>
           <dt>DX</dt>
-          <dd><strong>要在目标电台的 RX 音频频率附近深搜，请使用 DX。</strong>在主窗口的<strong>呼号</strong>中填写目标呼号，已知音频频率时填入 <strong>RX</strong>。也可以双击已解码的消息，一次填入呼号和频率。要启用定向深搜，请在<strong>设置 → 电台</strong>中填写<strong>我的呼号</strong>。只填写目标呼号也可以监听相关消息，DX 会在接收过程中学习目标频率。</dd>
+          <dd><strong>要在目标电台的 RX 音频频率附近深搜，请使用 DX。</strong>在主窗口的<strong>呼号</strong>中填写目标呼号，已知音频频率时填入 <strong>RX</strong>。也可以双击已解码的消息，一次填入呼号和频率。要启用定向深搜，请在<strong>设置 → 通用</strong>的<strong>本站信息</strong>中填写自己的呼号。只填写目标呼号也可以监听相关消息，DX 会在接收过程中学习目标频率。</dd>
         </dl>
 
         <h3 id="compare">对比：与 WSJT-X 对照</h3>
         <p>“对比”功能接收 WSJT-X 发来的实时解码消息，与 ft8.rs 的本地结果合并显示。你可以直观看到哪些消息只有一个软件收到，哪些消息两者都收到。</p>
         <ol>
           <li><strong>使用相同的接收音频。</strong>让 ft8.rs 和 WSJT-X 监听同一接收机、同一频率和同一音频声道，并同时开始接收。</li>
-          <li><strong>检查 ft8.rs 的接收设置。</strong>在 <strong>设置 → 对比</strong> 中勾选 <strong>监听 WSJT-X（UDP）</strong>。首次使用默认已开启，<strong>主机</strong>为 <code>127.0.0.1</code>，<strong>端口</strong>为 <code>2237</code>。</li>
+          <li><strong>检查 ft8.rs 的接收设置。</strong>在 <strong>设置 → 对比</strong> 中勾选 <strong>监听 UDP</strong>。首次使用默认已开启，<strong>主机</strong>为 <code>127.0.0.1</code>，<strong>端口</strong>为 <code>2237</code>。</li>
           <li><strong>设置 WSJT-X 的 UDP 输出。</strong>将 WSJT-X 的 UDP 报告发送地址设为 <code>127.0.0.1</code>、端口设为 <code>2237</code>。这里假设两个软件在同一台电脑上；端口被占用时，两边改用同一空闲端口。</li>
           <li><strong>等待新的接收时隙。</strong>消息列表会按来源显示不同颜色，图例可在<strong>对比</strong>设置页查看：仅 WSJT-X、仅 ft8.rs、两者均解出。它对照的是新收到的实时消息，不会导入 WSJT-X 的历史列表。</li>
         </ol>

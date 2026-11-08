@@ -12,13 +12,13 @@ window with seven pages:
 
 | Page | Controls and information |
 |---|---|
-| Station | My Callsign and My Grid |
+| General | My Station (Callsign and Grid), Display (Language) |
 | Audio | Input device, channel, input level and capture discontinuity count |
 | Decode | Profile, SWL and the Hybrid experimental decoder |
 | Frequency | Lower and upper audio-frequency bounds |
+| Compare | Listen to UDP, listener address and frequency matching tolerance |
 | Output | Outgoing UDP decode reports, host and port |
-| Compare | Incoming WSJT-X UDP feed and frequency matching tolerance |
-| Advanced | JTDX narrow-band filter, duplicate and unresolved-hash display settings |
+| Advanced | JTDX unresolved-hash control, plus contest and telemetry display filters |
 
 Choose the receiver input in Audio, select a profile, and press the main-window
 play button. Capture is aligned to UTC 15-second slots. The button becomes a
@@ -88,7 +88,7 @@ Time-only `HHMMSS` input wraps at midnight without attaching a date.
 
 The [README profile table](../README.md#decode-profiles) lists the available modes.
 The defaults are WSJT-X, a 200–3000 Hz decode band, and no operator/target context.
-Callsign and grid context can assist AP/hash decoding. My Callsign supplies
+Callsign and grid context can assist AP/hash decoding. Your own callsign supplies
 known-call hints for messages containing your own callsign, including resolving
 hashed representations of that call; it provides no direct decoding assistance
 for messages that do not contain it. RX is an audio offset in Hz, not the
@@ -113,7 +113,7 @@ For a deeper search near a target station's RX audio frequency, use **DX**.
 Select it in **Settings → Decode → Profile**, enter the target in the main
 window's **Callsign** field and set **RX** to its audio frequency in Hz if known.
 Double-clicking a decoded message can fill both fields. To enable the focused
-search, enter your own callsign under **Settings → Station → My Callsign**.
+search, enter your own callsign in **Callsign** under **Settings → General → My Station**.
 DX can also learn the target's frequency as it listens.
 
 DX returns target-related messages and combines its JTDX listener with WSJT-X+
@@ -226,8 +226,8 @@ target/release/ft8rs-cli monitor --device 0 --udp \
 
 GUI **Compare** is a separate incoming unicast listener, enabled by default at
 `127.0.0.1:2237`, with a configurable frequency tolerance (default ±7 Hz).
-Configure WSJT-X to send its UDP reports to that address. **Listen to WSJT-X
-(UDP)** remembers your choice, including a previously saved disabled setting.
+Configure WSJT-X to send its UDP reports to that address. **Listen to UDP**
+remembers your choice, including a previously saved disabled setting.
 The display merges matching local/external messages
 and colors local-only, WSJT-X-only and shared rows; its legend shows the colors.
 Merged rows keep resolved callsigns from either source instead of replacing
@@ -274,7 +274,7 @@ Technical limitations, the known JTDX long-recording miss and the partial
 geographic filter are documented in [validation](VALIDATION.md) and the
 [JTDX notes](../crates/ft8rs-core/JTDX.md).
 
-For Hybrid, the GUI exposes **Experimental decoder** at the bottom of Decode
+For Hybrid, the GUI exposes **Exp. decoder** at the bottom of Decode
 settings.
 It is disabled by default and saved across restarts. Enabling it adds the
 independent stable weak-signal/interference receiver; supplementary lines end in
