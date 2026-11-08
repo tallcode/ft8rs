@@ -14,7 +14,7 @@ window with seven pages:
 |---|---|
 | Station | My Callsign and My Grid |
 | Audio | Input device, channel, input level and capture discontinuity count |
-| Decode | Profile, SWL, focused deep decoding and the Hybrid experimental decoder |
+| Decode | Profile, SWL and the Hybrid experimental decoder |
 | Frequency | Lower and upper audio-frequency bounds |
 | Output | Outgoing UDP decode reports, host and port |
 | Compare | Incoming WSJT-X UDP feed and frequency matching tolerance |
@@ -43,9 +43,9 @@ output sink. Native calls do not support cooperative cancellation inside a
 thread. The GUI can stop active work by terminating its supervised decoder
 process; the standalone CLI waits for running native calls to finish.
 
-DX manages SWL/deep passes internally, so its generic SWL, `nagain` and advanced
-filter controls are disabled. The GUI uses the default JTDX partition setting;
-explicit partition selection is available in the CLI.
+DX manages SWL and focused searches internally. Its advanced decoder filters
+are disabled. The GUI uses the default JTDX partition setting. Explicit
+partition selection is available in the CLI.
 
 ## Audio input and levels
 
@@ -109,11 +109,18 @@ the baseline and cross-cancellation results.
 The two JTDX variants are one algorithm family for evidence accounting. Enable
 the experimental decoder to use the **Hybrid + exp** mode from the benchmarks.
 
+For a deeper search near a target station's RX audio frequency, use **DX**.
+Select it in **Settings → Decode → Profile**, enter the target in the main
+window's **Callsign** field and set **RX** to its audio frequency in Hz if known.
+Double-clicking a decoded message can fill both fields. To enable the focused
+search, enter your own callsign under **Settings → Station → My Callsign**.
+DX can also learn the target's frequency as it listens.
+
 DX returns target-related messages and combines its JTDX listener with WSJT-X+
-observation and focused recovery. Plus compatibility results use `Pc`.
-The target call alone is sufficient to listen; a valid, distinct operator/target
-call pair enables additional context recovery. A known grid can enable list
-recovery. Derived rows supply weak hints rather than independent confirmation.
+observation and focused recovery. Plus compatibility results use `Pc`. A target
+call alone is sufficient to listen. A valid, distinct pair of callsigns enables
+additional context recovery, and a known grid can enable list recovery. Derived
+rows supply weak hints rather than independent confirmation.
 
 Plus compatibility and candidate retry results carry `Pc` and `Pr` in the
 GUI and CLI. The GUI also uses `sic` for isolated cancellation recovery,
@@ -202,7 +209,7 @@ The file command writes console results; UDP output options are monitor-only.
 | `--his-call` / `--his-grid` | `-x` / `-g` | Both | Target context; target call required for DX |
 | `--swl` | | Both | JTDX SWL; both JTDX paths in Hybrid; DX manages its own policy |
 | `--jtdx-threads` | | Both | 0–24 logical partitions; default 1, zero opts into automatic selection |
-| `--nagain` | | Both | JTDX focused deep retry; DX chooses its own focused passes |
+| `--nagain` | | Both | Explicit RX-focused decoding for WSJT-X, WSJT-X+, JTDX and Hybrid. DX chooses its own focused passes. |
 | `--hybrid-experiment` | | Both | Opt in to the private weak-signal/interference branch; requires `--profile hybrid` |
 | `--udp` | `-u` | Monitor | Enable outgoing decode reports; default off |
 | `--udp-host` / `--udp-port` | `-o` / `-p` | Monitor | Destination, default `127.0.0.1:2238` |
@@ -267,8 +274,8 @@ Technical limitations, the known JTDX long-recording miss and the partial
 geographic filter are documented in [validation](VALIDATION.md) and the
 [JTDX notes](../crates/ft8rs-core/JTDX.md).
 
-The GUI exposes **Experimental decoder** at the bottom of Decode settings,
-after Deep decode, for Hybrid.
+For Hybrid, the GUI exposes **Experimental decoder** at the bottom of Decode
+settings.
 It is disabled by default and saved across restarts. Enabling it adds the
 independent stable weak-signal/interference receiver; supplementary lines end in
 `exp`. Native callbacks still arrive first. The branch uses the remaining soft

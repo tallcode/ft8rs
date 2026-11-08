@@ -79,10 +79,9 @@
           </dd>
           <dt id="jtdx">JTDX</dt>
           <dd>
-            Uses JTDX FT8 decoding and may find different messages from WSJT-X on the same audio. Both of these options are off by default and can be enabled in <strong>Settings → Decode</strong>:
+            Uses JTDX FT8 decoding and may find different messages from WSJT-X on the same audio.
             <ul>
-              <li><strong>SWL:</strong> Enables JTDX's listening-oriented search and affects both JTDX paths in Hybrid. It may take longer and may miss some messages found with it off.</li>
-              <li><strong>Deep decode:</strong> Searches further around the selected receive audio frequency. Double-click a message to set the target and frequency. The extra searches may take longer.</li>
+              <li><strong>SWL</strong> is off by default. Enable it in <strong>Settings → Decode</strong> to use JTDX's listening-oriented search. It affects both JTDX paths in Hybrid. It may take longer and may miss some messages found with it off.</li>
             </ul>
           </dd>
           <dt id="hybrid">Hybrid</dt>
@@ -93,7 +92,7 @@
             </ul>
           </dd>
           <dt>DX</dt>
-          <dd>Follows a target callsign and displays messages related to it. Enter the target in the main window's <strong>Callsign</strong> field before listening, or double-click a decoded message to select its target and audio frequency. Your own callsign is optional; supplying a valid, distinct own/target callsign pair enables additional context recovery. DX manages SWL and deep searches internally, so their general switches do not need adjustment.</dd>
+          <dd><strong>Use DX for a deeper search near a target station's RX audio frequency.</strong> Enter the target in the main window's <strong>Callsign</strong> field and set <strong>RX</strong> if you know its audio frequency. You can also double-click a decoded message to fill both fields. Enter <strong>My Callsign</strong> in <strong>Settings → Station</strong> to enable the focused search. With only the target callsign, DX can still listen for related messages and learn the target's frequency.</dd>
         </dl>
 
         <h3 id="compare">Compare with WSJT-X</h3>
