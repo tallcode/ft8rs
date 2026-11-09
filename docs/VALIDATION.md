@@ -15,9 +15,9 @@ session. Native baseline tests have SWL/AGC off and no user QSO context.
 |---|---:|---:|
 | WSJT-X (`W`) | 21/21 target rows, every target required | 434/434 target rows |
 | WSJT-X+ base (`WP`) | 21/21 target rows | 434/434 target rows |
-| WSJT-X+ with recovery and retry (`WPcr`) | 21/21 target rows | 446/446 target rows |
+| WSJT-X+ with recovery and retry (`WPcr`) | 21/21 target rows | 468/468 target rows |
 | JTDX (`J`) | 20/20 target rows | 453/453 target rows, fixed one partition |
-| Hybrid (`H`) | 21/21 target rows | 476/476 target rows |
+| Hybrid with recovery and retry (`H`) | 21/21 target rows | 484/484 target rows |
 | Hybrid + experiment with recovery and retry (`Hecr`) | 21/21 target rows | 486/486 target rows |
 
 The decoder runner uses `ALLCALL7.TXT.2022`, SHA-256:
@@ -41,7 +41,7 @@ replay, separated by `|`:
 | `WP` | WSJT-X+ with compatibility recovery and candidate retry disabled |
 | `WPcr` | WSJT-X+ with compatibility recovery (`Pc`) and candidate retry (`Pr`) enabled |
 | `J` | JTDX |
-| `H` | Hybrid |
+| `H` | Hybrid with the shared `Pc` and `Pr` enabled |
 | `Hecr` | Hybrid with experimental decoding and the shared `Pc` and `Pr` enabled |
 | blank | Reviewed reference message, absent from this fixed replay |
 
@@ -55,14 +55,34 @@ rows and must not be confused with target coverage.
 
 The `WP` gate checks per-slot parity with `W`, including the output order,
 message text, frequency, DT, SNR and tones. The staged `WPcr` gate checks all
-21 short and 446 long reference rows. On the long recording, `Hecr` retains
+21 short and 468 long reference rows. The standalone same-sequence retry
+preserves all 457 previous long-recording callbacks and adds 12 reference
+matches after manual review. Three further reviewed outputs were already
+present before this retry. The
+[review log](../crates/ft8rs-core/src/decode/lib_wsjtx_plus/README.md#同奇偶槽的重复码字)
+records the observations. On the long recording, `Hecr` retains
 all 479 reference rows from experimental Hybrid before candidate retry was
 enabled, and adds seven reference rows through `Pr`.
+
+The homepage replays use the GUI defaults for all five modes, with AP on and
+SWL off. Ordinary Hybrid and Hybrid + exp both enable compatibility recovery,
+candidate retry and cross cancellation. The shared weak-CQ search recovered
+the synthetic `CQ EA9SQY MQ71` target at −22 dB in ordinary Hybrid, matching
+standalone WSJT-X+ at 66 of 144 known targets. The synthetic callsign and grid
+are generated independently. The staged 19-slot replay with the 2022 CallDB
+added eight already-reviewed reference rows to ordinary Hybrid when its
+candidate retry was enabled. The experimental mode found two further
+reference rows. Sharing the weak-CQ search preserved those recording results.
+
+The 2026-11-09 review leaves `CQ 001 IZ7MMG 549 2025` at 14:03:45 UTC
+unconfirmed. The known errors remain `CQ Z3BZW FL21` at 14:04:00 UTC and
+`CQ TL1XFI FK48` at 14:04:45 UTC. Existing message annotations retain
+their frequency, DT and unresolved-hash fields.
 
 The known pure JTDX long miss remains:
 
 ```text
-230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,WPcr|Hecr
+230208_140700,-16,1.7,1153,F1MLZ UA3QNA -04,WPcr|H|Hecr
 ```
 
 It cannot be offset by a different new row. The WSJT-X short test's former floor

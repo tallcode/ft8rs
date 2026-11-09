@@ -422,7 +422,7 @@ mod tests {
                     _ => unreachable!(),
                 }
                 .unwrap();
-                if profile == "wsjtx-plus" || experiment {
+                if matches!(profile, "wsjtx-plus" | "hybrid") {
                     assert!(config.wsjtx_plus_compatibility);
                     assert!(config.wsjtx_plus_candidate_retry);
                 }

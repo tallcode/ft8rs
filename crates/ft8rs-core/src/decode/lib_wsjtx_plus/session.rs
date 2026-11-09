@@ -17,6 +17,9 @@ use crate::stream::profile::SlotRecovery;
 use crate::stream::time::SlotTimestamp;
 use crate::HashCallBook;
 
+#[path = "ft8/repeat_retry.rs"]
+mod repeat_retry;
+
 const SAMPLE_RATE: u32 = 12000;
 const NMAX: usize = 15 * 12_000;
 const NZHSYM_STRIDE: usize = 3456;
@@ -109,6 +112,7 @@ struct FinalSlotWork {
     retry: Option<FinalRetry>,
     sbase: Vec<f64>,
     older_a7: Option<OlderA7Audio>,
+    repeat_audio: Option<Vec<f64>>,
 }
 
 /// A7 seed entries collected for a single slot.
@@ -208,6 +212,7 @@ pub struct StreamDecodeSession {
     a7: [[Vec<A7SaveEntry>; 2]; 2],
     older_a7: Option<Box<[OlderA7History; 2]>>,
     cq_history: [Option<(SlotTimestamp, CqSpectrum)>; 2],
+    repeat_history: Option<Box<repeat_retry::RepeatHistory>>,
     /// Current sequence parity: 0=even, 1=odd.
     jseq: usize,
     slot_state: Option<StreamSlotDecodeState>,
@@ -227,6 +232,7 @@ impl StreamDecodeSession {
             a7: Default::default(),
             older_a7: None,
             cq_history: [None, None],
+            repeat_history: None,
             jseq: 0,
             slot_state: None,
             search_deadline: None,
@@ -237,6 +243,7 @@ impl StreamDecodeSession {
         let mut session = Self::new(params);
         if session.params.wsjtx_plus_candidate_retry {
             session.older_a7 = Some(Box::default());
+            session.repeat_history = Some(Box::default());
         }
         session
     }
@@ -461,12 +468,12 @@ impl StreamDecodeSession {
             // Allow Hybrid to start downstream work before the retry search.
             on_event(None)?;
             if let Some(FinalSlotWork {
-                retry: Some(mut retry),
+                retry: Some(retry),
                 sbase,
                 ..
             }) = pending
             {
-                Self::finish_candidate_retry(&mut state, &mut retry, &sbase, deadline, |row| {
+                self.finish_candidate_retry(&mut state, retry, &sbase, deadline, |row| {
                     on_event(Some(row))
                 })?;
             }
@@ -494,24 +501,11 @@ impl StreamDecodeSession {
             retry,
             sbase,
             older_a7,
+            repeat_audio,
         }) = pending
         {
-            if let Some(mut retry) = retry {
-                Self::finish_candidate_retry(state, &mut retry, &sbase, deadline, &mut on_decode)?;
-                if let Some(timestamp) = &state.timestamp {
-                    let bank = &mut self.cq_history[jseq_from_nutc(timestamp.nutc())];
-                    let previous = bank
-                        .as_ref()
-                        .filter(|(time, _)| time.add_seconds(30) == *timestamp)
-                        .map(|(_, spectrum)| spectrum);
-                    let base = state.merged.clone();
-                    let timestamp = timestamp.clone();
-                    *bank = retry
-                        .recover_cq(previous, &sbase, &base, deadline, |result| {
-                            push_candidate_retry(state, result, &mut on_decode)
-                        })?
-                        .map(|spectrum| (timestamp, spectrum));
-                }
+            if let Some(retry) = retry {
+                self.finish_candidate_retry(state, retry, &sbase, deadline, &mut on_decode)?;
             }
             if let Some(audio) = older_a7 {
                 self.recover_older_a7(
@@ -521,6 +515,27 @@ impl StreamDecodeSession {
                     deadline.or(self.search_deadline),
                     &mut on_decode,
                 )?;
+            }
+            if let (Some(history), Some(timestamp), Some(audio)) = (
+                self.repeat_history.as_mut(),
+                state.timestamp.as_ref(),
+                repeat_audio,
+            ) {
+                let end = Instant::now() + repeat_retry::BUDGET;
+                let end = deadline
+                    .or(self.search_deadline)
+                    .map_or(end, |d| d.min(end));
+                let recovered = history.recover(
+                    timestamp,
+                    &audio,
+                    &state.merged,
+                    &sbase,
+                    self.params.nfa..=self.params.nfb,
+                    end,
+                );
+                for row in recovered {
+                    push_retry_row(state, row, &mut on_decode)?;
+                }
             }
         }
         Ok(std::mem::take(&mut state.merged))
@@ -765,6 +780,8 @@ impl StreamDecodeSession {
                 }
             }
         }
+        let repeat_audio = (ap_allowed && retry.is_some() && self.repeat_history.is_some())
+            .then(|| full_residual.clone());
         let older_a7 = (ap_allowed
             && within_budget()
             && state
@@ -780,6 +797,7 @@ impl StreamDecodeSession {
                 retry,
                 sbase,
                 older_a7,
+                repeat_audio,
             }),
         )
     }
@@ -906,8 +924,9 @@ impl StreamDecodeSession {
     }
 
     fn finish_candidate_retry(
+        &mut self,
         state: &mut StreamSlotDecodeState,
-        retry: &mut FinalRetry,
+        mut retry: FinalRetry,
         sbase: &[f64],
         deadline: Option<Instant>,
         mut on_decode: impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
@@ -919,7 +938,21 @@ impl StreamDecodeSession {
         let base = state.merged.clone();
         retry.recover_adaptive(sbase, &base, deadline, |result| {
             push_candidate_retry(state, result, &mut on_decode)
-        })
+        })?;
+        if let Some(timestamp) = state.timestamp.clone() {
+            let bank = &mut self.cq_history[jseq_from_nutc(timestamp.nutc())];
+            let previous = bank
+                .as_ref()
+                .filter(|(time, _)| time.add_seconds(30) == timestamp)
+                .map(|(_, spectrum)| spectrum);
+            let base = state.merged.clone();
+            *bank = retry
+                .recover_cq(previous, sbase, &base, deadline, |result| {
+                    push_candidate_retry(state, result, &mut on_decode)
+                })?
+                .map(|spectrum| (timestamp, spectrum));
+        }
+        Ok(())
     }
 
     fn fine_rr73_target(&self) -> Option<&str> {
@@ -1025,7 +1058,14 @@ fn push_candidate_retry(
     result: DecodedMessage,
     on_decode: &mut impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
 ) -> Result<(), String> {
-    let decode = stream_decode(&result);
+    push_retry_row(state, stream_decode(&result), on_decode)
+}
+
+fn push_retry_row(
+    state: &mut StreamSlotDecodeState,
+    decode: StreamDecodedMessage,
+    on_decode: &mut impl FnMut(&StreamDecodedWithProvenance) -> Result<(), String>,
+) -> Result<(), String> {
     // The same codeword can be displayed with a different hash spelling.
     if state.merged.iter().any(|row| {
         row.itone == decode.itone

@@ -107,17 +107,24 @@ pub fn config_diff(old: &StreamDecodeConfig, new: &StreamDecodeConfig) -> BTreeS
         }
     };
     note(old.profile != new.profile, ConfigField::Profile);
-    let uses_plus_options = |config: &StreamDecodeConfig| {
+    let uses_plus_compatibility = |config: &StreamDecodeConfig| {
         config.profile == DecodeProfile::WsjtxPlus
             || (config.profile == DecodeProfile::Hybrid && config.hybrid_experiment)
     };
-    let plus_options_active = uses_plus_options(old) || uses_plus_options(new);
+    let uses_candidate_retry = |config: &StreamDecodeConfig| {
+        matches!(
+            config.profile,
+            DecodeProfile::WsjtxPlus | DecodeProfile::Hybrid
+        )
+    };
     note(
-        plus_options_active && old.wsjtx_plus_compatibility != new.wsjtx_plus_compatibility,
+        (uses_plus_compatibility(old) || uses_plus_compatibility(new))
+            && old.wsjtx_plus_compatibility != new.wsjtx_plus_compatibility,
         ConfigField::WsjtxPlusCompatibility,
     );
     note(
-        plus_options_active && old.wsjtx_plus_candidate_retry != new.wsjtx_plus_candidate_retry,
+        (uses_candidate_retry(old) || uses_candidate_retry(new))
+            && old.wsjtx_plus_candidate_retry != new.wsjtx_plus_candidate_retry,
         ConfigField::WsjtxPlusCandidateRetry,
     );
     note(old.mycall != new.mycall, ConfigField::MyCall);
@@ -263,12 +270,12 @@ mod tests {
         assert!(!plan.restart_capture);
         old.config.profile = DecodeProfile::Hybrid;
         new.config.profile = DecodeProfile::Hybrid;
-        assert!(plan_reconfig(&old, &new).is_noop());
-        old.config.hybrid_experiment = true;
-        new.config.hybrid_experiment = true;
         let plan = plan_reconfig(&old, &new);
         assert!(plan.rebuild_session);
         assert!(!plan.restart_capture);
+        old.config.profile = DecodeProfile::Wsjtx;
+        new.config.profile = DecodeProfile::Wsjtx;
+        assert!(plan_reconfig(&old, &new).is_noop());
     }
 
     #[test]

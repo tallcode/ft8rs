@@ -86,7 +86,7 @@
           </dd>
           <dt id="hybrid">Hybrid</dt>
           <dd>
-            同时运行一路 WSJT-X+ 和两路 JTDX 解码，再合并结果、去除重复消息。两路 JTDX 分别使用原始音频和自动增益调整后的音频。这种组合会使用更多计算资源。Hybrid 会自动执行<strong>交叉抵消（SIC）</strong>：在音频副本中抵消已解出的信号，再搜索可能被它遮住的消息。
+            同时运行一路 WSJT-X+ 和两路 JTDX 解码，再合并结果、去除重复消息。WSJT-X+ 主路自动启用兼容恢复（Pc）和候选重试（Pr），也会复查弱 CQ。两路 JTDX 分别使用原始音频和自动增益调整后的音频。这种组合会使用更多计算资源。Hybrid 会自动执行<strong>交叉抵消（SIC）</strong>：在音频副本中抵消已解出的信号，再搜索可能被它遮住的消息。
             <ul>
               <li><strong>实验解码器：</strong>默认关闭。在<strong>设置 → 解码</strong>中开启后，即可使用评测中的 <strong>Hybrid + exp</strong> 档，尝试恢复稳定弱信号以及受单音干扰或其他 FT8 信号遮挡的消息。基础结果先显示，补充结果可能晚几秒出现；本轮后台处理可能持续约 10 秒或更久。</li>
             </ul>
@@ -107,34 +107,34 @@
         <p><strong>对比</strong>用于合并显示 WSJT-X 与 ft8.rs 的接收结果；<strong>设置 → 输出</strong>中的<strong>UDP 上报</strong>用于将本地结果发送给其他软件。</p>
 
         <h3 id="sensitivity">灵敏度对比</h3>
+        <p>两项测试均按 ft8.rs 的 GUI 档位默认值回放。五档均开启 AP，SWL 关闭。WSJT-X+ 和两档 Hybrid 均开启兼容恢复（Pc）和候选重试（Pr）。两档 Hybrid 都启用交叉抵消，Hybrid + exp 额外开启实验解码器。</p>
         <h4 id="synthetic">人工数据测试（合成音频）</h4>
         <p>用下方五种解码配置重放同一批 144 组 FT8 音频，测试稳定弱信号和几种干扰条件。每组音频的目标消息、频率和时间均已知。</p>
         <figure class="sensitivity-chart">
-          <img src="${asset_prefix}synthetic.svg?v=$synthetic_version" width="680" height="348" alt="144 组测试中，WSJT-X 解出 47 组、WSJT-X+ 解出 65 组、JTDX 解出 30 组、Hybrid 解出 50 组、Hybrid + exp 解出 104 组。">
-          <figcaption>图中是解出的已知目标数，满分为 144。所有模式均使用 ft8.rs 内的解码实现，WSJT-X+ 和 Hybrid + exp 均开启兼容恢复和候选重试。此次人工回放对 WSJT-X 和 WSJT-X+ 关闭了 AP 辅助解码。</figcaption>
+          <img src="${asset_prefix}synthetic.svg?v=$synthetic_version" width="680" height="348" alt="144 组测试中，WSJT-X 解出 50 组、WSJT-X+ 解出 66 组、JTDX 解出 30 组、Hybrid 解出 66 组、Hybrid + exp 解出 104 组。">
+          <figcaption>图中是解出的已知目标数，满分为 144。每组 15 秒音频均新建会话。</figcaption>
         </figure>
-        <p>测试音频由 FT8 消息波形（参照 WSJT-X 的 <code>gen_ft8wave.f90</code> 实现生成）与人工生成的噪声、持续单音或重叠信号混合而成；每条路径都处理同一份 15 秒音频，并按预先知道的消息、频率和时间核对结果。另外 48 组没有目标消息的控制音频用于检查误解码，未计入图表。在这 192 组测试中，各模式均未观察到错误消息。</p>
+        <p>测试音频把 FT8 消息波形（参照 WSJT-X 的 <code>gen_ft8wave.f90</code> 实现生成）与合成噪声、持续单音或重叠信号混合。目标呼号和网格由脚本分别生成，以编码前的消息、频率和时间核对解码结果。另有 48 组无目标消息的对照音频用于检查误码，图中只统计 144 个已知目标。在这 192 组测试中，各模式均未观察到错误消息。</p>
         <p>这是一组有意挑选的实验条件。日常接收中，弱信号往往会同时受到变化的衰落、漂移和干扰影响，很少有这样稳定、可控的信号。因此，图中的提升不能推算为实际使用时的解码率，也不保证每一轮都能多收到消息。</p>
 
         <h4 id="recording">真实数据测试（录音回放）</h4>
-        <p>各模式以持续会话回放同一段真实录音的 19 个时隙。图中的总数为参考命中与已知误码之和。<strong>WSJT-X+</strong> 使用兼容恢复和候选重试均开启的配置。</p>
+        <p>各模式以持续会话回放同一段真实录音的 19 个时隙。图表总数为参考命中与已知误码之和。</p>
         <figure class="sensitivity-chart">
-          <img src="${asset_prefix}recording.svg?v=$recording_version" width="680" height="348" alt="长录音回放中经核对的输出行数：WSJT-X 434、WSJT-X+ 446、JTDX 455、Hybrid 478、Hybrid 加实验解码 488。">
-          <figcaption>WSJT-X+ 命中 446 条参考消息，比 WSJT-X 多 12 条。这 12 条均由候选重试恢复。</figcaption>
+          <img src="${asset_prefix}recording.svg?v=$recording_version" width="680" height="348" alt="长录音回放中已核对的输出行数：WSJT-X 434、WSJT-X+ 468、JTDX 455、Hybrid 486、Hybrid + exp 488。">
         </figure>
         <div class="comparison-table-scroll">
           <table class="comparison-table">
             <thead><tr><th scope="col">模式</th><th scope="col">总数</th><th scope="col">参考命中</th><th scope="col">已知误码</th></tr></thead>
             <tbody>
               <tr><th scope="row">WSJT-X</th><td>434</td><td>434</td><td>0</td></tr>
-              <tr><th scope="row">WSJT-X+</th><td>446</td><td>446</td><td>0</td></tr>
+              <tr><th scope="row">WSJT-X+</th><td>468</td><td>468</td><td>0</td></tr>
               <tr><th scope="row">JTDX</th><td>455</td><td>453</td><td>2</td></tr>
-              <tr><th scope="row">Hybrid</th><td>478</td><td>476</td><td>2</td></tr>
+              <tr><th scope="row">Hybrid</th><td>486</td><td>484</td><td>2</td></tr>
               <tr><th scope="row">Hybrid + exp</th><td>488</td><td>486</td><td>2</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="comparison-note">Hybrid 和 Hybrid + exp 均开启交叉抵消。Hybrid + exp 同时开启 Plus 的兼容恢复和候选重试。回放使用固定的 2022 年版呼号库和 1 个 JTDX 分区，按时隙计数。</p>
+        <p class="comparison-note">本次回放中的两条已知误码均来自 JTDX 解码路径。单独运行 JTDX、Hybrid 和 Hybrid + exp 时，出现的是同样的两条误码。回放使用固定的 2022 年版呼号库和 1 个 JTDX 分区，按时隙计数。</p>
 
         <h3>Linux 命令行</h3>
         <p>在解压目录打开终端，先列出输入设备，再用对应的设备编号开始收听：</p>

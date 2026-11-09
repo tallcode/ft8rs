@@ -167,7 +167,7 @@ averaging can attenuate single-sided audio or cancel opposite-phase channels.
 | `wsjtx` | Default WSJT-X-aligned FT8 path, with staged early/final decoding | Optional call/grid and receive-frequency context |
 | `wsjtx-plus` | Optimized WSJT-X+ receiver with staged decoding, compatibility recovery and candidate retry | Optional call/grid and receive-frequency context |
 | `jtdx` | Independent JTDX FT8 path | Optional SWL and CLI `--nagain` |
-| `hybrid` | Independent WSJT-X+ compatibility, JTDX/noAGC and JTDX/AGC sessions, plus bounded cross cancellation | SWL controls both JTDX paths; the experimental decoder is optional |
+| `hybrid` | Independent WSJT-X+ with compatibility recovery and candidate retry, JTDX/noAGC and JTDX/AGC sessions, plus bounded cross cancellation | SWL controls both JTDX paths; the experimental decoder is optional |
 | `dx` | Target-related output from three-way observations and isolated target recovery | Recommended in the GUI for focused RX searches. Enter the target call, your own call and the RX frequency if known. |
 
 Hybrid and DX combine existing native capabilities in the orchestration layer.

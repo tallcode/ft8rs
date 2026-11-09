@@ -183,8 +183,8 @@ pub struct HybridSlotDecodeState(WsjtxPlusSlotState);
 
 fn wsjtx_session(config: &StreamDecodeConfig, primary: bool) -> WsjtxPlusSession {
     let mut config = config.clone_for_profile_wsjt_x();
-    // Only the experimental profile's primary leg can run candidate retries.
-    if primary && config.hybrid_experiment {
+    // The primary leg can retry candidates with or without the DSP experiment.
+    if primary && config.wsjtx_plus_candidate_retry {
         config.profile = DecodeProfile::WsjtxPlus;
     }
     config.wsjtx_plus_compatibility =

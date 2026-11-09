@@ -14,6 +14,9 @@ use fontique::{
 use crate::i18n::{Language, Locale};
 
 const LATIN_SAMPLE: &str = "Callsign Grid RX WSJT-X JTDX Hybrid DX 0123456789 +-<>?";
+pub const BODY_FONT_SIZE: f32 = 13.0;
+pub const SMALL_FONT_SIZE: f32 = 11.0;
+
 fn chinese_sample() -> &'static str {
     static SAMPLE: LazyLock<String> = LazyLock::new(|| {
         include_str!("i18n.rs")
@@ -98,7 +101,7 @@ pub fn install(ctx: &egui::Context) -> FontSupport {
     // normal style and weight, just like CSS font-weight: normal.
     let mut collection = Collection::new(CollectionOptions::default());
     let mut cache = SourceCache::new(SourceCacheOptions::default());
-    let (definitions, support) = select_fonts(&mut collection, &mut cache);
+    let (definitions, support) = select_fonts(&mut collection, &mut cache, ctx.pixels_per_point());
     // Only install validated results; unchecked providers could reintroduce a
     // font that advertises characters but cannot be drawn by this renderer.
     ctx.set_font_providers(Vec::new());
@@ -109,6 +112,7 @@ pub fn install(ctx: &egui::Context) -> FontSupport {
 fn select_fonts(
     collection: &mut Collection,
     cache: &mut SourceCache,
+    _pixels_per_point: f32,
 ) -> (FontDefinitions, FontSupport) {
     let mut definitions = FontDefinitions::default();
     if let Some(data) = find_font(collection, cache, LATIN, LATIN_SAMPLE, false) {
@@ -126,7 +130,7 @@ fn select_fonts(
     };
     #[cfg(target_os = "windows")]
     if chinese {
-        align_latin_with_chinese(&mut definitions);
+        align_latin_with_chinese(&mut definitions, _pixels_per_point);
     }
     (definitions, FontSupport { chinese })
 }
@@ -237,27 +241,69 @@ fn balance_line_gap(data: &mut FontData) {
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn align_latin_with_chinese(definitions: &mut FontDefinitions) {
+fn align_latin_with_chinese(definitions: &mut FontDefinitions, pixels_per_point: f32) {
     // Measure the actual font pair through egui. A larger sample reduces
     // rounding error before converting the correction to a fraction of an em.
     const SIZE: f32 = 64.0;
-    let ctx = egui::Context::default();
-    ctx.set_fonts(definitions.clone());
-    let mut centers = None;
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
-        let galley = ui.painter().layout_no_wrap(
-            "中田国目 WSJT-X 0123456789".to_owned(),
-            egui::FontId::monospace(SIZE),
-            egui::Color32::BLACK,
-        );
-        centers = mixed_ink_centers(&galley);
-    });
-    if let Some((latin, chinese)) = centers {
-        let name = &definitions.families[&FontFamily::Monospace][0];
-        if let Some(data) = definitions.font_data.get_mut(name) {
-            Arc::make_mut(data).tweak.y_offset_factor += (chinese - latin) / SIZE;
+    let Some(correction) = mixed_ink_offset(
+        definitions,
+        pixels_per_point,
+        &[("中田国目 WSJT-X 0123456789", SIZE)],
+    ) else {
+        return;
+    };
+    let name = definitions.families[&FontFamily::Monospace][0].clone();
+    if let Some(data) = definitions.font_data.get_mut(&name) {
+        Arc::make_mut(data).tweak.y_offset_factor += correction / SIZE;
+    }
+
+    // Measure the remaining gap at the actual UI sizes after grid fitting.
+    // A fixed offset from these samples avoids amplifying small-size rounding.
+    let samples = [
+        (
+            Locale::Chinese
+                .text("Merges WSJT-X decodes with the local ones to compare sensitivity."),
+            SMALL_FONT_SIZE,
+        ),
+        (Locale::Chinese.text("only WSJT-X"), SMALL_FONT_SIZE),
+        (Locale::Chinese.text("Listen to UDP"), BODY_FONT_SIZE),
+    ];
+    if let Some(correction) = mixed_ink_offset(definitions, pixels_per_point, &samples) {
+        if let Some(data) = definitions.font_data.get_mut(&name) {
+            Arc::make_mut(data).tweak.y_offset += correction;
         }
     }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn mixed_ink_offset(
+    definitions: &FontDefinitions,
+    pixels_per_point: f32,
+    samples: &[(&str, f32)],
+) -> Option<f32> {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(definitions.clone());
+    let mut input = egui::RawInput::default();
+    input
+        .viewports
+        .get_mut(&input.viewport_id)?
+        .native_pixels_per_point = Some(pixels_per_point);
+    let mut sum = 0.0;
+    let mut count = 0;
+    let _ = ctx.run_ui(input, |ui| {
+        for &(text, size) in samples {
+            let galley = ui.painter().layout_no_wrap(
+                text.to_owned(),
+                egui::FontId::monospace(size),
+                egui::Color32::BLACK,
+            );
+            if let Some((latin, chinese)) = mixed_ink_centers(&galley) {
+                sum += chinese - latin;
+                count += 1;
+            }
+        }
+    });
+    (count > 0).then(|| sum / count as f32)
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -449,7 +495,7 @@ mod tests {
                     .register_fonts(fontique::Blob::new(Arc::new(bytes)), None)
                     .is_empty());
             }
-            let (definitions, support) = select_fonts(&mut collection, &mut cache);
+            let (definitions, support) = select_fonts(&mut collection, &mut cache, 1.0);
             assert!(!support.chinese);
             assert_eq!(support.locale(Locale::Chinese), Locale::English);
             assert_eq!(
@@ -478,7 +524,9 @@ mod tests {
     fn installed_fonts_center_chinese_and_latin_in_the_same_line() {
         let mut collection = Collection::new(CollectionOptions::default());
         let mut cache = SourceCache::new(SourceCacheOptions::default());
-        let (definitions, support) = select_fonts(&mut collection, &mut cache);
+        let (definitions, support) = select_fonts(&mut collection, &mut cache, 1.0);
+        let latin = &definitions.families[&FontFamily::Monospace][0];
+        let latin_offset = definitions.font_data[latin].tweak.y_offset;
         let ctx = egui::Context::default();
         ctx.set_fonts(definitions);
         for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -489,7 +537,7 @@ mod tests {
                     let latin = ui.painter().layout_no_wrap(
                         "WSJT-X".to_owned(), font.clone(), egui::Color32::BLACK,
                     );
-                    assert!((latin.mesh_bounds.center().y - latin.size().y * 0.5).abs() <= 1.01,
+                    assert!((latin.mesh_bounds.center().y - latin_offset - latin.size().y * 0.5).abs() <= 1.01,
                         "Latin ink off center at {scale}x / {size}pt: {:?}", latin.mesh_bounds);
                     if !support.chinese { continue; }
                     let chinese = ui.painter().layout_no_wrap(
@@ -501,7 +549,7 @@ mod tests {
                         "仅 WSJT-X".to_owned(), font, egui::Color32::BLACK,
                     );
                     let (latin, chinese) = mixed_ink_centers(&mixed).unwrap();
-                    assert!((chinese - latin).abs() <= 1.01,
+                    assert!((chinese - latin + latin_offset).abs() <= 1.01,
                         "Mixed text misaligned at {scale}x / {size}pt: CJK={chinese}, Latin={latin}");
                 }
             });
@@ -512,47 +560,30 @@ mod tests {
     fn windows_alignment_corrects_raised_latin_in_settings_text() {
         let mut collection = Collection::new(CollectionOptions::default());
         let mut cache = SourceCache::new(SourceCacheOptions::default());
-        let (mut definitions, support) = select_fonts(&mut collection, &mut cache);
+        let (mut definitions, support) = select_fonts(&mut collection, &mut cache, 1.0);
         if !support.chinese {
             return;
         }
         let latin = &definitions.families[&FontFamily::Monospace][0];
         Arc::make_mut(definitions.font_data.get_mut(latin).unwrap())
             .tweak
-            .y_offset_factor -= 0.16;
+            .y_offset -= 2.0;
 
-        let gaps = |definitions| {
-            let ctx = egui::Context::default();
-            ctx.set_fonts(definitions);
-            let mut gaps = Vec::new();
-            for scale in [1.0, 1.25, 1.5, 2.0] {
-                ctx.set_pixels_per_point(scale);
-                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    for (text, size) in [
-                        ("使用声道 1", 11.0),
-                        ("合并 WSJT-X 与本地解码结果", 11.0),
-                        ("监听 WSJT-X", 13.0),
-                    ] {
-                        let galley = ui.painter().layout_no_wrap(
-                            text.to_owned(),
-                            egui::FontId::monospace(size),
-                            egui::Color32::BLACK,
-                        );
-                        let (latin, chinese) = mixed_ink_centers(&galley).unwrap();
-                        gaps.push((chinese - latin).abs());
-                    }
-                });
-            }
-            gaps
-        };
-        let before = gaps(definitions.clone());
-        align_latin_with_chinese(&mut definitions);
-        let after = gaps(definitions);
-        assert!(
-            after.iter().all(|&gap| gap <= 1.0)
-                && after.iter().sum::<f32>() < before.iter().sum::<f32>(),
-            "Latin/CJK center gap before {before:?}, after {after:?}"
-        );
+        let samples = [
+            ("使用声道 1", SMALL_FONT_SIZE),
+            ("合并 WSJT-X 与本地解码结果以对比灵敏度。", SMALL_FONT_SIZE),
+            ("监听 UDP", BODY_FONT_SIZE),
+        ];
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let before = mixed_ink_offset(&definitions, scale, &samples).unwrap();
+            let mut aligned = definitions.clone();
+            align_latin_with_chinese(&mut aligned, scale);
+            let after = mixed_ink_offset(&aligned, scale, &samples).unwrap();
+            assert!(
+                after.abs() <= 0.5 && after.abs() < before.abs(),
+                "Latin/CJK center gap at {scale}x: before {before}, after {after}"
+            );
+        }
     }
 
     #[test]
@@ -560,7 +591,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut collection = Collection::new(CollectionOptions::default());
         let mut cache = SourceCache::new(SourceCacheOptions::default());
-        let (definitions, support) = select_fonts(&mut collection, &mut cache);
+        let (definitions, support) = select_fonts(&mut collection, &mut cache, 1.0);
         if let Some(data) = definitions.font_data.get("system-chinese") {
             eprintln!("Selected Chinese face: {}", font_description(data));
         }

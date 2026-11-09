@@ -532,7 +532,10 @@ impl SlotDelivery {
                     config.profile,
                     DecodeProfile::Wsjtx | DecodeProfile::WsjtxPlus
                 ) && record.provenance.is_wsjtx_history_seed();
-                if config.profile == DecodeProfile::Hybrid || native_seed {
+                // A Plus retry can be displayed without seeding the next Hybrid a7 pass.
+                let hybrid_seed = config.profile == DecodeProfile::Hybrid
+                    && record.provenance != StreamDecodeProvenance::CandidateRetry;
+                if hybrid_seed || native_seed {
                     let frequency =
                         if native_seed && record.provenance == StreamDecodeProvenance::A8List {
                             config.nfqso
@@ -814,6 +817,48 @@ mod tests {
         StreamDecodeProvenance::CandidateRetry,
         StreamDecodeProvenance::Experiment,
     ];
+
+    #[test]
+    fn hybrid_candidate_retry_is_displayed_without_seeding_a7() {
+        let config = StreamDecodeConfig {
+            profile: DecodeProfile::Hybrid,
+            ..Default::default()
+        };
+        let mut delivery = SlotDelivery::default();
+        let mut history = WorkerHistory::default();
+        let (events, received) = mpsc::channel();
+        let timestamp = SlotTimestamp::parse("261030_120000").unwrap();
+        for (message, provenance) in [
+            ("CQ K1ABC FN42", StreamDecodeProvenance::Unknown),
+            ("CQ W9XYZ EN50", StreamDecodeProvenance::CandidateRetry),
+        ] {
+            delivery
+                .forward(
+                    Response::Decode {
+                        timestamp: timestamp.format(),
+                        freq: 1_200.0,
+                        dt: 0.2,
+                        snr: -18.0,
+                        sync: 1.0,
+                        message: message.into(),
+                        tones: vec![0; 79],
+                        provenance,
+                        stage: DecodeStage::Final,
+                    },
+                    &mut history,
+                    &config,
+                    &events,
+                )
+                .unwrap();
+            assert!(matches!(
+                received.try_recv().unwrap(),
+                EngineEvent::Decode(record) if record.provenance == provenance
+            ));
+        }
+        let snapshot = ron::to_string(history.a7_for_slot(&timestamp)).unwrap();
+        assert!(snapshot.contains("CQ K1ABC FN42"));
+        assert!(!snapshot.contains("CQ W9XYZ EN50"));
+    }
 
     fn fixture(mode: &str) -> Result<Worker, String> {
         if mode == "native" {

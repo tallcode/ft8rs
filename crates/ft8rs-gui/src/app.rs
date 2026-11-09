@@ -13,7 +13,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Color32, RichText};
 
-use crate::fonts::{install as install_fonts, FontSupport, CHINESE_UNAVAILABLE};
+use crate::fonts::{
+    install as install_fonts, FontSupport, BODY_FONT_SIZE, CHINESE_UNAVAILABLE, SMALL_FONT_SIZE,
+};
 use crate::i18n::{Language, Locale};
 
 use ft8rs::stream::session::{DecodeProfile, StreamDecodeConfig, StreamDecodeProvenance};
@@ -1419,7 +1421,11 @@ impl Ft8rsApp {
                     self.display_items = display_items(&self.rows, self.display_filters);
                 }
                 ui.add_space(6.0);
-                ui.label(RichText::new(tr("Decoder changes take effect at the next slot.")).weak());
+                ui.label(
+                    RichText::new(tr("Decoder changes take effect at the next slot."))
+                        .small()
+                        .weak(),
+                );
             }
         }
         commit
@@ -3068,9 +3074,9 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
     // Monospace everywhere (matching the decode table).
     style.text_styles = [
         (TextStyle::Heading, FontId::new(17.0, Monospace)),
-        (TextStyle::Body, FontId::new(13.0, Monospace)),
+        (TextStyle::Body, FontId::new(BODY_FONT_SIZE, Monospace)),
         (TextStyle::Button, FontId::new(13.0, Monospace)),
-        (TextStyle::Small, FontId::new(11.0, Monospace)),
+        (TextStyle::Small, FontId::new(SMALL_FONT_SIZE, Monospace)),
         (TextStyle::Monospace, FontId::new(13.0, Monospace)),
     ]
     .into();

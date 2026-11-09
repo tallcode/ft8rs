@@ -446,13 +446,7 @@ impl A7Match {
             return None;
         }
 
-        // AP decode s8 has WSJT-X scale (no /1000).
-        let arg = self.power / xbase / 3e6 - 1.0;
-        let snr = if arg > 0.0 {
-            (-25.0f64).max(10.0 * arg.log10() - 27.0)
-        } else {
-            -25.0
-        };
+        let snr = template_snr(self.power, xbase);
         Some(ApDecodeResult {
             msg: self.msg,
             freq,
@@ -460,6 +454,16 @@ impl A7Match {
             snr,
             nharderrors: self.nharderrors,
         })
+    }
+}
+
+pub(super) fn template_snr(power: f64, xbase: f64) -> f64 {
+    // AP decode s8 has WSJT-X scale (no /1000).
+    let arg = power / xbase / 3e6 - 1.0;
+    if arg > 0.0 {
+        (-25.0f64).max(10.0 * arg.log10() - 27.0)
+    } else {
+        -25.0
     }
 }
 
@@ -679,7 +683,7 @@ fn build_one_table() -> &'static [[bool; 9]; 512] {
     })
 }
 
-fn ap_downsample(downsample_cache: &ApDownsampleCache, f0: f64) -> (Vec<f64>, Vec<f64>) {
+pub(super) fn ap_downsample(downsample_cache: &ApDownsampleCache, f0: f64) -> (Vec<f64>, Vec<f64>) {
     let mut cd0_re = vec![0.0f64; NFFT2];
     let mut cd0_im = vec![0.0f64; NFFT2];
     let mut shift_re = vec![0.0f64; NFFT2];

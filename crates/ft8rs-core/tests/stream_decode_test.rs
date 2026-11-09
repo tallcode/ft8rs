@@ -236,7 +236,7 @@ fn test_pure_wsjtx_plus_matches_wsjtx_recordings() {
 #[ignore = "serial optimized WSJT-X+ recording retention gate"]
 fn test_wsjtx_plus_preserves_wpcr_recording_baseline() {
     assert_release_mode();
-    for (file, nfa, expected_count) in [("210703_133430", 100.0, 21), ("230208_140300", 200.0, 446)]
+    for (file, nfa, expected_count) in [("210703_133430", 100.0, 21), ("230208_140300", 200.0, 468)]
     {
         let baseline = parse_baseline_with(&format!("tests/ft8/{file}.csv"), |extra| {
             !extra.split('|').any(|mode| mode.trim() == "WPcr")
@@ -251,13 +251,28 @@ fn test_wsjtx_plus_preserves_wpcr_recording_baseline() {
         if file == "230208_140300" {
             retry_targets.extend(
                 [
+                    (2, "OY1DZ DL5PH +02"),
+                    (3, "KB3Z DD0ZL JO40"),
                     (5, "FO0L F4GYE JN07"),
+                    (5, "IW6ON DL8GBR RRR"),
                     (5, "PD0YL OY1DZ -15"),
                     (5, "RJ3DC OE9GWV +06"),
+                    (6, "CQ OH5NBJ KP41"),
                     (6, "N1F US7UK -09"),
                     (7, "CQ M0BEN IO92"),
                     (7, "CQ IZ7MFY JN81"),
+                    (7, "G6XX IW1ALW R-06"),
+                    (8, "4S6NCH KK1F FN31"),
+                    (9, "CQ IZ7MFY JN81"),
+                    (10, "CQ F1PPH JN07"),
+                    (10, "CQ OH5NBJ KP41"),
+                    (12, "CQ F1PPH JN07"),
+                    (12, "CQ LZ1MNW KN21"),
+                    (13, "CQ 4X4ZP KM72"),
+                    (14, "CU3HN YC3BMX OI62"),
+                    (16, "CQ LZ1MNW KN21"),
                     (16, "F1MLZ UA3QNA -04"),
+                    (17, "VE7ON IU0IFR JN61"),
                 ]
                 .map(|(slot, msg)| (slot, msg.to_owned())),
             );
@@ -990,17 +1005,29 @@ fn test_hybrid_profile_long_audio_count() {
     });
     let start = SlotTimestamp::parse("230208_140300").unwrap();
     let mut total = 0usize;
+    let mut retried_known_message = false;
 
     for seg in 0..nseg {
         let timestamp = start.add_seconds((seg * 15) as i64);
         let data = slot_samples(&samples, seg * sps, sps);
-        total += decoder.decode_slot_at(&timestamp, &data).len();
+        total += decoder
+            .decode_slot_streaming_with_provenance_at(&timestamp, &data, |row| {
+                retried_known_message |= seg == 16
+                    && row.provenance == StreamDecodeProvenance::CandidateRetry
+                    && norm(&row.decode.msg) == "F1MLZ UA3QNA -04";
+                Ok(())
+            })
+            .unwrap();
     }
 
     // Keep the original baseline floor while allowing isolated recovery rows.
     assert!(
         total >= HYBRID_LONG_TARGET_COUNT,
         "HYBRID LONG sensitivity decreased: {total}"
+    );
+    assert!(
+        retried_known_message,
+        "default Hybrid must recover the 14:07:00 reference through candidate retry"
     );
 }
 

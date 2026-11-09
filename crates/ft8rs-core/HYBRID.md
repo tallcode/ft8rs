@@ -1,8 +1,9 @@
 # Hybrid Decode
 
-`--profile hybrid` combines independent WSJT-X+ compatibility, JTDX/noAGC and
-JTDX/AGC sessions and one bounded round of cross cancellation. The WSJT-X leg
-uses Plus compatibility recovery. Cross cancellation uses the Plus subtractor
+`--profile hybrid` combines independent WSJT-X+, JTDX/noAGC and JTDX/AGC
+sessions and one bounded round of cross cancellation. The primary WSJT-X leg
+uses Plus compatibility recovery (`Pc`) and final-stage candidate retry (`Pr`).
+Cross cancellation uses the Plus subtractor
 and re-decodes with the Plus base search when JTDX provides the seeds. Hybrid also
 offers an opt-in private ft8rs specialist branch with Plus BP/OSD.
 
@@ -13,12 +14,12 @@ Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md).
 `--profile hybrid --hybrid-experiment` enables the ft8rs single-slot receive DSP.
 It is disabled by default and has no standalone profile or public decoder API.
 The GUI exposes **Experimental decoder** in Hybrid's Decode settings.
-With the experimental mode on, the WSJT-X+ leg uses the same compatibility
-recovery (`Pc`) and candidate retry (`Pr`) as standalone Plus. The recording
-marker for both options enabled is `Hecr`. The two Plus switches also apply
-to this mode. Hybrid starts downstream work when the Plus baseline and
-compatibility callbacks finish. Retry results stay out of SIC inputs and
-passive evidence.
+The recording marker with the experimental decoder and both Plus recovery
+steps enabled is `Hecr`. Hybrid starts downstream work when the Plus baseline
+and compatibility callbacks finish. Final-stage retry results stay out of SIC
+inputs, passive evidence and the live a7 history. Both Hybrid modes run the
+standalone Plus weak-CQ search after the local and adaptive retry, with a
+private bank for soft information from the preceding same-sequence slot.
 See [specialist implementation](src/decode/experiment/README.md)
 for the independent front end, soft metrics, conditional waveform admission,
 single residual search and known limitations.
@@ -247,7 +248,7 @@ a short hash or similar text alone as identity evidence.
 
 ### Reviewed continuous-recording comparison (2026-10-30)
 
-The homepage chart uses the same 19-slot WAV (SHA-256
+The October 30 homepage chart used the 19-slot WAV (SHA-256
 `5b4efad0432b7e51a17645ec2723306bf1acd58c29994883b61d471f9841bc2e`),
 one persistent file session per mode, 200–3000 Hz, one JTDX partition and the
 historical `ALLCALL7.TXT.2022` database (SHA-256

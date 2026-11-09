@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 348" role="img" aria-labelledby="title description">
   <title id="title">Reviewed output rows from a real recording</title>
-  <desc id="description">WSJT-X 434, WSJT-X+ 446, JTDX 455, Hybrid 478, Hybrid with experimental decoding 488. WSJT-X+ has compatibility recovery and candidate retry enabled.</desc>
+  <desc id="description">WSJT-X 434, WSJT-X+ 468, JTDX 455, Hybrid 486, Hybrid + exp 488. Counts include reference matches and known errors.</desc>
   <style>
     text { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Liberation Sans", Arial, sans-serif; fill: #243342; }
     .label { font-size: 17px; font-weight: 600; }
@@ -14,20 +14,20 @@
     <rect x="205" y="188" width="400" height="34" rx="6" fill="#f0f2f4"/>
     <rect x="205" y="240" width="400" height="34" rx="6" fill="#f0f2f4"/>
     <rect x="205" y="32" width="289.3" height="34" rx="6" fill="#60778e"/>
-    <rect x="205" y="84" width="297.3" height="34" rx="6" fill="#2563eb"/>
+    <rect x="205" y="84" width="312.0" height="34" rx="6" fill="#2563eb"/>
     <rect x="205" y="136" width="303.3" height="34" rx="6" fill="#7e96a6"/>
-    <rect x="205" y="188" width="318.7" height="34" rx="6" fill="#247a86"/>
+    <rect x="205" y="188" width="324.0" height="34" rx="6" fill="#247a86"/>
     <rect x="205" y="240" width="325.3" height="34" rx="6" fill="#d45e34"/>
     <text class="label" x="0" y="55">WSJT-X</text>
     <text class="label" x="0" y="107">WSJT-X+</text>
     <text class="label" x="0" y="159">JTDX</text>
     <text class="label" x="0" y="211">Hybrid</text>
     <text class="label" x="0" y="263">Hybrid + exp</text>
-    <text class="value" x="504" y="55">434</text>
-    <text class="value" x="512" y="107">446</text>
-    <text class="value" x="518" y="159">455</text>
-    <text class="value" x="534" y="211">478</text>
-    <text class="value" x="540" y="263">488</text>
+    <text class="value" x="504.3" y="55">434</text>
+    <text class="value" x="527.0" y="107">468</text>
+    <text class="value" x="518.3" y="159">455</text>
+    <text class="value" x="539.0" y="211">486</text>
+    <text class="value" x="540.3" y="263">488</text>
     <path d="M205 291H605" stroke="#d2d8dd"/>
     <path d="M205 291v6M272 291v6M338 291v6M405 291v6M472 291v6M538 291v6M605 291v6" stroke="#d2d8dd"/>
     <text class="axis" x="205" y="317" text-anchor="middle">0</text>

@@ -102,9 +102,9 @@ base decode. **Candidate retry** checks nearby alignments first, then spends a s
 on promising time and frequency offsets for weak or overlapping signals. Both run
 automatically in the GUI and when using `--profile wsjtx-plus` on the CLI.
 
-Hybrid runs three paths: WSJT-X+ with compatibility recovery, JTDX/noAGC and
-JTDX/AGC. Plus compatibility results use the `Pc` marker and are published after
-the baseline and cross-cancellation results.
+Hybrid runs three paths: WSJT-X+ with compatibility recovery and candidate
+retry, JTDX/noAGC and JTDX/AGC. The WSJT-X+ leg runs both recovery steps with
+the experimental decoder either off or on.
 **Cross cancellation** runs automatically. SWL controls both JTDX paths together.
 The two JTDX variants are one algorithm family for evidence accounting. Enable
 the experimental decoder to use the **Hybrid + exp** mode from the benchmarks.
@@ -125,8 +125,12 @@ rows supply weak hints rather than independent confirmation.
 Plus compatibility and candidate retry results carry `Pc` and `Pr` in the
 GUI and CLI. The GUI also uses `sic` for isolated cancellation recovery,
 `ctx` for DX context recovery and `exp` for the opt-in Hybrid experimental receiver.
-Standalone WSJT-X+ also uses `Pr` for standard CQ messages recovered by its
-candidate retry. This search can use audio from the same sequence 30 seconds earlier.
+WSJT-X+ and the primary path in both Hybrid modes also use `Pr` for standard
+CQ messages recovered by the same weak-CQ search. This search can use audio
+from the same sequence 30 seconds earlier.
+With AP enabled, standalone WSJT-X+ can also retry an intact standard-call
+codeword heard on the same sequence 30–120 seconds earlier, checking the data
+symbols in the current slot before displaying it as `Pr`.
 WSJT-X results carry the successful AP subtype (`a1` through `a8`) when
 available. Standalone JTDX AP results use `ap` because their masks have a
 different numbering scheme. Unknown provenance has no visible tag.

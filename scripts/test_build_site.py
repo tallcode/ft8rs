@@ -85,6 +85,26 @@ class BuildSiteTests(unittest.TestCase):
             self.assertIn('src="language.js"', (output / "index.html").read_text())
             self.assertTrue((output / "language.js").is_file())
 
+    def test_recording_table_counts_only_reference_matches_and_known_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            build(published_release(), output)
+            headers = {
+                "zh": ["模式", "总数", "参考命中", "已知误码"],
+                "en": ["Mode", "Total", "Reference matches", "Known errors"],
+            }
+            for language, expected in headers.items():
+                with self.subTest(language=language):
+                    html = (output / language / "index.html").read_text(encoding="utf-8")
+                    table = re.search(r'<table class="comparison-table">(.*?)</table>', html, re.S)
+                    self.assertIsNotNone(table)
+                    self.assertEqual(re.findall(r'<th scope="col">([^<]+)</th>', table[1]), expected)
+                    rows = re.findall(r'<tr><th scope="row">[^<]+</th>(.*?)</tr>', table[1])
+                    self.assertEqual(len(rows), 5)
+                    for row in rows:
+                        total, matches, errors = map(int, re.findall(r"<td>(\d+)</td>", row))
+                        self.assertEqual(total, matches + errors)
+
     def test_unpublished_and_prerelease_versions_cannot_replace_existing_page(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)

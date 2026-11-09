@@ -171,7 +171,7 @@ pub struct StreamDecodeConfig {
     /// Search for legacy RR73 and CQ in WSJT-X+ and experimental Hybrid.
     #[serde(default = "default_enabled")]
     pub wsjtx_plus_compatibility: bool,
-    /// Retry final-stage candidates in WSJT-X+ and experimental Hybrid.
+    /// Retry final-stage candidates in WSJT-X+ and the primary Hybrid leg.
     #[serde(default = "default_enabled")]
     pub wsjtx_plus_candidate_retry: bool,
     pub nfa: f64,
