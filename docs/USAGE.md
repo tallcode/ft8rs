@@ -26,6 +26,13 @@ stop control while aligning or monitoring. The message list shows UTC, SNR, DT,
 audio frequency and message; new rows appear without waiting for every worker.
 Right-click the list to clear it.
 
+**Settings → Advanced → Hide contest messages** hides local-only Field Day,
+RTTY Roundup, and EU VHF exchanges identified by FT8 types 0.3, 0.4, 3, and 5.
+It also hides decoded exchanges containing a callsign ending in `/R` or a
+standalone `R` immediately followed by a four-character grid. Directed CQ
+modifiers and `/P` alone do not trigger the filter. UDP comparison rows and
+outgoing decode reports remain available.
+
 The main-window **Callsign**, **Grid** and **RX** fields describe the target and
 focused receive frequency. They are separate from your own station settings.
 Double-clicking a decoded row fills target context and frequency. In DX, a target

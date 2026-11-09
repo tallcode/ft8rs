@@ -2326,26 +2326,50 @@ fn push_display_row(items: &mut Vec<DisplayItem>, rows: &[Row], index: usize) {
     items.push(DisplayItem::Decode(index));
 }
 
-fn filterable_message(tones: &[i32; 79]) -> Option<FilterableMessage> {
+fn ft8_payload(tones: &[i32; 79]) -> Option<[u8; 77]> {
     const COSTAS: [i32; 7] = [3, 1, 4, 0, 6, 5, 2];
     if tones[..7] != COSTAS || tones[36..43] != COSTAS || tones[72..] != COSTAS {
         return None;
     }
 
-    // The first data block starts at tone 7. Its 24th through 26th
-    // symbols carry the systematic payload's subtype (bits 71..74) and type
-    // (bits 74..77). Undo the FT8 Gray mapping before extracting them.
+    // All 77 payload bits are systematic and fit in the first data block.
     const UNGRAY: [u8; 8] = [0, 1, 3, 2, 6, 4, 5, 7];
-    let first = *UNGRAY.get(tones[30] as usize)?;
-    let middle = *UNGRAY.get(tones[31] as usize)?;
-    let last = *UNGRAY.get(tones[32] as usize)?;
-    let subtype = ((first & 1) << 2) | (middle >> 1);
-    let kind = ((middle & 1) << 2) | (last >> 1);
-    match (kind, subtype) {
-        (0, 3 | 4) | (3 | 5, _) => Some(FilterableMessage::Contest),
-        (0, 5) => Some(FilterableMessage::Telemetry),
+    let mut payload = [0; 77];
+    for (bits, &tone) in payload.chunks_mut(3).zip(&tones[7..33]) {
+        let symbol = *UNGRAY.get(tone as usize)?;
+        for (bit, shift) in bits.iter_mut().zip((0..3).rev()) {
+            *bit = (symbol >> shift) & 1;
+        }
+    }
+    Some(payload)
+}
+
+fn filterable_message(payload: Option<&[u8; 77]>, message: &str) -> Option<FilterableMessage> {
+    let message_type = payload.map(|bits| {
+        let subtype = (bits[71] << 2) | (bits[72] << 1) | bits[73];
+        let kind = (bits[74] << 2) | (bits[75] << 1) | bits[76];
+        (kind, subtype)
+    });
+    match message_type {
+        Some((0, 0)) => None, // Free text can contain either pattern literally.
+        Some((0, 5)) => Some(FilterableMessage::Telemetry),
+        Some((0, 3 | 4) | (3 | 5, _)) => Some(FilterableMessage::Contest),
+        _ if matches_contest_filter(message) => Some(FilterableMessage::Contest),
         _ => None,
     }
+}
+
+fn matches_contest_filter(message: &str) -> bool {
+    let mut words = message_body_tokens(message).peekable();
+    while let Some(word) = words.next() {
+        let call = word.trim_matches(['<', '>']);
+        if (call.len() > 2 && call.ends_with("/R"))
+            || (word == "R" && words.peek().is_some_and(|grid| is_grid4(grid)))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn separator_label(gen: u64) -> String {
@@ -2399,8 +2423,65 @@ fn format_ms_time(ms: u32) -> String {
     format!("{:02}{:02}{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
+/// JTDX can remove brackets around resolved hashes. Unpack without a callbook
+/// to find their positions, then keep the calls already resolved by the decoder.
+fn local_display_message(message: &str, payload: Option<&[u8; 77]>) -> String {
+    use ft8rs::decode::lib_jtdx::ft8v2::packjt77::unpack77;
+
+    let body = clean_message(message);
+    let Some(template) = payload.and_then(|bits| unpack77(bits, None)) else {
+        return body;
+    };
+    if !template.contains("<...>") {
+        return body;
+    }
+
+    let words: Vec<_> = body.split_whitespace().collect();
+    let template: Vec<_> = template.split_whitespace().collect();
+    if let Some(restored) = restore_hash_brackets(&words, &template) {
+        return restored;
+    }
+
+    // JTDX can emit the two legs of a compound transmission as separate rows.
+    let restored = match template.as_slice() {
+        [first, "RR73;", second, hash, report] => {
+            restore_hash_brackets(&words, &[*first, *hash, "RR73"])
+                .or_else(|| restore_hash_brackets(&words, &[*second, *hash, *report]))
+        }
+        ["TU;", _, second, ..] => restore_hash_brackets(&words, &["DE", *second, "TU"])
+            .or_else(|| restore_hash_brackets(&words, &template[1..])),
+        _ => None,
+    };
+    restored.unwrap_or(body)
+}
+
+fn restore_hash_brackets(words: &[&str], template: &[&str]) -> Option<String> {
+    if words.len() != template.len() {
+        return None;
+    }
+    words
+        .iter()
+        .zip(template)
+        .map(|(&word, &field)| match field {
+            "<...>" if word.starts_with('<') && word.ends_with('>') => Some(word.into()),
+            "<...>"
+                if word.len() >= 3
+                    && word.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'/') =>
+            {
+                Some(format!("<{word}>"))
+            }
+            _ if word == field => Some(word.into()),
+            _ => None,
+        })
+        .collect::<Option<Vec<String>>>()
+        .map(|tokens| tokens.join(" "))
+}
+
 /// Keep all annotations supplied locally, with provenance in the trailing column.
-fn local_decode_text(record: &ft8rs_engine::protocol::DecodeRecord) -> String {
+fn local_decode_text(
+    record: &ft8rs_engine::protocol::DecodeRecord,
+    payload: Option<&[u8; 77]>,
+) -> String {
     let row = &record.row;
     let mut annotations: Vec<_> = row
         .msg
@@ -2417,7 +2498,7 @@ fn local_decode_text(record: &ft8rs_engine::protocol::DecodeRecord) -> String {
         row.snr.round() as i32,
         row.dt,
         row.freq.round() as i64,
-        clean_message(&row.msg),
+        local_display_message(&row.msg, payload),
         annotations.join(" "),
     )
 }
@@ -2524,14 +2605,15 @@ fn decode_row(
 }
 
 fn local_decode_row(record: ft8rs_engine::protocol::DecodeRecord) -> Row {
+    let payload = ft8_payload(&record.row.itone);
     decode_row(
         record.timestamp.milliseconds_since_midnight() / 15_000,
         record.row.freq,
         record.row.dt,
-        local_decode_text(&record),
+        local_decode_text(&record, payload.as_ref()),
         norm_tokens(&record.row.msg),
         DecodeSource::Local,
-        filterable_message(&record.row.itone),
+        filterable_message(payload.as_ref(), &record.row.msg),
     )
 }
 
@@ -3288,7 +3370,7 @@ mod tests {
             hide_contest: true,
             hide_telemetry: true,
         };
-        let field_day = "K1ABC W9XYZ 6A WI";
+        let rover_cq = "CQ K1ABC/R FN42";
         let mut rows = Vec::new();
         let mut display = Vec::new();
         {
@@ -3301,7 +3383,7 @@ mod tests {
             ));
             batch.insert(row(
                 11,
-                field_day,
+                rover_cq,
                 DecodeSource::Local,
                 Some(FilterableMessage::Contest),
             ));
@@ -3335,7 +3417,7 @@ mod tests {
         }
         DecodeBatch::new(&mut rows, &mut display, 7.0, filters).insert(row(
             11,
-            field_day,
+            rover_cq,
             DecodeSource::External,
             None,
         ));
@@ -3381,9 +3463,153 @@ mod tests {
                 tones[sync..sync + 7].copy_from_slice(&[3, 1, 4, 0, 6, 5, 2]);
             }
             tones[30..33].copy_from_slice(&symbols);
-            assert_eq!(filterable_message(&tones), expected);
+            assert_eq!(
+                filterable_message(ft8_payload(&tones).as_ref(), ""),
+                expected
+            );
         }
-        assert_eq!(filterable_message(&[0; 79]), None);
+        assert_eq!(ft8_payload(&[0; 79]), None);
+    }
+
+    fn local_fixture_row(wire: &str, decoded: &str) -> Row {
+        use ft8rs::decode::lib_jtdx::ft8v2::packjt77::pack77;
+
+        const COSTAS: [i32; 7] = [3, 1, 4, 0, 6, 5, 2];
+        const GRAY: [i32; 8] = [0, 1, 3, 2, 5, 6, 4, 7];
+        let bits = pack77(wire);
+        let mut tones = [0; 79];
+        for sync in [0, 36, 72] {
+            tones[sync..sync + 7].copy_from_slice(&COSTAS);
+        }
+        for (tone, bits) in tones[7..33].iter_mut().zip(bits.chunks(3)) {
+            let symbol = (bits[0] << 2) | (bits[1] << 1) | bits.get(2).copied().unwrap_or(0);
+            *tone = GRAY[symbol as usize];
+        }
+        assert_eq!(ft8_payload(&tones).unwrap().as_slice(), bits);
+        local_decode_row(ft8rs_engine::protocol::DecodeRecord {
+            timestamp: ft8rs::SlotTimestamp::parse("120000").unwrap(),
+            row: ft8rs::stream::StreamDecodedMessage {
+                freq: 1002.0,
+                dt: 0.1,
+                snr: -20.0,
+                msg: decoded.into(),
+                sync: 0.0,
+                itone: tones,
+            },
+            provenance: StreamDecodeProvenance::Experiment,
+            stage: ft8rs_engine::protocol::DecodeStage::Final,
+        })
+    }
+
+    #[test]
+    fn hide_contest_matches_payload_types_rover_calls_and_acknowledged_grids() {
+        let filters = DisplayFilters {
+            hide_contest: true,
+            ..DisplayFilters::NONE
+        };
+        for (message, hidden) in [
+            ("CQ WU8JCF/R EN81", true),
+            ("K1ABC/R W9XYZ RR73", true),
+            ("<K1ABC/R> W9XYZ RR73", true),
+            ("BG5ATV WA7QSU R MO76", true),
+            ("W9XYZ K1ABC R RR99", true),
+            ("G4ABC/P PA9XYZ JO22", false),
+            ("PA9XYZ G4ABC/P R-10", false),
+            ("CQ G4ABC/P IO91", false),
+            ("PA9XYZ G4ABC/P R IO91", true),
+            ("K1ABC W9XYZ R 6A WI", true),
+            ("K1ABC W9XYZ R 32A EMA", true),
+            ("K1ABC W9XYZ R 579 MA", true),
+            ("<G4ABC/P> <PA9XYZ> R 580071 JO22DB", true),
+            ("CQ ZW5STAY/R", true),
+            ("CQ TEST K1ABC FN42", false),
+            ("CQ FD K1ABC FN42", false),
+            ("CQ RU K1ABC FN42", false),
+            ("CQ WW K1ABC FN42", false),
+            ("CQ TEST K1ABC/R FN42", true),
+            ("CQ FD K1ABC/R FN42", true),
+            ("CQ RU K1ABC/R FN42", true),
+            ("CQ WW K1ABC/R FN42", true),
+            ("CQ RU G4ABC/P IO91", false),
+            ("BG5ATV WA7QSU MO76", false),
+            ("BG5ATV WA7QSU R-10", false),
+            ("BG5ATV WA7QSU R+10", false),
+            ("BG5ATV WA7QSU RR73", false),
+            ("CQ POTA K1ABC FN42", false),
+            ("CQ 6W/IK2HKT", false),
+            ("TEST /R", false),
+            ("R MO76", false),
+        ] {
+            let row = local_fixture_row(message, message);
+            let mut rows = Vec::new();
+            let mut display = Vec::new();
+            DecodeBatch::new(&mut rows, &mut display, 7.0, filters).insert(row);
+            assert_eq!(display.is_empty(), hidden, "{message}");
+            assert_eq!(display, display_items(&rows, filters));
+            assert_eq!(display_items(&rows, DisplayFilters::NONE).len(), 2);
+        }
+        assert_eq!(
+            filterable_message(None, "BG5ATV WA7QSU R MO76 a7"),
+            Some(FilterableMessage::Contest)
+        );
+    }
+
+    #[test]
+    fn local_rows_restore_hash_brackets_from_the_received_payload() {
+        for (wire, decoded, expected) in [
+            (
+                "<6W/IK2HKT> JA5ARW PM64",
+                "6W/IK2HKT JA5ARW PM64",
+                "<6W/IK2HKT> JA5ARW PM64",
+            ),
+            (
+                "<6W/IK2HKT> JA5ARW PM64",
+                "<...> JA5ARW PM64",
+                "<...> JA5ARW PM64",
+            ),
+            ("CQ 6W/IK2HKT", "CQ 6W/IK2HKT", "CQ 6W/IK2HKT"),
+            (
+                "<JA5ARW> 6W/IK2HKT RR73",
+                "JA5ARW 6W/IK2HKT RR73",
+                "<JA5ARW> 6W/IK2HKT RR73",
+            ),
+            (
+                "JA5ARW <6W/IK2HKT> -12",
+                "JA5ARW 6W/IK2HKT -12",
+                "JA5ARW <6W/IK2HKT> -12",
+            ),
+            (
+                "K1ABC RR73; W9XYZ <KH1/KH7Z> -08",
+                "K1ABC KH1/KH7Z RR73",
+                "K1ABC <KH1/KH7Z> RR73",
+            ),
+            (
+                "K1ABC RR73; W9XYZ <KH1/KH7Z> -08",
+                "W9XYZ KH1/KH7Z -08",
+                "W9XYZ <KH1/KH7Z> -08",
+            ),
+            (
+                "<G4ABC/P> <PA9XYZ> R 580071 JO22DB",
+                "G4ABC/P <PA9XYZ> R 580071 JO22DB",
+                "<G4ABC/P> <PA9XYZ> R 580071 JO22DB",
+            ),
+            (
+                "<6W/IK2HKT> JA5ARW PM64",
+                "6W/IK2HKT W9XYZ PM64",
+                "6W/IK2HKT W9XYZ PM64",
+            ),
+            ("CQ W9XYZ/R EN37", "CQ W9XYZ/R EN37", "CQ W9XYZ/R EN37"),
+            (
+                "W9XYZ K1ABC R FN42",
+                "W9XYZ K1ABC R FN42",
+                "W9XYZ K1ABC R FN42",
+            ),
+        ] {
+            let row = local_fixture_row(wire, decoded);
+            assert_eq!(clean_message(&row.text[24..]), expected, "{wire}");
+            assert_eq!(row.tokens, norm_tokens(decoded));
+            assert!(row.text.ends_with(" exp"));
+        }
     }
 
     #[test]
@@ -3785,7 +4011,7 @@ mod tests {
                 stage: ft8rs_engine::protocol::DecodeStage::Final,
             };
             Row {
-                text: local_decode_text(&record),
+                text: local_decode_text(&record, None),
                 gen: 1,
                 freq: record.row.freq,
                 dt: record.row.dt,
