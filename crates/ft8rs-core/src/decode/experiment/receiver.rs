@@ -3,6 +3,8 @@
 //! This private module has no standalone profile, CallDB or persistent AP state.
 use super::ExperimentInput;
 use crate::stream::session::StreamDecodedMessage;
+#[path = "impulse.rs"]
+mod impulse;
 #[path = "waveform.rs"]
 mod waveform;
 use rustfft::{num_complex::Complex64 as C, FftPlanner};
@@ -18,6 +20,10 @@ const COSTAS: [usize; 7] = [3, 1, 4, 0, 6, 5, 2];
 // A declared 50% margin rounded upward gives 160. This is not a p-value.
 const MIN_SCORE: f64 = 160.0;
 const MAX_FEC: usize = 4096;
+const MAX_CANDIDATES: usize = 96;
+const PULSE_CANDIDATES: usize = 32;
+// Four hypotheses with four metrics each, plus eight coherent hypotheses.
+const MAX_FEC_PER_CANDIDATE: usize = 4 * 4 + 8;
 #[derive(Clone, Debug, Default)]
 pub struct ExperimentDiagnostics {
     pub fec_calls: usize,
@@ -25,6 +31,9 @@ pub struct ExperimentDiagnostics {
     pub rejected_rows: usize,
     pub accepted_rows: usize,
     pub residual_searches: usize,
+    /// Samples blanked or tapered in the terminal pulse recovery search.
+    pub impulse_blanked_samples: usize,
+    pub impulse_accepted_rows: usize,
     pub native_seed_candidates: usize,
     pub native_seed_models: usize,
     pub native_seed_rejections: usize,
@@ -621,7 +630,7 @@ fn discover(audio: &[f64], low: f64, high: f64) -> (Vec<Band>, Vec<Candidate>) {
             continue;
         }
         chosen.push(c);
-        if chosen.len() == 96 {
+        if chosen.len() == MAX_CANDIDATES {
             break;
         }
     }
@@ -702,13 +711,19 @@ fn refine_coherent(band: &Band, c: &Candidate) -> Vec<Candidate> {
     }
     out
 }
-fn search(audio: &[f64], low: f64, high: f64, budget: &mut Budget) -> Vec<Row> {
+fn search(
+    audio: &[f64],
+    low: f64,
+    high: f64,
+    candidate_limit: usize,
+    budget: &mut Budget,
+) -> Vec<Row> {
     if budget.exhausted() {
         return Vec::new();
     }
     let (bands, candidates) = discover(audio, low, high);
     let mut rows: Vec<Row> = Vec::new();
-    for (ci, c) in candidates.into_iter().enumerate() {
+    for (ci, c) in candidates.into_iter().take(candidate_limit).enumerate() {
         if budget.exhausted() {
             break;
         }
@@ -888,6 +903,25 @@ fn conditioned_audio(audio: &[f64], models: &[ExplainedSignal], candidate: &Row)
     }
     residual
 }
+fn emit_fit(
+    row: &Row,
+    fit: WaveformFit,
+    diagnostics: &mut ExperimentDiagnostics,
+    emit: &mut dyn FnMut(&StreamDecodedMessage),
+) {
+    emit(&StreamDecodedMessage {
+        freq: fit.f,
+        dt: fit.dt,
+        snr: 10.0 * (fit.score / (12.64 * 2500.0)).log10(),
+        msg: row.msg.clone(),
+        sync: fit.score,
+        itone: row.tones.expect("FEC tones"),
+    });
+    diagnostics.accepted_rows += 1;
+    diagnostics.accepted_scores.push(fit.score);
+    diagnostics.accepted_data_scores.push(fit.data_score);
+    diagnostics.accepted_methods.push(row.method.clone());
+}
 fn admit(
     audio: &[f64],
     ranking_audio: &[f64],
@@ -940,19 +974,7 @@ fn admit(
         row.dt = dt;
         let cleaned = cancel_smooth(&residual, &row, f, dt);
         let wave = residual.iter().zip(cleaned).map(|(&x, y)| x - y).collect();
-        let decode = StreamDecodedMessage {
-            freq: f,
-            dt,
-            snr: 10.0 * (score / (12.64 * 2500.0)).log10(),
-            msg: row.msg.clone(),
-            sync: score,
-            itone: row.tones.expect("FEC tones"),
-        };
-        emit(&decode);
-        budget.diagnostics.accepted_rows += 1;
-        budget.diagnostics.accepted_scores.push(score);
-        budget.diagnostics.accepted_data_scores.push(fit.data_score);
-        budget.diagnostics.accepted_methods.push(row.method.clone());
+        emit_fit(&row, fit, &mut budget.diagnostics, emit);
         models.push(ExplainedSignal {
             row: row.clone(),
             wave,
@@ -1075,7 +1097,7 @@ pub(super) fn run(
     let mut models = native_models(&audio, baseline, &mut budget);
     budget.diagnostics.conditioning = conditioning.elapsed();
     let initial_search = Instant::now();
-    let candidates = search(&audio, budget.low, budget.high, &mut budget);
+    let candidates = search(&audio, budget.low, budget.high, MAX_CANDIDATES, &mut budget);
     let mut outputs = Vec::new();
     admit(
         &audio,
@@ -1099,7 +1121,13 @@ pub(super) fn run(
             }
         }
         budget.diagnostics.residual_searches = 1;
-        let candidates = search(&residual, budget.low, budget.high, &mut budget);
+        let candidates = search(
+            &residual,
+            budget.low,
+            budget.high,
+            MAX_CANDIDATES,
+            &mut budget,
+        );
         admit(
             &audio,
             &residual,
@@ -1113,6 +1141,64 @@ pub(super) fn run(
     }
     budget.diagnostics.elapsed = start.elapsed();
     budget.diagnostics
+}
+
+/// Terminal recovery on private audio. Its budget comes from the original
+/// worker and its candidates cannot become cancellation or AP seeds.
+pub(crate) fn recover_impulses(
+    samples: &[f32],
+    low: f64,
+    high: f64,
+    deadline: Instant,
+    previous: &ExperimentDiagnostics,
+    emit: &mut dyn FnMut(&StreamDecodedMessage),
+) -> Option<ExperimentDiagnostics> {
+    let start = Instant::now();
+    if !low.is_finite() || !high.is_finite() {
+        return None;
+    }
+    let samples = &samples[..samples.len().min(180_000)];
+    let (low, high) = (low.max(200.0), high.min(3000.0));
+    // Stop below MAX_FEC so a candidate already found can still be fitted.
+    let limit = (MAX_FEC.saturating_sub(previous.fec_calls + 1) / MAX_FEC_PER_CANDIDATE)
+        .min(PULSE_CANDIDATES);
+    if limit == 0
+        || start >= deadline
+        || low >= high
+        || samples.len() < 120_000
+        || samples.iter().any(|x| !x.is_finite())
+    {
+        return None;
+    }
+    let (blanked, touched) = impulse::blank(samples)?;
+    let mut budget = Budget {
+        deadline,
+        low,
+        high,
+        diagnostics: previous.clone(),
+    };
+    budget.diagnostics.impulse_blanked_samples = touched;
+    for mut row in search(&blanked, low, high, limit, &mut budget) {
+        if budget.exhausted() {
+            break;
+        }
+        let Some(fit) = fit_message(&blanked, &row, deadline) else {
+            continue;
+        };
+        if !fit.supported() || !(low..=high).contains(&fit.f) {
+            budget.diagnostics.rejected_rows += 1;
+            budget.diagnostics.data_support_rejections += usize::from(!fit.data_supported());
+            continue;
+        }
+        if budget.exhausted() {
+            break;
+        }
+        row.method.insert_str(0, "impulse-");
+        emit_fit(&row, fit, &mut budget.diagnostics, emit);
+        budget.diagnostics.impulse_accepted_rows += 1;
+    }
+    budget.diagnostics.elapsed += start.elapsed();
+    Some(budget.diagnostics)
 }
 
 #[cfg(test)]

@@ -276,6 +276,76 @@ fn waveform_row(message: &str, f: f64, dt: f64) -> (Row, Vec<f64>) {
 }
 
 #[test]
+fn hybrid_impulse_search_recovers_known_payload() {
+    use crate::decode::hybrid::HybridStreamDecodeSession;
+    use crate::stream::session::StreamDecodeProvenance;
+    use crate::{SlotTimestamp, StreamDecodeConfig};
+
+    let (target, wave) = waveform_row("CQ K1ABC FN42", 1000.37, 0.143);
+    let amplitude = (2.0 * 2500.0 / 6000.0 * 10f64.powf(-2.1)).sqrt();
+    let mut seed = 11u64;
+    let mut noise = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 32) as f64 / (1u64 << 32) as f64 - 0.5) * 12.0_f64.sqrt()
+    };
+    let samples: Vec<f32> = wave
+        .into_iter()
+        .enumerate()
+        .map(|(i, x)| {
+            let offset = (i + 2040) % 14_400;
+            let burst_noise = noise();
+            let burst = if offset < 900 {
+                10.0 * burst_noise * (std::f64::consts::PI * offset as f64 / 900.0).sin().powi(2)
+            } else {
+                0.0
+            };
+            (amplitude * x + noise() + burst) as f32
+        })
+        .collect();
+
+    let timestamp = SlotTimestamp::parse("261109_120000").unwrap();
+    for realtime in [false, true] {
+        let mut session = HybridStreamDecodeSession::new(StreamDecodeConfig {
+            hybrid_experiment: true,
+            cooperative_realtime: realtime,
+            ..Default::default()
+        });
+        let mut callbacks = Vec::new();
+        let mut emit = |row: &crate::stream::session::StreamDecodedWithProvenance| {
+            callbacks.push(row.clone());
+            Ok(())
+        };
+        if realtime {
+            let mut live_samples = samples.clone();
+            live_samples.extend([0.0; 256]);
+            let mut state = session.start_slot();
+            session
+                .decode_slot_nzhsym41_tagged(&timestamp, &mut state, &samples[..144_000], &mut emit)
+                .unwrap();
+            session.subtract_slot_nzhsym47(&mut state, &samples[..165_888]);
+            session
+                .decode_slot_nzhsym50_tagged(&timestamp, state, &live_samples, &mut emit)
+                .unwrap();
+        } else {
+            session
+                .decode_slot_streaming_tagged_at(&timestamp, &samples, &mut emit)
+                .unwrap();
+        }
+        let diagnostics = &session.last_diagnostics().experiment;
+        assert_eq!(diagnostics.impulse_accepted_rows, 1, "{diagnostics:?}");
+        assert_eq!(callbacks.len(), 1, "{callbacks:?}");
+        let recovered = &callbacks[0];
+        assert_eq!(recovered.provenance, StreamDecodeProvenance::Experiment);
+        assert_eq!(recovered.decode.msg, target.msg);
+        assert_eq!(Some(recovered.decode.itone), target.tones);
+        assert!((recovered.decode.freq - target.f).abs() < 5.0);
+        assert!((recovered.decode.dt - target.dt).abs() < 0.3);
+    }
+}
+
+#[test]
 fn data_gate_rejects_common_sync_without_a_payload() {
     let (row, mut audio) = waveform_row("CQ K1ABC FN42", 1000.37, 0.143);
     let start = ((row.dt + 0.5) * FS).round() as usize;

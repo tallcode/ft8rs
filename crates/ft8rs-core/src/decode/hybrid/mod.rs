@@ -869,6 +869,54 @@ impl HybridStreamDecodeSession {
                     }
                 }
             }
+            // Pulse recovery is last so it cannot claim a ledger representative
+            // or delay a callback from any of the existing searches.
+            if diagnostics.experiment_finish.is_some()
+                && diagnostics.experiment.error.is_none()
+                && first_error.is_none()
+                && agc_error.is_none()
+                && output_error.is_none()
+            {
+                let pulse_deadline = deadline.unwrap_or(clock + Duration::from_secs(10));
+                let result = guard_worker(|| {
+                    Ok(crate::decode::experiment::recover_impulses(
+                        samples,
+                        config.nfa,
+                        config.nfb,
+                        pulse_deadline,
+                        &diagnostics.experiment,
+                        &mut |row| {
+                            if ledger
+                                .tagged()
+                                .iter()
+                                .any(|old| same_signal(&old.decode, row))
+                            {
+                                return;
+                            }
+                            diagnostics
+                                .experiment_publish_start
+                                .get_or_insert(clock.elapsed());
+                            publish(
+                                &mut ledger,
+                                SignalSource::Recovery,
+                                row,
+                                StreamDecodeProvenance::Experiment,
+                                &mut output_error,
+                                &mut on_decode,
+                            );
+                            experiment_rows.push(row.clone());
+                        },
+                    ))
+                });
+                match result {
+                    Ok(Some(report)) => {
+                        diagnostics.experiment_finish = Some(clock.elapsed());
+                        diagnostics.experiment = report;
+                    }
+                    Ok(None) => {}
+                    Err(error) => diagnostics.experiment.error = Some(error),
+                }
+            }
         });
         let baseline = baseline.unwrap_or_default();
         let w_rows = w_rows.unwrap_or_default();

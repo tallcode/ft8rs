@@ -89,6 +89,35 @@ Terminal residual results never start another search. This is conditional
 sequential fitting, not a joint GLRT, SISO feedback receiver or joint refit of
 every overlapping station.
 
+### Broadband pulse recovery
+
+After all existing Hybrid callbacks, including candidate retry, the experimental
+branch can run one more search on a private, pulse-blanked copy. Overlapping
+64-sample Hann windows at 12 kHz measure power in six groups of audio FFT bins.
+A window triggers if at least four groups exceed four times their slot median,
+with a floor tied to total median power to reject narrowband leakage. The mask
+blanks short bursts and tapers the edges. It skips slots with a contiguous mask
+over 160 ms or more than 15% of the samples blanked or tapered.
+
+The terminal search takes at most 32 coarse candidates within the remaining
+slot deadline and shared 4096-call FEC budget. Candidates must pass the same
+full-frame and payload waveform checks on the blanked copy. Accepted rows can
+supplement the output as `exp` and cannot replace an existing representative or
+seed a subsequent search.
+
+An optimized, same-input A/B run with the experimental decoder enabled in
+both builds recovered 27 of 28 known targets under synthetic broadband pulses,
+up from 10. The fresh cases covered periodic, irregular and band-limited
+bursts. The 64 synthetic slots included 30 without a target and produced zero
+incorrect rows. All 16 prior callbacks were retained. Two keyed narrowband
+control slots triggered the pulse pass without adding messages.
+
+With the same `fast` build profile, 200–3000 Hz search and private 2022 CallDB,
+two historical recordings retained all 510 callbacks in order, including the
+three existing `exp` rows. The pulse detector stayed inactive in those 20 slots.
+In the synthetic runs the latest correct pulse recovery callback was 1.96 s
+after processing began, and the slowest slot finished in 2.99 s.
+
 ## Scheduling and output
 
 The experimental worker starts after all three native workers finish and their

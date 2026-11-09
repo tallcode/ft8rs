@@ -5,6 +5,7 @@ mod receiver;
 use crate::stream::session::StreamDecodedMessage;
 use std::time::Instant;
 
+pub(crate) use receiver::recover_impulses;
 pub use receiver::ExperimentDiagnostics;
 
 /// Immutable slot inputs. Baseline rows supply original tones, never re-encoded
