@@ -14,6 +14,26 @@ use ft8rs::SlotTimestamp;
 use crate::reconfig::{EngineState, ReconfigOutcome};
 use crate::soundcard::{InputChannel, SoundcardDeviceInfo, SoundcardFormatInfo};
 
+/// Borrowed diagnostic data for a slot that started on a capture boundary.
+pub struct CapturedSlot<'a> {
+    pub timestamp: &'a SlotTimestamp,
+    pub samples_12k: &'a [f32],
+    pub config: &'a ft8rs::stream::session::StreamDecodeConfig,
+    pub device_name: &'a str,
+    pub format: &'a SoundcardFormatInfo,
+    pub channel: InputChannel,
+    pub native_samples: usize,
+    pub xruns: u64,
+    pub jitter_ms: i64,
+}
+
+/// Optional live diagnostics. Implementations run on the engine thread and
+/// should keep callbacks short and avoid I/O.
+pub trait MonitorObserver: Send + Sync {
+    fn slot(&self, slot: CapturedSlot<'_>);
+    fn event(&self, event: &EngineEvent);
+}
+
 /// Commands the GUI sends to the engine. The GUI submits a full desired
 /// [`EngineState`]; the engine diffs it (see `reconfig::plan_reconfig`) and
 /// decides what to do. There is no `OpenFile` — the GUI is monitor-only.

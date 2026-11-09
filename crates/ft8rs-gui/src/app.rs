@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Color32, RichText};
 
+use crate::debug_info::{self, DebugInfo, Recorder};
 use crate::fonts::{
     install as install_fonts, FontSupport, BODY_FONT_SIZE, CHINESE_UNAVAILABLE, SMALL_FONT_SIZE,
 };
@@ -131,6 +132,8 @@ impl DisplayFilters {
 }
 
 pub struct Ft8rsApp {
+    debug_info: DebugInfo,
+    debug_result: Option<Result<std::path::PathBuf, String>>,
     engine: EngineHandle,
     activation: Arc<crate::single_instance::Activation>,
     main_focus: DialogFocus,
@@ -210,13 +213,14 @@ impl Ft8rsApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         activation: Arc<crate::single_instance::Activation>,
+        recorder: Arc<Recorder>,
     ) -> Self {
         activation.attach(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let font_support = install_fonts(&cc.egui_ctx);
         let theme = cc.egui_ctx.theme();
         apply_style(&cc.egui_ctx, theme);
-        let engine = EngineHandle::spawn();
+        let engine = EngineHandle::spawn_observed(recorder.clone());
         let _ = engine.send(EngineCommand::RefreshDevices);
 
         // Restore IDs; legacy names migrate after enumeration only if unique.
@@ -239,6 +243,7 @@ impl Ft8rsApp {
         let device = load("device", "");
         let profile =
             DecodeProfile::parse(&load("profile", "wsjtx")).unwrap_or(DecodeProfile::Wsjtx);
+        let mycall = load("mycall", "");
         // Install the menu while eframe still keeps the root hidden. Preserve
         // its physical client size: SetMenu consumes client height, whereas
         // winit knows how to resize the outer window for a menu-bearing window.
@@ -247,6 +252,7 @@ impl Ft8rsApp {
         #[cfg(target_os = "windows")]
         let client_size = cc.winit_window().map(|window| window.inner_size());
         let native_menu = install_menu(profile, language, locale, hwnd);
+        native_menu.sync_debug(locale, debug_info::eligible(&mycall), false, false);
         #[cfg(target_os = "windows")]
         if let (Some(window), Some(size)) = (cc.winit_window(), client_size) {
             if !window.is_maximized() {
@@ -264,6 +270,8 @@ impl Ft8rsApp {
         });
 
         Self {
+            debug_info: DebugInfo::new(recorder),
+            debug_result: None,
             engine,
             activation,
             main_focus: DialogFocus::default(),
@@ -272,7 +280,7 @@ impl Ft8rsApp {
             requested_locale,
             font_support,
             locale_checked_at: Instant::now(),
-            mycall: load("mycall", ""),
+            mycall,
             hiscall: load("hiscall", ""),
             hisgrid: load("hisgrid", ""),
             nfqso: load("nfqso", "0"),
@@ -618,7 +626,10 @@ impl Ft8rsApp {
             if let Some(target) = target {
                 if self.udp_in.is_none() && target.is_some() {
                     let wake = ctx.clone();
-                    match crate::wsjtx_udp::UdpIn::spawn(move || wake.request_repaint()) {
+                    match crate::wsjtx_udp::UdpIn::spawn_observed(
+                        move || wake.request_repaint(),
+                        Some(Arc::clone(&self.debug_info.recorder)),
+                    ) {
                         Ok(listener) => self.udp_in = Some(listener),
                         Err(err) => {
                             self.udp_in_on = false;
@@ -685,6 +696,11 @@ impl Ft8rsApp {
                     self.about_open = true;
                     self.about_focus.request();
                 }
+                "debug:collect" if debug_info::eligible(&self.mycall) => {
+                    self.set_debug_collection(!self.debug_info.active());
+                }
+                "debug:save" => self.save_debug_info(),
+                "debug:open" => self.open_debug_directory(),
                 id => {
                     if let Some(name) = id.strip_prefix("language:") {
                         self.language = Language::parse(name);
@@ -707,6 +723,55 @@ impl Ft8rsApp {
             self.native_menu
                 .sync(self.profile, self.language, self.locale);
         }
+    }
+
+    fn set_debug_collection(&mut self, enabled: bool) {
+        self.debug_info
+            .set_active(enabled && debug_info::eligible(&self.mycall));
+        self.debug_result = None;
+    }
+
+    fn save_debug_info(&mut self) {
+        if debug_info::eligible(&self.mycall) && self.debug_info.can_save() {
+            let udp_listener = self
+                .udp_in_on
+                .then(|| format!("{}:{}", self.udp_in_host.trim(), self.udp_in_port.trim()));
+            self.debug_result = None;
+            if let Err(err) = self.debug_info.save(udp_listener) {
+                self.debug_save_failed(&err);
+            }
+        }
+    }
+
+    fn debug_save_failed(&mut self, err: &str) {
+        let label = self.locale.text("Unable to save debug information");
+        self.debug_result = Some(Err(format!("{label}: {err}")));
+    }
+
+    fn open_debug_directory(&mut self) {
+        if debug_info::eligible(&self.mycall) {
+            self.debug_result = None;
+            if let Err(err) = self.debug_info.open_directory() {
+                let label = self.locale.text("Unable to open debug information folder");
+                self.debug_result = Some(Err(format!("{label}: {err}")));
+            }
+        }
+    }
+
+    fn sync_debug_menu(&mut self) {
+        let eligible = debug_info::eligible(&self.mycall);
+        if !eligible {
+            if self.debug_info.active() {
+                self.set_debug_collection(false);
+            }
+            self.debug_result = None;
+        }
+        self.native_menu.sync_debug(
+            self.locale,
+            eligible,
+            self.debug_info.active(),
+            self.debug_info.can_save(),
+        );
     }
 
     /// Language is a presentation preference; changing it never reconfigures the engine.
@@ -766,6 +831,31 @@ impl Ft8rsApp {
             if ui.button(tr("About")).clicked() {
                 self.about_open = true;
                 self.about_focus.request();
+            }
+            if debug_info::eligible(&self.mycall) {
+                ui.menu_button(tr("Developer Mode"), |ui| {
+                    let mut collect = self.debug_info.active();
+                    if ui
+                        .checkbox(&mut collect, tr("Collect Debug Information"))
+                        .changed()
+                    {
+                        self.set_debug_collection(collect);
+                    }
+                    if ui
+                        .add_enabled(
+                            self.debug_info.can_save(),
+                            egui::Button::new(tr("Save Debug Information")),
+                        )
+                        .clicked()
+                    {
+                        self.save_debug_info();
+                        ui.close();
+                    }
+                    if ui.button(tr("Open Debug Information Folder")).clicked() {
+                        self.open_debug_directory();
+                        ui.close();
+                    }
+                });
             }
         });
     }
@@ -1761,6 +1851,12 @@ impl eframe::App for Ft8rsApp {
         self.sync_udp_in(&ctx);
         self.pump_menu();
         self.pump_events(&ctx);
+        match self.debug_info.poll() {
+            Ok(Some(path)) if self.debug_info.active() => self.debug_result = Some(Ok(path)),
+            Ok(_) => {}
+            Err(err) if self.debug_info.active() => self.debug_save_failed(&err),
+            Err(_) => {}
+        }
 
         // macOS and Windows use a native menu bar; only the fallback platforms
         // (Linux) get an in-window top menu panel.
@@ -1789,6 +1885,26 @@ impl eframe::App for Ft8rsApp {
                 });
             });
         }
+        if let Some(result) = &self.debug_result {
+            let mut dismiss = false;
+            egui::Panel::bottom("debug_result").show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    match result {
+                        Ok(path) => {
+                            ui.label(self.locale.text("Debug information saved"))
+                                .on_hover_text(path.display().to_string());
+                        }
+                        Err(error) => {
+                            ui.colored_label(ui.visuals().error_fg_color, error);
+                        }
+                    }
+                    dismiss = ui.small_button("×").clicked();
+                });
+            });
+            if dismiss {
+                self.debug_result = None;
+            }
+        }
         if self.profile == DecodeProfile::Dx {
             egui::Panel::right("dx_panel")
                 .resizable(false)
@@ -1811,6 +1927,7 @@ impl eframe::App for Ft8rsApp {
 
         self.settings_window(&ctx);
         self.sync_language_and_menu();
+        self.sync_debug_menu();
         self.about_window(&ctx);
         self.copyright_window(&ctx);
         self.confirm_window(&ctx);
@@ -2949,9 +3066,50 @@ struct NativeMenu {
     quit: Option<muda::PredefinedMenuItem>,
     profile_items: Vec<(DecodeProfile, muda::CheckMenuItem)>,
     language_items: Vec<(Language, muda::CheckMenuItem)>,
+    debug: Option<NativeDebugMenu>,
+}
+
+struct NativeDebugMenu {
+    submenu: muda::Submenu,
+    collect: muda::CheckMenuItem,
+    save: muda::MenuItem,
+    open: muda::MenuItem,
+    synced: std::cell::Cell<Option<(Locale, bool, bool)>>,
+    visible: std::cell::Cell<bool>,
 }
 
 impl NativeMenu {
+    fn sync_debug(&self, locale: Locale, visible: bool, active: bool, can_save: bool) {
+        let (Some(menu), Some(debug)) = (&self._menu, &self.debug) else {
+            return;
+        };
+        let state = (locale, active, can_save);
+        if debug.synced.get() != Some(state) {
+            debug.submenu.set_text(locale.text("Developer Mode"));
+            debug
+                .collect
+                .set_text(locale.text("Collect Debug Information"));
+            debug.save.set_text(locale.text("Save Debug Information"));
+            debug
+                .open
+                .set_text(locale.text("Open Debug Information Folder"));
+            debug.collect.set_checked(active);
+            debug.save.set_enabled(can_save);
+            debug.synced.set(Some(state));
+        }
+        if visible != debug.visible.get() {
+            let result = if visible {
+                menu.append(&debug.submenu)
+            } else {
+                menu.remove(&debug.submenu)
+            };
+            match result {
+                Ok(()) => debug.visible.set(visible),
+                Err(err) => log::warn!("Developer menu visibility: {err}"),
+            }
+        }
+    }
+
     fn sync(&self, profile: DecodeProfile, language: Language, locale: Locale) {
         if let Some(item) = &self.settings {
             item.set_text(locale.text(if cfg!(target_os = "macos") {
@@ -3038,6 +3196,23 @@ fn install_menu(
     let quit = Some(muda::PredefinedMenuItem::quit(Some("Quit")));
     #[cfg(not(target_os = "macos"))]
     let quit = None;
+    let debug = NativeDebugMenu {
+        submenu: Submenu::new("Developer Mode", true),
+        collect: CheckMenuItem::with_id(
+            "debug:collect",
+            "Collect Debug Information",
+            true,
+            false,
+            None,
+        ),
+        save: MenuItem::with_id("debug:save", "Save Debug Information", false, None),
+        open: MenuItem::with_id("debug:open", "Open Debug Information Folder", true, None),
+        synced: Default::default(),
+        visible: Default::default(),
+    };
+    let _ = debug
+        .submenu
+        .append_items(&[&debug.collect, &debug.save, &debug.open]);
     let native = NativeMenu {
         quit,
         _menu: Some(menu.clone()),
@@ -3047,6 +3222,7 @@ fn install_menu(
         language: Some(language_menu.clone()),
         profile_items,
         language_items,
+        debug: Some(debug),
     };
     #[cfg(target_os = "macos")]
     {

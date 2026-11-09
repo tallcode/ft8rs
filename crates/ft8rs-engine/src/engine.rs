@@ -23,6 +23,7 @@
 use std::sync::mpsc::{
     self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError, TrySendError,
 };
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -39,8 +40,8 @@ use ft8rs::SlotTimestamp;
 
 use crate::events::GuiEvents;
 use crate::protocol::{
-    DecodeRecord, DecodeStage, DxContextSnapshot, EngineCommand, EngineEvent, EngineStatus,
-    HisgridSource,
+    CapturedSlot, DecodeRecord, DecodeStage, DxContextSnapshot, EngineCommand, EngineEvent,
+    EngineStatus, HisgridSource, MonitorObserver,
 };
 use crate::reconfig::{plan_reconfig, EngineState, StateBucket};
 use crate::report::{UdpConfig, UdpOutput};
@@ -71,8 +72,17 @@ pub struct EngineHandle {
 impl EngineHandle {
     /// Spawn the engine thread (starts Idle).
     pub fn spawn() -> Self {
+        Self::spawn_inner(None)
+    }
+
+    /// Spawn the engine with a diagnostics observer upstream of the GUI queue.
+    pub fn spawn_observed(observer: Arc<dyn MonitorObserver>) -> Self {
+        Self::spawn_inner(Some(observer))
+    }
+
+    fn spawn_inner(observer: Option<Arc<dyn MonitorObserver>>) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel();
-        let event_rx = GuiEvents::default();
+        let event_rx = GuiEvents::new(observer);
         let event_tx = event_rx.clone();
         let join = thread::spawn(move || engine_loop(cmd_rx, event_tx));
         Self {
@@ -139,7 +149,7 @@ fn run_monitor(
         mut stream,
         mut rx,
         mut format,
-        device_name,
+        mut device_name,
     } = match start_input_stream(state.device.as_deref(), state.channel) {
         Ok(parts) => parts,
         Err(err) => {
@@ -149,15 +159,17 @@ fn run_monitor(
     };
     let mut sample_rate = format.sample_rate;
     event_tx.send(EngineEvent::CaptureStarted {
-        device_name,
+        device_name: device_name.clone(),
         format: format.clone(),
     });
 
-    let (dec_cmd_tx, dec_evt_rx) = crate::worker::spawn(effective_config(&state.config));
+    let mut config = effective_config(&state.config);
+    let (dec_cmd_tx, dec_evt_rx) = crate::worker::spawn(config.clone());
 
     // Whole callback blocks are assigned to UTC slots by callback wall-clock
     // time and appended by sample count; there is no sample-level boundary split.
     let mut acc = PeriodAccumulator::new(sample_rate);
+    let mut aligned = false;
     let mut pending: Option<EngineState> = None;
     let mut last_audio = Instant::now();
     let mut last_level = Instant::now();
@@ -205,6 +217,21 @@ fn run_monitor(
                 );
                 let out = acc.push(&chunk.samples, chunk.capture_ms);
                 for (stage, timestamp, samples_12k) in out.stages {
+                    if stage == SlotStage::N50 && aligned {
+                        if let Some(diag) = &out.completed {
+                            event_tx.observe_slot(CapturedSlot {
+                                timestamp: &timestamp,
+                                samples_12k: &samples_12k,
+                                config: &config,
+                                device_name: &device_name,
+                                format: &format,
+                                channel: state.channel,
+                                native_samples: diag.samples,
+                                xruns: chunk.xruns,
+                                jitter_ms: diag.max_jitter_ms,
+                            });
+                        }
+                    }
                     // Wait for decode-queue space rather than dropping the slot (the
                     // old shedding could drop *every* slot on DAX). Command handling
                     // stays responsive while waiting; capture buffers in the channel.
@@ -252,14 +279,16 @@ fn run_monitor(
                     });
                 }
                 if out.boundary_crossed {
+                    aligned = true;
                     if let Some(mut new_state) = pending.take() {
                         let mut outcome = plan_reconfig(&state, &new_state);
                         if outcome.rebuild_output {
                             udp = build_udp(new_state.udp.as_ref(), event_tx);
                         }
                         if outcome.rebuild_session {
+                            config = effective_config(&new_state.config);
                             let _ = dec_cmd_tx.send(DecodeCmd::Reconfigure {
-                                config: effective_config(&new_state.config),
+                                config: config.clone(),
                                 reset_dx_target: outcome.reset.contains(&StateBucket::DxTarget),
                                 reset_dx_operator: outcome.reset.contains(&StateBucket::DxOperator),
                             });
@@ -275,14 +304,16 @@ fn run_monitor(
                                     stream = capture.stream;
                                     rx = capture.rx;
                                     format = capture.format;
+                                    device_name = capture.device_name;
                                     sample_rate = format.sample_rate;
                                     channel_peaks = vec![0.0; format.channels as usize];
                                     input_peak = 0.0;
                                     event_tx.send(EngineEvent::CaptureStarted {
-                                        device_name: capture.device_name,
+                                        device_name: device_name.clone(),
                                         format: format.clone(),
                                     });
                                     acc = PeriodAccumulator::new(sample_rate);
+                                    aligned = false;
                                     last_audio = Instant::now();
                                 }
                                 Err(err) => {
@@ -342,14 +373,16 @@ fn run_monitor(
                 stream = capture.stream;
                 rx = capture.rx;
                 format = capture.format;
+                device_name = capture.device_name;
                 sample_rate = format.sample_rate;
                 channel_peaks = vec![0.0; format.channels as usize];
                 input_peak = 0.0;
                 event_tx.send(EngineEvent::CaptureStarted {
-                    device_name: capture.device_name,
+                    device_name: device_name.clone(),
                     format: format.clone(),
                 });
                 acc = PeriodAccumulator::new(sample_rate);
+                aligned = false;
                 last_audio = Instant::now();
                 event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
             }

@@ -12,8 +12,11 @@
 
 use std::net::UdpSocket;
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+
+use crate::debug_info::Recorder;
 
 const MAGIC: u32 = 0xadbccbda;
 const TYPE_DECODE: u32 = 2;
@@ -59,13 +62,21 @@ pub struct UdpIn {
 }
 
 impl UdpIn {
+    #[cfg(test)]
     pub fn spawn(wake: impl Fn() + Send + 'static) -> Result<Self, String> {
+        Self::spawn_observed(wake, None)
+    }
+
+    pub fn spawn_observed(
+        wake: impl Fn() + Send + 'static,
+        recorder: Option<Arc<Recorder>>,
+    ) -> Result<Self, String> {
         let (commands, input) = mpsc::channel();
         let (status_tx, status) = mpsc::channel();
         let (_, rows) = mpsc::sync_channel(DECODE_QUEUE_CAP);
         let worker = thread::Builder::new()
             .name("ft8rs-compare".into())
-            .spawn(move || listen(input, status_tx, wake))
+            .spawn(move || listen(input, status_tx, wake, recorder))
             .map_err(|err| format!("UDP listener worker: {err}"))?;
         // The channel endpoints own the lifetime. Detach once; dropping the
         // GUI handle disconnects commands and makes the socket owner exit.
@@ -134,7 +145,12 @@ fn bind(endpoint: &Endpoint) -> Result<UdpSocket, String> {
     Ok(socket)
 }
 
-fn listen(commands: Receiver<Configure>, status: Sender<Status>, wake: impl Fn()) {
+fn listen(
+    commands: Receiver<Configure>,
+    status: Sender<Status>,
+    wake: impl Fn(),
+    recorder: Option<Arc<Recorder>>,
+) {
     let mut active: Option<(UdpSocket, SyncSender<ExternalDecode>)> = None;
     let mut buf = [0u8; 2048];
     loop {
@@ -181,8 +197,11 @@ fn listen(commands: Receiver<Configure>, status: Sender<Status>, wake: impl Fn()
         }
         let (socket, rows) = active.as_ref().expect("active socket was checked above");
         match socket.recv_from(&mut buf) {
-            Ok((n, _)) => {
+            Ok((n, peer)) => {
                 if let Some(decode) = parse_decode(&buf[..n]) {
+                    if let Some(recorder) = &recorder {
+                        recorder.udp(peer, &decode);
+                    }
                     if rows.try_send(decode).is_ok() {
                         wake();
                     }
@@ -342,9 +361,12 @@ mod tests {
             })
             .unwrap();
         drop(commands);
-        listen(input, status_tx, || {
-            panic!("cancelled bind was acknowledged")
-        });
+        listen(
+            input,
+            status_tx,
+            || panic!("cancelled bind was acknowledged"),
+            None,
+        );
         assert!(status.try_recv().is_err());
     }
 

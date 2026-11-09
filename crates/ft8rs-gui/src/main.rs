@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod debug_info;
 mod diagnostics;
 mod fonts;
 mod i18n;
@@ -47,7 +48,8 @@ fn main() -> eframe::Result<()> {
             return Err(eframe::Error::AppCreation(Box::new(error)));
         }
     };
-    let log_path = diagnostics::init();
+    let recorder = Arc::new(debug_info::Recorder::default());
+    let log_path = diagnostics::init(Arc::clone(&recorder));
     let renderer = match std::env::var("FT8RS_RENDERER").as_deref() {
         Ok("glow") => eframe::Renderer::Glow,
         Ok("wgpu") | Err(_) => eframe::Renderer::Wgpu,
@@ -63,7 +65,12 @@ fn main() -> eframe::Result<()> {
         std::env::consts::ARCH,
     );
     let result = run_with_fallback(renderer, |renderer, started| {
-        run_gui(renderer, started, Arc::clone(&primary.activation))
+        run_gui(
+            renderer,
+            started,
+            Arc::clone(&primary.activation),
+            Arc::clone(&recorder),
+        )
     });
     if let Err(error) = &result {
         diagnostics::report_failure(&error.to_string(), log_path.as_deref());
@@ -94,6 +101,7 @@ fn run_gui(
     renderer: eframe::Renderer,
     app_creation_started: Rc<Cell<bool>>,
     activation: Arc<single_instance::Activation>,
+    recorder: Arc<debug_info::Recorder>,
 ) -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([820.0, 760.0])
@@ -124,7 +132,7 @@ fn run_gui(
         Box::new(move |cc| {
             log::info!("Graphics initialized; creating application");
             app_creation_started.set(true);
-            let app = Ft8rsApp::new(cc, Arc::clone(&activation));
+            let app = Ft8rsApp::new(cc, Arc::clone(&activation), Arc::clone(&recorder));
             log::info!("Application initialized");
             Ok(Box::new(app))
         }),

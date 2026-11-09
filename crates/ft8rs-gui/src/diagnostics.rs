@@ -2,10 +2,12 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-struct FileLogger(Mutex<File>);
+use crate::debug_info::Recorder;
+
+struct FileLogger(Option<Mutex<File>>, Arc<Recorder>);
 
 impl log::Log for FileLogger {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
@@ -17,19 +19,20 @@ impl log::Log for FileLogger {
 
     fn log(&self, record: &log::Record<'_>) {
         if self.enabled(record.metadata()) {
-            if let Ok(mut file) = self.0.lock() {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default();
-                let _ = writeln!(
-                    file,
-                    "{}.{:03} UTC-epoch {} [{}] {}",
-                    now.as_secs(),
-                    now.subsec_millis(),
-                    record.level(),
-                    record.target(),
-                    record.args(),
-                );
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default();
+            let line = format_args!(
+                "{}.{:03} UTC-epoch {} [{}] {}",
+                now.as_secs(),
+                now.subsec_millis(),
+                record.level(),
+                record.target(),
+                record.args(),
+            );
+            self.1.log(now.as_millis() as i64, line);
+            if let Some(mut file) = self.0.as_ref().and_then(|file| file.lock().ok()) {
+                let _ = writeln!(file, "{line}");
                 // Write through every entry: panic=abort never runs destructors.
                 let _ = file.flush();
             }
@@ -37,13 +40,13 @@ impl log::Log for FileLogger {
     }
 
     fn flush(&self) {
-        if let Ok(mut file) = self.0.lock() {
+        if let Some(mut file) = self.0.as_ref().and_then(|file| file.lock().ok()) {
             let _ = file.flush();
         }
     }
 }
 
-pub fn init() -> Option<PathBuf> {
+pub fn init(recorder: Arc<Recorder>) -> Option<PathBuf> {
     let mut directories = Vec::new();
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         directories.push(PathBuf::from(local).join("ft8rs").join("logs"));
@@ -55,13 +58,17 @@ pub fn init() -> Option<PathBuf> {
         directories.push(parent.join("logs"));
     }
     directories.push(std::env::temp_dir().join("ft8rs").join("logs"));
-    let path = directories.into_iter().find_map(|dir| {
-        let (file, path) = open_log(&dir).ok()?;
-        let logger = Box::leak(Box::new(FileLogger(Mutex::new(file))));
-        log::set_logger(logger).ok()?;
+    let (file, path) = directories
+        .into_iter()
+        .find_map(|dir| open_log(&dir).ok())
+        .unzip();
+    let logger = Box::leak(Box::new(FileLogger(file.map(Mutex::new), recorder)));
+    let path = if log::set_logger(logger).is_ok() {
         log::set_max_level(log::LevelFilter::Info);
-        Some(path)
-    });
+        path
+    } else {
+        None
+    };
     let previous_hook = std::panic::take_hook();
     let panic_log_path = path.clone();
     std::panic::set_hook(Box::new(move |info| {

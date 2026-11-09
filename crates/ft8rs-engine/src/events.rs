@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use crate::protocol::EngineEvent;
+use crate::protocol::{CapturedSlot, EngineEvent, MonitorObserver};
 
 const DECODE_CAP: usize = 1024;
 
@@ -15,11 +15,30 @@ struct Queue {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct GuiEvents(Arc<Mutex<Queue>>);
+pub(crate) struct GuiEvents {
+    queue: Arc<Mutex<Queue>>,
+    observer: Option<Arc<dyn MonitorObserver>>,
+}
 
 impl GuiEvents {
+    pub(crate) fn new(observer: Option<Arc<dyn MonitorObserver>>) -> Self {
+        Self {
+            observer,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn observe_slot(&self, slot: CapturedSlot<'_>) {
+        if let Some(observer) = &self.observer {
+            observer.slot(slot);
+        }
+    }
+
     pub(crate) fn send(&self, event: EngineEvent) {
-        let mut queue = self.0.lock().unwrap();
+        if let Some(observer) = &self.observer {
+            observer.event(&event);
+        }
+        let mut queue = self.queue.lock().unwrap();
         if matches!(event, EngineEvent::Decode(_)) {
             if queue.decodes == DECODE_CAP {
                 queue.dropped = queue.dropped.saturating_add(1);
@@ -41,7 +60,7 @@ impl GuiEvents {
     }
 
     pub(crate) fn try_recv(&self) -> Option<EngineEvent> {
-        let mut queue = self.0.lock().unwrap();
+        let mut queue = self.queue.lock().unwrap();
         if let Some(event) = queue.events.pop_front() {
             if matches!(event, EngineEvent::Decode(_)) {
                 queue.decodes -= 1;
@@ -56,14 +75,30 @@ impl GuiEvents {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use crate::protocol::{DecodeRecord, DecodeStage, EngineStatus};
     use crate::soundcard::InputChannel;
     use ft8rs::stream::session::StreamDecodeProvenance;
     use ft8rs::{SlotTimestamp, StreamDecodedMessage};
 
+    #[derive(Default)]
+    struct ObservedDecodes(AtomicUsize);
+
+    impl MonitorObserver for ObservedDecodes {
+        fn slot(&self, _: CapturedSlot<'_>) {}
+
+        fn event(&self, event: &EngineEvent) {
+            if matches!(event, EngineEvent::Decode(_)) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
     #[test]
     fn stalled_gui_retains_controls_and_latest_status_and_counts_lost_rows() {
-        let mailbox = GuiEvents::default();
+        let observed = Arc::new(ObservedDecodes::default());
+        let mailbox = GuiEvents::new(Some(observed.clone()));
         let record = DecodeRecord {
             timestamp: SlotTimestamp::parse("120000").unwrap(),
             row: StreamDecodedMessage {
@@ -119,6 +154,7 @@ mod tests {
             events.last(),
             Some(EngineEvent::DecodeRowsDropped(7))
         ));
+        assert_eq!(observed.0.load(Ordering::Relaxed), DECODE_CAP + 7);
         mailbox.send(EngineEvent::Decode(record));
         assert!(matches!(mailbox.try_recv(), Some(EngineEvent::Decode(_))));
         assert!(mailbox.try_recv().is_none());
