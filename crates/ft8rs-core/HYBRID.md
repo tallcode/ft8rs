@@ -46,6 +46,9 @@ revoke an old entry after a later collision is found.
 The baseline union is retained regardless of recovery success. Recovery uses a
 private copy of the original audio and a disposable native session. It cannot
 mutate the baseline decoder or feed results back into another recovery round.
+The A7 bank takes peer hints from the three baseline sessions. When a
+supplemental callback arrives before a matching native callback, the native
+observation supplies the hint and the display keeps its first representative.
 The Plus leg's compatibility results use the `Pc` marker and stay out of
 the SIC seeds, experimental receiver inputs and passive evidence store.
 

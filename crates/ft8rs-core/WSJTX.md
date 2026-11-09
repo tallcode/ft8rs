@@ -86,10 +86,8 @@ The evidence and future compatibility work belong in
 
 Active RR73 sensitivity fixtures use native acknowledgment 32403, including
 the standalone AWGN case. Source checks cover 36 pinned codec, template,
-receiver and waveform files. The consolidated wsjtx+ report records synthetic
-coverage and compatibility diagnoses. Independent plus development now uses a
-test-only harness and remains outside this original profile; see its separate
-report linked above.
+receiver and waveform files. The separate WSJT-X+ report documents its
+standalone profile, its use by Hybrid, and the synthetic compatibility cases.
 
 Reproduction and pin audit:
 
@@ -264,6 +262,10 @@ Important rules:
 - `nzhsym<50` disables `ft8b` internal AP passes;
 - final decode zero-pads after `50 * 3456`, not after the full 15 s buffer;
 - AP parity uses `jseq = mod(nutc/5, 2)` from the slot timestamp.
+- In the live application, changing only the receive target callsign, grid or
+  audio frequency restores the A7 checkpoint for each parity when the
+  checkpoint is exactly 30 seconds old. A double-click on a message can
+  change all three fields in one update.
 - Each stage reads a fresh audio snapshot, including when a caller updates a
   fixed-size buffer in place. A pointer/length pair is not an audio version.
 

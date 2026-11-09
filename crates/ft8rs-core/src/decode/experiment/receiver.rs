@@ -136,13 +136,14 @@ impl Band {
             observed,
         }
     }
-    fn sync_stats(&self, f: f64, dt: f64, drift: f64) -> (f64, f64) {
+    fn sync_stats(&self, dt: f64, oscillators: &[[C; 32]; 21]) -> (f64, f64) {
         let start = ((dt + 0.5) * 200.0).round() as isize;
         let mut power = 0.0;
         let mut total = 0.0;
         let mut count = 0;
         let mut coherent = C::new(0.0, 0.0);
-        for base in [0, 36, 72] {
+        let basis = basis();
+        for (block, base) in [0, 36, 72].into_iter().enumerate() {
             for (k, &tone) in COSTAS.iter().enumerate() {
                 let j0 = start + 32 * (base + k) as isize;
                 if j0 < 0 || j0 + 31 >= self.observed_end as isize {
@@ -150,20 +151,13 @@ impl Band {
                 }
                 let mut z = C::new(0.0, 0.0);
                 let mut en = 0.0;
-                let t0 = (j0 - start) as f64 / 200.0;
-                let df = f - self.center;
-                let mut osc = C::from_polar(1.0, -TAU * (df * t0 + 0.5 * drift * t0 * t0));
-                let mut step = C::from_polar(
-                    1.0,
-                    -TAU * ((df + drift * t0) / 200.0 + 0.5 * drift / 40000.0),
-                );
-                let accel = C::from_polar(1.0, -TAU * drift / 40000.0);
-                for n in 0..32 {
-                    let j = j0 + n as isize;
-                    let sample = self.samples[j as usize];
-                    z += sample * basis()[tone][n] * osc;
-                    osc *= step;
-                    step *= accel;
+                let samples = &self.samples[j0 as usize..][..32];
+                for ((&sample, &reference), &osc) in samples
+                    .iter()
+                    .zip(&basis[tone])
+                    .zip(&oscillators[block * 7 + k])
+                {
+                    z += sample * reference * osc;
                     en += sample.norm_sqr();
                 }
                 power += z.norm_sqr();
@@ -180,16 +174,29 @@ impl Band {
             coherent.norm_sqr() / total.max(1e-15),
         )
     }
-    fn sync_score(&self, f: f64, dt: f64, drift: f64) -> f64 {
-        self.sync_stats(f, dt, drift).0
+    /// The zero-drift reference for each Costas symbol depends on frequency
+    /// and symbol index. Reuse it for all timing hypotheses at that frequency.
+    fn sync_oscillators(&self, f: f64) -> [[C; 32]; 21] {
+        let df = f - self.center;
+        let step = C::from_polar(1.0, -TAU * (df / 200.0));
+        std::array::from_fn(|i| {
+            let symbol = [0, 36, 72][i / 7] + i % 7;
+            let t0 = (32 * symbol) as f64 / 200.0;
+            let mut osc = C::from_polar(1.0, -TAU * (df * t0));
+            std::array::from_fn(|_| {
+                let current = osc;
+                osc *= step;
+                current
+            })
+        })
     }
 }
 fn median(mut x: Vec<f64>) -> f64 {
     if x.is_empty() {
         return 0.0;
     }
-    x.sort_by(f64::total_cmp);
-    x[x.len() / 2]
+    let middle = x.len() / 2;
+    *x.select_nth_unstable_by(middle, f64::total_cmp).1
 }
 fn variance(s: &Spectrum) -> f64 {
     let mut v = Vec::new();
@@ -623,13 +630,14 @@ fn discover(audio: &[f64], low: f64, high: f64) -> (Vec<Band>, Vec<Candidate>) {
 fn refine(band: &Band, c: &Candidate) -> Vec<Candidate> {
     let mut grid = Vec::new();
     for df in -3..=3 {
+        let f = c.f + df as f64 * 0.5;
+        let oscillators = band.sync_oscillators(f);
         for dt in -4..=4 {
-            let f = c.f + df as f64 * 0.5;
             let t = c.dt + dt as f64 * 0.01;
             grid.push(Candidate {
                 f,
                 dt: t,
-                score: band.sync_score(f, t, 0.0),
+                score: band.sync_stats(t, &oscillators).0,
                 band: c.band,
             });
         }
@@ -637,13 +645,14 @@ fn refine(band: &Band, c: &Candidate) -> Vec<Candidate> {
     grid.sort_by(|a, b| b.score.total_cmp(&a.score));
     let best = grid[0].clone();
     for df in -1..=1 {
+        let f = best.f + df as f64 * 0.125;
+        let oscillators = band.sync_oscillators(f);
         for dt in -1..=1 {
-            let f = best.f + df as f64 * 0.125;
             let t = best.dt + dt as f64 * 0.005;
             grid.push(Candidate {
                 f,
                 dt: t,
-                score: band.sync_score(f, t, 0.0),
+                score: band.sync_stats(t, &oscillators).0,
                 band: c.band,
             });
         }
@@ -666,13 +675,14 @@ fn refine(band: &Band, c: &Candidate) -> Vec<Candidate> {
 fn refine_coherent(band: &Band, c: &Candidate) -> Vec<Candidate> {
     let mut grid = Vec::new();
     for df in -40..=40 {
+        let f = c.f + df as f64 * 0.025;
+        let oscillators = band.sync_oscillators(f);
         for dt in -8..=8 {
-            let f = c.f + df as f64 * 0.025;
             let t = c.dt + dt as f64 * 0.005;
             grid.push(Candidate {
                 f,
                 dt: t,
-                score: band.sync_stats(f, t, 0.0).1,
+                score: band.sync_stats(t, &oscillators).1,
                 band: c.band,
             });
         }

@@ -904,8 +904,9 @@ impl HybridStreamDecodeSession {
         }
         self.active_call_context
             .update_from_evidence(&self.last_evidence_store);
-        self.wsjtx
-            .add_a7_rows(timestamp, ledger.tagged().iter().map(|row| &row.decode));
+        // Use the native snapshot even when an earlier recovery callback
+        // became the displayed representative of a signal.
+        self.wsjtx.add_a7_rows(timestamp, baseline.iter());
         self.early.clear();
         diagnostics.elapsed = clock.elapsed();
         self.diagnostics = diagnostics;

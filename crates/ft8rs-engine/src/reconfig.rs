@@ -174,9 +174,8 @@ pub fn plan_reconfig(old: &EngineState, new: &EngineState) -> ReconfigOutcome {
     let changed = config_diff(&old.config, &new.config);
     if !changed.is_empty() {
         out.rebuild_session = true;
-        // S1 scratch is reset by definition (rebuilding the session). Hash book
-        // migrates today; S3 (A7/AP/evidence) migration is not implemented, so
-        // it is reset for now (a one-slot transient AP loss on user action).
+        // Rebuilding resets scratch and session AP state. The live supervisor
+        // can restore the WSJT-X A7 checkpoint after receive-target-only changes.
         out.reset.insert(StateBucket::Scratch);
         out.migrate.insert(StateBucket::HashBook);
         out.reset.insert(StateBucket::ApMemory);

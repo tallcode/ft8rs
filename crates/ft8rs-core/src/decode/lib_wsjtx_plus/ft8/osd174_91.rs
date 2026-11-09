@@ -15,7 +15,6 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
     let n = N_LDPC;
     let k = KK;
 
-    let gen = get_generator();
     let absllr: Vec<f32> = llr.iter().map(|&x| x.abs()).collect();
 
     // WSJT-X osd174_91.f90 uses indexx(absrx,N,indx), then consumes the
@@ -24,21 +23,11 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
     let indx = indexx_ascending(&absllr_for_index);
     let mut indices: Vec<usize> = indx.into_iter().rev().collect();
 
-    // Reorder generator matrix columns
-    let mut genmrb = vec![0u8; k * n];
-    for row_idx in 0..k {
-        let row = row_idx * n;
-        for i in 0..n {
-            genmrb[row + i] = gen[row + indices[i]];
-        }
-    }
-
-    // Preserve pivot search/column-swap order, but eliminate packed integer
-    // rows instead of touching 174 individual bytes for every row XOR.
-    let mut packed = pack_rows(&genmrb);
+    let mut packed = reorder_generator(&indices[..n]);
     if !eliminate(&mut packed, &mut indices) {
         return None;
     }
+    let mut genmrb = vec![0u8; k * n];
     for (row, words) in genmrb.as_chunks_mut::<N_LDPC>().0.iter_mut().zip(&packed) {
         for (bit, value) in row.iter_mut().enumerate() {
             *value = ((words[bit / 64] >> (bit % 64)) & 1) as u8;
@@ -66,10 +55,7 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
     let mut best_cw = c0.clone();
 
     if norder > 0 {
-        let mut ndeep = norder.min(6);
-        if ndeep == 0 {
-            ndeep = 1;
-        }
+        let ndeep = norder.min(6);
         let (nord, npre1, npre2, nt, ntheta, ntau) = match ndeep {
             1 => (1usize, false, false, 40usize, 12usize, 0usize),
             2 => (1usize, true, false, 40usize, 10usize, 0usize),
@@ -104,11 +90,14 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
                     }
 
                     let nd1kpt = if n1 == flag {
-                        for j in 0..k {
-                            me[j] = m0[j] ^ misub[j];
+                        // The systematic hard-decision codeword is already encoded.
+                        // Flipping a bit XORs its generator row into the codeword.
+                        ce.copy_from_slice(&c0);
+                        for (j, &flip) in misub.iter().enumerate() {
+                            if flip == 1 {
+                                gf2_row_xor(&mut ce, &genmrb[j * n..(j + 1) * n]);
+                            }
                         }
-                        me[n1] = m0[n1] ^ 1;
-                        mrbencode91_into(&me, &packed, n, &mut ce);
                         for j in k..n {
                             e2sub[j - k] = ce[j] ^ hdec[j] as u8;
                         }
@@ -117,7 +106,7 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
                             .take(nt.min(64))
                             .enumerate()
                             .fold(0u64, |bits, (i, &value)| bits | (u64::from(value) << i));
-                        d1 = me
+                        d1 = ce
                             .iter()
                             .zip(hdec.iter())
                             .zip(absrx.iter())
@@ -142,16 +131,9 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
                     };
 
                     if nd1kpt <= ntheta {
-                        if n1 != flag {
-                            for j in 0..k {
-                                me[j] = m0[j] ^ misub[j];
-                            }
-                            me[n1] = m0[n1] ^ 1;
-                            if nt <= 64 {
-                                e2.copy_from_slice(&e2sub);
-                                gf2_row_xor(&mut e2, &genmrb[n1 * n + k..n1 * n + n]);
-                            }
-                            mrbencode91_into(&me, &packed, n, &mut ce);
+                        if n1 != flag && nt <= 64 {
+                            e2.copy_from_slice(&e2sub);
+                            gf2_row_xor(&mut e2, &genmrb[n1 * n + k..n1 * n + n]);
                         }
                         let dd = if n1 == flag {
                             d1 + e2sub
@@ -160,7 +142,7 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
                                 .map(|(&e, &a)| e as f32 * a)
                                 .sum::<f32>()
                         } else {
-                            d1 + (ce[n1] ^ hdec[n1] as u8) as f32 * absrx[n1]
+                            d1 + absrx[n1]
                                 + e2.iter()
                                     .zip(absrx.iter().skip(k))
                                     .map(|(&e, &a)| e as f32 * a)
@@ -169,6 +151,9 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
                         if dd < dmin {
                             dmin = dd;
                             best_cw.copy_from_slice(&ce);
+                            if n1 != flag {
+                                gf2_row_xor(&mut best_cw, &genmrb[n1 * n..(n1 + 1) * n]);
+                            }
                         }
                     }
                 }
@@ -272,8 +257,37 @@ pub(crate) fn osd_decode174_91(llr: &[f32], apmask: &[i8], norder: usize) -> Opt
     })
 }
 
+fn reorder_generator(indices: &[usize]) -> [[u64; 3]; KK] {
+    // The systematic columns are unit vectors. Cache the nonzero rows of the
+    // fixed parity columns so each reliability order can be packed directly.
+    static PARITY_COLUMNS: OnceLock<[Vec<usize>; N_LDPC - KK]> = OnceLock::new();
+    let parity = PARITY_COLUMNS.get_or_init(|| {
+        let generator = get_generator();
+        std::array::from_fn(|column| {
+            (0..KK)
+                .filter(|&row| generator[row * N_LDPC + KK + column] == 1)
+                .collect()
+        })
+    });
+
+    let mut rows = [[0u64; 3]; KK];
+    for (position, &column) in indices.iter().enumerate() {
+        let word = position / 64;
+        let mask = 1u64 << (position % 64);
+        if column < KK {
+            rows[column][word] |= mask;
+        } else {
+            for &row in &parity[column - KK] {
+                rows[row][word] |= mask;
+            }
+        }
+    }
+    rows
+}
+
 // Three machine words retain exactly the same GF(2) rows. XOR association
 // cannot change integer results; weighted floating-point scores are untouched.
+#[cfg(test)]
 fn pack_rows(matrix: &[u8]) -> Vec<[u64; 3]> {
     matrix
         .as_chunks::<N_LDPC>()
@@ -306,11 +320,13 @@ fn eliminate(rows: &mut [[u64; 3]], indices: &mut [usize]) -> bool {
             indices.swap(id, column);
         }
         let pivot = rows[id];
+        let (word, bit) = (id / 64, id % 64);
         for (i, row) in rows.iter_mut().enumerate() {
-            if i != id && (row[id / 64] >> (id % 64)) & 1 == 1 {
-                for (word, value) in row.iter_mut().zip(pivot) {
-                    *word ^= value;
-                }
+            // Leave the pivot intact and XOR it only into rows with a set bit.
+            let selected = ((row[word] >> bit) & 1) & u64::from(i != id);
+            let mask = selected.wrapping_neg();
+            for (word, value) in row.iter_mut().zip(pivot) {
+                *word ^= value & mask;
             }
         }
     }
@@ -548,5 +564,20 @@ fn packed_elimination_preserves_matrix_and_pivot_order() {
         assert_eq!(old_success, eliminate(&mut packed, &mut new_indices));
         assert_eq!(old_indices, new_indices, "pivot case={case}");
         assert_eq!(pack_rows(&bytes), packed, "matrix case={case}");
+    }
+}
+
+#[test]
+fn packed_generator_matches_column_reordering() {
+    let generator = get_generator();
+    for start in [0, 1, 63, 64, 90, 91, 127, 128, 173] {
+        let indices: Vec<_> = (0..N_LDPC).cycle().skip(start).take(N_LDPC).collect();
+        let expected: Vec<_> = generator
+            .as_chunks::<N_LDPC>()
+            .0
+            .iter()
+            .flat_map(|row| indices.iter().map(|&column| row[column]))
+            .collect();
+        assert_eq!(reorder_generator(&indices).as_slice(), pack_rows(&expected));
     }
 }

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::{decode_actor, DecodeCmd, DECODE_QUEUE_CAP};
 use crate::protocol::{DecodeRecord, DecodeStage, DxContextSnapshot, EngineEvent};
+use crate::reconfig::{config_diff, ConfigField};
 use crate::soundcard::SlotStage;
 
 const WORKER_ARGUMENT: &str = "--ft8rs-decode-worker";
@@ -532,9 +533,11 @@ impl SlotDelivery {
                     config.profile,
                     DecodeProfile::Wsjtx | DecodeProfile::WsjtxPlus
                 ) && record.provenance.is_wsjtx_history_seed();
-                // A Plus retry can be displayed without seeding the next Hybrid a7 pass.
+                // Hybrid may seed A7 from an original JTDX row whose AP subtype
+                // is unknown. Supplemental callbacks never become history.
                 let hybrid_seed = config.profile == DecodeProfile::Hybrid
-                    && record.provenance != StreamDecodeProvenance::CandidateRetry;
+                    && (record.provenance == StreamDecodeProvenance::Unknown
+                        || record.provenance.is_wsjtx_history_seed());
                 if hybrid_seed || native_seed {
                     let frequency =
                         if native_seed && record.provenance == StreamDecodeProvenance::A8List {
@@ -614,8 +617,28 @@ fn supervise(
                 reset_dx_target,
                 reset_dx_operator,
             } => {
+                // A new receive target does not invalidate observations at
+                // the frequency and time stored in the native A7 table.
+                let changed = config_diff(&config, &next);
+                let keep_a7 = matches!(
+                    config.profile,
+                    DecodeProfile::Wsjtx | DecodeProfile::WsjtxPlus | DecodeProfile::Hybrid
+                ) && !changed.is_empty()
+                    && changed.iter().all(|field| {
+                        matches!(
+                            field,
+                            ConfigField::Nfqso | ConfigField::HisCall | ConfigField::HisGrid
+                        )
+                    });
+                let a7 = keep_a7.then(|| std::mem::take(&mut history.a7));
                 config = next;
                 history = WorkerHistory::default();
+                if let Some(a7) = a7 {
+                    history.a7 = a7;
+                    if let Some(child) = &mut worker {
+                        child.restore_pending = [true; 2];
+                    }
+                }
                 sequence += 1;
                 (
                     Request::Reconfigure {
@@ -819,7 +842,7 @@ mod tests {
     ];
 
     #[test]
-    fn hybrid_candidate_retry_is_displayed_without_seeding_a7() {
+    fn hybrid_supplemental_rows_are_displayed_without_seeding_a7() {
         let config = StreamDecodeConfig {
             profile: DecodeProfile::Hybrid,
             ..Default::default()
@@ -831,6 +854,9 @@ mod tests {
         for (message, provenance) in [
             ("CQ K1ABC FN42", StreamDecodeProvenance::Unknown),
             ("CQ W9XYZ EN50", StreamDecodeProvenance::CandidateRetry),
+            ("CQ W1AW FN31", StreamDecodeProvenance::PlusCompatibility),
+            ("CQ N0CAL EM48", StreamDecodeProvenance::CooperativeRecovery),
+            ("CQ K7ABC CN87", StreamDecodeProvenance::Experiment),
         ] {
             delivery
                 .forward(
@@ -857,7 +883,9 @@ mod tests {
         }
         let snapshot = ron::to_string(history.a7_for_slot(&timestamp)).unwrap();
         assert!(snapshot.contains("CQ K1ABC FN42"));
-        assert!(!snapshot.contains("CQ W9XYZ EN50"));
+        for call in ["W9XYZ", "W1AW", "N0CAL", "K7ABC"] {
+            assert!(!snapshot.contains(call));
+        }
     }
 
     fn fixture(mode: &str) -> Result<Worker, String> {
@@ -969,6 +997,63 @@ mod tests {
             restore_jtdx: [None, None],
             supervised: false,
         }
+    }
+
+    #[test]
+    fn wsjtx_receive_target_change_preserves_native_a7() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ft8rs-core/tests/ft8/230208_140300.wav");
+        let audio = ft8rs::input::audio::read_wav_mono_f32(path).unwrap();
+        let config = StreamDecodeConfig::default();
+        let mut retuned = config.clone();
+        retuned.nfqso = 1100.0;
+        retuned.hiscall = Some("W1AW".into());
+        retuned.hisgrid = Some("FN31".into());
+        let (tx, commands) = mpsc::channel();
+        let (events, results) = mpsc::channel();
+        let supervisor = thread::spawn(move || {
+            supervise(config, commands, events, || fixture("native"), LIVE_BUDGET);
+        });
+
+        let mut recovered = false;
+        for (slot, timestamp) in [(0, "230208_140300"), (2, "230208_140330")] {
+            let start = slot * 180_000;
+            for (kind, len) in [
+                (SlotStage::N41, 141_696),
+                (SlotStage::N47, 162_432),
+                (SlotStage::N50, 180_000),
+            ] {
+                tx.send(stage(
+                    timestamp,
+                    kind,
+                    audio.samples[start..start + len].to_vec(),
+                ))
+                .unwrap();
+            }
+            loop {
+                match results.recv_timeout(Duration::from_secs(15)).unwrap() {
+                    EngineEvent::Decode(record) => {
+                        recovered |= slot == 2
+                            && record.row.msg == "CQ R6KEE KN75"
+                            && record.provenance == StreamDecodeProvenance::A7Memory;
+                    }
+                    EngineEvent::SlotComplete { .. } => break,
+                    EngineEvent::Error(error) => panic!("live worker failed: {error}"),
+                    _ => {}
+                }
+            }
+            if slot == 0 {
+                tx.send(DecodeCmd::Reconfigure {
+                    config: retuned.clone(),
+                    reset_dx_target: false,
+                    reset_dx_operator: false,
+                })
+                .unwrap();
+            }
+        }
+        tx.send(DecodeCmd::Stop).unwrap();
+        supervisor.join().unwrap();
+        assert!(recovered, "the receive target change dropped the A7 seed");
     }
 
     #[test]

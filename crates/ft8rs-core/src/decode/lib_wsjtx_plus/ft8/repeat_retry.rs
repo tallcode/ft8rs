@@ -5,7 +5,7 @@ use crate::decode::lib_wsjtx_plus::fft::SymbolFft;
 use crate::decode::lib_wsjtx_plus::ft8_a7::{ap_downsample, template_snr, ApDownsampleCache};
 use crate::decode::lib_wsjtx_plus::ft8_decode::{extract_symbol_spectrum, DT2, FS2};
 use crate::decode::packjt77::is_stdcall;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
@@ -121,6 +121,13 @@ fn search(
     let mut fft = SymbolFft::new();
     let center = ((row.dt + 0.5) * FS2) as f32;
     let center = center.round() as isize + 1;
+    // Each alignment advances by four samples. A symbol's start is therefore
+    // shared with symbol neighbors eight alignment steps away.
+    const STEP: usize = 4;
+    const RADIUS: isize = 64;
+    const OFFSETS: usize = (2 * RADIUS) as usize / STEP + 1;
+    const SYMBOL_STRIDE: usize = 32 / STEP;
+    let mut bins = [None; (79 - 1) * SYMBOL_STRIDE + OFFSETS];
     let mut best = None;
     let mut best_score = f64::NEG_INFINITY;
     for df in -6..=6 {
@@ -129,8 +136,8 @@ fn search(
             continue;
         }
         let (re, im) = ap_downsample(cache, freq);
-        let mut bins = HashMap::new();
-        for offset in (-64..=64).step_by(4) {
+        bins.fill(None);
+        for (alignment, offset) in (-RADIUS..=RADIUS).step_by(STEP).enumerate() {
             let time = center + offset;
             let mut hits = [0; 3];
             let mut energy = [0.0; 3];
@@ -142,10 +149,14 @@ fn search(
                     _ => 2,
                 };
                 let start = time + i as isize * 32;
-                let powers = bins.entry(start).or_insert_with(|| {
-                    extract_symbol_spectrum(&mut fft, &re, &im, start).map(|bin| bin.norm_sqr())
-                });
-                let total = powers.iter().sum::<f64>();
+                let (powers, total) =
+                    bins[alignment + i * SYMBOL_STRIDE].get_or_insert_with(|| {
+                        let powers = extract_symbol_spectrum(&mut fft, &re, &im, start)
+                            .map(|bin| bin.norm_sqr());
+                        let total = powers.iter().sum::<f64>();
+                        (powers, total)
+                    });
+                let total = *total;
                 if total > 1.0e-30 {
                     let expected = powers[tone as usize];
                     power += expected;

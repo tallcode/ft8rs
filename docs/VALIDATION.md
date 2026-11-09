@@ -350,6 +350,64 @@ and `target/decoder-validation/wsjtx-plus-phase1-final-recheck/`. Temporary prob
 are removed after retaining compact exploration summaries. Source and fixture
 protection plus final check identities are recorded in `final-audit.json`.
 
+## 2026-11-09 live A7 history and decoder work
+
+The official WSJT-X 3.3.0-beta5 macOS arm64 `jt9` classic receiver and the
+Rust WSJT-X and WSJT-X+ base profiles replayed 78 slots with matching audio,
+frequency bounds, depth 3, QSO progress 1, and AP width 75 Hz. This covers the
+short and long recordings, both long noise variants, the long recording with
+an explicit QSO context, and the standalone A8 fixture. Each long case keeps
+its own session across the entire recording. The no-context cases use
+`-c b -x b` because `jt9` otherwise installs sample calls. Those calls
+produced a low-confidence `? a8` row on each noisy recording.
+
+Every one of the 1,317 classic observations has a match in both Rust base
+profiles. Matching uses slot, normalized text, ±5 Hz and ±0.25 seconds.
+The native console's `CQ_001` spelling is normalized for the comparison.
+An independent run of official MTD with four workers on the original long
+recording gives 33 MTD-only and 19 classic-only observations at those
+tolerances. The receiver audit also checks native A7/A8 template generation,
+parity, AP progress and eligibility, staged audio, hash context and delivery.
+In live mode, the official classic decoder has separate wall-clock cutoffs for
+N41 and N47. The ft8.rs application schedules N50 at the capture boundary and
+applies a cumulative supervisor deadline. Both choices matter when comparing
+live logs on a loaded host.
+
+Changing the receive target through the ft8.rs application now keeps each
+parity's A7 checkpoint eligible for the next slot on that parity. The
+supervised-worker regression replays the same signal after changing the
+target call, grid and RX frequency, and checks that `CQ R6KEE KN75` returns
+with the A7 annotation. Hybrid takes A7 peer hints from its baseline sessions
+and isolates the supplemental callbacks from that bank.
+
+The Plus OSD search applies generator-row XOR to the already encoded
+hard-decision codeword and keeps the same floating-point scoring order.
+Standalone repeat search reuses symbol powers and their total energy at
+shared sample offsets. The experimental receiver reuses each frequency's
+Costas oscillators across timing hypotheses and selects medians by rank.
+
+The serial macOS arm64 release replay used the 2022 CallDB and the original,
++1 dB and +3 dB long recordings, with 57 slots per mode in each build.
+N50 callback times start when the final stage is invoked. Total work is the
+sum of the three stage durations, including worker completion. The callback
+means use slots with a final-stage callback. All times are in seconds.
+
+| Mode | N50 first callback | N50 last callback | Total work |
+|---|---:|---:|---:|
+| WSJT-X+ | 0.274 → 0.270 | 0.663 → 0.648 | 1.091 → 1.066 (−2.34%) |
+| Hybrid | 0.312 → 0.307 | 1.035 → 1.020 | 1.879 → 1.852 (−1.42%) |
+| Hybrid + exp | 0.311 → 0.305 | 1.543 → 1.509 | 3.949 → 3.824 (−3.16%) |
+
+All 2,903 callbacks retain their order, message, exported frequency, DT, SNR,
+sync, tones and provenance. The original recording retains every reviewed
+target for its mode, with 468, 484 and 486 matches in the order above.
+Both Hybrid configurations reproduce the two previously classified wrong
+messages at the same timestamps. Local checks pass 273 optimized core tests,
+50 optimized engine tests, the 487-row production-worker recording gate,
+formatting and all-target Clippy with warnings denied. Raw comparisons and
+run conditions are under the ignored
+`target/decoder-validation/native-parity-perf-20261109/` directory.
+
 ## Limits and follow-up validation
 
 The JTDX geography filter remains a deliberate partial port; implausible
