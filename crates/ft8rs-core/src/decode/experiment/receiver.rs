@@ -257,7 +257,7 @@ struct BesselGroup {
     zeroes: usize,
 }
 
-fn bessel_partition(values: &[f64], run: usize, offset: usize) -> impl Iterator<Item = f64> + '_ {
+fn score_partition(values: &[f64], run: usize, offset: usize) -> impl Iterator<Item = f64> + '_ {
     values
         .chunks_exact(2 * run)
         .flat_map(move |chunk| chunk[offset..offset + run].iter().copied())
@@ -273,7 +273,7 @@ fn bessel_maxima(scores: &[f64], maxima: &mut [f64], scratch: &mut Vec<f64>) -> 
         for (i, maximum) in maxima.iter_mut().enumerate() {
             let run = scores.len() >> (1 + i / 2);
             *maximum =
-                bessel_partition(scores, run, (i % 2) * run).fold(f64::NEG_INFINITY, f64::max);
+                score_partition(scores, run, (i % 2) * run).fold(f64::NEG_INFINITY, f64::max);
         }
         return scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     }
@@ -321,7 +321,7 @@ fn partition_llrs(scores: &[f64], bits: usize, exps: &mut Vec<f64>, output: &mut
         let run = scores.len() >> (1 + i / 2);
         let offset = (i % 2) * run;
         if maximum.to_bits() == peak.to_bits() {
-            *value = peak + bessel_partition(exps, run, offset).sum::<f64>().ln();
+            *value = peak + score_partition(exps, run, offset).sum::<f64>().ln();
             continue;
         }
         let index = groups[..count]
@@ -365,9 +365,9 @@ fn partition_llrs(scores: &[f64], bits: usize, exps: &mut Vec<f64>, output: &mut
             let run = scores.len() >> (1 + i / 2);
             let offset = (i % 2) * run;
             let sum = if shared {
-                bessel_partition(exps, run, offset).sum::<f64>()
+                score_partition(exps, run, offset).sum::<f64>()
             } else {
-                bessel_partition(scores, run, offset)
+                score_partition(scores, run, offset)
                     .map(|score| (score - maximum).exp())
                     .sum::<f64>()
             };
@@ -508,17 +508,10 @@ fn metrics(s: &Spectrum, stats: &MetricStats, block: usize, mode: &str) -> Vec<f
                 continue;
             }
             for bit in 0..3 * b {
-                let mut a = Vec::new();
-                let mut c = Vec::new();
-                for (p, &v) in scores.iter().enumerate() {
-                    if (p >> (3 * b - 1 - bit)) & 1 == 1 {
-                        a.push(v)
-                    } else {
-                        c.push(v)
-                    }
-                }
-                llr[half * 87 + k * 3 + bit] = a.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-                    - c.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let run = count >> (bit + 1);
+                let zero = score_partition(&scores, run, 0).fold(f64::NEG_INFINITY, f64::max);
+                let one = score_partition(&scores, run, run).fold(f64::NEG_INFINITY, f64::max);
+                llr[half * 87 + k * 3 + bit] = one - zero;
             }
             k += b;
         }

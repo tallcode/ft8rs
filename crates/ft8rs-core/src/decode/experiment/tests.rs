@@ -141,6 +141,60 @@ fn bessel_marginals_preserve_nonfinite_behavior() {
 }
 
 #[test]
+fn amplitude_metrics_preserve_scalar_llrs() {
+    for observed_end in [3000, 2213] {
+        let band = Band {
+            samples: (0..3000)
+                .map(|i| C::new((i * 13 % 31) as f64 - 15.0, (i * 7 % 29) as f64 - 14.0))
+                .collect(),
+            center: 1000.0,
+            observed_end,
+        };
+        let spectrum = band.spectra(1000.0, 0.0, 0.0);
+        let stats = MetricStats::new(&spectrum);
+        for block in [1, 3] {
+            let actual = metrics(&spectrum, &stats, block, "amp");
+            let mut expected = Vec::new();
+            for base in [7, 43] {
+                for k in (0..29).step_by(block) {
+                    let width = block.min(29 - k);
+                    let scores: Vec<_> = (0..(1 << (3 * width)))
+                        .map(|pattern| {
+                            let mut sum = C::new(0.0, 0.0);
+                            for n in 0..width {
+                                let tone = GRAY[(pattern >> (3 * (width - 1 - n))) & 7];
+                                sum += spectrum[base + k + n][tone] * 1.0;
+                            }
+                            sum.norm()
+                        })
+                        .collect();
+                    for bit in (0..3 * width).rev() {
+                        let mut maxima = [f64::NEG_INFINITY; 2];
+                        for (pattern, &score) in scores.iter().enumerate() {
+                            let partition = (pattern >> bit) & 1;
+                            maxima[partition] = maxima[partition].max(score);
+                        }
+                        expected.push(maxima[1] - maxima[0]);
+                    }
+                }
+            }
+            let mean = expected.iter().sum::<f64>() / 174.0;
+            let sd = (expected.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / 174.0)
+                .sqrt()
+                .max(1e-12);
+            assert_eq!(actual.len(), expected.len());
+            for (bit, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+                assert_eq!(
+                    actual.to_bits(),
+                    (expected / sd * 2.83).to_bits(),
+                    "observed={observed_end} block={block} bit={bit}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn robust_metrics_preserve_scalar_llrs() {
     for observed_end in [79usize * 32, 66 * 32 + 13] {
         let observed =
