@@ -249,34 +249,133 @@ fn lse(x: &[f64]) -> f64 {
     let m = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     m + x.iter().map(|v| (v - m).exp()).sum::<f64>().ln()
 }
-/// Keep each partition's original max, subtraction and ascending-pattern sum.
-/// One partition per bit contains the global maximum: those identical exp
-/// arguments can share a cache, without rescaling a different partition's sum.
+#[derive(Clone, Copy, Default)]
+struct BesselGroup {
+    maximum: f64,
+    partitions: u32,
+    ones: usize,
+    zeroes: usize,
+}
+
+fn bessel_partition(values: &[f64], run: usize, offset: usize) -> impl Iterator<Item = f64> + '_ {
+    values
+        .chunks_exact(2 * run)
+        .flat_map(move |chunk| chunk[offset..offset + run].iter().copied())
+}
+
+fn bessel_maxima(scores: &[f64], maxima: &mut [f64], scratch: &mut Vec<f64>) -> f64 {
+    // Keep the original ordered reductions for NaNs, infinities and signed
+    // zero ties. Ordinary finite maxima have a unique bit representation.
+    if scores
+        .iter()
+        .any(|score| !score.is_finite() || score.to_bits() == (-0.0f64).to_bits())
+    {
+        for (i, maximum) in maxima.iter_mut().enumerate() {
+            let run = scores.len() >> (1 + i / 2);
+            *maximum =
+                bessel_partition(scores, run, (i % 2) * run).fold(f64::NEG_INFINITY, f64::max);
+        }
+        return scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    }
+
+    // Each level records the maxima of the alternating runs for one bit.
+    // The merged adjacent runs supply the next more significant bit.
+    let mut count = scores.len() / 2;
+    scratch.resize(count, 0.0);
+    let mut levels = maxima.as_chunks_mut::<2>().0.iter_mut().rev();
+    let least_significant = levels.next().expect("at least one Bessel bit");
+    least_significant.fill(f64::NEG_INFINITY);
+    for (&[zero, one], merged) in scores.as_chunks::<2>().0.iter().zip(scratch.iter_mut()) {
+        least_significant[0] = least_significant[0].max(zero);
+        least_significant[1] = least_significant[1].max(one);
+        *merged = zero.max(one);
+    }
+    for level in levels {
+        count /= 2;
+        level.fill(f64::NEG_INFINITY);
+        for i in 0..count {
+            let zero = scratch[2 * i];
+            let one = scratch[2 * i + 1];
+            level[0] = level[0].max(zero);
+            level[1] = level[1].max(one);
+            scratch[i] = zero.max(one);
+        }
+    }
+    scratch[0]
+}
+
+/// Share exponents only when the pattern and the partition maximum agree.
+/// Each partition still reduces its terms in ascending pattern order.
 fn bessel_llrs(scores: &[f64], bits: usize, exps: &mut Vec<f64>, output: &mut [f64]) {
+    const MAX_PARTITIONS: usize = 2 * 4 * 3;
     debug_assert_eq!(scores.len(), 1 << bits);
     debug_assert_eq!(output.len(), bits);
-    let peak = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut maxima = [0.0; MAX_PARTITIONS];
+    let peak = bessel_maxima(scores, &mut maxima[..2 * bits], exps);
     exps.clear();
     exps.extend(scores.iter().map(|v| (v - peak).exp()));
-    for (bit, value) in output.iter_mut().enumerate() {
-        let run = 1 << (bits - 1 - bit);
-        let partition = |offset: usize| {
-            let selected = || {
-                scores
-                    .chunks_exact(2 * run)
-                    .flat_map(|chunk| chunk[offset..offset + run].iter().copied())
-            };
-            let m = selected().fold(f64::NEG_INFINITY, f64::max);
-            let sum = if m.to_bits() == peak.to_bits() {
-                exps.chunks_exact(2 * run)
-                    .flat_map(|chunk| chunk[offset..offset + run].iter().copied())
-                    .sum::<f64>()
+    let mut values = [0.0; MAX_PARTITIONS];
+    let mut groups = [BesselGroup::default(); MAX_PARTITIONS];
+    let mut count = 0;
+    for (i, (value, maximum)) in values.iter_mut().zip(maxima).take(2 * bits).enumerate() {
+        let run = scores.len() >> (1 + i / 2);
+        let offset = (i % 2) * run;
+        if maximum.to_bits() == peak.to_bits() {
+            *value = peak + bessel_partition(exps, run, offset).sum::<f64>().ln();
+            continue;
+        }
+        let index = groups[..count]
+            .iter()
+            .position(|group| group.maximum.to_bits() == maximum.to_bits())
+            .unwrap_or_else(|| {
+                count += 1;
+                count - 1
+            });
+        let group = &mut groups[index];
+        group.maximum = maximum;
+        group.partitions |= 1 << i;
+        group.ones |= offset;
+        group.zeroes |= run ^ offset;
+    }
+    for group in &groups[..count] {
+        let mut partitions = group.partitions;
+        let maximum = group.maximum;
+        let shared = !partitions.is_power_of_two();
+        if shared {
+            // A pattern is in the union if any of its selected bits differs
+            // from the one combination excluded by every member partition.
+            let mask = group.ones | group.zeroes;
+            let whole_block = group.ones & group.zeroes != 0;
+            let stride = 1 << mask.trailing_zeros();
+            for (index, (scores, exps)) in scores
+                .chunks_exact(stride)
+                .zip(exps.chunks_exact_mut(stride))
+                .enumerate()
+            {
+                if whole_block || (index * stride) & mask != group.zeroes {
+                    for (&score, exp) in scores.iter().zip(exps) {
+                        *exp = (score - maximum).exp();
+                    }
+                }
+            }
+        }
+        while partitions != 0 {
+            let i = partitions.trailing_zeros() as usize;
+            partitions &= partitions - 1;
+            let run = scores.len() >> (1 + i / 2);
+            let offset = (i % 2) * run;
+            let sum = if shared {
+                bessel_partition(exps, run, offset).sum::<f64>()
             } else {
-                selected().map(|v| (v - m).exp()).sum::<f64>()
+                bessel_partition(scores, run, offset)
+                    .map(|score| (score - maximum).exp())
+                    .sum::<f64>()
             };
-            m + sum.ln()
-        };
-        *value = partition(run) - partition(0);
+            values[i] = maximum + sum.ln();
+        }
+    }
+    for (bit, value) in output.iter_mut().enumerate() {
+        *value = values[2 * bit + 1] - values[2 * bit];
     }
 }
 struct MetricStats {

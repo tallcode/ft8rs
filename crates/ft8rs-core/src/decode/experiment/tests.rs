@@ -49,6 +49,17 @@ fn bessel_prefix_scores_preserve_scalar_accumulation() {
 fn bessel_marginals_preserve_every_llr_bit() {
     let mut state = 0x1234_5678_9abc_def0u64;
     let mut exps = Vec::new();
+    // The runner-up at 010 shares its maximum across both 0 and 1 partitions.
+    let scores = [-11.0, -1.0, 9.0, 0.0, 2.0, 10.0, 3.0, 4.0];
+    let mut actual = [0.0; 3];
+    bessel_llrs(&scores, 3, &mut exps, &mut actual);
+    assert_eq!(
+        actual.map(f64::to_bits).as_slice(),
+        reference_bessel_llrs(&scores, 3)
+            .into_iter()
+            .map(f64::to_bits)
+            .collect::<Vec<_>>()
+    );
     // Includes the one-symbol final block, ties, cancellation near zero,
     // exp underflow, widely separated maxima and realistic log-I0 scores.
     for block in 1..=4 {
