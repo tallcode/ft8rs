@@ -306,7 +306,7 @@ fn bessel_maxima(scores: &[f64], maxima: &mut [f64], scratch: &mut Vec<f64>) -> 
 
 /// Share exponents only when the pattern and the partition maximum agree.
 /// Each partition still reduces its terms in ascending pattern order.
-fn bessel_llrs(scores: &[f64], bits: usize, exps: &mut Vec<f64>, output: &mut [f64]) {
+fn partition_llrs(scores: &[f64], bits: usize, exps: &mut Vec<f64>, output: &mut [f64]) {
     const MAX_PARTITIONS: usize = 2 * 4 * 3;
     debug_assert_eq!(scores.len(), 1 << bits);
     debug_assert_eq!(output.len(), bits);
@@ -460,7 +460,7 @@ fn metrics(s: &Spectrum, stats: &MetricStats, block: usize, mode: &str) -> Vec<f
     .max(0.1 * var)
     .sqrt();
     let mut llr = vec![0.0; 174];
-    let mut bessel_exps = Vec::new();
+    let mut partition_exps = Vec::new();
     let mut bessel_prefixes = (mode == "bessel").then(|| [C::new(0.0, 0.0); 512]);
     for (half, base) in [7, 43].iter().enumerate() {
         let mut k = 0;
@@ -471,10 +471,10 @@ fn metrics(s: &Spectrum, stats: &MetricStats, block: usize, mode: &str) -> Vec<f
             if let Some(prefixes) = bessel_prefixes.as_mut() {
                 bessel_scores(&s[base + k..base + k + b], amp, var, prefixes, &mut scores);
                 let start = half * 87 + k * 3;
-                bessel_llrs(
+                partition_llrs(
                     &scores,
                     3 * b,
-                    &mut bessel_exps,
+                    &mut partition_exps,
                     &mut llr[start..start + 3 * b],
                 );
                 k += b;
@@ -496,6 +496,17 @@ fn metrics(s: &Spectrum, stats: &MetricStats, block: usize, mode: &str) -> Vec<f
                     _ => panic!("mode"),
                 };
             }
+            if mode == "robust" {
+                let start = half * 87 + k * 3;
+                partition_llrs(
+                    &scores,
+                    3 * b,
+                    &mut partition_exps,
+                    &mut llr[start..start + 3 * b],
+                );
+                k += b;
+                continue;
+            }
             for bit in 0..3 * b {
                 let mut a = Vec::new();
                 let mut c = Vec::new();
@@ -506,13 +517,8 @@ fn metrics(s: &Spectrum, stats: &MetricStats, block: usize, mode: &str) -> Vec<f
                         c.push(v)
                     }
                 }
-                let value = if mode == "amp" {
-                    a.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-                        - c.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-                } else {
-                    lse(&a) - lse(&c)
-                };
-                llr[half * 87 + k * 3 + bit] = value;
+                llr[half * 87 + k * 3 + bit] = a.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                    - c.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             }
             k += b;
         }

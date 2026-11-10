@@ -2,7 +2,7 @@ use super::*;
 
 // Scalar definition used before the Bessel optimization. Keep its independent
 // bit partitioning and summation as an exact floating-point regression oracle.
-fn reference_bessel_llrs(scores: &[f64], bits: usize) -> Vec<f64> {
+fn reference_partition_llrs(scores: &[f64], bits: usize) -> Vec<f64> {
     (0..bits)
         .map(|bit| {
             let mut one = Vec::new();
@@ -52,10 +52,10 @@ fn bessel_marginals_preserve_every_llr_bit() {
     // The runner-up at 010 shares its maximum across both 0 and 1 partitions.
     let scores = [-11.0, -1.0, 9.0, 0.0, 2.0, 10.0, 3.0, 4.0];
     let mut actual = [0.0; 3];
-    bessel_llrs(&scores, 3, &mut exps, &mut actual);
+    partition_llrs(&scores, 3, &mut exps, &mut actual);
     assert_eq!(
         actual.map(f64::to_bits).as_slice(),
-        reference_bessel_llrs(&scores, 3)
+        reference_partition_llrs(&scores, 3)
             .into_iter()
             .map(f64::to_bits)
             .collect::<Vec<_>>()
@@ -97,9 +97,9 @@ fn bessel_marginals_preserve_every_llr_bit() {
                 })
                 .collect();
             for pass in 0..2 {
-                let expected = reference_bessel_llrs(&scores, bits);
+                let expected = reference_partition_llrs(&scores, bits);
                 let mut actual = vec![0.0; bits];
-                bessel_llrs(&scores, bits, &mut exps, &mut actual);
+                partition_llrs(&scores, bits, &mut exps, &mut actual);
                 for (bit, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
                     assert_eq!(
                         actual.to_bits(),
@@ -131,11 +131,60 @@ fn bessel_marginals_preserve_nonfinite_behavior() {
         ],
     ];
     for scores in cases {
-        let expected = reference_bessel_llrs(&scores, 3);
+        let expected = reference_partition_llrs(&scores, 3);
         let mut actual = vec![0.0; 3];
-        bessel_llrs(&scores, 3, &mut Vec::new(), &mut actual);
+        partition_llrs(&scores, 3, &mut Vec::new(), &mut actual);
         for (actual, expected) in actual.iter().zip(&expected) {
             assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+    }
+}
+
+#[test]
+fn robust_metrics_preserve_scalar_llrs() {
+    for observed_end in [79usize * 32, 66 * 32 + 13] {
+        let observed =
+            std::array::from_fn(|symbol| observed_end.saturating_sub(symbol * 32).min(32));
+        let values = std::array::from_fn(|symbol| {
+            std::array::from_fn(|tone| {
+                let re = ((symbol * 13 + tone * 7) % 31) as f64 - 15.0;
+                let im = ((symbol * 5 + tone * 11) % 29) as f64 - 14.0;
+                C::new(re, im) * observed[symbol] as f64 / 32.0
+            })
+        });
+        let spectrum = Spectrum { values, observed };
+        let stats = MetricStats::new(&spectrum);
+        let varq = tone_variance(&spectrum, stats.var);
+        let amp = (stats.robust_power - stats.var).max(0.1 * stats.var).sqrt();
+        let actual = metrics(&spectrum, &stats, 3, "robust");
+        let mut expected = Vec::new();
+        for base in [7, 43] {
+            for k in (0..29).step_by(3) {
+                let width = 3.min(29 - k);
+                let scores: Vec<_> = (0..(1 << (3 * width)))
+                    .map(|pattern| {
+                        let mut z = C::new(0.0, 0.0);
+                        let mut invsum = 0.0;
+                        for n in 0..width {
+                            let tone = GRAY[(pattern >> (3 * (width - 1 - n))) & 7];
+                            let weight = 1.0 / varq[tone];
+                            let symbol = base + k + n;
+                            z += spectrum[symbol][tone] * weight;
+                            invsum += weight * spectrum.observed[symbol] as f64 / 32.0;
+                        }
+                        log_i0(2.0 * amp * z.norm()) - amp * amp * invsum
+                    })
+                    .collect();
+                expected.extend(reference_partition_llrs(&scores, 3 * width));
+            }
+        }
+        assert_eq!(actual.len(), expected.len());
+        for (bit, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "observed={observed_end} bit={bit}"
+            );
         }
     }
 }
