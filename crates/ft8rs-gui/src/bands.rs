@@ -1,15 +1,18 @@
 //! Band labels for the live decode log, based on WSJT-X UDP dial status.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use crate::wsjtx_udp::DialStatus;
 
+const HISTORY_CAP: usize = 1024;
+const SLOT_MS: u64 = 15_000;
 const STATUS_LIFETIME: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 pub(crate) struct CurrentBand {
     sources: HashMap<(SocketAddr, String), DialSource>,
+    history: VecDeque<DialStatus>,
 }
 
 struct DialSource {
@@ -18,13 +21,16 @@ struct DialSource {
 }
 
 impl CurrentBand {
-    pub(crate) fn observe(&mut self, status: DialStatus) {
+    pub(crate) fn observe(&mut self, mut status: DialStatus) {
         self.expire(status.received);
-        let key = (status.peer, status.id);
+        let key = (status.peer, status.id.clone());
         match status.frequency_hz {
             None => {
                 if let Some(source) = self.sources.get_mut(&key) {
                     source.received = status.received;
+                    status.frequency_hz = Some(source.frequency_hz);
+                } else {
+                    return;
                 }
             }
             Some(0) => {
@@ -40,18 +46,48 @@ impl CurrentBand {
                 );
             }
         }
+        if self.history.len() == HISTORY_CAP {
+            self.history.pop_front();
+        }
+        self.history.push_back(status);
     }
 
-    pub(crate) fn expire(&mut self, now: Instant) {
+    fn expire(&mut self, now: Instant) {
         self.sources
             .retain(|_, source| now.saturating_duration_since(source.received) < STATUS_LIFETIME);
     }
 
     pub(crate) fn clear(&mut self) {
         self.sources.clear();
+        self.history.clear();
     }
 
-    pub(crate) fn name(&self) -> Option<&'static str> {
+    pub(crate) fn name_at_slot(
+        &self,
+        slot: u64,
+        clock_step: Option<Instant>,
+    ) -> Option<&'static str> {
+        let start_ms = slot * SLOT_MS;
+        let mut seen = HashSet::new();
+        let mut frequencies = self.history.iter().rev().filter_map(|status| {
+            if status.received_ms > start_ms
+                || clock_step.is_some_and(|step| status.received < step)
+                || start_ms - status.received_ms >= STATUS_LIFETIME.as_millis() as u64
+                || !seen.insert((status.peer, status.id.as_str()))
+            {
+                return None;
+            }
+            status.frequency_hz.filter(|&hz| hz != 0)
+        });
+        let hz = frequencies.next()?;
+        frequencies
+            .all(|other| other == hz)
+            .then(|| band_name(hz))
+            .flatten()
+    }
+
+    #[cfg(test)]
+    fn name(&self) -> Option<&'static str> {
         let mut sources = self.sources.values();
         let hz = sources.next()?.frequency_hz;
         if sources.all(|source| source.frequency_hz == hz) {
@@ -111,6 +147,7 @@ mod tests {
             id: id.into(),
             frequency_hz: Some(frequency_hz),
             received,
+            received_ms: 0,
         }
     }
 
@@ -171,6 +208,26 @@ mod tests {
 
         band.expire(now + STATUS_LIFETIME);
         assert_eq!(band.name(), Some("40m"));
+    }
+
+    #[test]
+    fn a_late_decode_uses_the_dial_status_at_its_slot_start() {
+        let mut band = CurrentBand::default();
+        let now = Instant::now();
+        let mut old = status(now, "WSJT-X", 14_074_000);
+        old.received_ms = 149_900;
+        band.observe(old);
+        let retune = now + Duration::from_millis(15_200);
+        let mut new = status(retune, "WSJT-X", 7_074_000);
+        new.received_ms = 165_100;
+        band.observe(new);
+        assert_eq!(band.name_at_slot(9, None), None);
+        assert_eq!(band.name_at_slot(10, None), Some("20m"));
+        assert_eq!(band.name_at_slot(11, None), Some("20m"));
+        assert_eq!(band.name_at_slot(12, None), Some("40m"));
+        assert_eq!(band.name_at_slot(15, None), Some("40m"));
+        assert_eq!(band.name_at_slot(16, None), None);
+        assert_eq!(band.name_at_slot(10, Some(retune)), None);
     }
 
     #[test]

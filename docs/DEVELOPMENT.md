@@ -79,9 +79,9 @@ build configuration and validation.
 The UI consumes local events before external comparison rows with a shared
 2 ms input budget. If it yields, the unconsumed events remain in their mailboxes
 and it requests another frame. `DecodeBatch` limits deduplication to the same
-absolute UTC slot and uses a logical evicted prefix to preserve the sequential
-20,000-row history limit. Physical compaction and display-index rebuilding run
-once when the batch leaves scope. Neither the consumption budget nor the
+UTC slot within the same clock segment and uses a logical evicted prefix to
+preserve the sequential 20,000-row history limit. Physical compaction and
+display-index rebuilding run once when the batch leaves scope. Neither the consumption budget nor the
 subsequent compaction is a hard real-time guarantee.
 
 The comparison listener has one persistent worker owning socket binding,

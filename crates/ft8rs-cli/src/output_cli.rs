@@ -1,22 +1,22 @@
+use std::io::{self, Write};
+
 use ft8rs::stream::session::StreamDecodeProvenance;
 use ft8rs::stream::StreamDecodedMessage;
 use ft8rs::SlotTimestamp;
 
-pub struct CliOutput;
+#[derive(Default)]
+pub struct CliOutput {
+    pub(crate) broken_pipe: bool,
+}
 
 impl CliOutput {
-    pub fn new() -> Self {
-        Self
-    }
-
     pub fn on_decode(
         &mut self,
         timestamp: SlotTimestamp,
         row: &StreamDecodedMessage,
         provenance: StreamDecodeProvenance,
     ) -> Result<(), String> {
-        println!("{}", decode_line(&timestamp, row, provenance));
-        flush_stdout()
+        self.line(format_args!("{}", decode_line(&timestamp, row, provenance)))
     }
 
     pub fn on_slot_complete(
@@ -24,16 +24,21 @@ impl CliOutput {
         _timestamp: SlotTimestamp,
         count: usize,
     ) -> Result<(), String> {
-        println!("------ slot done: {count:>2} decodes ------");
-        flush_stdout()
+        self.line(format_args!("------ slot done: {count:>2} decodes ------"))
+    }
+
+    fn line(&mut self, line: std::fmt::Arguments<'_>) -> Result<(), String> {
+        write_stdout(format_args!("{line}\n")).map_err(|error| {
+            self.broken_pipe = error.kind() == io::ErrorKind::BrokenPipe;
+            format!("failed to write stdout: {error}")
+        })
     }
 }
 
-fn flush_stdout() -> Result<(), String> {
-    use std::io::Write;
-    std::io::stdout()
-        .flush()
-        .map_err(|err| format!("failed to flush stdout: {err}"))
+pub(crate) fn write_stdout(value: std::fmt::Arguments<'_>) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_fmt(value)?;
+    stdout.flush()
 }
 
 fn decode_line(

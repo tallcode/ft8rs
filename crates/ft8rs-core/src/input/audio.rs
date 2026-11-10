@@ -2,6 +2,9 @@ use std::path::Path;
 
 use hound::WavReader;
 
+// Cap the sample-rate-dependent FIR kernel allocation for WAV input.
+const MAX_WAV_SAMPLE_RATE: u32 = 384_000;
+
 #[derive(Clone, Debug)]
 pub struct AudioSamples {
     pub sample_rate: u32,
@@ -14,6 +17,13 @@ pub fn read_wav_mono_f32(path: impl AsRef<Path>) -> Result<AudioSamples, String>
     let spec = reader.spec();
     if spec.channels == 0 {
         return Err("WAV has zero channels".to_string());
+    }
+
+    if !(1..=MAX_WAV_SAMPLE_RATE).contains(&spec.sample_rate) {
+        return Err(format!(
+            "Unsupported WAV sample rate {} Hz (expected 1–{MAX_WAV_SAMPLE_RATE} Hz)",
+            spec.sample_rate
+        ));
     }
 
     let channels = spec.channels as usize;
@@ -192,11 +202,11 @@ fn fil4_decimate(src: &[f32]) -> Vec<f32> {
 }
 
 pub fn resample_linear(src: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if src.is_empty() || from_rate == 0 || to_rate == 0 {
+        return Vec::new();
+    }
     if from_rate == to_rate {
         return src.to_vec();
-    }
-    if src.is_empty() {
-        return Vec::new();
     }
 
     let ratio = from_rate as f64 / to_rate as f64;

@@ -160,6 +160,11 @@ impl Locale {
             " (decoded)" => "（解码获得）",
             "Switch DX target" => "切换 DX 目标",
             "This clears the collected DX information." => "这会清除已收集的 DX 信息。",
+            "Audio monitoring stopped" => "音频监听已停止",
+            "Audio input was interrupted. Check the receiver or audio device, then start monitoring again." => {
+                "音频输入已中断。请检查接收机或音频设备，恢复后可重新开始监听。"
+            }
+            "OK" => "确定",
             "Cancel" => "取消",
             "Switch" => "切换",
             "Audio discontinuity reports" => "音频不连续报告",

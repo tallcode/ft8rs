@@ -12,9 +12,16 @@ pub struct Outputs {
 impl Outputs {
     pub fn new(udp: Option<UdpConfig>) -> Result<Self, String> {
         Ok(Self {
-            cli: CliOutput::new(),
+            cli: CliOutput::default(),
             udp: udp.map(UdpOutput::new).transpose()?,
         })
+    }
+
+    pub fn finish(self, result: Result<(), String>) -> Result<(), String> {
+        if self.cli.broken_pipe {
+            return Ok(());
+        }
+        result
     }
 
     pub fn on_decode(

@@ -114,19 +114,26 @@ mod tests {
             provenance: StreamDecodeProvenance::Unknown,
             stage: DecodeStage::Final,
         };
-        mailbox.send(EngineEvent::Status(EngineStatus::Monitoring));
+        mailbox.send(EngineEvent::Status {
+            id: 1,
+            status: EngineStatus::Monitoring,
+        });
         for _ in 0..DECODE_CAP + 7 {
             mailbox.send(EngineEvent::Decode(record.clone()));
             mailbox.send(EngineEvent::InputLevel(0.5));
         }
         mailbox.send(EngineEvent::Error("capture stopped".into()));
         mailbox.send(EngineEvent::CaptureSelectionRejected {
+            id: 1,
             requested_device: Some("new".into()),
             requested_channel: InputChannel::Mono,
             active_device: None,
             active_channel: InputChannel::Left,
         });
-        mailbox.send(EngineEvent::Status(EngineStatus::Idle));
+        mailbox.send(EngineEvent::Status {
+            id: 1,
+            status: EngineStatus::Idle,
+        });
         let events: Vec<_> = std::iter::from_fn(|| mailbox.try_recv()).collect();
         assert_eq!(
             events
@@ -146,12 +153,20 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, EngineEvent::CaptureSelectionRejected { .. })));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, EngineEvent::Status(EngineStatus::Idle))));
-        assert!(!events
-            .iter()
-            .any(|e| matches!(e, EngineEvent::Status(EngineStatus::Monitoring))));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            EngineEvent::Status {
+                id: 1,
+                status: EngineStatus::Idle
+            }
+        )));
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            EngineEvent::Status {
+                id: 1,
+                status: EngineStatus::Monitoring
+            }
+        )));
         assert!(matches!(
             events.last(),
             Some(EngineEvent::DecodeRowsDropped(7))

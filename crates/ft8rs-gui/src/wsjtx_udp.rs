@@ -15,7 +15,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::debug_info::Recorder;
 
@@ -47,6 +47,7 @@ pub(crate) struct DialStatus {
     // frequency (including Close) clears the current source.
     pub frequency_hz: Option<u64>,
     pub received: Instant,
+    pub received_ms: u64,
 }
 
 type DialInbox = Arc<Mutex<VecDeque<DialStatus>>>;
@@ -244,6 +245,10 @@ fn listen(
                         id,
                         frequency_hz,
                         received,
+                        received_ms: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
                     };
                     {
                         let mut inbox = dial.lock().unwrap();

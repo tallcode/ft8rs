@@ -1,4 +1,6 @@
 use std::cell::RefCell;
+use std::io;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -129,7 +131,7 @@ struct MonitorArgs {
 
     /// Stop after this many 15-second slots. Omit to keep listening.
     #[arg(short = 'S', long, help_heading = "Input")]
-    slots: Option<usize>,
+    slots: Option<NonZeroUsize>,
 
     /// Send UDP decode reports in the compatible packet format.
     #[arg(short = 'u', long, help_heading = "Output")]
@@ -150,9 +152,6 @@ struct MonitorArgs {
 }
 
 fn main() {
-    if ft8rs_engine::run_decode_worker_if_requested() {
-        return;
-    }
     if let Err(err) = run() {
         eprintln!("{err}");
         std::process::exit(1);
@@ -165,10 +164,10 @@ fn run() -> Result<(), String> {
     match cli.command {
         Command::File(args) => run_file(args),
         Command::Monitor(args) => run_monitor(args),
-        Command::License => {
-            print!("{}", ft8rs::about::notice(VERSION));
-            Ok(())
-        }
+        Command::License => stdout_result(output_cli::write_stdout(format_args!(
+            "{}",
+            ft8rs::about::notice(VERSION)
+        ))),
     }
 }
 
@@ -186,12 +185,13 @@ fn run_file(args: FileArgs) -> Result<(), String> {
     let config = stream_decode_config(&args.decode)?;
 
     let outputs = RefCell::new(Outputs::new(None)?);
-    decode_wav_file_streaming_tagged(
+    let result = decode_wav_file_streaming_tagged(
         &args.input,
         FileDecodeOptions { start_time, config },
         |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
         |timestamp, count| outputs.borrow_mut().on_slot_complete(timestamp, count),
-    )
+    );
+    outputs.into_inner().finish(result)
 }
 
 fn stream_decode_config(args: &DecodeArgs) -> Result<StreamDecodeConfig, String> {
@@ -253,7 +253,7 @@ fn normalized_nonempty(value: &Option<String>) -> Option<String> {
 
 fn run_monitor(args: MonitorArgs) -> Result<(), String> {
     if args.device.is_none() {
-        return run_monitor_ls();
+        return stdout_result(run_monitor_ls());
     }
 
     let channel = InputChannel::parse(&args.channel).ok_or_else(|| {
@@ -272,37 +272,44 @@ fn run_monitor(args: MonitorArgs) -> Result<(), String> {
     if config.profile == DecodeProfile::Dx {
         config.dx_monitor_watchdog_ms = Some(DX_MONITOR_WATCHDOG_MS);
     }
-    decode_soundcard_streaming_tagged(
+    let result = decode_soundcard_streaming_tagged(
         SoundcardDecodeOptions {
             device: args.device,
             channel,
             config,
-            max_slots: args.slots,
+            max_slots: args.slots.map(NonZeroUsize::get),
         },
         |timestamp, row| outputs.borrow_mut().on_decode(timestamp, row),
         |timestamp, count| outputs.borrow_mut().on_slot_complete(timestamp, count),
-    )
+    );
+    outputs.into_inner().finish(result)
 }
 
-fn run_monitor_ls() -> Result<(), String> {
-    let devices = list_soundcards()?;
+fn stdout_result(result: io::Result<()>) -> Result<(), String> {
+    match result {
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        other => other.map_err(|error| error.to_string()),
+    }
+}
+
+fn run_monitor_ls() -> io::Result<()> {
+    let devices = list_soundcards().map_err(io::Error::other)?;
     if devices.is_empty() {
-        println!("No audio input devices found.");
-        return Ok(());
+        return output_cli::write_stdout(format_args!("No audio input devices found.\n"));
     }
 
-    println!(
-        "{:<5} {:<12} {:<40} {:<10} Default input format",
+    output_cli::write_stdout(format_args!(
+        "{:<5} {:<12} {:<40} {:<10} Default input format\n",
         "Index", "Host", "Name", "Default"
-    );
+    ))?;
     for device in devices {
         let default_mark = if device.is_default_input { "yes" } else { "-" };
         let format = format_soundcard_format(&device.input);
 
-        println!(
-            "{:<5} {:<12} {:<40} {:<10} {}  id:{}",
+        output_cli::write_stdout(format_args!(
+            "{:<5} {:<12} {:<40} {:<10} {}  id:{}\n",
             device.index, device.host, device.name, default_mark, format, device.id
-        );
+        ))?;
     }
 
     Ok(())
@@ -318,6 +325,16 @@ fn format_soundcard_format(format: &SoundcardFormatInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitor_rejects_zero_slots() {
+        assert!(
+            Cli::try_parse_from(["ft8rs-cli", "monitor", "--device", "0", "--slots", "0"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["ft8rs-cli", "monitor", "--device", "0", "--slots", "1"]).is_ok()
+        );
+    }
 
     #[test]
     fn frequency_validation_includes_defaults_and_nonfinite_values() {

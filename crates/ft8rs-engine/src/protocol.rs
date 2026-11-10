@@ -41,7 +41,7 @@ pub trait MonitorObserver: Send + Sync {
 #[derive(Clone, Debug)]
 pub enum EngineCommand {
     /// Begin monitoring with the given desired state.
-    StartMonitor(EngineState),
+    StartMonitor { id: u64, state: EngineState },
     /// Stop monitoring; keep the last desired state.
     StopMonitor,
     /// Apply a new desired state while monitoring (engine diffs and reconfigures).
@@ -136,7 +136,10 @@ pub enum EngineEvent {
     },
     /// Decode rows lost while the GUI was stalled, since its last drain.
     DecodeRowsDropped(u64),
-    Status(EngineStatus),
+    Status {
+        id: u64,
+        status: EngineStatus,
+    },
     Decode(DecodeRecord),
     /// Internal event consumed by the live worker supervisor.
     A7Checkpoint {
@@ -173,6 +176,7 @@ pub enum EngineEvent {
     /// A failed capture switch kept the previous device; reconcile the picker
     /// only if the operator has not requested a newer selection meanwhile.
     CaptureSelectionRejected {
+        id: u64,
         requested_device: Option<String>,
         requested_channel: InputChannel,
         active_device: Option<String>,

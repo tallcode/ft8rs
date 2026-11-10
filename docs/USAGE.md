@@ -76,6 +76,11 @@ to the decoder. The level is measured in **dBFS**, where 0 dBFS is full scale.
 48 kHz conversion uses the WSJT-X `fil4` coefficients; other rates use an
 anti-aliasing resampler. Neither path changes decoder thresholds.
 
+If the audio input disconnects or stops delivering samples, the GUI stops
+monitoring and shows a dialog. Confirm it, restore the receiver or audio input,
+then press Play to resume. The decode log remains visible and new results are
+added to it.
+
 On Windows FlexRadio systems, select the receive audio endpoint for the intended
 slice, for example `DAX Audio RX 1` or `DAX RX 1 (FlexRadio DAX)`. Check the
 input level with the intended channel selected. Hardware-specific DAX

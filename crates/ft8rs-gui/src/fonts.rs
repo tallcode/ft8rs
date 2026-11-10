@@ -592,9 +592,10 @@ mod tests {
         let mut collection = Collection::new(CollectionOptions::default());
         let mut cache = SourceCache::new(SourceCacheOptions::default());
         let (definitions, support) = select_fonts(&mut collection, &mut cache, 1.0);
-        if let Some(data) = definitions.font_data.get("system-chinese") {
-            eprintln!("Selected Chinese face: {}", font_description(data));
-        }
+        let selected_face = definitions.font_data.get("system-chinese").map_or_else(
+            || "Latin fallback".to_owned(),
+            |data| font_description(data),
+        );
         ctx.set_fonts(definitions);
         for scale in [1.0, 1.25, 1.5, 2.0] {
             ctx.set_pixels_per_point(scale);
@@ -617,7 +618,7 @@ mod tests {
                             .flat_map(|row| &row.glyphs)
                             .filter(|glyph| !glyph.chr.is_whitespace())
                             .all(|glyph| glyph.uv_rect.size.min_elem() > 0.0),
-                        "glyph bitmap missing at {scale}x / {size}pt"
+                        "glyph bitmap missing at {scale}x / {size}pt ({selected_face})"
                     );
                     let atlas = ui.fonts_mut(|fonts| fonts.image());
                     for glyph in galley
@@ -632,7 +633,7 @@ mod tests {
                             (min[1]..max[1]).any(|y| (min[0]..max[0]).any(|x| {
                                 atlas.pixels[y as usize * atlas.size[0] + x as usize].a() > 0
                             })),
-                            "empty bitmap for {:?} at {scale}x / {size}pt",
+                            "empty bitmap for {:?} at {scale}x / {size}pt ({selected_face})",
                             glyph.chr
                         );
                     }
