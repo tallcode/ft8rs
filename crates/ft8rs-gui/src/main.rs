@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod bands;
+mod clock_sync;
 mod debug_info;
 mod diagnostics;
 mod fonts;
@@ -35,6 +37,8 @@ fn load_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result<()> {
+    #[cfg(windows)]
+    clock_sync::run_write_helper();
     if ft8rs_engine::run_decode_worker_if_requested() {
         return Ok(());
     }

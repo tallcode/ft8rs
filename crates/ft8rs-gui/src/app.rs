@@ -13,6 +13,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Color32, RichText};
 
+use crate::bands::CurrentBand;
+use crate::clock_sync;
 use crate::debug_info::{self, DebugInfo, Recorder};
 use crate::fonts::{
     install as install_fonts, FontSupport, BODY_FONT_SIZE, CHINESE_UNAVAILABLE, SMALL_FONT_SIZE,
@@ -33,6 +35,9 @@ use ft8rs_engine::EngineHandle;
 const MAX_ROWS: usize = 20_000;
 /// Cooperative input budget; final batch compaction happens once afterwards.
 const EVENT_BUDGET: Duration = Duration::from_millis(2);
+// High bits distinguish UTC timelines. Low bits retain the absolute UTC slot
+// for the displayed date and time.
+const CLOCK_SEGMENT_STRIDE: u64 = 1 << 40;
 const DIALOG_FOCUS_ATTEMPTS: u8 = 3;
 const DIALOG_FOCUS_INTERVAL: Duration = Duration::from_millis(100);
 /// Slightly larger than WSJT-X's default 10 pt (~13.33 logical pixels at
@@ -42,6 +47,8 @@ const DECODE_FONT_SIZE: f32 = 14.0;
 const DECODE_ROW_PADDING_Y: f32 = 1.0;
 /// Internal left padding for the decode table (header + rows go edge-to-edge).
 const TABLE_PAD: f32 = 12.0;
+const SETTINGS_HEADING_TOP_SPACE: f32 = 2.0;
+const SETTINGS_FORM_BOTTOM_SPACE: f32 = 10.0;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum SettingsTab {
@@ -80,6 +87,8 @@ struct Row {
     // decoders. `gen` is the absolute UTC slot number, so adjacent slots can
     // arrive out of order and rows from different days cannot collide.
     gen: u64,
+    // Label captured when the first decode for this slot entered the log.
+    slot_band: Option<&'static str>,
     freq: f64,
     dt: f64,
     tokens: Vec<String>,
@@ -101,7 +110,7 @@ impl Row {
 #[cfg_attr(test, derive(Debug, PartialEq))]
 enum DisplayItem {
     Decode(usize),
-    Separator(u64),
+    Separator(u64, Option<&'static str>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +144,10 @@ pub struct Ft8rsApp {
     debug_info: DebugInfo,
     debug_result: Option<Result<std::path::PathBuf, String>>,
     engine: EngineHandle,
+    clock_sync: Option<Receiver<clock_sync::Update>>,
+    clock_status: Option<clock_sync::Update>,
+    clock_segment: u64,
+    clock_boundary: Option<(Instant, u64)>,
     activation: Arc<crate::single_instance::Activation>,
     main_focus: DialogFocus,
 
@@ -207,6 +220,7 @@ pub struct Ft8rsApp {
     // Persistent socket owner; retained while disabled so rebinds are serialized.
     udp_in: Option<crate::wsjtx_udp::UdpIn>,
     udp_in_dirty: bool,
+    current_band: CurrentBand,
 }
 
 impl Ft8rsApp {
@@ -273,6 +287,10 @@ impl Ft8rsApp {
             debug_info: DebugInfo::new(recorder),
             debug_result: None,
             engine,
+            clock_sync: None,
+            clock_status: None,
+            clock_segment: 0,
+            clock_boundary: None,
             activation,
             main_focus: DialogFocus::default(),
             language,
@@ -331,6 +349,7 @@ impl Ft8rsApp {
             logo,
             udp_in: None,
             udp_in_dirty: true,
+            current_band: CurrentBand::default(),
         }
     }
 
@@ -523,6 +542,15 @@ impl Ft8rsApp {
 
     fn pump_events(&mut self, ctx: &egui::Context) {
         let clock = Instant::now();
+        // Use the latest received dial status for newly seen slots in this batch.
+        while clock.elapsed() < EVENT_BUDGET {
+            let Some(status) = self.udp_in.as_ref().and_then(|udp| udp.try_dial_status()) else {
+                break;
+            };
+            self.current_band.observe(status);
+        }
+        self.current_band.expire(Instant::now());
+        let band = self.current_band.name();
         let mut batch = DecodeBatch::new(
             &mut self.rows,
             &mut self.display_items,
@@ -584,7 +612,18 @@ impl Ft8rsApp {
                         }
                     }
                 }
-                EngineEvent::Decode(record) => batch.insert(local_decode_row(record)),
+                EngineEvent::Decode(record) => {
+                    let mut row = local_decode_row(record);
+                    row.gen += self.clock_segment;
+                    row.slot_band = band;
+                    batch.insert(row);
+                }
+                EngineEvent::ClockDiscontinuity { at_ms, observed } => {
+                    self.clock_segment += CLOCK_SEGMENT_STRIDE;
+                    let first_slot = at_ms.max(0) as u64 / 15_000 + 1;
+                    self.clock_boundary = Some((observed, first_slot));
+                    self.dx = None;
+                }
                 EngineEvent::A7Checkpoint { .. }
                 | EngineEvent::JtdxCheckpoint { .. }
                 | EngineEvent::CaptureDiag { .. }
@@ -600,10 +639,21 @@ impl Ft8rsApp {
             }
         }
         while clock.elapsed() < EVENT_BUDGET {
-            let Some(decode) = self.udp_in.as_ref().and_then(|udp| udp.try_recv()) else {
+            let Some((received, decode)) =
+                self.udp_in.as_ref().and_then(|udp| udp.try_recv_timed())
+            else {
                 break;
             };
-            batch.insert(external_decode_row(decode));
+            let mut row = external_decode_row(decode);
+            if self
+                .clock_boundary
+                .is_some_and(|(observed, first_slot)| received < observed || row.gen < first_slot)
+            {
+                continue;
+            }
+            row.gen += self.clock_segment;
+            row.slot_band = band;
+            batch.insert(row);
         }
         if clock.elapsed() >= EVENT_BUDGET {
             // Leave unconsumed events in their original mailboxes and continue
@@ -642,9 +692,15 @@ impl Ft8rsApp {
                         // Clear the previous error on submission, not on a
                         // delayed acknowledgement that could erase a newer
                         // capture/engine error.
-                        Ok(true) if self.udp_in_on => self.error = None,
-                        Ok(_) => {}
+                        Ok(true) => {
+                            self.current_band.clear();
+                            if self.udp_in_on {
+                                self.error = None;
+                            }
+                        }
+                        Ok(false) => {}
                         Err(err) => {
+                            self.current_band.clear();
                             self.udp_in_on = false;
                             self.error = Some(err);
                         }
@@ -960,11 +1016,8 @@ impl Ft8rsApp {
         let own_call = norm(&self.mycall);
         let target_call = norm(&self.hiscall);
         let target_grid = norm(&self.hisgrid);
-        let separator_bg = if dark {
-            Color32::from_gray(65)
-        } else {
-            Color32::from_gray(210)
-        };
+        // Match the WSJT-X detailed separator in both themes.
+        let separator_bg = Color32::from_gray(if dark { 0xa2 } else { 0xd3 });
         // Compare-mode coloring only applies while listening.
         let comparing = self.udp_in_on;
         // Row interactions, collected inside the (immutably borrowed) closure and
@@ -995,13 +1048,13 @@ impl Ft8rsApp {
                         ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::click());
                     let row = match item {
                         DisplayItem::Decode(index) => &rows[*index],
-                        DisplayItem::Separator(gen) => {
+                        DisplayItem::Separator(gen, band) => {
                             paint_decode_separator(
                                 ui.painter(),
                                 rect,
-                                separator_label(*gen),
+                                separator_label(*gen, *band),
                                 font.clone(),
-                                text_color,
+                                Color32::BLACK,
                                 separator_bg,
                             );
                             continue;
@@ -1232,6 +1285,9 @@ impl Ft8rsApp {
         let mut commit = false;
         match self.tab {
             SettingsTab::General => {
+                let item_gap = ui.spacing().item_spacing.y;
+                let heading_gap = item_gap + SETTINGS_HEADING_TOP_SPACE;
+                let extra_gap_scale = 0.75;
                 section_heading(ui, tr("My Station"));
                 ui.push_id("my_station", |ui| {
                     settings_form(ui, |ui| {
@@ -1243,6 +1299,10 @@ impl Ft8rsApp {
                         });
                     });
                 });
+                // The station form's ID scope contributes one extra item gap.
+                ui.add_space(
+                    (SETTINGS_FORM_BOTTOM_SPACE + item_gap + heading_gap) * extra_gap_scale,
+                );
                 section_heading(ui, tr("Display"));
                 settings_form(ui, |ui| {
                     setting_row(ui, tr("Language"), |ui| {
@@ -1264,7 +1324,11 @@ impl Ft8rsApp {
                 if !self.font_support.chinese {
                     ui.add_space(8.0);
                     ui.label(CHINESE_UNAVAILABLE);
+                } else {
+                    ui.add_space(SETTINGS_FORM_BOTTOM_SPACE * extra_gap_scale);
                 }
+                ui.add_space(heading_gap * extra_gap_scale);
+                self.clock_sync_ui(ui);
             }
             SettingsTab::Audio => {
                 section_heading(ui, tr("Audio"));
@@ -1519,6 +1583,97 @@ impl Ft8rsApp {
             }
         }
         commit
+    }
+
+    fn clock_sync_ui(&mut self, ui: &mut egui::Ui) {
+        use clock_sync::{Error, Update};
+
+        let locale = self.locale;
+        let tr = |text| locale.text(text);
+        section_heading(ui, tr("Calibrate system time"));
+        if ui
+            .add_enabled(
+                self.clock_sync.is_none(),
+                egui::Button::new(tr("Calibrate now")),
+            )
+            .clicked()
+        {
+            let ctx = ui.ctx().clone();
+            match clock_sync::start(self.engine.clock_adjustment_reporter(), move || {
+                ctx.request_repaint()
+            }) {
+                Ok(rx) => {
+                    self.clock_sync = Some(rx);
+                    self.clock_status = Some(Update::Querying);
+                }
+                Err(error) => {
+                    self.clock_status = Some(Update::Failed(Error::System(error.to_string())))
+                }
+            }
+        }
+        let status = match &self.clock_status {
+            None => return,
+            Some(Update::Querying | Update::Applying | Update::Verifying) => {
+                tr("Calibrating…").to_owned()
+            }
+            Some(Update::WithinTolerance { offset_us }) => format!(
+                "{}\n{} {:+.3} ms",
+                tr("System time is within tolerance"),
+                tr("Measured offset"),
+                *offset_us as f64 / 1000.0
+            ),
+            Some(Update::Finished {
+                offset_us,
+                remaining_us,
+            }) => {
+                let remaining = remaining_us.map_or_else(
+                    || tr("Verification unavailable").to_owned(),
+                    |us| format!("{} {:+.1} ms", tr("Remaining offset"), us as f64 / 1000.0),
+                );
+                format!(
+                    "{}\n{} {:+.1} ms\n{remaining}",
+                    tr("System time calibrated"),
+                    tr("Measured offset"),
+                    *offset_us as f64 / 1000.0
+                )
+            }
+            Some(Update::Failed(Error::NoResponse)) => tr("No valid NTP response").to_owned(),
+            Some(Update::Failed(Error::Cancelled)) => tr("Time calibration cancelled").to_owned(),
+            Some(Update::Failed(Error::System(error))) => {
+                format!("{}\n{error}", tr("Unable to set system time"))
+            }
+        };
+        let line_height = ui.text_style_height(&egui::TextStyle::Small) + 2.0;
+        let mut label = RichText::new(status)
+            .small()
+            .weak()
+            .line_height(Some(line_height));
+        if matches!(self.clock_status, Some(Update::Failed(_))) {
+            label = label.color(ui.visuals().error_fg_color);
+        }
+        ui.add(egui::Label::new(label).wrap());
+    }
+
+    fn pump_clock_sync(&mut self) {
+        let Some(rx) = &self.clock_sync else { return };
+        loop {
+            match rx.try_recv() {
+                Ok(status) if status.busy() => self.clock_status = Some(status),
+                Ok(status) => {
+                    self.clock_status = Some(status);
+                    self.clock_sync = None;
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.clock_status = Some(clock_sync::Update::Failed(
+                        clock_sync::Error::System("Clock calibration worker stopped".into()),
+                    ));
+                    self.clock_sync = None;
+                    return;
+                }
+            }
+        }
     }
 
     /// Standard picker: egui handles focus, keyboard input, popup sizing and
@@ -1851,6 +2006,7 @@ impl eframe::App for Ft8rsApp {
         self.sync_udp_in(&ctx);
         self.pump_menu();
         self.pump_events(&ctx);
+        self.pump_clock_sync();
         match self.debug_info.poll() {
             Ok(Some(path)) if self.debug_info.active() => self.debug_result = Some(Ok(path)),
             Ok(_) => {}
@@ -2085,7 +2241,7 @@ fn settings_min_height(ctx: &egui::Context, locale: Locale) -> f32 {
 
 /// A bold section heading for the settings content pane.
 fn section_heading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(2.0);
+    ui.add_space(SETTINGS_HEADING_TOP_SPACE);
     ui.label(RichText::new(text).size(14.0).strong());
     ui.add_space(10.0);
 }
@@ -2230,7 +2386,7 @@ fn settings_form(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .spacing(egui::vec2(16.0, 10.0))
         .min_col_width(0.0)
         .show(ui, add);
-    ui.add_space(10.0);
+    ui.add_space(SETTINGS_FORM_BOTTOM_SPACE);
 }
 
 /// One row in the standard settings Grid, returning the control's commit signal.
@@ -2438,7 +2594,7 @@ fn display_items(rows: &[Row], filters: DisplayFilters) -> Vec<DisplayItem> {
 fn push_display_row(items: &mut Vec<DisplayItem>, rows: &[Row], index: usize) {
     let gen = rows[index].gen;
     if !matches!(items.last(), Some(DisplayItem::Decode(last)) if rows[*last].gen == gen) {
-        items.push(DisplayItem::Separator(gen));
+        items.push(DisplayItem::Separator(gen, rows[index].slot_band));
     }
     items.push(DisplayItem::Decode(index));
 }
@@ -2489,8 +2645,8 @@ fn matches_contest_filter(message: &str) -> bool {
     false
 }
 
-fn separator_label(gen: u64) -> String {
-    let seconds = gen * 15;
+fn separator_label(gen: u64, band: Option<&str>) -> String {
+    let seconds = (gen % CLOCK_SEGMENT_STRIDE) * 15;
     let days = (seconds / 86_400) as i64;
     let time = seconds % 86_400;
     // Civil date from Unix days (Gregorian calendar).
@@ -2504,8 +2660,9 @@ fn separator_label(gen: u64) -> String {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = mp + if mp < 10 { 3 } else { -9 };
     year += i64::from(month <= 2);
+    let band = band.map_or_else(String::new, |band| format!("{band} - "));
     format!(
-        "------ {year:04}-{month:02}-{day:02} - {:02}:{:02}:{:02} UTC - FT8 ------",
+        "------ {year:04}-{month:02}-{day:02} - {:02}:{:02}:{:02} UTC - {band}FT8 ------",
         time / 3_600,
         time / 60 % 60,
         time % 60,
@@ -2660,16 +2817,18 @@ impl<'a> DecodeBatch<'a> {
         }
     }
 
-    fn insert(&mut self, incoming: Row) {
+    fn insert(&mut self, mut incoming: Row) {
         let live = &mut self.rows[self.prefix..];
         let low = live.partition_point(|row| row.gen < incoming.gen);
         let high = live.partition_point(|row| row.gen <= incoming.gen);
+        let slot_rows = &mut live[low..high];
         let hidden = self.filters.hides(&incoming);
-        if let Some(filterable_changed) =
-            fold_decode_row(&mut live[low..high], &incoming, self.tolerance)
-        {
+        if let Some(filterable_changed) = fold_decode_row(slot_rows, &incoming, self.tolerance) {
             self.rebuild |= filterable_changed && self.filters != DisplayFilters::NONE;
             return;
+        }
+        if let Some(first) = slot_rows.first() {
+            incoming.slot_band = first.slot_band;
         }
         let index = self.prefix + high;
         self.rebuild |= index != self.rows.len();
@@ -2713,6 +2872,7 @@ fn decode_row(
     Row {
         text,
         gen: absolute_slot(slot_key, now),
+        slot_band: None,
         freq,
         dt,
         tokens,
@@ -2723,7 +2883,7 @@ fn decode_row(
 
 fn local_decode_row(record: ft8rs_engine::protocol::DecodeRecord) -> Row {
     let payload = ft8_payload(&record.row.itone);
-    decode_row(
+    let mut row = decode_row(
         record.timestamp.milliseconds_since_midnight() / 15_000,
         record.row.freq,
         record.row.dt,
@@ -2731,7 +2891,15 @@ fn local_decode_row(record: ft8rs_engine::protocol::DecodeRecord) -> Row {
         norm_tokens(&record.row.msg),
         DecodeSource::Local,
         filterable_message(payload.as_ref(), &record.row.msg),
-    )
+    );
+    if let Some(seconds) = record
+        .timestamp
+        .unix_seconds_utc()
+        .filter(|&seconds| seconds >= 0)
+    {
+        row.gen = seconds as u64 / 15;
+    }
+    row
 }
 
 fn external_decode_row(decode: crate::wsjtx_udp::ExternalDecode) -> Row {
@@ -3362,7 +3530,7 @@ mod tests {
     fn insert_decode_row_reference(
         rows: &mut Vec<Row>,
         display: &mut Vec<DisplayItem>,
-        incoming: Row,
+        mut incoming: Row,
         tolerance: f64,
     ) {
         if fold_decode_row(rows, &incoming, tolerance).is_some() {
@@ -3370,10 +3538,13 @@ mod tests {
         }
         let gen = incoming.gen;
         let index = rows.partition_point(|row| row.gen <= gen);
+        if let Some(previous) = rows[..index].last().filter(|row| row.gen == gen) {
+            incoming.slot_band = previous.slot_band;
+        }
         let append = index == rows.len();
         if append {
             if rows.last().is_none_or(|row| row.gen != gen) {
-                display.push(DisplayItem::Separator(gen));
+                display.push(DisplayItem::Separator(gen, incoming.slot_band));
             }
             display.push(DisplayItem::Decode(index));
         }
@@ -3394,6 +3565,7 @@ mod tests {
             Row {
                 text: message.clone(),
                 gen,
+                slot_band: None,
                 freq: 200.0 + (id % 2800) as f64,
                 dt: 0.0,
                 tokens: norm_tokens(&message),
@@ -3464,6 +3636,7 @@ mod tests {
         let row = |gen, source, dt, snr| Row {
             text: format!("{snr} JA8IIK/P SV9GPV -18"),
             gen,
+            slot_band: None,
             freq: 1137.0,
             dt,
             tokens: norm_tokens("JA8IIK/P SV9GPV -18"),
@@ -3524,7 +3697,7 @@ mod tests {
         let sections: Vec<_> = display
             .iter()
             .filter_map(|item| match item {
-                DisplayItem::Separator(gen) => Some(*gen),
+                DisplayItem::Separator(gen, _) => Some(*gen),
                 _ => None,
             })
             .collect();
@@ -3532,10 +3705,60 @@ mod tests {
     }
 
     #[test]
+    fn slot_separators_capture_the_current_band_only_on_first_insert() {
+        let row = |gen, slot_band, freq, filterable| Row {
+            text: "CQ K1ABC FN42".into(),
+            gen,
+            slot_band,
+            freq,
+            dt: 0.0,
+            tokens: norm_tokens("CQ K1ABC FN42"),
+            filterable,
+            source: DecodeSource::Local,
+        };
+        let filters = DisplayFilters {
+            hide_contest: false,
+            hide_telemetry: true,
+        };
+        let mut rows = Vec::new();
+        let mut display = Vec::new();
+        {
+            let mut batch = DecodeBatch::new(&mut rows, &mut display, 7.0, filters);
+            batch.insert(row(
+                10,
+                Some("20m"),
+                1000.0,
+                Some(FilterableMessage::Telemetry),
+            ));
+            batch.insert(row(12, None, 1000.0, None));
+            batch.insert(row(10, Some("40m"), 1100.0, None));
+            batch.insert(row(11, Some("40m"), 1000.0, None));
+            batch.insert(row(12, Some("40m"), 1100.0, None));
+        }
+        assert_eq!(
+            display,
+            [
+                DisplayItem::Separator(10, Some("20m")),
+                DisplayItem::Decode(1),
+                DisplayItem::Separator(11, Some("40m")),
+                DisplayItem::Decode(2),
+                DisplayItem::Separator(12, None),
+                DisplayItem::Decode(3),
+                DisplayItem::Decode(4),
+            ]
+        );
+        assert_eq!(
+            display_items(&rows[1..], filters)[0],
+            DisplayItem::Separator(10, Some("20m"))
+        );
+    }
+
+    #[test]
     fn display_filters_retain_local_rows_and_leave_udp_visible() {
         let row = |gen, text: &str, source, filterable| Row {
             text: text.into(),
             gen,
+            slot_band: None,
             freq: 1386.0,
             dt: 0.0,
             tokens: norm_tokens(text),
@@ -3567,7 +3790,7 @@ mod tests {
         }
         assert_eq!(
             display,
-            [DisplayItem::Separator(12), DisplayItem::Decode(2)]
+            [DisplayItem::Separator(12, None), DisplayItem::Decode(2)]
         );
         assert_eq!(display_items(&rows, DisplayFilters::NONE).len(), 6);
         for (filters, visible_slot) in [
@@ -3588,7 +3811,7 @@ mod tests {
         ] {
             assert_eq!(
                 display_items(&rows, filters)[0],
-                DisplayItem::Separator(visible_slot)
+                DisplayItem::Separator(visible_slot, None)
             );
         }
         DecodeBatch::new(&mut rows, &mut display, 7.0, filters).insert(row(
@@ -3606,9 +3829,9 @@ mod tests {
         assert_eq!(
             display,
             [
-                DisplayItem::Separator(11),
+                DisplayItem::Separator(11, None),
                 DisplayItem::Decode(1),
-                DisplayItem::Separator(12),
+                DisplayItem::Separator(12, None),
                 DisplayItem::Decode(2),
             ]
         );
@@ -3793,6 +4016,7 @@ mod tests {
         let row = |gen| Row {
             text: String::new(),
             gen,
+            slot_band: None,
             freq: 1000.0,
             dt: 0.0,
             tokens: Vec::new(),
@@ -3802,20 +4026,24 @@ mod tests {
         let rows = [row(10), row(10), row(13), row(13), row(15)];
         let items = display_items(&rows, DisplayFilters::NONE);
         assert_eq!(items.len(), 8);
-        assert!(matches!(items[0], DisplayItem::Separator(10)));
+        assert!(matches!(items[0], DisplayItem::Separator(10, None)));
         assert!(matches!(items[1], DisplayItem::Decode(0)));
         assert!(matches!(items[2], DisplayItem::Decode(1)));
-        assert!(matches!(items[3], DisplayItem::Separator(13)));
-        assert!(matches!(items[6], DisplayItem::Separator(15)));
+        assert!(matches!(items[3], DisplayItem::Separator(13, None)));
+        assert!(matches!(items[6], DisplayItem::Separator(15, None)));
         assert!(matches!(
             display_items(&rows[1..], DisplayFilters::NONE)[0],
-            DisplayItem::Separator(10)
+            DisplayItem::Separator(10, None)
         ));
         assert!(display_items(&[], DisplayFilters::NONE).is_empty());
         // Unix epoch plus one skipped slot: no divider for the missing slot.
         assert_eq!(
-            separator_label(2),
+            separator_label(2, None),
             "------ 1970-01-01 - 00:00:30 UTC - FT8 ------"
+        );
+        assert_eq!(
+            separator_label(2, Some("20m")),
+            "------ 1970-01-01 - 00:00:30 UTC - 20m - FT8 ------"
         );
     }
 
@@ -4044,6 +4272,7 @@ mod tests {
                         external_text.clone()
                     },
                     gen: 1,
+                    slot_band: None,
                     freq: if local_first { 1002.0 } else { 1000.0 },
                     dt: 0.0,
                     tokens: norm_tokens(message),
@@ -4054,6 +4283,7 @@ mod tests {
                     &mut rows,
                     &Row {
                         gen: 1,
+                        slot_band: None,
                         freq: if local_first { 1000.0 } else { 1002.0 },
                         dt: 0.0,
                         tokens: norm_tokens(message),
@@ -4101,6 +4331,7 @@ mod tests {
             let local = || Row {
                 text: format!("120000 -20   0.1  1002  {local_message:<20} exp"),
                 gen: 1,
+                slot_band: None,
                 freq: 1002.0,
                 dt: 0.1,
                 tokens: norm_tokens(local_message),
@@ -4116,6 +4347,7 @@ mod tests {
                     message: external_message.into(),
                 }),
                 gen: 1,
+                slot_band: None,
                 freq: 1000.0,
                 dt: 0.2,
                 tokens: norm_tokens(external_message),
@@ -4189,6 +4421,7 @@ mod tests {
             Row {
                 text: local_decode_text(&record, None),
                 gen: 1,
+                slot_band: None,
                 freq: record.row.freq,
                 dt: record.row.dt,
                 tokens: norm_tokens(message),
@@ -4211,6 +4444,7 @@ mod tests {
             let external = Row {
                 text: external_decode_text(&decode),
                 gen: 1,
+                slot_band: None,
                 freq: decode.freq as f64,
                 dt: decode.dt,
                 tokens: norm_tokens(&decode.message),
@@ -4259,6 +4493,7 @@ mod tests {
                     provenance_tag(StreamDecodeProvenance::Unknown)
                 ),
                 gen: 3362,
+                slot_band: None,
                 freq: 2367.0,
                 dt: 0.0,
                 tokens: norm_tokens(message),
@@ -4269,6 +4504,7 @@ mod tests {
                 &mut rows,
                 &Row {
                     gen: 3362,
+                    slot_band: None,
                     freq: 2369.0,
                     dt: 0.0,
                     tokens: norm_tokens("CQ BA7SAY OL53 ? a2"),
@@ -4320,6 +4556,7 @@ mod tests {
             let mut rows = vec![Row {
                 text: text.to_string(),
                 gen: u64::from(external.ms_since_midnight / 15_000),
+                slot_band: None,
                 freq: 1118.0,
                 dt: 0.0,
                 tokens: tokens.clone(),
@@ -4330,6 +4567,7 @@ mod tests {
                 &mut rows,
                 &Row {
                     gen: u64::from(external.ms_since_midnight / 15_000),
+                    slot_band: None,
                     freq: 1118.0,
                     dt: 0.0,
                     tokens: incoming.to_vec(),
@@ -4421,6 +4659,7 @@ mod tests {
         let mk = |source, freq, msg: &str| Row {
             text: String::new(),
             gen: 1,
+            slot_band: None,
             freq,
             dt: 0.0,
             tokens: norm_tokens(msg),
@@ -4434,6 +4673,7 @@ mod tests {
             &mut rows,
             &Row {
                 gen: 1,
+                slot_band: None,
                 freq: 1002.0,
                 dt: 0.0,
                 tokens: norm_tokens("CQ K1ABC FN42"),
@@ -4451,6 +4691,7 @@ mod tests {
             &mut rows,
             &Row {
                 gen: 1,
+                slot_band: None,
                 freq: 1001.0,
                 dt: 0.0,
                 tokens: norm_tokens("CQ K1ABC FN42"),
@@ -4468,6 +4709,7 @@ mod tests {
                 &mut rows,
                 &Row {
                     gen: 1,
+                    slot_band: None,
                     freq: 1001.0,
                     dt: 0.0,
                     tokens: norm_tokens("CQ K1ABC FN42"),
@@ -4485,6 +4727,7 @@ mod tests {
             &mut rows,
             &Row {
                 gen: 2,
+                slot_band: None,
                 freq: 1000.0,
                 dt: 0.0,
                 tokens: norm_tokens("CQ K1ABC FN42"),
@@ -4522,6 +4765,7 @@ mod tests {
                 let mut rows = vec![Row {
                     text: String::new(),
                     gen: 2702,
+                    slot_band: None,
                     freq: 1118.0,
                     dt: 0.0,
                     tokens: norm_tokens("CQ ZL2AGY RF70 a7"),
@@ -4533,6 +4777,7 @@ mod tests {
                         &mut rows,
                         &Row {
                             gen: 2702,
+                            slot_band: None,
                             freq: 1118.0 + offset,
                             dt: 0.0,
                             tokens: norm_tokens("CQ ZL2AGY RF70 ? a1"),

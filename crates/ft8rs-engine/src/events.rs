@@ -47,7 +47,9 @@ impl GuiEvents {
             queue.decodes += 1;
         } else if !matches!(
             event,
-            EngineEvent::Error(_) | EngineEvent::CaptureSelectionRejected { .. }
+            EngineEvent::Error(_)
+                | EngineEvent::CaptureSelectionRejected { .. }
+                | EngineEvent::ClockDiscontinuity { .. }
         ) {
             // Snapshots replace their old value and move to the tail, preserving
             // their order relative to controls. Errors and rollbacks are retained.

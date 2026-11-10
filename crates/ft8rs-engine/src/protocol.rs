@@ -10,6 +10,7 @@
 use ft8rs::stream::session::StreamDecodeProvenance;
 use ft8rs::stream::StreamDecodedMessage;
 use ft8rs::SlotTimestamp;
+use std::time::Instant;
 
 use crate::reconfig::{EngineState, ReconfigOutcome};
 use crate::soundcard::{InputChannel, SoundcardDeviceInfo, SoundcardFormatInfo};
@@ -45,6 +46,11 @@ pub enum EngineCommand {
     StopMonitor,
     /// Apply a new desired state while monitoring (engine diffs and reconfigures).
     ApplyState(EngineState),
+    /// A system clock write took place in this monotonic interval.
+    ClockAdjusted {
+        started: Instant,
+        completed: Instant,
+    },
     /// Re-enumerate input devices.
     RefreshDevices,
     /// Tear everything down and exit the engine thread.
@@ -123,6 +129,11 @@ pub struct SessionSnapshot {
     reason = "Preserve the public event API and avoid an extra allocation per decoded message"
 )]
 pub enum EngineEvent {
+    /// Start a new UTC timeline after a wall-clock step.
+    ClockDiscontinuity {
+        at_ms: i64,
+        observed: Instant,
+    },
     /// Decode rows lost while the GUI was stalled, since its last drain.
     DecodeRowsDropped(u64),
     Status(EngineStatus),

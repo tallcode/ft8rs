@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const TARGET_SAMPLE_RATE: u32 = 12_000;
 const SLOT_SECONDS: u64 = 15;
@@ -24,6 +24,7 @@ const SLOT_MS: i64 = SLOT_SECONDS as i64 * 1000;
 pub(crate) struct AudioChunk {
     pub samples: Vec<f32>,
     pub capture_ms: i64,
+    pub captured_at: Instant,
     pub channel_peaks: Vec<f32>,
     pub xruns: u64,
     pub error: Option<String>,
@@ -929,6 +930,7 @@ fn report_capture_error(err: cpal::Error, tx: &Sender<AudioChunk>, xruns: &Atomi
     let _ = tx.send(AudioChunk {
         samples: Vec::new(),
         capture_ms: capture_now_ms(),
+        captured_at: Instant::now(),
         channel_peaks: Vec::new(),
         xruns: xruns.load(Ordering::Relaxed),
         error: Some(format!("soundcard input stream error: {err}")),
@@ -946,6 +948,7 @@ fn send_samples<T>(
     f32: cpal::FromSample<T>,
 {
     let capture_ms = capture_now_ms();
+    let captured_at = Instant::now();
     let mut channel_peaks = vec![0.0f32; channels];
     let samples = data.iter().enumerate().map(|(i, &sample)| {
         let value = sample.to_sample::<f32>();
@@ -958,6 +961,7 @@ fn send_samples<T>(
     let _ = tx.send(AudioChunk {
         samples,
         capture_ms,
+        captured_at,
         channel_peaks,
         xruns: xruns.load(Ordering::Relaxed),
         error: None,

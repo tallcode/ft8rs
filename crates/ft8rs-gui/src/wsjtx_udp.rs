@@ -10,18 +10,23 @@
 //! `id:utf8, is_new:bool, time:u32(ms), snr:i32, dt:f64, freq:u32, mode:utf8,
 //! message:utf8, low_confidence:bool, off_air:bool`.
 
-use std::net::UdpSocket;
+use std::collections::VecDeque;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::debug_info::Recorder;
 
 const MAGIC: u32 = 0xadbccbda;
+const TYPE_HEARTBEAT: u32 = 0;
+const TYPE_STATUS: u32 = 1;
 const TYPE_DECODE: u32 = 2;
+const TYPE_CLOSE: u32 = 6;
 const NULL_STRING: u32 = 0xffff_ffff;
 const DECODE_QUEUE_CAP: usize = 4096;
+const DIAL_QUEUE_CAP: usize = 32;
 const RECEIVE_POLL: Duration = Duration::from_millis(100);
 
 /// A decode received from WSJT-X over UDP.
@@ -34,6 +39,18 @@ pub struct ExternalDecode {
     pub message: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct DialStatus {
+    pub peer: SocketAddr,
+    pub id: String,
+    // Heartbeats refresh a source without changing its frequency. A zero
+    // frequency (including Close) clears the current source.
+    pub frequency_hz: Option<u64>,
+    pub received: Instant,
+}
+
+type DialInbox = Arc<Mutex<VecDeque<DialStatus>>>;
+
 #[derive(Clone, PartialEq, Eq)]
 struct Endpoint {
     host: String,
@@ -43,7 +60,8 @@ struct Endpoint {
 struct Configure {
     generation: u64,
     endpoint: Option<Endpoint>,
-    rows: SyncSender<ExternalDecode>,
+    rows: SyncSender<(Instant, ExternalDecode)>,
+    dial: DialInbox,
 }
 
 struct Status {
@@ -56,7 +74,8 @@ struct Status {
 pub struct UdpIn {
     commands: Sender<Configure>,
     status: Receiver<Status>,
-    rows: Receiver<ExternalDecode>,
+    rows: Receiver<(Instant, ExternalDecode)>,
+    dial: DialInbox,
     endpoint: Option<Endpoint>,
     generation: u64,
 }
@@ -85,6 +104,7 @@ impl UdpIn {
             commands,
             status,
             rows,
+            dial: DialInbox::default(),
             endpoint: None,
             generation: 0,
         })
@@ -104,16 +124,19 @@ impl UdpIn {
         }
         let generation = self.generation.wrapping_add(1);
         let (rows, rx) = mpsc::sync_channel(DECODE_QUEUE_CAP);
+        let dial = DialInbox::default();
         self.commands
             .send(Configure {
                 generation,
                 endpoint: endpoint.clone(),
                 rows,
+                dial: Arc::clone(&dial),
             })
             .map_err(|_| "UDP listener worker stopped".to_owned())?;
         self.generation = generation;
         self.endpoint = endpoint;
         self.rows = rx;
+        self.dial = dial;
         Ok(true)
     }
 
@@ -127,8 +150,17 @@ impl UdpIn {
         None
     }
 
-    pub fn try_recv(&self) -> Option<ExternalDecode> {
+    pub fn try_recv_timed(&self) -> Option<(Instant, ExternalDecode)> {
         self.rows.try_recv().ok()
+    }
+
+    pub(crate) fn try_dial_status(&self) -> Option<DialStatus> {
+        self.dial.lock().unwrap().pop_front()
+    }
+
+    #[cfg(test)]
+    pub fn try_recv(&self) -> Option<ExternalDecode> {
+        self.try_recv_timed().map(|(_, decode)| decode)
     }
 }
 
@@ -151,7 +183,7 @@ fn listen(
     wake: impl Fn(),
     recorder: Option<Arc<Recorder>>,
 ) {
-    let mut active: Option<(UdpSocket, SyncSender<ExternalDecode>)> = None;
+    let mut active = None;
     let mut buf = [0u8; 2048];
     loop {
         let command = if active.is_none() {
@@ -179,7 +211,7 @@ fn listen(
             active.take();
             let result = match command.endpoint {
                 Some(endpoint) => bind(&endpoint).map(|socket| {
-                    active = Some((socket, command.rows));
+                    active = Some((socket, command.rows, command.dial));
                 }),
                 None => Ok(()),
             };
@@ -195,16 +227,32 @@ fn listen(
             wake();
             continue;
         }
-        let (socket, rows) = active.as_ref().expect("active socket was checked above");
+        let (socket, rows, dial) = active.as_ref().expect("active socket was checked above");
         match socket.recv_from(&mut buf) {
             Ok((n, peer)) => {
+                let received = Instant::now();
                 if let Some(decode) = parse_decode(&buf[..n]) {
                     if let Some(recorder) = &recorder {
                         recorder.udp(peer, &decode);
                     }
-                    if rows.try_send(decode).is_ok() {
+                    if rows.try_send((received, decode)).is_ok() {
                         wake();
                     }
+                } else if let Some((id, frequency_hz)) = parse_dial_update(&buf[..n]) {
+                    let update = DialStatus {
+                        peer,
+                        id,
+                        frequency_hz,
+                        received,
+                    };
+                    {
+                        let mut inbox = dial.lock().unwrap();
+                        if inbox.len() == DIAL_QUEUE_CAP {
+                            inbox.pop_front();
+                        }
+                        inbox.push_back(update);
+                    }
+                    wake();
                 }
             }
             Err(err) => match err.kind() {
@@ -213,6 +261,23 @@ fn listen(
             },
         }
     }
+}
+
+fn parse_dial_update(buf: &[u8]) -> Option<(String, Option<u64>)> {
+    let mut p = Cursor::new(buf);
+    if p.u32()? != MAGIC {
+        return None;
+    }
+    let _schema = p.u32()?;
+    let kind = p.u32()?;
+    let id = p.string()?;
+    let frequency = match kind {
+        TYPE_HEARTBEAT => None,
+        TYPE_STATUS => Some(p.u64()?),
+        TYPE_CLOSE => Some(0),
+        _ => return None,
+    };
+    Some((id, frequency))
 }
 
 /// Parse a WSJT-X Decode (type 2) datagram. Returns None for other message
@@ -290,6 +355,11 @@ impl<'a> Cursor<'a> {
             .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
     }
 
+    fn u64(&mut self) -> Option<u64> {
+        self.take(8)
+            .map(|b| u64::from_be_bytes(b.try_into().unwrap()))
+    }
+
     fn i32(&mut self) -> Option<i32> {
         self.take(4)
             .map(|b| i32::from_be_bytes(b.try_into().unwrap()))
@@ -345,6 +415,60 @@ mod tests {
             .port()
     }
 
+    fn dial_packet(frequency: u64) -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&MAGIC.to_be_bytes());
+        packet.extend_from_slice(&3u32.to_be_bytes());
+        packet.extend_from_slice(&TYPE_STATUS.to_be_bytes());
+        put_string(&mut packet, "WSJT-X");
+        packet.extend_from_slice(&frequency.to_be_bytes());
+        put_string(&mut packet, "FT8");
+        packet
+    }
+
+    #[test]
+    fn parses_64_bit_dial_frequency_from_status() {
+        let mut packet = dial_packet(5_760_000_000);
+        assert_eq!(
+            parse_dial_update(&packet),
+            Some(("WSJT-X".into(), Some(5_760_000_000)))
+        );
+        assert!(parse_decode(&packet).is_none());
+        packet.truncate(29); // Header + ID + seven of the eight frequency bytes.
+        assert!(parse_dial_update(&packet).is_none());
+    }
+
+    #[test]
+    fn receives_status_over_real_socket_and_rebind_discards_pending_status() {
+        let (wake, woken) = mpsc::channel();
+        let mut udp = UdpIn::spawn(move || {
+            let _ = wake.send(());
+        })
+        .unwrap();
+        let port = free_port();
+        udp.configure(Some(("127.0.0.1", port))).unwrap();
+        await_status(&udp).unwrap();
+        woken.recv_timeout(Duration::from_secs(2)).unwrap();
+        let source = UdpSocket::bind("127.0.0.1:0").unwrap();
+        source
+            .send_to(&dial_packet(14_074_000), ("127.0.0.1", port))
+            .unwrap();
+        woken.recv_timeout(Duration::from_secs(2)).unwrap();
+        let status = udp.try_dial_status().unwrap();
+        assert_eq!(status.frequency_hz, Some(14_074_000));
+        assert_eq!(status.id, "WSJT-X");
+        assert_eq!(status.peer, source.local_addr().unwrap());
+        assert!(udp.try_recv().is_none());
+
+        source
+            .send_to(&dial_packet(7_074_000), ("127.0.0.1", port))
+            .unwrap();
+        woken.recv_timeout(Duration::from_secs(2)).unwrap();
+        udp.configure(None).unwrap();
+        assert!(udp.try_dial_status().is_none());
+        await_status(&udp).unwrap();
+    }
+
     #[test]
     fn dropped_handle_cancels_queued_bind_before_opening_a_socket() {
         let (commands, input) = mpsc::channel();
@@ -358,6 +482,7 @@ mod tests {
                     port: 0,
                 }),
                 rows,
+                dial: DialInbox::default(),
             })
             .unwrap();
         drop(commands);

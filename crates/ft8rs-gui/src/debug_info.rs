@@ -1,5 +1,5 @@
 //! Session-only diagnostics for the live GUI.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -99,6 +99,10 @@ struct Window {
 }
 
 impl Window {
+    fn len(self) -> i64 {
+        self.last - self.first + 1
+    }
+
     fn retains(self, slot: i64) -> bool {
         // Post-boundary diagnostics can land in the following slot.
         (self.first..=self.last + 1).contains(&slot)
@@ -110,10 +114,18 @@ impl Window {
 }
 
 struct Request {
-    window: Window,
+    window: Option<Window>,
+    segments: Vec<Segment>,
     requested_ms: i64,
     ready_at: Instant,
     udp_listener: Option<String>,
+}
+
+#[derive(Clone)]
+struct Segment {
+    id: u64,
+    window: Window,
+    slots: BTreeMap<i64, Arc<Slot>>,
 }
 
 struct Session {
@@ -121,10 +133,59 @@ struct Session {
     slots: BTreeMap<i64, Arc<Slot>>,
     latest_audio: Option<i64>,
     pending: Option<Request>,
+    segment: u64,
+    sealed: VecDeque<Segment>,
     cancelled: Arc<Mutex<bool>>,
 }
 
 impl Session {
+    fn snapshot(&self, window: Window) -> Segment {
+        Segment {
+            id: self.segment,
+            window,
+            slots: self
+                .slots
+                .range(window.first..=window.last + 1)
+                .map(|(&slot, data)| (slot, Arc::clone(data)))
+                .collect(),
+        }
+    }
+
+    fn trim_sealed(&mut self) {
+        let old: i64 = self.sealed.iter().map(|segment| segment.window.len()).sum();
+        let mut excess = old + self.window().map_or(0, Window::len) - KEEP_SLOTS;
+        while excess > 0 {
+            let segment = self.sealed.front_mut().unwrap();
+            let count = segment.window.len();
+            if count <= excess {
+                self.sealed.pop_front();
+                excess -= count;
+            } else {
+                segment.window.first += excess;
+                segment.slots = segment.slots.split_off(&segment.window.first);
+                break;
+            }
+        }
+    }
+
+    fn clock_changed(&mut self, at_ms: i64) {
+        if let Some(mut request) = self.pending.take() {
+            if let Some(window) = request.window.take() {
+                request.segments.push(self.snapshot(window));
+            }
+            request.ready_at = Instant::now();
+            self.pending = Some(request);
+        }
+        if let Some(window) = self.window() {
+            self.sealed.push_back(self.snapshot(window));
+        }
+        self.segment += 1;
+        self.first = at_ms.div_euclid(SLOT_MS) + 1;
+        self.slots.clear();
+        self.latest_audio = None;
+        self.trim_sealed();
+    }
+
     fn window(&self) -> Option<Window> {
         self.latest_audio.map(|last| Window {
             first: self.first.max(last - KEEP_SLOTS + 1),
@@ -135,7 +196,7 @@ impl Session {
     fn prune(&mut self, at_ms: i64) {
         let current = at_ms.div_euclid(SLOT_MS);
         let recent = self.window();
-        let pending = self.pending.as_ref().map(|req| req.window);
+        let pending = self.pending.as_ref().and_then(|req| req.window);
         self.slots.retain(|&slot, _| {
             (current - KEEP_SLOTS..=current).contains(&slot)
                 || recent.is_some_and(|window| window.retains(slot))
@@ -169,6 +230,8 @@ impl Recorder {
                     slots: BTreeMap::new(),
                     latest_audio: None,
                     pending: None,
+                    segment: 0,
+                    sealed: VecDeque::new(),
                     cancelled: Arc::new(Mutex::new(false)),
                 });
             }
@@ -239,6 +302,7 @@ impl Recorder {
             }
             session.latest_audio = Some(slot);
             session.prune(at_ms);
+            session.trim_sealed();
             Arc::make_mut(session.slots.entry(slot).or_default()).audio = Some(Audio {
                 samples: Arc::from(captured.samples_12k),
                 config: captured.config.clone(),
@@ -274,10 +338,14 @@ impl Recorder {
 
     fn request(&self, at_ms: i64, udp_listener: Option<String>) {
         self.record(|session| {
-            if let Some(window) = session.window() {
-                let wait_ms = (window.cutoff_ms() - at_ms).clamp(0, GRACE_MS) as u64;
+            let window = session.window();
+            if window.is_some() || !session.sealed.is_empty() {
+                let wait_ms = window
+                    .map_or(0, |window| (window.cutoff_ms() - at_ms).clamp(0, GRACE_MS))
+                    as u64;
                 session.pending = Some(Request {
                     window,
+                    segments: session.sealed.iter().cloned().collect(),
                     requested_ms: at_ms,
                     ready_at: Instant::now() + Duration::from_millis(wait_ms),
                     udp_listener,
@@ -292,15 +360,12 @@ impl Recorder {
         if now < session.pending.as_ref()?.ready_at {
             return None;
         }
-        let request = session.pending.take()?;
-        let slots = session
-            .slots
-            .range(request.window.first..=request.window.last + 1)
-            .map(|(&slot, data)| (slot, Arc::clone(data)))
-            .collect();
+        let mut request = session.pending.take()?;
+        if let Some(window) = request.window.take() {
+            request.segments.push(session.snapshot(window));
+        }
         Some(Export {
             request,
-            slots,
             cancelled: Arc::clone(&session.cancelled),
         })
     }
@@ -309,10 +374,8 @@ impl Recorder {
 impl MonitorObserver for Recorder {
     fn slot(&self, captured: CapturedSlot<'_>) {
         if self.active.load(Ordering::Acquire) {
-            let at_ms = now_ms();
-            let slot = received_slot(captured.timestamp.milliseconds_since_midnight(), at_ms);
-            if *captured.timestamp == slot_timestamp(slot) {
-                self.audio(slot, at_ms, captured);
+            if let Some(seconds) = captured.timestamp.unix_seconds_utc() {
+                self.audio(seconds.div_euclid(SLOT_MS / 1000), now_ms(), captured);
             }
         }
     }
@@ -321,6 +384,9 @@ impl MonitorObserver for Recorder {
         if self.active.load(Ordering::Acquire) {
             match event {
                 EngineEvent::Decode(decode) => self.local(now_ms(), decode),
+                EngineEvent::ClockDiscontinuity { at_ms, .. } => {
+                    self.record(|session| session.clock_changed(*at_ms));
+                }
                 EngineEvent::Error(error) => {
                     let at_ms = now_ms();
                     self.log(
@@ -384,7 +450,10 @@ impl DebugInfo {
                 .lock()
                 .unwrap()
                 .as_ref()
-                .is_some_and(|session| session.latest_audio.is_some() && session.pending.is_none())
+                .is_some_and(|session| {
+                    (session.latest_audio.is_some() || !session.sealed.is_empty())
+                        && session.pending.is_none()
+                })
     }
 
     pub(crate) fn save(&self, udp_listener: Option<String>) -> Result<(), String> {
@@ -454,7 +523,6 @@ impl Drop for DebugInfo {
 
 struct Export {
     request: Request,
-    slots: BTreeMap<i64, Arc<Slot>>,
     cancelled: Arc<Mutex<bool>>,
 }
 
@@ -511,68 +579,83 @@ impl Export {
         let mut udp = BufWriter::new(File::create(path.join("udp-decodes.jsonl"))?);
         let mut logs = BufWriter::new(File::create(path.join("app.log"))?);
         let mut slots = Vec::new();
-        let window = self.request.window;
-        let cutoff_ms = window.cutoff_ms();
+        let mut cutoff_ms = 0;
+        let mut tail_dropped_logs = 0;
         let empty = Slot::default();
-        for slot in window.first..=window.last + 1 {
-            if *self.cancelled.lock().unwrap() {
-                return Ok(());
+        for segment in &self.request.segments {
+            let window = segment.window;
+            cutoff_ms = window.cutoff_ms();
+            tail_dropped_logs += segment
+                .slots
+                .get(&(window.last + 1))
+                .map_or(0, |slot| slot.dropped_logs);
+            if segment.id != 0 {
+                writeln!(logs, "--- clock segment {} ---", segment.id)?;
             }
-            let data = self.slots.get(&slot).map(Arc::as_ref).unwrap_or(&empty);
-            for log in data.logs.iter().filter(|log| log.at_ms <= cutoff_ms) {
-                writeln!(logs, "{}", log.value)?;
-            }
-            if slot > window.last {
-                break;
-            }
-            let timestamp = slot_timestamp(slot).format();
-            for entry in data.local.iter().filter(|row| row.at_ms <= cutoff_ms) {
-                let record = &entry.value;
-                write_json_line(
-                    &mut local,
-                    &json!({
-                        "slot_utc": timestamp, "forwarded_at_unix_ms": entry.at_ms,
-                        "snr_db": record.row.snr, "dt_seconds": record.row.dt,
-                        "frequency_hz": record.row.freq, "message": record.row.msg,
-                        "stage": record.stage, "provenance": record.provenance,
-                    }),
-                )?;
-            }
-            for entry in data.udp.iter().filter(|row| row.at_ms <= cutoff_ms) {
-                let (peer, record) = &entry.value;
-                write_json_line(
-                    &mut udp,
-                    &json!({
-                        "slot_utc": timestamp, "received_at_unix_ms": entry.at_ms,
-                        "packet_ms_since_midnight": record.ms_since_midnight, "peer": peer,
-                        "snr_db": record.snr, "dt_seconds": record.dt,
-                        "frequency_hz": record.freq, "message": record.message,
-                    }),
-                )?;
-            }
-            let audio = if let Some(audio) = &data.audio {
-                let name = format!("{timestamp}.wav");
-                write_wav(&audio_dir.join(&name), &audio.samples)?;
-                json!({
-                    "file": format!("audio/{name}"),
-                    "samples": audio.samples.len(), "sample_rate": AUDIO_RATE,
-                    "channels": 1, "sample_format": "float32",
-                    "short": audio.samples.len() < AUDIO_RATE as usize * 15,
-                    "device": audio.device_name, "channel": audio.channel,
-                    "native_sample_rate": audio.format.sample_rate,
-                    "native_channels": audio.format.channels,
-                    "native_sample_format": audio.format.sample_format,
-                    "native_samples": audio.native_samples, "capture_xruns": audio.xruns,
-                    "capture_jitter_ms": audio.jitter_ms, "decode_config": audio.config,
-                })
-            } else {
-                Value::Null
-            };
-            slots.push(json!({
-                "slot_utc": timestamp, "slot_start_unix_ms": slot * SLOT_MS, "audio": audio,
+            for slot in window.first..=window.last + 1 {
+                if *self.cancelled.lock().unwrap() {
+                    return Ok(());
+                }
+                let data = segment.slots.get(&slot).map(Arc::as_ref).unwrap_or(&empty);
+                for log in data.logs.iter().filter(|log| log.at_ms <= cutoff_ms) {
+                    writeln!(logs, "{}", log.value)?;
+                }
+                if slot > window.last {
+                    break;
+                }
+                let timestamp = slot_timestamp(slot).format();
+                for entry in data.local.iter().filter(|row| row.at_ms <= cutoff_ms) {
+                    let record = &entry.value;
+                    write_json_line(
+                        &mut local,
+                        &json!({
+                            "slot_utc": timestamp, "clock_segment": segment.id, "forwarded_at_unix_ms": entry.at_ms,
+                            "snr_db": record.row.snr, "dt_seconds": record.row.dt,
+                            "frequency_hz": record.row.freq, "message": record.row.msg,
+                            "stage": record.stage, "provenance": record.provenance,
+                        }),
+                    )?;
+                }
+                for entry in data.udp.iter().filter(|row| row.at_ms <= cutoff_ms) {
+                    let (peer, record) = &entry.value;
+                    write_json_line(
+                        &mut udp,
+                        &json!({
+                            "slot_utc": timestamp, "clock_segment": segment.id, "received_at_unix_ms": entry.at_ms,
+                            "packet_ms_since_midnight": record.ms_since_midnight, "peer": peer,
+                            "snr_db": record.snr, "dt_seconds": record.dt,
+                            "frequency_hz": record.freq, "message": record.message,
+                        }),
+                    )?;
+                }
+                let audio = if let Some(audio) = &data.audio {
+                    let name = if segment.id == 0 {
+                        format!("{timestamp}.wav")
+                    } else {
+                        format!("g{}_{timestamp}.wav", segment.id)
+                    };
+                    write_wav(&audio_dir.join(&name), &audio.samples)?;
+                    json!({
+                        "file": format!("audio/{name}"),
+                        "samples": audio.samples.len(), "sample_rate": AUDIO_RATE,
+                        "channels": 1, "sample_format": "float32",
+                        "short": audio.samples.len() < AUDIO_RATE as usize * 15,
+                        "device": audio.device_name, "channel": audio.channel,
+                        "native_sample_rate": audio.format.sample_rate,
+                        "native_channels": audio.format.channels,
+                        "native_sample_format": audio.format.sample_format,
+                        "native_samples": audio.native_samples, "capture_xruns": audio.xruns,
+                        "capture_jitter_ms": audio.jitter_ms, "decode_config": audio.config,
+                    })
+                } else {
+                    Value::Null
+                };
+                slots.push(json!({
+                "slot_utc": timestamp, "clock_segment": segment.id, "slot_start_unix_ms": slot * SLOT_MS, "audio": audio,
                 "dropped_local": data.dropped_local, "dropped_udp": data.dropped_udp,
                 "dropped_log_lines": data.dropped_logs,
             }));
+            }
         }
         local.flush()?;
         udp.flush()?;
@@ -585,8 +668,7 @@ impl Export {
                 "requested_at_unix_ms": self.request.requested_ms,
                 "last_observation_unix_ms": cutoff_ms,
                 "udp_listener_at_save": self.request.udp_listener, "slots": slots,
-                "tail_dropped_log_lines": self.slots.get(&(window.last + 1))
-                    .map_or(0, |slot| slot.dropped_logs),
+                "tail_dropped_log_lines": tail_dropped_logs,
             }),
         )?;
         manifest.flush()
@@ -736,9 +818,43 @@ mod tests {
         let export = recorder
             .ready(Instant::now() + Duration::from_secs(11))
             .unwrap();
-        assert_eq!(export.request.window.first, MIDNIGHT + 1);
-        assert_eq!(export.request.window.last, MIDNIGHT + 8);
-        assert!(export.slots[&(MIDNIGHT + 1)].audio.is_some());
+        let segment = &export.request.segments[0];
+        assert_eq!(segment.window.first, MIDNIGHT + 1);
+        assert_eq!(segment.window.last, MIDNIGHT + 8);
+        assert!(segment.slots[&(MIDNIGHT + 1)].audio.is_some());
+    }
+
+    #[test]
+    fn backwards_clock_step_keeps_completed_audio_with_distinct_slot_names() {
+        let recorder = Recorder::default();
+        let slot_ms = MIDNIGHT * SLOT_MS;
+        recorder.set_active(true, slot_ms - 1);
+        record_audio(&recorder, MIDNIGHT, &[0.125]);
+        recorder.request(slot_ms + SLOT_MS, None);
+        recorder.record(|session| session.clock_changed(slot_ms - 1));
+
+        let original = recorder.ready(Instant::now()).unwrap();
+        assert_eq!(original.request.segments.len(), 1);
+        assert_eq!(original.request.segments[0].id, 0);
+
+        record_audio(&recorder, MIDNIGHT, &[0.25]);
+        recorder.request(slot_ms + 2 * SLOT_MS, None);
+        let directory = test_directory();
+        let exported = recorder
+            .ready(Instant::now())
+            .unwrap()
+            .write(&directory.path)
+            .unwrap()
+            .unwrap();
+        let timestamp = slot_timestamp(MIDNIGHT);
+        let audio = exported.join("audio");
+        let samples = |name: String| {
+            ft8rs::input::audio::read_wav_mono_f32(audio.join(name))
+                .unwrap()
+                .samples
+        };
+        assert_eq!(samples(format!("{timestamp}.wav")), [0.125]);
+        assert_eq!(samples(format!("g1_{timestamp}.wav")), [0.25]);
     }
 
     #[test]

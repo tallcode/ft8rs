@@ -55,6 +55,8 @@ use crate::soundcard::{
 #[cfg(test)]
 const TARGET_SAMPLE_RATE: u32 = 12_000;
 const SLOT_SECONDS: u64 = 15;
+const SLOT_MS: i64 = SLOT_SECONDS as i64 * 1000;
+const CLOCK_STEP_MS: u64 = 100;
 /// Mirrors the CLI's per-slot focused-decode budget for DX live (`main.rs`).
 const DX_MONITOR_WATCHDOG_MS: u64 = 12_000;
 /// Command/event polling granularity inside the capture loop.
@@ -97,6 +99,13 @@ impl EngineHandle {
         self.cmd_tx.send(cmd).map_err(|err| err.to_string())
     }
 
+    pub fn clock_adjustment_reporter(&self) -> impl FnOnce(Instant, Instant) + Send + 'static {
+        let commands = self.cmd_tx.clone();
+        move |started, completed| {
+            let _ = commands.send(EngineCommand::ClockAdjusted { started, completed });
+        }
+    }
+
     /// Non-blocking poll for the next engine event (call each GUI frame).
     pub fn try_recv(&self) -> Option<EngineEvent> {
         self.event_rx.try_recv()
@@ -122,6 +131,12 @@ fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: GuiEvents) {
             // Idle: nothing to stop, and ApplyState has no session yet — the GUI
             // sends the full desired state with StartMonitor.
             EngineCommand::StopMonitor | EngineCommand::ApplyState(_) => {}
+            EngineCommand::ClockAdjusted { completed, .. } => {
+                event_tx.send(EngineEvent::ClockDiscontinuity {
+                    at_ms: crate::soundcard::capture_now_ms(),
+                    observed: completed,
+                });
+            }
             EngineCommand::RefreshDevices => refresh_devices(&event_tx),
             EngineCommand::StartMonitor(state) => match run_monitor(&cmd_rx, &event_tx, state) {
                 MonitorExit::Stopped => {
@@ -136,6 +151,60 @@ fn engine_loop(cmd_rx: Receiver<EngineCommand>, event_tx: GuiEvents) {
 enum MonitorExit {
     Stopped,
     Shutdown,
+}
+
+#[derive(Default)]
+struct PendingChanges {
+    state: Option<EngineState>,
+    clock: Option<(Instant, Instant)>,
+}
+
+#[derive(Default)]
+struct CaptureClock {
+    previous: Option<(Instant, i64)>,
+    last_step: Option<Instant>,
+    next_boundary_ms: Option<i64>,
+}
+
+enum ClockAction {
+    Accept,
+    Wait,
+    Restart,
+    Aligned,
+}
+
+impl CaptureClock {
+    fn observe(
+        &mut self,
+        captured_at: Instant,
+        wall_ms: i64,
+        reported: &mut Option<(Instant, Instant)>,
+    ) -> ClockAction {
+        if reported.is_some_and(|(started, _)| self.last_step.is_some_and(|step| step >= started)) {
+            *reported = None;
+        }
+        if reported.is_some_and(|(_, completed)| captured_at < completed) {
+            return ClockAction::Wait;
+        }
+        let previous = self.previous.replace((captured_at, wall_ms));
+        let external_step = previous.is_some_and(|(before, previous_wall)| {
+            let elapsed = captured_at.saturating_duration_since(before).as_millis() as i64;
+            wall_ms.saturating_sub(previous_wall).abs_diff(elapsed) >= CLOCK_STEP_MS
+        });
+        if reported.take().is_some() || external_step {
+            self.last_step = Some(captured_at);
+            self.next_boundary_ms = Some((wall_ms.div_euclid(SLOT_MS) + 1) * SLOT_MS);
+            return ClockAction::Restart;
+        }
+        match self.next_boundary_ms {
+            Some(boundary) if wall_ms < boundary => ClockAction::Wait,
+            Some(_) => {
+                self.next_boundary_ms = None;
+                ClockAction::Aligned
+            }
+            None => ClockAction::Accept,
+        }
+    }
 }
 
 fn run_monitor(
@@ -164,20 +233,21 @@ fn run_monitor(
     });
 
     let mut config = effective_config(&state.config);
-    let (dec_cmd_tx, dec_evt_rx) = crate::worker::spawn(config.clone());
+    let (mut dec_cmd_tx, mut dec_evt_rx) = crate::worker::spawn(config.clone());
 
     // Whole callback blocks are assigned to UTC slots by callback wall-clock
     // time and appended by sample count; there is no sample-level boundary split.
     let mut acc = PeriodAccumulator::new(sample_rate);
     let mut aligned = false;
-    let mut pending: Option<EngineState> = None;
+    let mut capture_clock = CaptureClock::default();
+    let mut pending = PendingChanges::default();
     let mut last_audio = Instant::now();
     let mut last_level = Instant::now();
     let mut channel_peaks = vec![0.0f32; format.channels as usize];
     let mut input_peak = 0.0f32;
     event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
 
-    loop {
+    'monitor: loop {
         match drain_commands(cmd_rx, event_tx, &mut pending) {
             CmdFlow::Continue => {}
             CmdFlow::Stop => return teardown(dec_cmd_tx, stream),
@@ -187,7 +257,9 @@ fn run_monitor(
                 return MonitorExit::Shutdown;
             }
         }
-        forward_decode_events(&dec_evt_rx, event_tx, &mut udp);
+        if pending.clock.is_none() {
+            forward_decode_events(&dec_evt_rx, event_tx, &mut udp);
+        }
 
         match rx.recv_timeout(POLL) {
             Ok(chunk) => {
@@ -196,6 +268,29 @@ fn run_monitor(
                     return teardown(dec_cmd_tx, stream);
                 }
                 last_audio = Instant::now();
+                match capture_clock.observe(chunk.captured_at, chunk.capture_ms, &mut pending.clock)
+                {
+                    ClockAction::Accept => {}
+                    ClockAction::Wait => continue,
+                    ClockAction::Restart => {
+                        // Disconnection preempts the old worker and its queued
+                        // work. This keeps old AP/history and late rows out of
+                        // the new UTC timeline while the audio stream stays open.
+                        (dec_cmd_tx, dec_evt_rx) = crate::worker::spawn(config.clone());
+                        acc = PeriodAccumulator::new(sample_rate);
+                        aligned = false;
+                        event_tx.send(EngineEvent::ClockDiscontinuity {
+                            at_ms: chunk.capture_ms,
+                            observed: chunk.captured_at,
+                        });
+                        event_tx.send(EngineEvent::Status(EngineStatus::Aligning));
+                        continue;
+                    }
+                    ClockAction::Aligned => {
+                        aligned = true;
+                        event_tx.send(EngineEvent::Status(EngineStatus::Monitoring));
+                    }
+                }
                 for (peak, value) in channel_peaks.iter_mut().zip(&chunk.channel_peaks) {
                     *peak = peak.max(*value);
                 }
@@ -254,6 +349,7 @@ fn run_monitor(
                         &mut pending,
                     ) {
                         StageSend::Sent => {}
+                        StageSend::ClockAdjusted => continue 'monitor,
                         StageSend::Stop => return teardown(dec_cmd_tx, stream),
                         StageSend::Shutdown => {
                             let _ = dec_cmd_tx.send(DecodeCmd::Stop);
@@ -280,7 +376,7 @@ fn run_monitor(
                 }
                 if out.boundary_crossed {
                     aligned = true;
-                    if let Some(mut new_state) = pending.take() {
+                    if let Some(mut new_state) = pending.state.take() {
                         let mut outcome = plan_reconfig(&state, &new_state);
                         if outcome.rebuild_output {
                             udp = build_udp(new_state.udp.as_ref(), event_tx);
@@ -430,7 +526,7 @@ fn reconnect_capture(
     event_tx: &GuiEvents,
     device: Option<&str>,
     channel: InputChannel,
-    pending: &mut Option<EngineState>,
+    pending: &mut PendingChanges,
 ) -> Reconnect {
     reconnect_capture_with(
         cmd_rx,
@@ -448,7 +544,7 @@ fn reconnect_capture_with<T>(
     event_tx: &GuiEvents,
     device: Option<&str>,
     channel: InputChannel,
-    pending: &mut Option<EngineState>,
+    pending: &mut PendingChanges,
     mut open: impl FnMut(Option<&str>, InputChannel) -> Result<T, String>,
     mut pause: impl FnMut(),
 ) -> Reconnect<T> {
@@ -462,6 +558,7 @@ fn reconnect_capture_with<T>(
             CmdFlow::Shutdown => return Reconnect::Shutdown,
         }
         let (device, channel) = pending
+            .state
             .as_ref()
             .map(|state| (state.device.as_deref(), state.channel))
             .unwrap_or((device, channel));
@@ -482,6 +579,7 @@ fn reconnect_capture_with<T>(
 /// Outcome of handing a staged decode command to the actor.
 enum StageSend {
     Sent,
+    ClockAdjusted,
     Stop,
     Shutdown,
     /// The decode actor thread is gone (channel disconnected).
@@ -501,7 +599,7 @@ fn send_stage(
     dec_evt_rx: &Receiver<EngineEvent>,
     event_tx: &GuiEvents,
     udp: &mut Option<UdpOutput>,
-    pending: &mut Option<EngineState>,
+    pending: &mut PendingChanges,
 ) -> StageSend {
     let mut cmd = cmd;
     loop {
@@ -515,6 +613,9 @@ fn send_stage(
                     CmdFlow::Continue => {}
                     CmdFlow::Stop => return StageSend::Stop,
                     CmdFlow::Shutdown => return StageSend::Shutdown,
+                }
+                if pending.clock.is_some() {
+                    return StageSend::ClockAdjusted;
                 }
                 thread::sleep(POLL);
             }
@@ -531,7 +632,7 @@ enum CmdFlow {
 fn drain_commands(
     cmd_rx: &Receiver<EngineCommand>,
     event_tx: &GuiEvents,
-    pending: &mut Option<EngineState>,
+    pending: &mut PendingChanges,
 ) -> CmdFlow {
     loop {
         match cmd_rx.try_recv() {
@@ -540,7 +641,10 @@ fn drain_commands(
             // Both ApplyState and a StartMonitor while running update the desired
             // state, applied at the next slot boundary.
             Ok(EngineCommand::ApplyState(state)) | Ok(EngineCommand::StartMonitor(state)) => {
-                *pending = Some(state)
+                pending.state = Some(state)
+            }
+            Ok(EngineCommand::ClockAdjusted { started, completed }) => {
+                pending.clock = Some((started, completed));
             }
             Ok(EngineCommand::RefreshDevices) => refresh_devices(event_tx),
             Err(TryRecvError::Empty) => return CmdFlow::Continue,
@@ -931,6 +1035,7 @@ pub(crate) fn decode_actor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ft8rs::stream::session::StreamDecodeProvenance;
 
     const NZHSYM_STRIDE: usize = 3456;
     const SHORT_FIXTURE: &str = "../ft8rs-core/tests/ft8/210703_133430.wav";
@@ -942,10 +1047,138 @@ mod tests {
     }
 
     #[test]
+    fn capture_clock_detects_whole_slot_steps_and_ignores_normal_boundaries() {
+        let base = Instant::now();
+        for step_ms in [-15_000, 15_000] {
+            let mut clock = CaptureClock::default();
+            let mut reported = None;
+            let mut observe = |elapsed, wall| {
+                clock.observe(base + Duration::from_millis(elapsed), wall, &mut reported)
+            };
+            assert!(matches!(observe(0, 29_990), ClockAction::Accept));
+            assert!(matches!(observe(20, 30_010), ClockAction::Accept));
+            let stepped = 30_030 + step_ms;
+            assert!(matches!(observe(40, stepped), ClockAction::Restart));
+            assert!(matches!(observe(60, stepped + 20), ClockAction::Wait));
+            assert!(matches!(
+                observe(15_010, stepped + 14_970),
+                ClockAction::Aligned
+            ));
+            assert!(matches!(
+                observe(15_030, stepped + 14_990),
+                ClockAction::Accept
+            ));
+        }
+    }
+
+    #[test]
+    fn capture_clock_drops_queued_audio_and_does_not_apply_a_reported_step_twice() {
+        let base = Instant::now();
+        let start = base + Duration::from_millis(10);
+        let complete = base + Duration::from_millis(20);
+        let mut clock = CaptureClock::default();
+        let mut reported = Some((start, complete));
+        assert!(matches!(
+            clock.observe(base, 15_005, &mut reported),
+            ClockAction::Wait
+        ));
+        assert!(matches!(
+            clock.observe(complete, 15_015, &mut reported),
+            ClockAction::Restart
+        ));
+        assert!(reported.is_none());
+        reported = Some((start, complete));
+        assert!(matches!(
+            clock.observe(complete + Duration::from_millis(1), 15_016, &mut reported),
+            ClockAction::Wait
+        ));
+        assert!(reported.is_none());
+    }
+
+    #[test]
+    fn first_complete_slot_after_realigning_reproduces_decode_rows() {
+        type Row = (String, u64, u64, u64, DecodeStage, StreamDecodeProvenance);
+        let source = load_fixture_12k();
+        let base = Instant::now();
+        let decode = |stepped: bool| {
+            let mut clock = CaptureClock::default();
+            let mut reported = None;
+            if stepped {
+                clock.observe(base, 60_000, &mut reported);
+                assert!(matches!(
+                    clock.observe(base + Duration::from_millis(20), 15_020, &mut reported),
+                    ClockAction::Restart
+                ));
+            }
+            let mut acc = PeriodAccumulator::new(TARGET_SAMPLE_RATE);
+            let mut stages = Vec::new();
+            for (index, chunk) in source.chunks(240).enumerate() {
+                let elapsed = index as u64 * 20;
+                let wall = 30_000 + elapsed as i64;
+                assert!(matches!(
+                    clock.observe(
+                        base + Duration::from_millis(15_000 + elapsed),
+                        wall,
+                        &mut reported
+                    ),
+                    ClockAction::Accept | ClockAction::Aligned
+                ));
+                stages.extend(acc.push(chunk, wall).stages);
+            }
+            stages.extend(acc.flush().stages);
+
+            let (input, output) = spawn_decode_actor(StreamDecodeConfig::default());
+            let started = Instant::now();
+            for (stage, timestamp, samples_12k) in stages {
+                input
+                    .send(DecodeCmd::Stage {
+                        stage,
+                        timestamp,
+                        samples_12k,
+                        submitted: started,
+                        recovery_deadline: None,
+                        restore_a7: None,
+                        restore_jtdx: [None, None],
+                        supervised: false,
+                    })
+                    .unwrap();
+            }
+            let mut rows = Vec::<Row>::new();
+            let mut first = None;
+            loop {
+                match output.recv_timeout(Duration::from_secs(10)).unwrap() {
+                    EngineEvent::Decode(record) => {
+                        first.get_or_insert_with(|| started.elapsed());
+                        rows.push((
+                            record.row.msg,
+                            record.row.freq.to_bits(),
+                            record.row.snr.to_bits(),
+                            record.row.dt.to_bits(),
+                            record.stage,
+                            record.provenance,
+                        ));
+                    }
+                    EngineEvent::SlotComplete { .. } => break,
+                    EngineEvent::Error(err) => panic!("decode: {err}"),
+                    _ => {}
+                }
+            }
+            eprintln!(
+                "clock step {stepped}: first callback {:?}, slot complete {:?}",
+                first.unwrap(),
+                started.elapsed()
+            );
+            rows
+        };
+        let baseline = decode(false);
+        assert_eq!(decode(true), baseline);
+    }
+
+    #[test]
     fn reconnect_uses_latest_selection_received_between_attempts() {
         let (tx, rx) = mpsc::channel();
         let events = GuiEvents::default();
-        let mut pending = None;
+        let mut pending = PendingChanges::default();
         let mut attempts = Vec::new();
         let result = reconnect_capture_with(
             &rx,
@@ -981,7 +1214,7 @@ mod tests {
             matches!(result, Reconnect::Ok {device:Some(device),channel:InputChannel::Right,..} if device=="new")
         );
         assert!(
-            pending.is_some(),
+            pending.state.is_some(),
             "decode/output config remains pending until a boundary"
         );
     }

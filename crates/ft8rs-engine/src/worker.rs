@@ -734,11 +734,14 @@ fn supervise(
             child.send(request)?;
             loop {
                 // Stop/Shutdown must preempt even a blocked native FEC call.
-                while let Ok(command) = commands.try_recv() {
-                    if matches!(command, DecodeCmd::Stop) {
-                        return Err("monitor stopped".into());
+                loop {
+                    match commands.try_recv() {
+                        Ok(DecodeCmd::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
+                            return Err("monitor stopped".into());
+                        }
+                        Ok(command) => pending.push_back(command),
+                        Err(mpsc::TryRecvError::Empty) => break,
                     }
-                    pending.push_back(command);
                 }
                 if started.elapsed() >= budget || Instant::now() >= deadline {
                     deadline_expired = true;

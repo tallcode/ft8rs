@@ -1539,6 +1539,7 @@ dependencies = [
  "ft8rs",
  "ft8rs-build",
  "ft8rs-engine",
+ "futures-util",
  "hound",
  "ico",
  "image",
@@ -1546,8 +1547,12 @@ dependencies = [
  "muda",
  "raw-window-handle",
  "serde_json",
+ "sntpc",
+ "sntpc-net-tokio",
  "sys-locale",
+ "tokio",
  "ttf-parser",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 
@@ -2492,6 +2497,17 @@ checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
 dependencies = [
  "adler2",
  "simd-adler32",
+]
+
+[[package]]
+name = "mio"
+version = "1.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee"
+dependencies = [
+ "libc",
+ "wasi",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3983,6 +3999,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "sntpc"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "294278b134cd7d06d7f22eca970aebe38707864c080f66547f9ad26327534af3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
+name = "sntpc-net-tokio"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d144774d41903891f67f9cbe7ebe93f5a8b72e5742c77ab0465b45a2d8edf34d"
+dependencies = [
+ "sntpc",
+ "tokio",
+]
+
+[[package]]
+name = "socket2"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "spirv"
 version = "0.4.0+sdk-1.4.341.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4223,7 +4268,11 @@ version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
+ "libc",
+ "mio",
  "pin-project-lite",
+ "socket2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4559,6 +4608,12 @@ dependencies = [
  "same-file",
  "winapi-util",
 ]
+
+[[package]]
+name = "wasi"
+version = "0.11.1+wasi-snapshot-preview1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasip2"

@@ -64,6 +64,12 @@ impl SlotTimestamp {
         self.seconds_of_day * 1000
     }
 
+    /// Absolute Unix seconds for a dated UTC slot.
+    pub fn unix_seconds_utc(&self) -> Option<i64> {
+        let days = i128::from(self.date.as_ref()?.days);
+        i64::try_from(days * 86_400 + i128::from(self.seconds_of_day)).ok()
+    }
+
     pub fn nutc(&self) -> u32 {
         let h = self.seconds_of_day / 3600;
         let m = (self.seconds_of_day / 60) % 60;
