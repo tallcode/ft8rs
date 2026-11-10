@@ -184,6 +184,48 @@ an OS worker count. SWL-on is not guaranteed to be a superset of SWL-off results
 [WSJT-X](crates/ft8rs-core/WSJTX.md) · [JTDX](crates/ft8rs-core/JTDX.md) ·
 [Hybrid](crates/ft8rs-core/HYBRID.md) · [DX](crates/ft8rs-core/DX.md)
 
+## Decoder sensitivity comparison
+
+Both replays use the ft8.rs GUI profile defaults with AP on and SWL off.
+WSJT-X+ and both Hybrid modes enable compatibility recovery (`Pc`) and candidate
+retry (`Pr`). Both Hybrid modes use cross cancellation. Hybrid + exp also
+enables the experimental decoder.
+
+### Synthetic data test
+
+Each mode replays the same 144 synthetic FT8 recordings under selected
+weak-signal and interference conditions. The test scores known targets by
+message, frequency and timing.
+
+![Known targets recovered out of 144: WSJT-X 50, WSJT-X+ 66, JTDX 30, Hybrid 66, Hybrid + exp 104.](site/synthetic.svg)
+
+*Each 15-second input starts a fresh session.*
+
+Across the 144 target inputs and 48 target-free controls, no mode produced an
+incorrect message. The recovery rates apply to these controlled conditions.
+
+### Real recording test
+
+Each mode replays all 19 slots of `230208_140300.wav` in one continuous session.
+The total adds reference matches and known errors per slot.
+
+![Reviewed recording outputs: WSJT-X 434, WSJT-X+ 468, JTDX 455, Hybrid 486, Hybrid + exp 488.](site/recording.svg)
+
+| Mode | Total | Reference matches | Known errors |
+|---|---:|---:|---:|
+| WSJT-X | 434 | 434 | 0 |
+| WSJT-X+ | 468 | 468 | 0 |
+| JTDX | 455 | 453 | 2 |
+| Hybrid | 486 | 484 | 2 |
+| Hybrid + exp | 488 | 486 | 2 |
+
+JTDX, Hybrid and Hybrid + exp produced the same two known errors through the
+JTDX path. The replay uses the fixed 2022 CallDB and one JTDX partition.
+
+[Recording reference rows](crates/ft8rs-core/tests/ft8/230208_140300.csv) ·
+[Validation conditions](docs/VALIDATION.md#historical-recordings) ·
+[Homepage comparison](https://ft8.rs/en/#sensitivity)
+
 ## Local tests and reference data
 
 Decode tests require optimized builds and run locally:

@@ -145,17 +145,12 @@ jobs:
           make_latest: ${{ steps.metadata.outputs.prerelease == 'true' && 'false' || 'true' }}
           fail_on_unmatched_files: true
           body: |
-            Release built from `${{ github.sha }}`.
-
             Assets use the default rustfft@3840 backend and have no FFTW runtime dependency:
             - `ft8rs-linux-x86_64.tar.gz` — CLI (`ft8rs-cli`)
             - `ft8rs-windows-x86_64.zip` — GUI (`ft8rs.exe`) + CLI (`ft8rs-cli.exe`)
 
             `ALLCALL7.TXT` is bundled next to the binaries for JTDX profile
             callsign filtering and can be updated in place.
-
-            macOS release packaging is temporarily disabled while hosted runner
-            queue times are high.
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
