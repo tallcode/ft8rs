@@ -17,6 +17,10 @@ from package_release import SEMVER
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "site"
 LOGO = ROOT / "crates" / "ft8rs-gui" / "assets" / "ft8rs.png"
+SCREENSHOTS = {
+    "gui": SITE / "gui-screenshot.png",
+    "cli": SITE / "cli-screenshot.png",
+}
 
 
 def checked_url(url, path):
@@ -64,6 +68,8 @@ def build(release, output):
     values = {key: escape(value, quote=True) for key, value in release_values(release).items()}
     values["style_version"] = hashlib.sha256((SITE / "style.css").read_bytes()).hexdigest()[:8]
     values["logo_version"] = hashlib.sha256(LOGO.read_bytes()).hexdigest()[:8]
+    for interface, screenshot in SCREENSHOTS.items():
+        values[f"{interface}_screenshot_version"] = hashlib.sha256(screenshot.read_bytes()).hexdigest()[:8]
     values["synthetic_version"] = hashlib.sha256((SITE / "synthetic.svg").read_bytes()).hexdigest()[:8]
     values["recording_version"] = hashlib.sha256((SITE / "recording.svg").read_bytes()).hexdigest()[:8]
     templates = {
@@ -83,9 +89,13 @@ def build(release, output):
     (output / "index.html").write_text(fallback, encoding="utf-8")
     shutil.copy2(SITE / "style.css", output / "style.css")
     shutil.copy2(LOGO, output / LOGO.name)
+    for screenshot in SCREENSHOTS.values():
+        shutil.copy2(screenshot, output / screenshot.name)
     shutil.copy2(SITE / "language.js", output / "language.js")
     shutil.copy2(SITE / "synthetic.svg", output / "synthetic.svg")
     shutil.copy2(SITE / "recording.svg", output / "recording.svg")
+    for filename in ("robots.txt", "sitemap.xml"):
+        shutil.copy2(SITE / filename, output / filename)
     (output / ".nojekyll").touch()
 
 

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://ft8.rs/sitemap.xml

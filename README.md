@@ -1,7 +1,10 @@
 # ft8.rs and ft8rs
 
+[![ft8.rs release](https://img.shields.io/github/v/release/tallcode/ft8rs?label=ft8.rs%20release)](https://github.com/tallcode/ft8rs/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/ft8rs.svg)](https://crates.io/crates/ft8rs)
 [![docs.rs](https://docs.rs/ft8rs/badge.svg)](https://docs.rs/ft8rs/latest/ft8rs/)
+[![Tests](https://github.com/tallcode/ft8rs/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/tallcode/ft8rs/actions/workflows/test.yml)
+[![GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 
 This repository contains two products: **ft8rs**, a Rust FT8 decoding library,
 and **ft8.rs**, a receive-only FT8 application built on it. The application has
@@ -41,6 +44,48 @@ Keep `ALLCALL7.TXT` beside the executable for every profile that uses JTDX,
 including Hybrid and DX. Builds and release packages supply the repository's
 runtime copy. The separate `ALLCALL7.TXT.2022` is used for calibrated regression
 tests; changing the database can change decoded results.
+
+## Decoder sensitivity comparison
+
+Both replays use the ft8.rs GUI profile defaults with AP on and SWL off.
+WSJT-X+ and both Hybrid modes enable compatibility recovery (`Pc`) and candidate
+retry (`Pr`). Both Hybrid modes use cross cancellation. Hybrid + exp also
+enables the experimental decoder.
+
+### Synthetic data test
+
+Each mode replays the same 144 synthetic FT8 recordings under selected
+weak-signal and interference conditions. The test scores known targets by
+message, frequency and timing.
+
+![Known targets recovered out of 144: WSJT-X 50, WSJT-X+ 66, JTDX 30, Hybrid 66, Hybrid + exp 104.](site/synthetic.svg)
+
+*Each 15-second input starts a fresh session.*
+
+Across the 144 target inputs and 48 target-free controls, no mode produced an
+incorrect message. The recovery rates apply to these controlled conditions.
+
+### Real recording test
+
+Each mode replays all 19 slots of `230208_140300.wav` in one continuous session.
+The total adds reference matches and known errors per slot.
+
+![Reviewed recording outputs: WSJT-X 434, WSJT-X+ 468, JTDX 455, Hybrid 486, Hybrid + exp 488.](site/recording.svg)
+
+| Mode | Total | Reference matches | Known errors |
+|---|---:|---:|---:|
+| WSJT-X | 434 | 434 | 0 |
+| WSJT-X+ | 468 | 468 | 0 |
+| JTDX | 455 | 453 | 2 |
+| Hybrid | 486 | 484 | 2 |
+| Hybrid + exp | 488 | 486 | 2 |
+
+JTDX, Hybrid and Hybrid + exp produced the same two known errors through the
+JTDX path. The replay uses the fixed 2022 CallDB and one JTDX partition.
+
+[Recording reference rows](crates/ft8rs-core/tests/ft8/230208_140300.csv) ·
+[Validation conditions](docs/VALIDATION.md#historical-recordings) ·
+[Homepage comparison](https://ft8.rs/en/#sensitivity)
 
 ## ft8rs library: audio to messages
 
@@ -108,6 +153,10 @@ decoder.decode_with_callback(slot, audio, |batch| {
 4. Press the play button to monitor; press stop to finish. Capture is aligned
    to UTC 15-second FT8 slots, and decoded messages appear as they arrive.
 
+![The ft8.rs main window lists decoded messages with their UTC time, signal strength, time offset and frequency.](site/gui-screenshot.png)
+
+*ft8.rs running in Hybrid mode on Windows.*
+
 The interface defaults to **Automatic (System)**: Chinese for a Chinese system
 language, English otherwise. Switch instantly through **Language** in the menu
 or **Settings → General → Language**; the choice is saved. Menus, settings and
@@ -153,6 +202,10 @@ target/release/ft8rs-cli monitor --device 0 \
 target/release/ft8rs-cli monitor --device 0 --udp
 ```
 
+![Windows PowerShell showing live FT8 decodes from ft8rs-cli.](site/cli-screenshot.png)
+
+*Live monitoring in Windows PowerShell with `.\ft8rs-cli.exe monitor --device 0`.*
+
 `--channel mono` requests a native mono stream and uses channel 1 if only a
 multichannel stream is available. `left` and `right` select a channel explicitly;
 `mix` averages all channels. Choose the channel carrying the receiver signal:
@@ -183,48 +236,6 @@ an OS worker count. SWL-on is not guaranteed to be a superset of SWL-off results
 
 [WSJT-X](crates/ft8rs-core/WSJTX.md) · [JTDX](crates/ft8rs-core/JTDX.md) ·
 [Hybrid](crates/ft8rs-core/HYBRID.md) · [DX](crates/ft8rs-core/DX.md)
-
-## Decoder sensitivity comparison
-
-Both replays use the ft8.rs GUI profile defaults with AP on and SWL off.
-WSJT-X+ and both Hybrid modes enable compatibility recovery (`Pc`) and candidate
-retry (`Pr`). Both Hybrid modes use cross cancellation. Hybrid + exp also
-enables the experimental decoder.
-
-### Synthetic data test
-
-Each mode replays the same 144 synthetic FT8 recordings under selected
-weak-signal and interference conditions. The test scores known targets by
-message, frequency and timing.
-
-![Known targets recovered out of 144: WSJT-X 50, WSJT-X+ 66, JTDX 30, Hybrid 66, Hybrid + exp 104.](site/synthetic.svg)
-
-*Each 15-second input starts a fresh session.*
-
-Across the 144 target inputs and 48 target-free controls, no mode produced an
-incorrect message. The recovery rates apply to these controlled conditions.
-
-### Real recording test
-
-Each mode replays all 19 slots of `230208_140300.wav` in one continuous session.
-The total adds reference matches and known errors per slot.
-
-![Reviewed recording outputs: WSJT-X 434, WSJT-X+ 468, JTDX 455, Hybrid 486, Hybrid + exp 488.](site/recording.svg)
-
-| Mode | Total | Reference matches | Known errors |
-|---|---:|---:|---:|
-| WSJT-X | 434 | 434 | 0 |
-| WSJT-X+ | 468 | 468 | 0 |
-| JTDX | 455 | 453 | 2 |
-| Hybrid | 486 | 484 | 2 |
-| Hybrid + exp | 488 | 486 | 2 |
-
-JTDX, Hybrid and Hybrid + exp produced the same two known errors through the
-JTDX path. The replay uses the fixed 2022 CallDB and one JTDX partition.
-
-[Recording reference rows](crates/ft8rs-core/tests/ft8/230208_140300.csv) ·
-[Validation conditions](docs/VALIDATION.md#historical-recordings) ·
-[Homepage comparison](https://ft8.rs/en/#sensitivity)
 
 ## Local tests and reference data
 

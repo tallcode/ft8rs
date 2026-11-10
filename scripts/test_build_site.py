@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from xml.etree import ElementTree
 
 from build_site import build, release_values
 
@@ -68,10 +69,18 @@ class BuildSiteTests(unittest.TestCase):
             output = Path(directory)
             release = published_release()
             build(release, output)
+            screenshot_urls = []
+            for name in ("gui-screenshot.png", "cli-screenshot.png"):
+                digest = hashlib.sha256((output / name).read_bytes()).hexdigest()[:8]
+                screenshot_urls.append(f"{name}?v={digest}")
             for language, other in [("zh", "en"), ("en", "zh")]:
                 html = (output / language / "index.html").read_text(encoding="utf-8")
                 self.assertIn("<strong>1.2.3</strong>", html)
                 self.assertIn(f'href="../{other}/"', html)
+                nav = html.split("<nav", 1)[1].split("</nav>", 1)[0]
+                self.assertIn('<a href="https://github.com/tallcode/ft8rs">GitHub</a>', nav)
+                for url in screenshot_urls:
+                    self.assertIn(f'src="../{url}"', html)
                 self.assertRegex(html, r'href="\.\./style\.css\?v=[0-9a-f]{8}"')
                 for chart in ("synthetic", "recording"):
                     digest = hashlib.sha256((output / f"{chart}.svg").read_bytes()).hexdigest()[:8]
@@ -82,8 +91,21 @@ class BuildSiteTests(unittest.TestCase):
                     self.assertIn(asset["browser_download_url"], html)
             self.assertIn('<html lang="zh-CN">', (output / "zh/index.html").read_text())
             self.assertIn('<html lang="en">', (output / "en/index.html").read_text())
-            self.assertIn('src="language.js"', (output / "index.html").read_text())
+            fallback = (output / "index.html").read_text()
+            for url in screenshot_urls:
+                self.assertIn(f'src="{url}"', fallback)
+            self.assertIn('src="language.js"', fallback)
             self.assertTrue((output / "language.js").is_file())
+
+    def test_sitemap_and_robots_are_published_at_the_site_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            build(published_release(), output)
+            sitemap = ElementTree.parse(output / "sitemap.xml")
+            urls = sitemap.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
+            self.assertCountEqual([url.text for url in urls], ["https://ft8.rs/en/", "https://ft8.rs/zh/"])
+            robots = (output / "robots.txt").read_text()
+            self.assertIn("Sitemap: https://ft8.rs/sitemap.xml", robots.splitlines())
 
     def test_recording_table_counts_only_reference_matches_and_known_errors(self):
         with tempfile.TemporaryDirectory() as directory:
