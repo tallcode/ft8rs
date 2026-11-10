@@ -346,15 +346,9 @@ CQ 在 W、Hybrid、Hybrid-exp 的 +1 / +3 dB 重放中各缺失一次；加上�
 - OSD 的消元及重编码采用三个 `u64` 保存 174 位 GF(2) 行，保留枢轴与列交换顺序。内层 AP 检查提到不变部分；仅在候选需要评分时构造完整向量；前 40 位差异数用精确 popcount 求取。浮点距离、并列顺序、候选枚举和门槛保持原样。
 - `metrics.rs` 提供可选嵌套计时与 FFT 尺寸/执行 scratch 增长计数。热点时长为 inclusive，不能相加；性能轮次关闭采样，热点单独重放。
 
-### 验证工具与口径
+### 历史重放口径
 
-```sh
-python3 scripts/test-wsjtx-plus.py \
-  target/decoder-validation/wsjtx-plus-phase1-release \
-  --profile release --repeats 3 --hotspots
-```
-
-输出目录必须不存在。工具先构建，再串行运行 original、plus reference 和 plus optimized，逐轮轮换三者顺序。每个子进程从私有可执行文件和 2022 CallDB 副本启动，不更换实时数据库。reference 仅用于验证独立编排基线，FFT/FEC 调用未经修改的原版；optimized 使用 plus 专用计算路径。
+历史性能比较先构建，再串行运行 original、plus reference 和 plus optimized，逐轮轮换三者顺序。每个子进程从私有可执行文件和 2022 CallDB 副本启动。reference 仅用于验证独立编排基线，FFT/FEC 调用未经修改的原版；optimized 使用 plus 专用计算路径。
 
 语料包括原始短/长录音、六份固定加噪录音、两个来源的 16 份原生 Watterson 波形、新版 32403 RR73 和 A8 呼号上下文。完整多时隙按时间顺序保留会话。比较所有输出和回调的完整消息、顺序、频率/DT/SNR/sync 的浮点比特以及 79 音调，要求零丢失、零新增、零元数据差异，不用 CSV 过滤实际输出。
 
@@ -425,13 +419,6 @@ A7 仅对基础搜索失败的标准呼号上下文补搜。32403 与 32373 的�
 A8 在标准呼号双方的基础 A8 失败后尝试旧 RR73 模板。旧模板与全部现有模板一起竞争，获胜并通过原有频差和信号质量门槛后才输出。独立固定噪声用例从冻结的原生发送码字合成波形，旧波形仅由补充 A8 恢复，新波形由基础 A8 恢复，纯噪声对照无输出。该用例隔离了模板问题，历史 DX 全时隙见后续重放记录。
 
 新版合成 FEC 难例的四组软信息和原生码字已归档到 [FEC 检查点](../../../tests/decoder/data/ft8/waveforms/plus-rr73-fec-checkpoints.json)。plus 解出旧观测及两组理想输入。新版实测软信息有 38 个硬判错误，信道 OSD 深度 2–4、三份 BP 后验的深度 4 OSD，以及最弱八位上的 36 次单／双位翻转均未给出 CRC 通过的候选。原生码字只用于核对输出。后续的完整合成录音软判比较见下文。
-
-兼容重放命令如下，输出目录需为新目录。
-
-```sh
-python3 scripts/test-wsjtx-plus.py target/decoder-validation/plus-compat-replay \
-  --profile fast --repeats 1 --compatibility
-```
 
 对照要求所有原有输出及回调逐位保留。补充输出必须精确匹配六次已确认观测，包含 +1 dB 的四条旧 RR73 和 +1／+3 dB 各一次 `CQ OH8CMS KP24`。这六次是独立 plus 模式的验证目标，原有 Hybrid／Hybrid-exp 的历史差异策略另行维护。
 
@@ -504,11 +491,9 @@ cargo test --profile fast -p ft8rs --lib rr73_replay:: -- --ignored --test-threa
 
 ```sh
 cargo test --profile fast -p ft8rs --lib fine_rr73 -- --ignored --test-threads=1 --nocapture
-python3 scripts/test-wsjtx-plus.py target/decoder-validation/plus-fine-rr73 \
-  --profile fast --repeats 3 --compatibility --original-control
 ```
 
-原型阶段开启与关闭的 26 场景全量重放逐位一致，保留 941 条基础输出和六次既有兼容恢复。开启原型的重放最慢槽约 1.230 秒。当前可用测试参数 `--without-fine-rr73` 保持已有 A7/A8 兼容恢复并关闭细频率路径。原型日志保存在 `target/decoder-validation/plus-long-r2c/`。
+原型阶段开启与关闭的 26 场景全量重放逐位一致，保留 941 条基础输出和六次既有兼容恢复。开启原型的重放最慢槽约 1.230 秒。关闭细频率路径的对照轮次仍启用了已有的 A7/A8 兼容恢复。原型日志保存在 `target/decoder-validation/plus-long-r2c/`。
 
 ### 细频率恢复接入验收
 

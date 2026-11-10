@@ -233,7 +233,7 @@ struct Replay {
 }
 
 #[test]
-#[ignore = "serial performance/retention run; use scripts/test-wsjtx-plus.py"]
+#[ignore = "serial RR73/A8 replay; use scripts/test-decoders.sh release --include-ignored"]
 fn paired_corpus_replay() {
     if cfg!(debug_assertions) {
         panic!("use optimized builds");

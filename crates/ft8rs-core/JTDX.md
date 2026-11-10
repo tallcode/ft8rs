@@ -197,7 +197,7 @@ partition setting.
 Run the calibrated local gate with the private-database helper:
 
 ```bash
-./scripts/acceptance-gates.sh test_jtdx_profile_long_audio
+scripts/test-decoders.sh release --stream-gate test_jtdx_profile_long_audio
 ```
 
 The short fixture retains its existing 20/20 target floor. The remaining

@@ -296,8 +296,9 @@ scripts/test-decoders.sh release --include-ignored
 The complete runner verifies the fixed corpus, builds first, then runs all core
 library/integration executables serially with the private 2022 CallDB. It includes
 ignored historical profile tests, DX known-truth gates and the long degraded
-recording matrix. `scripts/acceptance-gates.sh [filter]` remains a narrower helper
-for only the ignored `stream_decode_test` gates; it is not the complete suite.
+recording matrix. To run only the ignored historical recording tests, use
+`scripts/test-decoders.sh release --stream-gate [test-name-filter]`. The optional
+filter selects tests by name, using the same private 2022 CallDB.
 
 For changes to the engine's staged delivery, add the engine's separate long gate:
 
