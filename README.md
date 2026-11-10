@@ -1,5 +1,7 @@
 # ft8.rs and ft8rs
 
+*A high-sensitivity FT8 decoder written in Rust*
+
 [![ft8.rs release](https://img.shields.io/github/v/release/tallcode/ft8rs?label=ft8.rs%20release)](https://github.com/tallcode/ft8rs/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/ft8rs.svg)](https://crates.io/crates/ft8rs)
 [![docs.rs](https://docs.rs/ft8rs/badge.svg)](https://docs.rs/ft8rs/latest/ft8rs/)
@@ -14,6 +16,22 @@ live soundcard input, timestamped WAV recordings and optional UDP decode reports
 The application offers **WSJT-X**, **WSJT-X+**, **JTDX**, **Hybrid** and **DX**. The
 default build uses RustFFT with the native 3840-point synchronization FFT and
 has no FFTW runtime dependency. The product supports FT8 reception only.
+
+## Design philosophy
+
+We put decoding sensitivity first. ft8.rs uses available CPU power to search
+received audio more thoroughly and recover as many weak-signal FT8 messages as
+possible. Deeper searches take more processing power and time, so we designed
+ft8.rs for **receive-only operation** on computers with **ample CPU capacity**.
+Small devices with limited processing power are outside the supported scope.
+
+- **WSJT-X and JTDX** are Rust ports of the original FT8 receive decoders,
+  preserving each decoder's search and decoding behavior.
+- **WSJT-X+** extends the WSJT-X decoder with a broader candidate search and
+  retries to recover more weak-signal messages.
+- **Hybrid** runs one WSJT-X+ path and two JTDX paths in parallel. It combines
+  their strengths to find more messages and uses substantially more CPU than a
+  single decoder path.
 
 ## Build and start
 

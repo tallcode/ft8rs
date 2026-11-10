@@ -15,7 +15,7 @@
       <div class="site-heading">
         <div>
           <h1>ft8.rs</h1>
-          <p>A Rust implementation of an FT8 decoder</p>
+          <p>A high-sensitivity FT8 decoder written in Rust</p>
         </div>
         <img src="${asset_prefix}ft8rs.png?v=$logo_version" width="84" height="84" alt="">
       </div>
@@ -33,8 +33,17 @@
         <h2 id="about">About</h2>
         <p>ft8.rs is an FT8 decoder based on WSJT-X and JTDX, reimplemented in Rust with additional experimental decoding features developed for this project.</p>
         <p>For developers, <a href="https://docs.rs/ft8rs/latest/ft8rs/"><code>ft8rs</code></a> is the Rust FT8 decoding library used by the ft8.rs application.</p>
-        <p>It is receive-only, with no transmit function. Listen to activity across the band or follow a particular callsign. Five decoding modes are available: WSJT-X, WSJT-X+, JTDX, Hybrid and DX.</p>
-        <p>If you also use WSJT-X, Compare lets you view both programs' reception results in one message list.</p>
+        <p>Listen to activity across the band or follow a particular callsign. The five decoding modes are WSJT-X, WSJT-X+, JTDX, Hybrid and DX.</p>
+
+        <h3 id="design">Design philosophy</h3>
+        <p>We put decoding sensitivity first. ft8.rs uses available CPU power to search received audio more thoroughly and recover as many weak-signal FT8 messages as possible. Deeper searches take more processing power and time, so we designed ft8.rs for <strong>receive-only operation</strong> on computers with <strong>ample CPU capacity</strong>. Small devices with limited processing power are outside the supported scope.</p>
+        <ul>
+          <li><strong>WSJT-X and JTDX</strong> are Rust ports of the original FT8 receive decoders, preserving each decoder's search and decoding behavior.</li>
+          <li><strong>WSJT-X+</strong> extends the WSJT-X decoder with a broader candidate search and retries to recover more weak-signal messages.</li>
+          <li><strong>Hybrid</strong> runs one WSJT-X+ path and two JTDX paths in parallel. It combines their strengths to find more messages and uses substantially more CPU than a single decoder path.</li>
+        </ul>
+
+        <h3 id="ft8">About FT8</h3>
         <p>FT8 is an amateur-radio digital mode for weak-signal communication. It uses 15-second transmit/receive slots and short, structured messages to exchange callsigns, grid locators, signal reports and contact acknowledgements. It is intended for basic exchanges rather than voice or long conversations. See the <a href="https://wsjt.sourceforge.io/wsjtx-doc/wsjtx-main-3.0.0.html">official WSJT-X User Guide</a> for background.</p>
       </section>
 
