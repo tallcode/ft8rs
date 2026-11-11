@@ -916,6 +916,51 @@ impl HybridStreamDecodeSession {
                     Ok(None) => {}
                     Err(error) => diagnostics.experiment.error = Some(error),
                 }
+                // Drift recovery follows pulse publication and uses only the
+                // immutable native snapshot, never SIC, retry or exp outputs.
+                if diagnostics.experiment.error.is_none() && output_error.is_none() {
+                    let result = guard_worker(|| {
+                        Ok(crate::decode::experiment::recover_drift(
+                            crate::decode::experiment::ExperimentInput {
+                                samples,
+                                baseline,
+                                low: config.nfa,
+                                high: config.nfb,
+                                deadline: pulse_deadline,
+                            },
+                            &diagnostics.experiment,
+                            &mut |row| {
+                                if ledger
+                                    .tagged()
+                                    .iter()
+                                    .any(|old| same_signal(&old.decode, row))
+                                {
+                                    return;
+                                }
+                                diagnostics
+                                    .experiment_publish_start
+                                    .get_or_insert(clock.elapsed());
+                                publish(
+                                    &mut ledger,
+                                    SignalSource::Recovery,
+                                    row,
+                                    StreamDecodeProvenance::Experiment,
+                                    &mut output_error,
+                                    &mut on_decode,
+                                );
+                                experiment_rows.push(row.clone());
+                            },
+                        ))
+                    });
+                    match result {
+                        Ok(Some(report)) => {
+                            diagnostics.experiment_finish = Some(clock.elapsed());
+                            diagnostics.experiment = report;
+                        }
+                        Ok(None) => {}
+                        Err(error) => diagnostics.experiment.error = Some(error),
+                    }
+                }
             }
         });
         let baseline = baseline.unwrap_or_default();

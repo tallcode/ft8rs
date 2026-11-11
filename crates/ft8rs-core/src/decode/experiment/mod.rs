@@ -5,8 +5,8 @@ mod receiver;
 use crate::stream::session::StreamDecodedMessage;
 use std::time::Instant;
 
-pub(crate) use receiver::recover_impulses;
 pub use receiver::ExperimentDiagnostics;
+pub(crate) use receiver::{recover_drift, recover_impulses};
 
 /// Immutable slot inputs. Baseline rows supply original tones, never re-encoded
 /// display text. They are nuisance models, not independent confirmation of exp.

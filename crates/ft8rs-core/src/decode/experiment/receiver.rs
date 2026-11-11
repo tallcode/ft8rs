@@ -3,8 +3,11 @@
 //! This private module has no standalone profile, CallDB or persistent AP state.
 use super::ExperimentInput;
 use crate::stream::session::StreamDecodedMessage;
+#[path = "drift.rs"]
+mod drift;
 #[path = "impulse.rs"]
 mod impulse;
+pub(crate) use drift::recover_drift;
 #[path = "waveform.rs"]
 mod waveform;
 use rustfft::{num_complex::Complex64 as C, FftPlanner};
@@ -34,6 +37,12 @@ pub struct ExperimentDiagnostics {
     /// Samples blanked or tapered in the terminal pulse recovery search.
     pub impulse_blanked_samples: usize,
     pub impulse_accepted_rows: usize,
+    /// Terminal, isolated drift recovery; shares the slot's FEC budget.
+    pub drift_accepted_rows: usize,
+    /// Compensated views with at least one persistent-line removal (at most two).
+    pub drift_removed_lines: usize,
+    pub drift_seed_models: usize,
+    pub drift_elapsed: Duration,
     pub native_seed_candidates: usize,
     pub native_seed_models: usize,
     pub native_seed_rejections: usize,
@@ -809,6 +818,12 @@ fn refine_coherent(band: &Band, c: &Candidate) -> Vec<Candidate> {
     }
     out
 }
+fn worker_count() -> usize {
+    static WORKERS: OnceLock<usize> = OnceLock::new();
+    *WORKERS
+        .get_or_init(|| std::thread::available_parallelism().map_or(1, |count| count.get().min(6)))
+}
+
 fn search(
     audio: &[f64],
     low: f64,
@@ -816,74 +831,179 @@ fn search(
     candidate_limit: usize,
     budget: &mut Budget,
 ) -> Vec<Row> {
-    if budget.exhausted() {
-        return Vec::new();
-    }
-    let (bands, candidates) = discover(audio, low, high);
-    let mut rows: Vec<Row> = Vec::new();
-    for (ci, c) in candidates.into_iter().take(candidate_limit).enumerate() {
+    search_with_workers(audio, low, high, candidate_limit, budget, worker_count())
+}
+
+fn search_one(
+    band: &Band,
+    c: &Candidate,
+    ci: usize,
+    prior: &[Row],
+    budget: &mut Budget,
+) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let hypotheses = refine(band, c);
+    for (hi, h) in hypotheses.iter().enumerate() {
         if budget.exhausted() {
             break;
         }
-        let band = &bands[c.band];
-        let hypotheses = refine(band, &c);
-        for (hi, h) in hypotheses.iter().enumerate() {
+        let s = band.spectra(h.f, h.dt, 0.0);
+        let stats = MetricStats::new(&s);
+        for (block, mode) in [(1, "amp"), (3, "amp"), (4, "bessel"), (3, "robust")] {
+            if let Some((msg, tones)) = budget.decode(&metrics(&s, &stats, block, mode)) {
+                let row = Row {
+                    msg,
+                    f: h.f,
+                    dt: h.dt,
+                    method: format!("h{hi}-{block}-{mode}"),
+                    tones: Some(tones),
+                };
+                if !prior.iter().chain(&rows).any(|old| row_identity(old, &row)) {
+                    rows.push(row);
+                }
+                break;
+            }
+        }
+        if prior
+            .iter()
+            .chain(&rows)
+            .any(|r| (r.f - h.f).abs() < 3.0 && (r.dt - h.dt).abs() < 0.2)
+        {
+            break;
+        }
+    }
+    if ci < 32
+        && !prior
+            .iter()
+            .chain(&rows)
+            .any(|r| (r.f - c.f).abs() < 3.0 && (r.dt - c.dt).abs() < 0.2)
+    {
+        if budget.exhausted() {
+            return rows;
+        }
+        for (hi, h) in refine_coherent(band, &hypotheses[0]).iter().enumerate() {
             if budget.exhausted() {
                 break;
             }
             let s = band.spectra(h.f, h.dt, 0.0);
-            let stats = MetricStats::new(&s);
-            for (block, mode) in [(1, "amp"), (3, "amp"), (4, "bessel"), (3, "robust")] {
-                if let Some((msg, tones)) = budget.decode(&metrics(&s, &stats, block, mode)) {
-                    let row = Row {
-                        msg,
-                        f: h.f,
-                        dt: h.dt,
-                        method: format!("h{hi}-{block}-{mode}"),
-                        tones: Some(tones),
-                    };
-                    if !rows.iter().any(|old| row_identity(old, &row)) {
-                        rows.push(row);
-                    }
-                    break;
+            if let Some((msg, tones)) = budget.decode(&coherent_metrics(&s)) {
+                let row = Row {
+                    msg,
+                    f: h.f,
+                    dt: h.dt,
+                    method: format!("phase-{hi}"),
+                    tones: Some(tones),
+                };
+                if !prior.iter().chain(&rows).any(|old| row_identity(old, &row)) {
+                    rows.push(row);
                 }
-            }
-            if rows
-                .iter()
-                .any(|r| (r.f - h.f).abs() < 3.0 && (r.dt - h.dt).abs() < 0.2)
-            {
                 break;
-            }
-        }
-        if ci < 32
-            && !rows
-                .iter()
-                .any(|r| (r.f - c.f).abs() < 3.0 && (r.dt - c.dt).abs() < 0.2)
-        {
-            if budget.exhausted() {
-                break;
-            }
-            for (hi, h) in refine_coherent(band, &hypotheses[0]).iter().enumerate() {
-                if budget.exhausted() {
-                    break;
-                }
-                let s = band.spectra(h.f, h.dt, 0.0);
-                if let Some((msg, tones)) = budget.decode(&coherent_metrics(&s)) {
-                    let row = Row {
-                        msg,
-                        f: h.f,
-                        dt: h.dt,
-                        method: format!("phase-{hi}"),
-                        tones: Some(tones),
-                    };
-                    if !rows.iter().any(|old| row_identity(old, &row)) {
-                        rows.push(row);
-                    }
-                    break;
-                }
             }
         }
     }
+    rows
+}
+
+fn search_with_workers(
+    audio: &[f64],
+    low: f64,
+    high: f64,
+    candidate_limit: usize,
+    budget: &mut Budget,
+    width: usize,
+) -> Vec<Row> {
+    if budget.exhausted() {
+        return Vec::new();
+    }
+    let (bands, candidates) = discover(audio, low, high);
+    let candidates = &candidates[..candidates.len().min(candidate_limit)];
+    let width = width.max(1);
+    let worst = candidates.len() * 16 + candidates.len().min(32) * 8;
+    let rows = if width == 1 || worst >= MAX_FEC - budget.diagnostics.fec_calls {
+        let mut rows = Vec::new();
+        for (ci, c) in candidates.iter().enumerate() {
+            if budget.exhausted() {
+                break;
+            }
+            let result = search_one(&bands[c.band], c, ci, &rows, budget);
+            rows.extend(result);
+        }
+        rows
+    } else {
+        let mut result = vec![None::<Vec<Row>>; candidates.len()];
+        let mut todo = candidates.len();
+        while todo > 0 && !budget.exhausted() {
+            // Each hypothesis stays within 2.625 Hz of its coarse candidate;
+            // a prior row affects this candidate only within 5 Hz. Unfinished
+            // candidates more than 11 Hz apart can therefore run independently.
+            let ready: Vec<_> = candidates
+                .iter()
+                .enumerate()
+                .filter(|(i, c)| {
+                    result[*i].is_none()
+                        && candidates[..*i].iter().enumerate().all(|(j, previous)| {
+                            result[j].is_some() || (c.f - previous.f).abs() > 11.0
+                        })
+                })
+                .map(|(i, _)| i)
+                .take(width)
+                .collect();
+            assert!(!ready.is_empty());
+            let finished = &result;
+            let deadline = budget.deadline;
+            let solve = |ci: usize| {
+                let c = &candidates[ci];
+                let prior: Vec<_> = finished[..ci]
+                    .iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|r| (r.f - c.f).abs() <= 12.0)
+                    .cloned()
+                    .collect();
+                let mut local = Budget {
+                    deadline,
+                    low,
+                    high,
+                    diagnostics: ExperimentDiagnostics::default(),
+                };
+                let rows = search_one(&bands[c.band], c, ci, &prior, &mut local);
+                (
+                    ci,
+                    rows,
+                    local.diagnostics.fec_calls,
+                    local.diagnostics.budget_exhausted,
+                )
+            };
+            let work = std::thread::scope(|scope| {
+                let children: Vec<_> = ready[1..]
+                    .iter()
+                    .map(|&ci| {
+                        let solve = &solve;
+                        (
+                            ci,
+                            std::thread::Builder::new().spawn_scoped(scope, move || solve(ci)),
+                        )
+                    })
+                    .collect();
+                let head = solve(ready[0]);
+                std::iter::once(head)
+                    .chain(children.into_iter().map(|(ci, task)| match task {
+                        Ok(task) => task.join().expect("experimental candidate worker panicked"),
+                        Err(_) => solve(ci),
+                    }))
+                    .collect::<Vec<_>>()
+            });
+            todo -= work.len();
+            for (ci, rows, calls, cut) in work {
+                let max_calls = if ci < 32 { MAX_FEC_PER_CANDIDATE } else { 16 };
+                assert!(calls <= max_calls);
+                budget.diagnostics.fec_calls += calls;
+                budget.diagnostics.budget_exhausted |= cut;
+                result[ci] = Some(rows);
+            }
+        }
+        result.into_iter().flatten().flatten().collect()
+    };
     budget.diagnostics.tentative_rows += rows.len();
     rows
 }
@@ -1302,3 +1422,7 @@ pub(crate) fn recover_impulses(
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "drift_tests.rs"]
+mod drift_tests;

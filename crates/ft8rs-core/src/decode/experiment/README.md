@@ -16,6 +16,8 @@ records frozen known-truth confirmation and original-recording observations.
 - `mod.rs` defines immutable slot inputs, the internal boundary and diagnostics.
 - `receiver.rs` owns discovery, demapping, model selection and the bounded search.
 - `waveform.rs` owns reference fitting, data support and regularized cancellation.
+- `drift.rs` owns terminal drift recovery and shared chirp conditioning.
+- `drift_tests.rs` freezes known-truth, interference, scheduling and live-entry regressions.
 - `tests.rs` keeps input/budget/CW, sync-only and weak-retention regressions outside runtime code.
 - `EXPERIMENTS.md` records the pre-layout frozen measurement, not a new benchmark.
 
@@ -43,6 +45,14 @@ The configured search is limited to the intersection with 200–3000 Hz. Candida
 Costas power is locally whitened. Up to 96 candidates receive four noncoherent
 local hypotheses. Up to 32 candidates can receive eight pilot-coherent hypotheses.
 FEC calls the Plus BP/OSD entry with argument value 2.
+
+Candidate FEC jobs use up to six workers, capped by the host's available
+parallelism. A job waits for every earlier candidate whose frequency envelope can
+affect its duplicate checks or early exits. Results retain the serial candidate
+order. The scheduler reserves the complete search's worst-case FEC count before
+starting parallel jobs and uses serial evaluation when the remaining budget is
+smaller. Thread creation failures use the calling thread. Scalar DSP and FEC
+arithmetic are shared by both schedules.
 
 Initial metrics include one/three-symbol amplitude, four-symbol Bessel likelihood
 and three-symbol per-tone robust likelihood. Bessel demapping reuses complex
@@ -118,6 +128,31 @@ three existing `exp` rows. The pulse detector stayed inactive in those 20 slots.
 In the synthetic runs the latest correct pulse recovery callback was 1.96 s
 after processing began, and the slowest slot finished in 2.99 s.
 
+### Terminal drift recovery
+
+After pulse recovery has published its callbacks, Hybrid can supplement a full
+180000-sample slot using drift hypotheses of +0.60 and -0.60 Hz/s. Persistent
+lines identified in either compensated view are removed from a shared private
+copy before both searches. Up to eight native baseline waveforms are independently
+fitted and subtracted on that copy. The native snapshot is the sole source of
+waveform models for this pass.
+
+Rejected codewords can receive local drift fits in 0.02 Hz/s steps out to
+0.08 Hz/s from their coarse hypothesis. Independent fits share corrected audio
+and run on at most four workers. Every added row must pass the existing full-frame
+and three-group data support gates with all symbols observed. The terminal pass
+shares the slot's 4096-call FEC limit and ten-second deadline. Partial captures
+are skipped. Recovered rows enter the existing ledger as `exp` after all earlier
+callbacks, retaining its representative and evidence rules.
+
+The frozen 148-slot known-truth test exercises this path through Hybrid's normal
+entry point. Its 32 overlapping weak targets improve from 6 recoveries before
+terminal drift recovery to 26, while retaining all 32 stronger signals. All 56
+noise, sync-only and single/dual swept-carrier controls produce no messages.
+Both optimized profiles retain the declared targets; the fast confirmation also
+checks every returned 79-tone codeword against the injected payload. The test is
+`hybrid_drift_frozen_truth_corpus`, included by the complete decoder runner.
+
 ## Scheduling and output
 
 The experimental worker starts after all three native workers finish and their
@@ -145,7 +180,8 @@ User callback failures retain the normal error behavior.
 
 `HybridSlotDiagnostics.experiment` records FEC calls, tentative/rejected/accepted
 rows, full-frame/data scores and methods, native model counts/rejections,
-data-support rejections, conditioning/initial/residual stage durations, residual
+data-support rejections, conditioning/initial/residual stage durations, drift
+admissions, line-cleanup passes, fitted native models and terminal duration, residual
 searches, budget exhaustion, elapsed time and a worker error if any.
 Hybrid diagnostics separately record native/SIC completion, experimental worker
 start/finish and its publication gate.
