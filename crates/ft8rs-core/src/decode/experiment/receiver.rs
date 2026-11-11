@@ -8,8 +8,11 @@ mod drift;
 #[path = "impulse.rs"]
 mod impulse;
 pub(crate) use drift::recover_drift;
+#[path = "polar.rs"]
+mod polar;
 #[path = "waveform.rs"]
 mod waveform;
+pub(crate) use polar::{recover as recover_polar, ApContext as PolarApContext};
 use rustfft::{num_complex::Complex64 as C, FftPlanner};
 use std::cell::OnceCell;
 use std::f64::consts::TAU;
@@ -43,6 +46,13 @@ pub struct ExperimentDiagnostics {
     pub drift_removed_lines: usize,
     pub drift_seed_models: usize,
     pub drift_elapsed: Duration,
+    /// Terminal Gaussian-channel demapping and cross-fitted data support.
+    pub polar_elapsed: Duration,
+    pub polar_fec_calls: usize,
+    pub polar_ap_calls: usize,
+    pub polar_accepted_rows: usize,
+    pub polar_ap_accepted_rows: usize,
+    pub polar_rejected_rows: usize,
     pub native_seed_candidates: usize,
     pub native_seed_models: usize,
     pub native_seed_rejections: usize,
@@ -1426,3 +1436,7 @@ mod tests;
 #[cfg(test)]
 #[path = "drift_tests.rs"]
 mod drift_tests;
+
+#[cfg(test)]
+#[path = "polar_tests.rs"]
+mod polar_tests;

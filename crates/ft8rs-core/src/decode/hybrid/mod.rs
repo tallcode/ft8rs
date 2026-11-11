@@ -961,6 +961,60 @@ impl HybridStreamDecodeSession {
                         Err(error) => diagnostics.experiment.error = Some(error),
                     }
                 }
+                // Gaussian-channel recovery is terminal: all previous messages
+                // have already been published, and its AP context is read-only.
+                if diagnostics.experiment.error.is_none() && output_error.is_none() {
+                    let result = guard_worker(|| {
+                        Ok(crate::decode::experiment::recover_polar(
+                            crate::decode::experiment::ExperimentInput {
+                                samples,
+                                baseline,
+                                low: config.nfa,
+                                high: config.nfb,
+                                deadline: pulse_deadline,
+                            },
+                            crate::decode::experiment::PolarApContext {
+                                enabled: config.lft8apon,
+                                mycall: config.mycall.as_deref(),
+                                hiscall: config.hiscall.as_deref(),
+                                tails: matches!(config.nQSOProgress, 3 | 4),
+                                frequency: config.nfqso,
+                                width: config.napwid,
+                            },
+                            &diagnostics.experiment,
+                            &mut |row| {
+                                if ledger.tagged().iter().any(|old| {
+                                    same_signal(&old.decode, row)
+                                        || (old.decode.itone == row.itone
+                                            && (old.decode.dt - row.dt).abs() < 0.3
+                                            && (old.decode.freq - row.freq).abs() < 12.5)
+                                }) {
+                                    return;
+                                }
+                                diagnostics
+                                    .experiment_publish_start
+                                    .get_or_insert(clock.elapsed());
+                                publish(
+                                    &mut ledger,
+                                    SignalSource::Recovery,
+                                    row,
+                                    StreamDecodeProvenance::Experiment,
+                                    &mut output_error,
+                                    &mut on_decode,
+                                );
+                                experiment_rows.push(row.clone());
+                            },
+                        ))
+                    });
+                    match result {
+                        Ok(Some(report)) => {
+                            diagnostics.experiment_finish = Some(clock.elapsed());
+                            diagnostics.experiment = report;
+                        }
+                        Ok(None) => {}
+                        Err(error) => diagnostics.experiment.error = Some(error),
+                    }
+                }
             }
         });
         let baseline = baseline.unwrap_or_default();

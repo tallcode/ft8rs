@@ -17,6 +17,10 @@ records frozen known-truth confirmation and original-recording observations.
 - `receiver.rs` owns discovery, demapping, model selection and the bounded search.
 - `waveform.rs` owns reference fitting, data support and regularized cancellation.
 - `drift.rs` owns terminal drift recovery and shared chirp conditioning.
+- `polar.rs` owns terminal Gaussian-channel demapping, cross-fitted fast-fading
+  support and isolated explicit AP hypotheses.
+- `polar_tests.rs` records the optimized channel studies and full-Hybrid AP
+  increment, mask-boundary, invalid-input and callback-preservation regressions.
 - `drift_tests.rs` freezes known-truth, interference, scheduling and live-entry regressions.
 - `tests.rs` keeps input/budget/CW, sync-only and weak-retention regressions outside runtime code.
 - `EXPERIMENTS.md` records the pre-layout frozen measurement, not a new benchmark.
@@ -35,8 +39,11 @@ derived from the preserved single-slot research harness. No mirrored native
 source, threshold, candidate order, AP scheduling or arithmetic is changed.
 
 Hybrid supplies read-only audio and baseline observations to this private DSP
-branch. Its FEC uses an all-zero AP mask. Each decode uses local state, independent
-of the baseline sessions, AP memory, hash books and runtime CallDB.
+branch. Its existing searches use an all-zero AP mask. The terminal polar
+search can additionally use bounded AP hypotheses from public CQ structure and
+immutable explicit receive context. Each decode uses local state, independent
+of the baseline sessions, AP memory, hash books and runtime CallDB. Experimental
+output never populates AP context or native callsign history.
 
 ## Receive path
 
@@ -152,6 +159,55 @@ noise, sync-only and single/dual swept-carrier controls produce no messages.
 Both optimized profiles retain the declared targets; the fast confirmation also
 checks every returned 79-tone codeword against the injected payload. The test is
 `hybrid_drift_frozen_truth_corpus`, included by the complete decoder runner.
+
+### Terminal Gaussian-channel and AP recovery
+
+After the existing drift callbacks, the polar pass works on an independent full
+slot. It uses the existing full-band candidate discovery, at most 16 candidates,
+four local positions and four Gaussian-channel models: 2, 5 and 10 Hz power
+spectrum width (2 sigma), plus a 2 Hz, 6 Hz differential-Doppler model. The
+32 complex samples inside a symbol retain time correlation. Tone likelihoods
+marginalize a Gaussian complex channel with covariance `I + rho R`; no native
+demapper, FEC or AP scheduler is changed.
+
+Each model first tries zero AP. If the existing `lft8apon` option is enabled,
+public CQ/type hypotheses are available. Explicit standard callsign context
+can supply target, CQ/target or two-call masks within the configured receive
+frequency window (bounded to 5–100 Hz). Existing QSO progress 3 or 4 additionally
+allows the three RRR/RR73/73 hypotheses. Masks constrain 32, 61 or 77 payload
+bits, never CRC/parity bits. Unsupported/hash calls are skipped. Full QSO
+context is not assumed for ordinary blind listening. Output provenance remains
+`Experiment`, including when AP helped this private FEC attempt.
+
+Admission uses the original, unconditioned channel metrics and audio. A decoded
+reference is mixed out at 200 Hz. Gaussian/ridge predictions for each sample
+use only opposite-parity neighbors at offsets 5–35 ms. The empirical data
+score must exceed 80, each of three data groups must exceed 10 with at least
+128 observations, and unmodified channel-bit support must exceed 10. This
+penalizes noise fitting; it is not statistical independence, a calibrated
+false-alarm probability or independent confirmation. All AP masks use the
+same admission thresholds.
+
+The pass has a 500 ms soft work limit, shares the existing 4096-call ceiling,
+and adds at most 320 FEC calls. Active FFT/FEC work is not preempted. No polar
+result starts another search, cancellation or AP update. Earlier ledger
+representatives remain intact. Equal codewords within 12.5 Hz and 0.3 s are
+conservatively suppressed in this supplementary pass so broad or split lines
+cannot add another displayed copy of an existing representative.
+
+Diagnostics record `polar_elapsed`, `polar_fec_calls`, `polar_ap_calls`,
+`polar_accepted_rows`, `polar_ap_accepted_rows` and `polar_rejected_rows`.
+Admission counts can include ledger-suppressed rows; actual incremental output
+is measured from callbacks. The local integration study under
+`experiments/2026-11-11-polar-integration/` preserves before/after snapshots,
+paired full-Hybrid AP controls, negative controls, exact conditions and
+separate target-callback/work-completion times.
+
+Ignored polar research studies require an explicit `FT8RS_POLAR_OUTPUT` (or
+`FT8RS_POLAR_STUDY` for the saved-waveform audit). Without that variable they
+report a skip, so the complete decoder runner does not require untracked
+research recordings or create study output. The frozen AP/callback regression
+generates its own signals and runs without those variables.
 
 ## Scheduling and output
 
