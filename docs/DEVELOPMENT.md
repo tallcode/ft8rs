@@ -186,6 +186,42 @@ and branch builds to reuse default-branch caches and retain unaffected build
 data across dependency updates. Branch caches remain branch-scoped; they do not
 populate `main` or other sibling branches/tags.
 
+### Linux system dependency cache
+
+Linux builds and tests keep a separate DEB snapshot with
+`scripts/install_linux_deps.py`. It runs directly on the Ubuntu runner. Normal
+operation always refreshes the signed APT indexes and selects the current
+package versions. Unchanged DEBs are reused; new versions and their dependencies
+are downloaded. The snapshot includes the complete resolved dependency closure,
+even dependencies already installed on the runner that produced it.
+
+If index refresh or archive download fails, the helper uses the last complete
+snapshot. It verifies the Ubuntu version, native architecture, requested package
+set, archive metadata and SHA-256 checksums. Installation uses a local `file:`
+repository and isolated APT lists, with remote sources and downloads disabled.
+A partly refreshed remote index cannot demand a newer, uncached package during
+fallback. The local repository trusts only the checked snapshot; online refresh
+retains normal repository signature verification.
+
+Snapshots are replaced only after installation succeeds. Dependency conflicts
+or installation failures stop the job and preserve the previous snapshot; they
+do not trigger a second installation attempt. A cold cache cannot recover from
+a network outage, and a cache incompatible with the current runner is rejected.
+
+The workflows restore the latest snapshot for the Ubuntu version, architecture
+and package set, then save a content-addressed key immediately after dependency
+installation. Unchanged snapshots reuse the existing key; updated snapshots get
+a new key. A later Rust build failure does not discard the dependency cache.
+The cache follows GitHub's branch/tag access and eviction rules, so its presence
+is not guaranteed. The `source` output is `updated` for the online path or
+`cached` for network-failure fallback; logs also show archive reuse/download counts.
+
+Local orchestration regressions (mocked APT/dpkg, no host package installation):
+
+```sh
+python3 -B -m unittest discover -s scripts -p test_install_linux_deps.py -v
+```
+
 ### Tagged releases
 
 Only pushing a `v`-prefixed SemVer tag, such as `v0.0.23`, publishes a GitHub

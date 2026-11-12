@@ -17,6 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Verify Linux dependency cache behavior
+        run: python3 -B -m unittest discover -s scripts -p test_install_linux_deps.py -v
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -31,14 +34,29 @@ jobs:
           restore-keys: |
             cargo-test-${{ runner.os }}-
 
+      - name: Identify Linux dependency cache
+        id: deb-meta
+        run: python3 scripts/install_linux_deps.py --metadata-only libasound2-dev libfftw3-dev pkg-config
+
+      - name: Restore Linux DEB snapshot
+        id: deb-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: dist/linux-deps/snapshot
+          key: ${{ steps.deb-meta.outputs.cache-prefix }}-latest
+          restore-keys: |
+            ${{ steps.deb-meta.outputs.cache-prefix }}-
+
       - name: Install Linux test dependencies
-        run: |
-          # The hosted Azure mirror can fail DNS; prefer Ubuntu's public archive.
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
-          fi
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y libasound2-dev libfftw3-dev pkg-config
+        id: deb-install
+        run: python3 scripts/install_linux_deps.py libasound2-dev libfftw3-dev pkg-config
+
+      - name: Save updated Linux DEB snapshot
+        if: steps.deb-install.outputs.cache-key != steps.deb-cache.outputs.cache-matched-key
+        uses: actions/cache/save@v5
+        with:
+          path: dist/linux-deps/snapshot
+          key: ${{ steps.deb-install.outputs.cache-key }}
 
       - name: Run default short stream test
         run: cargo test --release -p ft8rs test_stream_decode_short_audio -- --nocapture
