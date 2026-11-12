@@ -24,7 +24,9 @@ run from the repository root unless a section says otherwise.
 
 | Document | Contents |
 |---|---|
+| [Decoder positioning and ownership](DECODER_DESIGN.md) | Plus, Hybrid and exp responsibilities, overlapping research plans, maturity and acceptance rules (Chinese) |
 | [WSJT-X](../crates/ft8rs-core/WSJTX.md) | Source mapping, sample/numerical conventions, stages, AP and alignment risks |
+| [WSJT-X+](../crates/ft8rs-core/src/decode/lib_wsjtx_plus/README.md) | Plus-owned roadmap, compatibility recovery, candidate retry and dated validation |
 | [JTDX](../crates/ft8rs-core/JTDX.md) | Independent state, CallDB, partition settings, source differences and partial `chkgrid` scope |
 | [Hybrid](../crates/ft8rs-core/HYBRID.md) | Three baseline sessions, payload-aware deduplication, bounded cancellation and scheduling |
 | [Hybrid experiment](../crates/ft8rs-core/src/decode/experiment/README.md) | Hybrid-only receive DSP, GUI/CLI opt-in, native waveform models, data admission and bounded residual search |

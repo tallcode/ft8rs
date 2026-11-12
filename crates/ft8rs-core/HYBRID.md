@@ -9,6 +9,23 @@ offers an opt-in private ft8rs specialist branch with Plus BP/OSD.
 
 Related notes: [WSJT-X](WSJTX.md), [JTDX](JTDX.md), [DX](DX.md).
 
+## Positioning and ownership
+
+Hybrid owns the combination of receiver paths: task selection, cross-decoder
+seed admission, calls to existing subtraction/redecode functions, deduplication,
+resource budgets and callback delivery. Plus owns enhancements to its complete
+WSJT-X-derived receive chain; `experiment` owns independent receive methods.
+New channel models or demappers belong to their receiver, rather than growing
+inside Hybrid's orchestration layer.
+
+Hybrid + exp already includes the Plus primary path. The exp branch is assessed
+for incremental recovery in declared conditions, without requiring complete
+standalone coverage. New exp methods are compared against the current full
+Hybrid + exp with that method disabled, so gains from existing branches are not
+counted again. Maturity does not automatically move a method into Plus or open
+a standalone profile. See [decoder positioning and ownership](../../docs/DECODER_DESIGN.md)
+for the current allocation and the split of overlapping research plans.
+
 ## Optional specialist branch
 
 `--profile hybrid --hybrid-experiment` enables the ft8rs single-slot receive DSP.

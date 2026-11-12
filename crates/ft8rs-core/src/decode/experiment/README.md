@@ -11,6 +11,31 @@ decode session at the next slot boundary without restarting audio capture. The
 [2026-10-29 report](EXPERIMENTS.md)
 records frozen known-truth confirmation and original-recording observations.
 
+## Positioning and planning boundary
+
+This branch owns independent ft8rs receive methods that complement Hybrid in
+declared signal conditions. It can remain a specialist after validation; maturity
+is tracked per capability and does not automatically move code into WSJT-X+.
+Stable AWGN recovery can belong here, while a specialized retry that extends
+Plus's own receive chain can remain in Plus. Combining output, using AP or
+running on a private audio copy does not determine ownership.
+
+Independent discovery, channel likelihoods, waveform admission and specialist
+residual searches belong here. Improvements integrated into Plus's existing
+candidate/demodulation/FEC chain belong to Plus. Cross-decoder seed selection,
+calls to existing cancellation/redecode functions, budgets and publication belong
+to Hybrid. Shared FEC use does not transfer receiver ownership.
+See [decoder positioning and ownership](../../../../../docs/DECODER_DESIGN.md)
+for the allocation of overlapping soft-information, SIC, FEC and performance work.
+
+For each new method, record its declared scope, maturity, truth/control evidence,
+wrong and unconfirmed outputs, prior specialist coverage changes and resource
+cost. Compare incremental callbacks against the current complete Hybrid + exp
+with that method disabled, preserving baseline outputs and measuring callback
+arrival separately from worker completion. Research prototypes remain outside
+runtime scheduling until applicable acceptance is complete. The existing flag,
+GUI label, default-off behavior, provenance and Hybrid-only entry remain unchanged.
+
 ## Current layout
 
 - `mod.rs` defines immutable slot inputs, the internal boundary and diagnostics.

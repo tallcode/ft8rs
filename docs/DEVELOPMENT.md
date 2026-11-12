@@ -4,6 +4,11 @@ Run commands from the repository root. Local checks are required; CI does not
 replace local decoder validation. Decoder constraints are described under
 [Decoder change review](#decoder-change-review).
 
+Before planning decoder work, use [decoder positioning and ownership](DECODER_DESIGN.md)
+to assign Plus receiver changes, Hybrid orchestration and independent exp DSP.
+That document splits overlapping research topics and treats maturity separately
+from ownership; the experimental flag does not waive acceptance requirements.
+
 This repository integrates directly into `main` without pull requests. Before
 committing or merging, synchronize remote `main`, resolve conflicts and complete
 the applicable local checks and optimized tests. Then commit and push `main`.
@@ -368,7 +373,7 @@ The authorized [Hybrid experiment](../crates/ft8rs-core/src/decode/experiment/RE
 ft8rs DSP in a private module. It reuses unchanged protocol/FEC functions and is
 available only through Hybrid (`--profile hybrid --hybrid-experiment`); do not add
 a standalone profile or expose its decoder as a public API. It is opt-in through
-CLI/config or the Hybrid-only GUI setting **Exp. decoder**. Runtime
+CLI/config or the Hybrid-only GUI setting **Experimental decoder**. Runtime
 changes rebuild the decode session at the next slot boundary. Keep baseline
 sessions and original audio isolated. Supplementary rows carry their own provenance and cannot create
 independent confirmation or update native AP/hash memory. Evaluate each declared
