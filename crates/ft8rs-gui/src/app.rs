@@ -495,25 +495,17 @@ impl eframe::App for Ft8rsApp {
         egui::Color32::from_rgb(r, g, b).to_normalized_gamma_f32()
     }
 
-    // eframe 0.35: the root entry point is `ui` (a `&mut Ui` with no margin),
-    // not `update(ctx)`. Panels now `.show(ui, …)` into that ui; the Context is
-    // reached via `ui.ctx()`.
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
+    // eframe skips `ui` while the root window is minimized or occluded, but
+    // continues calling `logic` on repaint requests. Keep mailbox consumption
+    // and its next wakeup here so background reception never depends on paint.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.activation.take_request() {
             self.main_focus.request();
         }
-        self.main_focus.update(&ctx, Instant::now());
-        // Follow the OS light/dark theme: re-apply the custom style when it flips.
-        let theme = ctx.theme();
-        if theme != self.styled_theme {
-            apply_style(&ctx, theme);
-            self.styled_theme = theme;
-        }
-        self.sync_title(&ctx);
-        self.sync_udp_in(&ctx);
+        self.main_focus.update(ctx, Instant::now());
+        self.sync_udp_in(ctx);
         self.pump_menu();
-        self.pump_events(&ctx);
+        self.pump_events(ctx);
         self.pump_clock_sync();
         match self.debug_info.poll() {
             Ok(Some(path)) if self.debug_info.active() => self.debug_result = Some(Ok(path)),
@@ -521,6 +513,20 @@ impl eframe::App for Ft8rsApp {
             Err(err) if self.debug_info.active() => self.debug_save_failed(&err),
             Err(_) => {}
         }
+
+        // Schedule the next logic tick even when no UI pass will be run.
+        ctx.request_repaint_after(Duration::from_millis(150));
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        // Follow the OS light/dark theme: re-apply the custom style when it flips.
+        let theme = ctx.theme();
+        if theme != self.styled_theme {
+            apply_style(&ctx, theme);
+            self.styled_theme = theme;
+        }
+        self.sync_title(&ctx);
 
         // macOS and Windows use a native menu bar; only the fallback platforms
         // (Linux) get an in-window top menu panel.
@@ -596,9 +602,6 @@ impl eframe::App for Ft8rsApp {
         self.copyright_window(&ctx);
         self.confirm_window(&ctx);
         self.monitor_stopped_dialog(&ctx);
-
-        // Keep pumping engine events even without user input.
-        ctx.request_repaint_after(Duration::from_millis(150));
     }
 }
 
@@ -694,6 +697,8 @@ fn apply_style(ctx: &egui::Context, theme: egui::Theme) {
 
 #[cfg(test)]
 mod tests {
+    mod background;
+
     use super::*;
     use ft8rs::stream::session::StreamDecodeConfig;
     use ft8rs_engine::soundcard::InputChannel;

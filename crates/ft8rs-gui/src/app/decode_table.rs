@@ -2,7 +2,7 @@
 use eframe::egui::{self, Color32};
 
 use super::decode_log::{
-    call_candidate, fill_target_context, is_grid4, separator_label, DecodeSource, DisplayItem,
+    call_candidate, fill_target_context, separator_label, DecodeSource, DisplayItem,
 };
 use super::widgets::cap_height_sample;
 use super::{norm, Ft8rsApp};
@@ -64,7 +64,6 @@ impl Ft8rsApp {
             .y;
         let own_call = norm(&self.preferences.mycall);
         let target_call = norm(&self.preferences.hiscall);
-        let target_grid = norm(&self.preferences.hisgrid);
         // Match the WSJT-X detailed separator in both themes.
         let separator_bg = Color32::from_gray(if dark { 0xa2 } else { 0xd3 });
         // Compare-mode coloring only applies while listening.
@@ -117,7 +116,6 @@ impl Ft8rsApp {
                         &row.text,
                         own_call.as_deref(),
                         target_call.as_deref(),
-                        target_grid.as_deref(),
                         font.clone(),
                         color,
                     );
@@ -219,13 +217,12 @@ fn paint_decode_row(
     painter.galley(pos, galley, color);
 }
 
-/// Highlight complete callsign and target-grid tokens in the message column, leaving the time,
-/// signal and provenance columns in their existing compare-mode color.
+/// Highlight our callsign in either role, and the target only as the sender.
+/// Time, signal, grid and provenance keep their existing compare-mode color.
 fn decode_highlight_job(
     text: &str,
     own_call: Option<&str>,
     target_call: Option<&str>,
-    target_grid: Option<&str>,
     font_id: egui::FontId,
     color: Color32,
 ) -> (egui::text::LayoutJob, Vec<DecodeHighlight>) {
@@ -239,8 +236,22 @@ fn decode_highlight_job(
     };
     let mut cursor = 0;
     if let Some(body) = text.get(MESSAGE_START..) {
+        let tokens: Vec<_> = body.split_whitespace().collect();
+        // Directed FT8 messages are TO FROM ..., while CQ [modifier] FROM ...
+        // puts the sender after CQ and any directional/frequency modifier.
+        let sender_index = match tokens.as_slice() {
+            ["CQ", ..] => tokens
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find(|(_, token)| call_candidate(token).is_some())
+                .map(|(index, _)| index),
+            ["TU;", ..] => Some(2),
+            [_, "RR73;", ..] => Some(3),
+            _ => Some(1),
+        };
         let mut body_cursor = 0;
-        for token in body.split_whitespace() {
+        for (index, token) in tokens.into_iter().enumerate() {
             let start = MESSAGE_START
                 + body_cursor
                 + body[body_cursor..]
@@ -254,11 +265,10 @@ fn decode_highlight_job(
                 if own_call == Some(normalized.as_str()) && call_candidate(&normalized).is_some() {
                     Some((Color32::YELLOW, Color32::BLACK))
                 } else if target_call == Some(normalized.as_str())
+                    && sender_index == Some(index)
                     && call_candidate(&normalized).is_some()
                 {
                     Some((Color32::from_rgb(0xe0, 0x22, 0x22), Color32::WHITE))
-                } else if target_grid == Some(normalized.as_str()) && is_grid4(&normalized) {
-                    Some((Color32::from_rgb(0x18, 0x45, 0xa8), Color32::WHITE))
                 } else {
                     None
                 };
@@ -321,7 +331,6 @@ mod tests {
             &text,
             None,
             Some("ZY7H"),
-            Some("HI06"),
             egui::FontId::monospace(14.0),
             Color32::BLACK,
         );
@@ -329,7 +338,7 @@ mod tests {
             .iter()
             .map(|highlight| &job.text[highlight.bytes.clone()])
             .collect();
-        assert_eq!(marked, ["ZY7H", "HI06"]);
+        assert_eq!(marked, ["ZY7H"]);
         assert_eq!(job.text, text);
 
         let similar = text.replace("ZY7H", "ZY7H/P").replace("HI06", "HI06AA");
@@ -337,7 +346,6 @@ mod tests {
             &similar,
             None,
             Some("ZY7H"),
-            Some("HI06"),
             egui::FontId::monospace(14.0),
             Color32::BLACK,
         );
@@ -345,29 +353,96 @@ mod tests {
     }
 
     #[test]
-    fn own_callsign_is_yellow_but_own_grid_is_unmarked() {
-        let text = format!(
-            "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
-            "020045", -18, -0.4, 1108, "CQ BG5ATV PM00", ""
-        );
-        let (job, highlights) = decode_highlight_job(
-            &text,
-            Some("BG5ATV"),
-            None,
-            None,
-            egui::FontId::monospace(14.0),
-            Color32::WHITE,
-        );
-        assert_eq!(highlights.len(), 1);
-        assert_eq!(&job.text[highlights[0].bytes.clone()], "BG5ATV");
-        assert_eq!(highlights[0].background, Color32::YELLOW);
-        let marked = job
-            .sections
-            .iter()
-            .find(|section| section.byte_range.start.0 == highlights[0].bytes.start)
-            .unwrap();
-        assert_eq!(marked.format.color, Color32::BLACK);
-        assert_eq!(job.text, text);
+    fn own_callsign_is_yellow_in_both_roles_and_grids_are_unmarked() {
+        for message in ["CQ BG5ATV PM00", "E51A BG5ATV -10", "BG5ATV VK3AMP PM00"] {
+            let text = format!(
+                "{:<6} {:>3} {:>5.1} {:>5}  {:<20} {}",
+                "020045", -18, -0.4, 1108, message, ""
+            );
+            let (job, highlights) = decode_highlight_job(
+                &text,
+                Some("BG5ATV"),
+                Some("BG5ATV"), // Our yellow takes priority even if also targeted.
+                egui::FontId::monospace(14.0),
+                Color32::WHITE,
+            );
+            assert_eq!(highlights.len(), 1, "{message}");
+            assert_eq!(&job.text[highlights[0].bytes.clone()], "BG5ATV");
+            assert_eq!(highlights[0].background, Color32::YELLOW);
+            let marked = job
+                .sections
+                .iter()
+                .find(|section| section.byte_range.start.0 == highlights[0].bytes.start)
+                .unwrap();
+            assert_eq!(marked.format.color, Color32::BLACK);
+            assert_eq!(job.text, text);
+        }
+    }
+
+    #[test]
+    fn target_callsign_is_red_only_as_sender() {
+        for (message, expected) in [
+            ("E51A VK3AMP R-14", None),
+            ("E51A JA1FWS QM05", None),
+            ("JA1FWS E51A +02", Some("E51A")),
+            ("JF1RDH E51A RR73", Some("E51A")),
+            ("CQ E51A RG37", Some("E51A")),
+            ("CQ DX E51A RG37", Some("E51A")),
+            ("CQ 072 E51A RG37", Some("E51A")),
+            ("JA1FWS <E51A> +02", Some("<E51A>")),
+            ("<E51A> JA1FWS +02", None),
+            ("TU; E51A JA1FWS R 579 MA", None),
+            ("TU; JA1FWS E51A R 579 MA", Some("E51A")),
+            ("E51A RR73; JA1FWS <KH1/KH7Z> -08", None),
+            ("K1ABC RR73; JA1FWS <E51A> -08", Some("<E51A>")),
+        ] {
+            let text = format!("020045 -18  -0.4  1108  {message}");
+            let (job, highlights) = decode_highlight_job(
+                &text,
+                None,
+                Some("E51A"),
+                egui::FontId::monospace(14.0),
+                Color32::BLACK,
+            );
+            let marked: Vec<_> = highlights
+                .iter()
+                .map(|highlight| &job.text[highlight.bytes.clone()])
+                .collect();
+            assert_eq!(
+                marked,
+                expected.into_iter().collect::<Vec<_>>(),
+                "{message}"
+            );
+            for highlight in &highlights {
+                assert_eq!(highlight.background, Color32::from_rgb(0xe0, 0x22, 0x22));
+            }
+            assert_eq!(job.text, text);
+        }
+    }
+
+    #[test]
+    fn own_and_target_callsigns_keep_their_separate_colors() {
+        for (message, expected) in [
+            (
+                "BG5ATV E51A -10",
+                vec![Color32::YELLOW, Color32::from_rgb(0xe0, 0x22, 0x22)],
+            ),
+            ("E51A BG5ATV R-10", vec![Color32::YELLOW]),
+        ] {
+            let text = format!("020045 -18  -0.4  1108  {message}");
+            let (_, highlights) = decode_highlight_job(
+                &text,
+                Some("BG5ATV"),
+                Some("E51A"),
+                egui::FontId::monospace(14.0),
+                Color32::BLACK,
+            );
+            assert_eq!(
+                highlights.iter().map(|h| h.background).collect::<Vec<_>>(),
+                expected,
+                "{message}"
+            );
+        }
     }
 
     #[test]
@@ -405,7 +480,6 @@ mod tests {
                         "030730   0  -0.1  1838  UA0FF ZZ5UNO -11",
                         None,
                         Some("ZZ5UNO"),
-                        None,
                         font.clone(),
                         Color32::BLACK,
                     );

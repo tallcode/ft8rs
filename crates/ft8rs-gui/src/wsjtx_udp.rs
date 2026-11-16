@@ -82,6 +82,25 @@ pub struct UdpIn {
 }
 
 impl UdpIn {
+    /// In-memory input for app lifecycle tests, without binding a real socket.
+    #[cfg(test)]
+    pub(crate) fn test_mailbox() -> (Self, SyncSender<(Instant, ExternalDecode)>) {
+        let (commands, _) = mpsc::channel();
+        let (_, status) = mpsc::channel();
+        let (sender, rows) = mpsc::sync_channel(DECODE_QUEUE_CAP);
+        (
+            Self {
+                commands,
+                status,
+                rows,
+                dial: DialInbox::default(),
+                endpoint: None,
+                generation: 0,
+            },
+            sender,
+        )
+    }
+
     #[cfg(test)]
     pub fn spawn(wake: impl Fn() + Send + 'static) -> Result<Self, String> {
         Self::spawn_observed(wake, None)
